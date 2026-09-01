@@ -9,6 +9,7 @@
     "dev": "next dev",
     "build": "next build",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/**/*.test.ts",
     "smoke": "tsx scripts/smoke-frontend.ts",
     "migrate:tex": "tsx scripts/migrate-to-tex.ts",
     "clean": "rm -rf .next tsconfig.tsbuildinfo",
