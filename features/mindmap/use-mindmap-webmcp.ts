@@ -33,7 +33,12 @@ export function useMindmapWebMcp(host: MindmapWebMcpHost): void {
       const tools = [
         ...buildMindmapWebMcpTools(bound),
         ...(bound.sharedActions
-          ? buildSharedWebMcpTools({ project: bound.getSnapshot().project, actions: bound.sharedActions })
+          ? buildSharedWebMcpTools({
+              project: bound.getSnapshot().project,
+              actions: bound.sharedActions,
+              navigate: (href) => hostRef.current.navigate?.(href),
+              current: () => hostRef.current.current?.(),
+            })
           : []),
       ];
       const registration = await registerWebMcpToolsIndependent(

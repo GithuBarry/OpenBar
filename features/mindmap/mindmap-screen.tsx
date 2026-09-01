@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/shell/page-header";
 import { MindmapEditor } from "@/features/mindmap/mindmap-editor";
 import { MindmapSwitcher } from "@/features/mindmap/mindmap-switcher";
 import { deriveMindmap } from "@/lib/mindmap-derive";
-import { buildProjectPaperGraph } from "@/lib/paper-graph";
+import { getProjectState } from "@/lib/research/project-state";
 import { DRAFT_MINDMAP_ID, getMindmap, getProject, listMindmaps, listWiki } from "@/lib/store";
 import type { ArtifactRef } from "@/lib/types";
 
@@ -24,15 +24,19 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
 
   const activeId = mindmap.id || mapId;
   const isDraft = mindmap.role === "draft" || activeId === DRAFT_MINDMAP_ID;
-  const graph = buildProjectPaperGraph(slug);
+  const state = getProjectState(slug, {
+    kind: "mindmap",
+    href: `/p/${slug}/mindmap${activeId === DRAFT_MINDMAP_ID ? "" : `/${activeId}`}`,
+    mapId: activeId,
+  });
   const artifactSuggestions: ArtifactRef[] = [
     { kind: "project", id: slug, label: project.title },
-    ...graph.claims.map((claim) => ({
-      kind: "draft-claim" as const,
-      id: claim.id,
-      label: claim.title || claim.text,
+    ...(state?.paper?.outline || []).map((section) => ({
+      kind: "draft-section" as const,
+      id: section.id,
+      label: section.title,
     })),
-    ...graph.todos.map((todo) => ({
+    ...(state?.paper?.todos || []).map((todo) => ({
       kind: "draft-todo" as const,
       id: todo.id,
       label: todo.text,
@@ -73,6 +77,7 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
           project={slug}
           initialMindmap={mindmap}
           draftMindmap={isDraft ? draftOutline : null}
+          paperState={state}
           artifactSuggestions={artifactSuggestions}
         />
       </main>

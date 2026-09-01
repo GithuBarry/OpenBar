@@ -106,6 +106,7 @@ button, input, textarea, select { font: inherit; }
 .paper-view {
   --font-serif: var(--font-paper);
 }
+.paper-view .ob-pv-heading { cursor: pointer; }
 
 /* ============================================================
    Prose — the paper reading surface (serif, print-like)
@@ -741,6 +742,46 @@ button, input, textarea, select { font: inherit; }
   box-shadow: var(--shadow-float);
 }
 .mindmap-editor-no-inspector { grid-template-columns: minmax(0, 1fr); }
+.mindmap-editor-with-activity { grid-template-columns: 252px minmax(0, 1fr) 296px; }
+.mindmap-editor-with-activity.mindmap-editor-no-inspector { grid-template-columns: 252px minmax(0, 1fr); }
+.mindmap-activity {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border-right: 1px solid rgb(var(--line));
+  background: rgb(var(--surface-2));
+}
+.mindmap-activity-heading { padding: 0.85rem 0.9rem 0.5rem; }
+.mindmap-activity-scroll { min-height: 0; overflow: auto; padding-bottom: 0.75rem; }
+.mindmap-activity-group { padding: 0.35rem 0 0.5rem; }
+.mindmap-activity-label {
+  padding: 0.35rem 0.9rem 0.2rem;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgb(var(--faint));
+}
+.mindmap-activity-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.25rem;
+  padding: 0.35rem 0.7rem 0.35rem 0.9rem;
+  font-size: 12px;
+  color: rgb(var(--ink));
+}
+.mindmap-details {
+  margin-top: 0.75rem;
+  border-top: 1px solid rgb(var(--line));
+  padding-top: 0.6rem;
+}
+.mindmap-details summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgb(var(--muted));
+}
 .mindmap-workspace { display: flex; min-width: 0; min-height: 0; flex-direction: column; }
 .mindmap-toolbar {
   display: flex;
@@ -944,9 +985,12 @@ button, input, textarea, select { font: inherit; }
 .mindmap-swatch:hover, .mindmap-swatch-selected { border-color: rgb(var(--accent)); box-shadow: 0 0 0 2px rgb(var(--accent) / 0.16); }
 .mindmap-inspector-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.8rem; padding-top: 0.8rem; border-top: 1px solid rgb(var(--line)); }
 @media (max-width: 900px) {
-  .mindmap-editor { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
+  .mindmap-editor,
+  .mindmap-editor-with-activity,
+  .mindmap-editor-with-activity.mindmap-editor-no-inspector { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
   .mindmap-workspace { min-height: 560px; }
   .mindmap-inspector { min-height: auto; max-height: none; border-top: 1px solid rgb(var(--line)); border-left: 0; }
+  .mindmap-activity { border-right: 0; border-bottom: 1px solid rgb(var(--line)); max-height: 220px; }
   .mindmap-toolbar { align-items: flex-start; }
   .mindmap-canvas-hint { display: none; }
 }

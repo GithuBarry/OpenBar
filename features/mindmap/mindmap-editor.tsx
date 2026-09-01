@@ -2,19 +2,8 @@
 
 import "katex/dist/katex.min.css";
 import katex from "katex";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useReducer,
-  useRef,
-  useState,
-  useTransition,
-  type CSSProperties,
-  type KeyboardEvent,
-  type PointerEvent,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, useTransition, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import {
   ChevronDown,
   ChevronRight,
@@ -41,6 +30,7 @@ import {
 
 import { getMindmapAction, saveMindmapAction } from "@/app/actions";
 import { sharedWebMcpActions } from "@/features/webmcp-actions";
+import { PaperActivityRail } from "@/features/mindmap/paper-activity-rail";
 import { HtmlDocumentFrame } from "@/features/document/html-frame";
 import { htmlFrameCapabilities } from "@/lib/html-policy";
 import {
@@ -72,6 +62,7 @@ import { pruneEvidenceNodes } from "@/lib/mindmap-index";
 import { ARTIFACT_KINDS, artifactHref } from "@/lib/research/artifact-link";
 import { cn } from "@/lib/utils";
 import type { ArtifactKind, ArtifactRef, Maturity, Mindmap, MindmapNode, MindmapNodeShape } from "@/lib/types";
+import type { ProjectState } from "@/lib/research/project-state";
 
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 2.5;
@@ -132,14 +123,17 @@ export function MindmapEditor({
   project,
   initialMindmap,
   draftMindmap,
+  paperState,
   artifactSuggestions = [],
 }: {
   project: string;
   initialMindmap: Mindmap;
   /** A non-destructive fallback the user can explicitly restore from. */
   draftMindmap?: Mindmap | null;
+  paperState?: ProjectState | null;
   artifactSuggestions?: ArtifactRef[];
 }) {
+  const router = useRouter();
   const [session, dispatch] = useReducer(mindmapReducer, initialMindmap, createMindmapSession);
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -263,6 +257,26 @@ export function MindmapEditor({
       }, expectedRevision);
     },
     setActivityHighlight: (since) => setActivitySince(since || null),
+    navigate: (href) => {
+      try {
+        const url = new URL(href, window.location.origin);
+        if (url.pathname === window.location.pathname) {
+          const hash = decodeURIComponent(url.hash.replace(/^#/, ""));
+          if (hash) dispatch({ type: "select", id: hash });
+          window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+          return;
+        }
+      } catch {
+        // Fall through to a full navigation.
+      }
+      router.push(href);
+    },
+    current: () => ({
+      kind: "mindmap" as const,
+      href: `/p/${project}/mindmap`,
+      mapId: sessionRef.current.mindmap.id || "draft",
+      nodeId: sessionRef.current.selectedId,
+    }),
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [view, setView] = useState<View>({ x: 36, y: 36, scale: 1 });
@@ -979,9 +993,41 @@ export function MindmapEditor({
   const availableParents = selected && bannedParents
     ? mindmap.nodes.filter((node) => node.id !== selected.id && !bannedParents.has(node.id))
     : [];
+  const paperSections = paperState?.paper?.outline || [];
+  const paperRef = (selected?.refs || []).find((ref) => ref.kind === "draft-section" || ref.kind === "draft-todo");
+
+  useEffect(() => {
+    const apply = () => {
+      const hash = decodeURIComponent(window.location.hash.replace(/^#/, ""));
+      if (hash && sessionRef.current.mindmap.nodes.some((node) => node.id === hash)) {
+        dispatch({ type: "select", id: hash });
+      }
+    };
+    apply();
+    window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, []);
 
   return (
-    <section className={cn("mindmap-editor", !showInspector && "mindmap-editor-no-inspector")}>
+    <section className={cn(
+      "mindmap-editor",
+      !showInspector && "mindmap-editor-no-inspector",
+      paperState && "mindmap-editor-with-activity",
+    )}>
+      {paperState && (
+        <PaperActivityRail
+          state={paperState}
+          onPinTodo={(todo) => {
+            const id = newNodeId();
+            dispatch({ type: "add-node", parentId: mindmap.rootId, id, text: todo.text });
+            dispatch({
+              type: "patch-node",
+              id,
+              patch: { refs: [{ kind: "draft-todo", id: todo.id, label: todo.text }] },
+            });
+          }}
+        />
+      )}
       <div className="mindmap-workspace">
         <div className="mindmap-toolbar" aria-label="Mindmap controls">
           <div className="flex min-w-0 flex-wrap items-center gap-1">
@@ -1218,6 +1264,45 @@ export function MindmapEditor({
             />
             <small>First line is the topic title. Use a second line for context.</small>
           </label>
+
+          <label className="mindmap-field">
+            <span>Paper</span>
+            <select
+              value={paperRef?.kind === "draft-section" ? paperRef.id : ""}
+              onChange={(event) => {
+                const section = paperSections.find((item) => item.id === event.target.value);
+                setSaveError(null);
+                const refs = (selected.refs || []).filter((ref) => ref.kind !== "draft-section");
+                if (section) refs.unshift({ kind: "draft-section", id: section.id, label: section.title });
+                dispatch({ type: "patch-node", id: selected.id, patch: { refs } });
+              }}
+            >
+              <option value="">No paper section</option>
+              {paperSections.map((section) => (
+                <option key={section.id} value={section.id}>{section.title}</option>
+              ))}
+            </select>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {paperRef && (
+                <a className="btn-outline px-2 py-0.5 text-[11px]" href={artifactHref(project, paperRef)}>Open in paper</a>
+              )}
+              {paperSections.length > 0 && (
+                <button
+                  type="button"
+                  className="btn-outline px-2 py-0.5 text-[11px]"
+                  onClick={async () => {
+                    const target = paperRef?.kind === "draft-section" ? paperRef.id : paperSections[0]?.id;
+                    if (!target) return;
+                    try { await navigator.clipboard.writeText(selected.text); } catch { /* clipboard is optional */ }
+                    router.push(`/p/${project}/paper#${encodeURIComponent(target)}`);
+                  }}
+                >
+                  Put in paper…
+                </button>
+              )}
+            </div>
+          </label>
+
           {selected.createdAt && (
             <p className="mindmap-date-row">
               Created {formatMindmapDate(selected.createdAt)}
@@ -1235,10 +1320,11 @@ export function MindmapEditor({
               }}
               placeholder="experiment, priority, blocker"
             />
-            <small>Use short comma-separated labels. They stay with this card in the project files.</small>
           </label>
 
-          <div className="mindmap-field">
+          <details className="mindmap-details">
+            <summary>Details</summary>
+            <div className="mindmap-field">
             <span>Progress <strong>{formatProgress(selected.progress)}%</strong></span>
             <div className="mindmap-progress-inputs">
               <input
@@ -1354,6 +1440,7 @@ export function MindmapEditor({
               ))}
             </div>
           </div>
+          </details>
 
           {selected.id !== mindmap.rootId && (
             <>
