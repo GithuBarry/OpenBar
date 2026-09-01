@@ -1,0 +1,53 @@
+# Dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# Next.js
+/.next/
+/.next-*/
+/out/
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# Production
+/build
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Env files
+.env
+.env*.local
+
+# Editor / OS
+.DS_Store
+.idea
+.vscode
+*.pem
+
+# iCloud/macOS duplicate-file noise
+* 2.*
+* 2/
+.scratch/
+/scratch/
+
+# OpenBar generated indexes, previews, and TeX build cache
+**/.openbarry/
+**/*.aux
+**/*.dvi
+**/*.fdb_latexmk
+**/*.fls
+**/*.log
+**/*.out
+
+# Private research state stays in a separate mounted content store
+/content/projects/
+/content/workspace.tex
+/migrates/
+/HANDOFF.md
+/HANDOFF_PLAN.md
+/PLAN.md

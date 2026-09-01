@@ -1,0 +1,73 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import type { NextConfig } from "next";
+
+const configDir = path.dirname(fileURLToPath(import.meta.url));
+
+function distDirFromEnvironment(): string {
+  const requested = process.env.OB_DIST?.trim();
+  if (!requested) return ".next";
+  const resolved = path.resolve(configDir, requested);
+  const relative = path.relative(configDir, resolved);
+  if (path.isAbsolute(requested) || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+    throw new Error("OB_DIST must stay inside the project directory, for example .next-local.");
+  }
+  return relative || ".next";
+}
+
+const nextConfig: NextConfig = {
+  distDir: distDirFromEnvironment(),
+  outputFileTracingRoot: configDir,
+  // Content is a runtime data tree, not application code. Keep it out of NFT
+  // traces so `next build` does not warn about walking manuscript files.
+  // Pandoc Lua filters must ship with the server trace.
+  outputFileTracingExcludes: {
+    "/*": ["./content/projects/**", "./scratch/**", "./.scratch/**"],
+  },
+  outputFileTracingIncludes: {
+    "/*": ["./lib/tex-project/pandoc-openbarry.lua"],
+  },
+  // Next 16 treats 127.0.0.1 as a different origin from localhost and blocks
+  // /_next chunks + HMR unless listed here.
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
+  serverExternalPackages: [
+    "file-type",
+    "proper-lockfile",
+    "jose",
+    "@citation-js/core",
+    "@citation-js/plugin-bibtex",
+    "@citation-js/plugin-csl",
+  ],
+  experimental: {
+    authInterrupts: true,
+    serverActions: {
+      bodySizeLimit: "8mb",
+    },
+  },
+  transpilePackages: [
+    "@unified-latex/unified-latex-ctan",
+    "@unified-latex/unified-latex-types",
+    "@unified-latex/unified-latex-util-arguments",
+    "@unified-latex/unified-latex-util-catcode",
+    "@unified-latex/unified-latex-util-environments",
+    "@unified-latex/unified-latex-util-match",
+    "@unified-latex/unified-latex-util-parse",
+    "@unified-latex/unified-latex-util-pegjs",
+    "@unified-latex/unified-latex-util-print-raw",
+    "@unified-latex/unified-latex-util-replace",
+    "@unified-latex/unified-latex-util-scan",
+    "@unified-latex/unified-latex-util-trim",
+    "@unified-latex/unified-latex-util-visit",
+    "@unified-latex/unified-latex-to-hast",
+    "@unified-latex/unified-latex-util-html-like",
+  ],
+  turbopack: {
+    resolveAlias: {
+      fs: { browser: "./lib/empty-module.ts" },
+      path: { browser: "./lib/empty-module.ts" },
+      module: { browser: "./lib/empty-module.ts" },
+    },
+  },
+};
+
+export default nextConfig;

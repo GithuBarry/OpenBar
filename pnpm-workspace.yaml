@@ -1,0 +1,13 @@
+packages:
+  - "."
+allowBuilds:
+  esbuild: true
+  sharp: true
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+# Next webpack resolves styled-jsx, @swc/helpers, and unified-latex's `color`
+# from the app root. Isolated node_modules leaves those ENOENT on /p/*/paper.
+# pnpm 11 ignores hoist settings in .npmrc; they live here.
+publicHoistPattern:
+  - "*"

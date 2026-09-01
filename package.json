@@ -1,0 +1,63 @@
+{
+  "name": "openbarry",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx scripts/smoke-frontend.ts",
+    "migrate:tex": "tsx scripts/migrate-to-tex.ts",
+    "clean": "rm -rf .next tsconfig.tsbuildinfo",
+    "clean:all-generated": "rm -rf .next node_modules tsconfig.tsbuildinfo",
+    "mcp": "next dev -p 3001",
+    "mcp:http": "next dev -p 3001",
+    "mcp:stdio": "tsx mcp/server.ts"
+  },
+  "dependencies": {
+    "@citation-js/core": "0.8.2",
+    "@citation-js/plugin-bibtex": "0.8.2",
+    "@citation-js/plugin-csl": "0.8.2",
+    "@codemirror/commands": "^6.8.0",
+    "@codemirror/language": "^6.11.0",
+    "@codemirror/legacy-modes": "^6.5.0",
+    "@codemirror/search": "^6.5.0",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.36.0",
+    "@lezer/highlight": "^1.2.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@unified-latex/unified-latex-to-hast": "1.8.4",
+    "@unified-latex/unified-latex-types": "^1.8.0",
+    "@unified-latex/unified-latex-util-match": "^1.8.0",
+    "@unified-latex/unified-latex-util-parse": "^1.8.0",
+    "@unified-latex/unified-latex-util-visit": "^1.8.0",
+    "clsx": "^2.1.1",
+    "d3-hierarchy": "3.1.2",
+    "dompurify": "3.4.14",
+    "file-type": "22.0.2",
+    "gray-matter": "^4.0.3",
+    "hast-util-to-html": "8.0.4",
+    "hast-util-to-jsx-runtime": "2.3.6",
+    "jose": "6.2.10",
+    "katex": "^0.16.47",
+    "lucide-react": "^0.469.0",
+    "next": "16.3.3",
+    "proper-lockfile": "4.1.2",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "tailwind-merge": "^2.6.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "postcss": "^8.5.16",
+    "tailwindcss": "^3.4.19",
+    "tsx": "^4.22.4",
+    "typescript": "^5.9.3"
+  }
+}
