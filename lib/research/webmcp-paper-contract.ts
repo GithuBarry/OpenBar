@@ -209,22 +209,22 @@ const TOOL_META: Record<PaperWebMcpToolName, { title: string; description: strin
   get_paper_state: {
     title: "Read live paper state",
     description:
-      "Return the live paper snapshot: revision, dirty flag, active section, outline, open TODO count, and compile state. Call this first. Project is fixed by the open page.",
+      "Return the live paper snapshot: revision, dirty flag, active section, outline, open TODO count, and compile state. Call this after navigate_project lands on the paper page. Project is fixed by the open page.",
     readOnly: true,
   },
   get_paper_outline: {
     title: "Read paper outline",
-    description: "Return stable section ids, titles, levels, and claim/TODO counts for the live paper.",
+    description: "Return stable section ids, titles, levels, and TODO counts for the live paper.",
     readOnly: true,
   },
   read_paper_section: {
     title: "Read one paper section",
-    description: "Return the live TeX and revision for one section id. Unsaved editor edits are visible.",
+    description: "Return the live TeX and revision for one section id. Unsaved editor edits are visible. Use this before replace_paper_section.",
     readOnly: true,
   },
   navigate_paper_section: {
     title: "Navigate to a paper section",
-    description: "Move the live document and editor to a stable section id from get_paper_outline.",
+    description: "Move the live document and editor to a stable section id from get_paper_outline. The paper page must already be open.",
     readOnly: true,
   },
   set_paper_reader_mode: {
@@ -235,12 +235,12 @@ const TOOL_META: Record<PaperWebMcpToolName, { title: string; description: strin
   replace_paper_section: {
     title: "Replace a paper section",
     description:
-      "Replace one section body via the live editor. Pass expectedRevision from the last read. A mismatch returns stale_live_state (retryable).",
+      "Replace one manuscript section using the current live editor revision. Use read_paper_section first. The change appears immediately in the human editor and persists through the same revision-checked save path.",
     readOnly: false,
   },
   resolve_paper_todo: {
     title: "Resolve a paper TODO",
-    description: "Remove one \\obtodo by stable id through the live editor. Pass expectedRevision from the last read.",
+    description: "Remove one \\obtodo by stable id through the live editor. Pass expectedRevision from the last read. Prefer complete_todo when the TODO should remain as completed metadata.",
     readOnly: false,
   },
   lint_paper: {
@@ -250,7 +250,7 @@ const TOOL_META: Record<PaperWebMcpToolName, { title: string; description: strin
   },
   compile_paper: {
     title: "Compile the paper",
-    description: "Flush live edits onto the ordinary save path and start compilation. Returns the source hash being compiled.",
+    description: "Flush live edits onto the ordinary save path and start compilation. Returns the source hash being compiled. The human PDF preview updates when the build finishes.",
     readOnly: false,
   },
   get_bibliography: {

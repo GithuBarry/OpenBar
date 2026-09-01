@@ -273,6 +273,8 @@ export function usePaperWebMcp(host: PaperSourceHost): void {
           ? buildSharedWebMcpTools({
               project: bound.getSnapshot().project,
               liveSource: () => bound.getSnapshot().source,
+              navigate: (href) => hostRef.current.navigate?.(href),
+              current: () => hostRef.current.current?.(),
               actions: bound.sharedActions,
             })
           : []),

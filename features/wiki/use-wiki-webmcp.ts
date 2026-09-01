@@ -20,7 +20,12 @@ export function useWikiWebMcp(host: DocumentWebMcpHost): void {
       const bound = hostRef.current;
       const tools = [
         ...buildDocumentWebMcpTools(bound),
-        ...buildSharedWebMcpTools({ project: bound.project, actions: bound.sharedActions }),
+        ...buildSharedWebMcpTools({
+          project: bound.project,
+          actions: bound.sharedActions,
+          navigate: (href) => hostRef.current.navigate?.(href),
+          current: () => hostRef.current.current?.(),
+        }),
       ];
       const registration = await registerWebMcpToolsIndependent(
         modelContext.registerTool.bind(modelContext),

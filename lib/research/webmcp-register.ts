@@ -45,7 +45,7 @@ function registry(): WebMcpRegistry {
 function unavailableToolResult(name: string) {
   return failResult(
     "capability_unavailable",
-    `The ${name} tool belongs to a page that is no longer open. Ask the user to navigate to the relevant workspace, then retry.`,
+    `The ${name} tool belongs to a page that is no longer open. Call get_project_state, then navigate_project to the relevant location, then retry.`,
     { retryable: true },
   );
 }

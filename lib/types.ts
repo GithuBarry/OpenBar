@@ -412,7 +412,7 @@ export interface MaturedDraft {
   overallMaturity: Maturity;
   updatedAt: string;
   /** Optional link to the source LaTeX / gdoc this mirrors. */
-  source?: ProjectLink;
+  sourceLink?: ProjectLink;
 }
 
 // ---------------------------------------------------------------------------

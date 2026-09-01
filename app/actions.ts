@@ -67,6 +67,9 @@ import { getRuntimeCapabilities } from "@/lib/research/capabilities";
 import { applyRepositoryMigration, planRepositoryMigration } from "@/lib/research/migration";
 import { renderContextMarkdown } from "@/lib/context-bundle";
 import { projectAgenda } from "@/lib/research/project-agenda";
+import { getProjectState, resolveProjectNavigation, searchProject } from "@/lib/research/project-state";
+import { readBundledSkill, readSkillFile } from "@/lib/research/project-skills";
+import type { CurrentLocation } from "@/lib/research/webmcp-shared-contract";
 import { isPathAllowed } from "@/lib/server/path-policy";
 import { requireProjectAccess, requireWorkbenchAccess } from "@/lib/server/project-access";
 import { paperSectionPatchSchema, wikiMetadataPatchSchema } from "@/lib/schemas";
@@ -447,6 +450,30 @@ export async function getProjectContextAction(slug: string) {
 export async function getAgendaAction(slug: string) {
   await requireProjectAccess(slug);
   return projectAgenda(slug);
+}
+
+export async function getProjectStateAction(slug: string, current?: CurrentLocation) {
+  await requireProjectAccess(slug);
+  return getProjectState(slug, current);
+}
+
+export async function searchProjectAction(slug: string, query: string) {
+  await requireProjectAccess(slug);
+  return { results: searchProject(slug, query) };
+}
+
+export async function resolveProjectNavigationAction(slug: string, input: { id?: string; href?: string }) {
+  await requireProjectAccess(slug);
+  return resolveProjectNavigation(slug, input);
+}
+
+export async function readProjectSkillAction(slug: string, id: string) {
+  await requireProjectAccess(slug);
+  const local = readSkillFile(projectContentDir(slug), id);
+  if (local) return { ...local.skill, body: local.body };
+  const bundled = readBundledSkill(id);
+  if (bundled) return { ...bundled.skill, body: bundled.body };
+  throw new Error(`Unknown skill "${id}".`);
 }
 
 export async function planRepositoryMigrationAction(slug: string) {

@@ -62,6 +62,12 @@ export function WikiPageClient({ page, tex }: { page: WikiPage; tex: string }) {
     actions: documentWebMcpActions,
     sharedActions: sharedWebMcpActions,
     refresh: () => router.refresh(),
+    navigate: (href) => router.push(href),
+    current: () => ({
+      kind: "wiki",
+      href: `/p/${page.projectId}/wiki/${page.slug}`,
+      pageId: page.slug,
+    }),
   });
 
   useEffect(() => {

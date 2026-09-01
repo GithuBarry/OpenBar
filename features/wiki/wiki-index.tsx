@@ -6,11 +6,16 @@ import { useState } from "react";
 import { BookOpenText, Database, FileText, Link2, LoaderCircle, Plus, Sparkles } from "lucide-react";
 
 import { saveWikiAction } from "@/app/actions";
+import { useSharedProjectWebMcp } from "@/features/use-shared-webmcp";
 import { WikiPage } from "@/lib/types";
 import { relativeTime } from "@/lib/utils";
 
 export function WikiIndex({ slug, pages }: { slug: string; pages: WikiPage[] }) {
   const router = useRouter();
+  useSharedProjectWebMcp({
+    project: slug,
+    current: { kind: "wiki", href: `/p/${slug}/wiki` },
+  });
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [error, setError] = useState<string | null>(null);

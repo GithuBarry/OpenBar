@@ -5,7 +5,7 @@
 import { failResult, okResult, type OperationResult } from "./operation-result";
 import { DOCUMENT_WEBMCP_SCHEMAS, DOCUMENT_WEBMCP_TOOL_NAMES } from "./mcp-tool-schemas";
 import { parseWebMcpArgs, unknownWebMcpArgument, type JsonSchemaObject, type PaperWebMcpTool } from "./webmcp-paper-contract";
-import type { SharedWebMcpActions } from "./webmcp-shared-contract";
+import type { SharedWebMcpActions, CurrentLocation } from "./webmcp-shared-contract";
 
 export { DOCUMENT_WEBMCP_TOOL_NAMES };
 
@@ -29,6 +29,8 @@ export type DocumentWebMcpHost = {
   actions: DocumentWebMcpActions;
   sharedActions: SharedWebMcpActions;
   refresh?: () => void;
+  navigate?: (href: string) => void;
+  current?: () => CurrentLocation | undefined;
 };
 
 const WIKI_WEBMCP_TOOL_NAMES = ["update_wiki_page"] as const;

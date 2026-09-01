@@ -8,6 +8,10 @@ import { z } from "zod";
 import type { JsonSchemaObject } from "./webmcp-paper-contract";
 
 export const SHARED_WEBMCP_TOOL_NAMES = [
+  "get_project_state",
+  "search_project",
+  "navigate_project",
+  "read_project_skill",
   "get_project_context",
   "get_capabilities",
   "inspect_repository",
@@ -63,7 +67,27 @@ export const navigateArtifactZod = z.object({
   id: z.string(),
 });
 
+export const searchProjectZod = z.object({
+  query: z.string(),
+});
+
+export const navigateProjectZod = z.object({
+  id: z.string().optional(),
+  href: z.string().optional(),
+});
+
+export const readProjectSkillZod = z.object({
+  id: z.string(),
+});
+
 export const SHARED_WEBMCP_SCHEMAS: Record<string, JsonSchemaObject> = {
+  get_project_state: objectSchema(),
+  search_project: objectSchema({ query: { type: "string", description: "Case-insensitive substring to find in the paper, TODOs, comments, mindmap, or wiki." } }, ["query"]),
+  navigate_project: objectSchema({
+    id: { type: "string", description: "An id returned by get_project_state or search_project." },
+    href: { type: "string", description: "A project href returned by get_project_state or search_project." },
+  }),
+  read_project_skill: objectSchema({ id: { type: "string", description: "Skill id from get_project_state." } }, ["id"]),
   get_project_context: objectSchema(),
   get_capabilities: objectSchema(),
   inspect_repository: objectSchema(),

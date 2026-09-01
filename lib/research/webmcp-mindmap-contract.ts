@@ -4,7 +4,7 @@
 
 import { failResult, okResult, WEBMCP_ERROR_CODES, type OperationResult } from "./operation-result";
 import { MINDMAP_WEBMCP_TOOL_NAMES, parseWebMcpArgs, unknownWebMcpArgument, type JsonSchemaObject, type MindmapWebMcpToolName } from "./webmcp-paper-contract";
-import type { SharedWebMcpActions } from "./webmcp-shared-contract";
+import type { SharedWebMcpActions, CurrentLocation } from "./webmcp-shared-contract";
 import { ARTIFACT_KINDS, isArtifactKind } from "./artifact-link";
 import { safeUrl } from "@/lib/safe-url";
 import type { ArtifactKind, MindmapNode, MindmapNodeShape, Maturity } from "@/lib/types";
@@ -41,6 +41,8 @@ export type MindmapWebMcpHost = {
   linkArtifact: (id: string, kind: ArtifactKind, artifactId: string, label?: string, url?: string, expectedRevision?: number) => void | Promise<void>;
   setActivityHighlight: (since?: string) => void;
   sharedActions?: SharedWebMcpActions;
+  navigate?: (href: string) => void;
+  current?: () => CurrentLocation | undefined;
 };
 
 function objectSchema(properties: Record<string, unknown> = {}, required: string[] = []): JsonSchemaObject {
@@ -355,16 +357,37 @@ export function buildMindmapWebMcpTools(host: MindmapWebMcpHost) {
 }
 
 function mindmapToolDescription(name: MindmapWebMcpToolName): string {
+  if (name === "get_mindmap") {
+    return "Read the live mindmap: nodes, hierarchy, paper links, and revision. Saved nodes are researcher-authored; paper TODOs also appear as a derived activity overlay in the UI.";
+  }
+  if (name === "focus_mindmap_node") {
+    return "Select a saved mindmap node in the open map. Use navigate_project first if the mindmap page is not open.";
+  }
+  if (name === "add_mindmap_node") {
+    return "Add a child topic under a parent. Pass text and parentId. Presentation fields are optional; research work should use text, hierarchy, and paper links.";
+  }
+  if (name === "rename_mindmap_node") {
+    return "Rename a saved mindmap node. Pass expectedRevision from get_mindmap.";
+  }
+  if (name === "move_mindmap_node") {
+    return "Move a saved mindmap node to a new parent or sibling position.";
+  }
+  if (name === "delete_mindmap_node") {
+    return "Delete a saved mindmap node. Derived paper TODOs cannot be deleted here; complete them in the manuscript.";
+  }
   if (name === "highlight_mindmap_activity") {
     return "Visually highlight cards updated since a date on the open live mindmap. Omit since for the past seven days.";
   }
   if (name === "set_mindmap_node_presentation") {
-    return "Update a card's style, tags, or percentage progress. The open page supplies the project and persists the result.";
+    return "Optional visual presentation (shape, color, tags, progress). Prefer text and paper links for research work.";
   }
   if (name === "set_mindmap_collapsed") {
     return "Collapse or expand a branch in the live map, preserving the saved planning view.";
   }
-  return `Mindmap operation ${name}. The open page supplies the project.`;
+  if (name === "link_mindmap_artifact") {
+    return "Link a mindmap node to a paper section, TODO, or other project location. Use kind draft-section or draft-todo for manuscript links.";
+  }
+  return `Mindmap operation ${name}. Work with text, hierarchy, and paper links. The open page supplies the project.`;
 }
 
 function daysAgoDate(days: number): string {

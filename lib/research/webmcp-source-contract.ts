@@ -19,7 +19,7 @@ import {
   type PaperWebMcpTool,
 } from "./webmcp-paper-contract";
 import { artifactHref } from "./artifact-link";
-import type { SharedWebMcpActions } from "./webmcp-shared-contract";
+import type { SharedWebMcpActions, CurrentLocation } from "./webmcp-shared-contract";
 
 export const PAPER_SOURCE_WEBMCP_TOOL_NAMES = [
   "get_source_bundle",
@@ -40,6 +40,8 @@ export type PaperSourceWebMcpToolName = (typeof PAPER_SOURCE_WEBMCP_TOOL_NAMES)[
 export type PaperSourceHost = PaperWebMcpHost & {
   replaceRange: (from: number, to: number, text: string, signal?: AbortSignal) => void | Promise<void>;
   sharedActions?: SharedWebMcpActions;
+  navigate?: (href: string) => void;
+  current?: () => CurrentLocation | undefined;
 };
 
 function objectSchema(properties: Record<string, unknown> = {}, required: string[] = []): JsonSchemaObject {
@@ -385,11 +387,58 @@ export async function executePaperSourceTool(
   }
 }
 
+const SOURCE_TOOL_META: Record<PaperSourceWebMcpToolName, { title: string; description: string }> = {
+  get_source_bundle: {
+    title: "Read the live source bundle",
+    description: "Return the live include-graph source, file segments, and revision. Prefer read_paper_section for ordinary research edits.",
+  },
+  read_source_range: {
+    title: "Read a source range",
+    description: "Read a character range from the live paper source. Use after get_paper_state when a section replacement is too coarse.",
+  },
+  replace_source_range: {
+    title: "Replace a source range",
+    description: "Replace a character range in the live editor using expectedRevision. The change appears immediately and saves through the same hash-checked path as human edits.",
+  },
+  add_comment: {
+    title: "Add a paper comment",
+    description: "Wrap or insert an \\obcomment at a live source range. Keep comments next to the relevant manuscript prose.",
+  },
+  add_todo: {
+    title: "Add a paper TODO",
+    description: "Insert an \\obtodo at a live source range. Basic creation needs only text; a stable id is generated. Optional owner, due, and priority are allowed.",
+  },
+  update_todo: {
+    title: "Update a paper TODO",
+    description: "Change TODO text or optional metadata by id through the live editor. Unknown attributes are preserved.",
+  },
+  complete_todo: {
+    title: "Complete a paper TODO",
+    description: "Mark an \\obtodo done in the live manuscript. Completing it removes it from the mindmap's active overlay.",
+  },
+  lint_document: {
+    title: "Lint the live paper (alias)",
+    description: "Alias of lint_paper. Prefer lint_paper.",
+  },
+  compile_document: {
+    title: "Compile the paper (alias)",
+    description: "Alias of compile_paper. Prefer compile_paper.",
+  },
+  navigate_artifact: {
+    title: "Navigate to a paper artifact",
+    description: "Jump to a paper section or TODO on the open paper page. Prefer navigate_project when the target may be on another page.",
+  },
+  get_agenda: {
+    title: "Read live paper TODOs",
+    description: "Return open TODOs from the live paper buffer. Prefer get_project_state for project-wide orientation.",
+  },
+};
+
 export function buildPaperSourceWebMcpTools(host: PaperSourceHost): PaperWebMcpTool[] {
   return PAPER_SOURCE_WEBMCP_TOOL_NAMES.map((name) => ({
-        name,
-    title: name.replaceAll("_", " "),
-    description: `Live paper source operation ${name}. Project is fixed by the open page.`,
+    name,
+    title: SOURCE_TOOL_META[name].title,
+    description: SOURCE_TOOL_META[name].description,
     inputSchema: PAPER_SOURCE_WEBMCP_SCHEMAS[name],
     annotations: {
       readOnlyHint: name === "get_source_bundle" || name === "read_source_range" || name === "lint_document" || name === "get_agenda" || name === "navigate_artifact",

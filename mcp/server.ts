@@ -72,6 +72,8 @@ import { texPaths, patchDocument, readDocument } from "../lib/tex-project/projec
 import { requestPaperCompile } from "../lib/tex-project/compile";
 import { normalizeMindmap, mindmapDiskHash } from "../lib/mindmap/v2";
 import { applyRepositoryMigration, planRepositoryMigration } from "../lib/research/migration";
+import { getProjectState, searchProject } from "../lib/research/project-state";
+import { discoverSkillsInDir, readBundledSkill, readSkillFile } from "../lib/research/project-skills";
 import { projectAgenda } from "../lib/research/project-agenda";
 import { artifactHref, isArtifactKind } from "../lib/research/artifact-link";
 import { failResult, okResult } from "../lib/research/operation-result";
@@ -1611,7 +1613,7 @@ server.registerTool(
           text: body,
           parentId: parent,
           shape: "leaf",
-          maturity: maturity || "hypothesized",
+          ...(maturity ? { maturity } : {}),
           order: siblingOrders.length ? Math.max(...siblingOrders) + 1 : 0,
           createdAt: new Date().toISOString(),
         },
@@ -1634,7 +1636,7 @@ server.registerTool(
   async ({ id }) => {
     if (!id) {
       return text(
-        `Available skills:\n${SKILLS.map((s) => `- **${s.id}** — ${s.title}. ${s.when}`).join("\n")}`,
+        `Available skills:\n${SKILLS.map((s) => `- **${s.id}** — ${s.title}. ${s.when}`).join("\n")}\n\nPrefer read_project_skill when a project lists local skills in get_project_state.`,
       );
     }
     const skill = getSkill(id);
@@ -1787,6 +1789,55 @@ server.registerTool(
         hits.push(`- mindmap/${n.id}: ${n.text.split("\n")[0]}`);
     }
     return text(hits.length ? `Matches for "${query}":\n${hits.join("\n")}` : `No matches for "${query}".`);
+  },
+);
+
+server.registerTool(
+  "get_project_state",
+  {
+    title: "Read project state",
+    description:
+      "Read this first when entering an OpenBar project or after losing context. Returns the manuscript outline, open paper TODOs, available mindmaps, recent project activity, and project-local skills. Does not modify files.",
+    inputSchema: { project: z.string() },
+  },
+  async ({ project }) => {
+    if (!getProject(project)) return text(`Unknown project "${project}".`);
+    return text(JSON.stringify(getProjectState(project), null, 2));
+  },
+);
+
+server.registerTool(
+  "search_project",
+  {
+    title: "Search the project",
+    description:
+      "Search paper headings, TeX source, TODO and comment text, mindmap nodes, and wiki notes. Returns ids and hrefs for navigation.",
+    inputSchema: { project: z.string(), query: z.string() },
+  },
+  async ({ project, query }) => {
+    if (!getProject(project)) return text(`Unknown project "${project}".`);
+    return text(JSON.stringify({ results: searchProject(project, query) }, null, 2));
+  },
+);
+
+server.registerTool(
+  "read_project_skill",
+  {
+    title: "Read a project skill",
+    description: "Read a project-local SKILL.md or bundled OpenBar skill by id from get_project_state.",
+    inputSchema: { project: z.string().optional(), id: z.string() },
+  },
+  async ({ project, id }) => {
+    if (project) {
+      const local = readSkillFile(projectContentDir(project), id);
+      if (local) return text(`# ${local.skill.name}\n\n${local.body}`);
+    }
+    const bundled = readBundledSkill(id);
+    if (bundled) return text(`# ${bundled.skill.name}\n\n${bundled.body}`);
+    const available = [
+      ...(project ? discoverSkillsInDir(projectContentDir(project)) : []),
+    ].map((skill) => skill.id);
+    return text(`Unknown skill "${id}".${available.length ? ` Project skills: ${available.join(", ")}.` : ""}`);
   },
 );
 
