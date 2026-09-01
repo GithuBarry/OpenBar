@@ -2,7 +2,7 @@ import { GitBranch } from "lucide-react";
 import Link from "next/link";
 
 import { listProjects } from "@/lib/store";
-import { buildProjectPaperGraph, paperGraphMaturity } from "@/lib/paper-graph";
+import { buildProjectPaperGraph } from "@/lib/paper-graph";
 import { requireWorkbenchPage } from "@/lib/server/project-access";
 import { ProjectCard } from "@/components/project-card";
 import { CreateProjectButton } from "@/components/project/create-project";
@@ -18,7 +18,7 @@ export default async function Home() {
   const projects = listProjects();
   const rows = projects.map((project) => {
     const graph = buildProjectPaperGraph(project.slug);
-    return { project, graph, maturity: paperGraphMaturity(graph) };
+    return { project, graph };
   });
 
   const openTodos = rows.reduce((n, r) => n + r.graph.todos.length, 0);
@@ -46,12 +46,11 @@ export default async function Home() {
       </header>
 
       <section className="mx-auto grid max-w-6xl gap-4 px-6 py-6 md:grid-cols-2">
-        {rows.map(({ project, graph, maturity }) => (
+        {rows.map(({ project, graph }) => (
           <ProjectCard
             key={project.slug}
             project={project}
             todos={graph.todos.length}
-            maturity={maturity}
           />
         ))}
       </section>

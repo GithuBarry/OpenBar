@@ -6,8 +6,7 @@ import { useEffect, useState, useTransition } from "react";
 import { BookOpenText, Edit3, FileText, Network, Plus, X } from "lucide-react";
 
 import { saveProjectAction } from "@/app/actions";
-import { MaturityMeter } from "@/components/maturity-badge";
-import type { Maturity, Project, ProjectMode } from "@/lib/types";
+import type { Project, ProjectMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const STATUS_LABEL: Record<Project["status"], string> = {
@@ -99,11 +98,9 @@ function Field({
 export function ProjectCard({
   project,
   todos,
-  maturity,
 }: {
   project: Project;
   todos: number;
-  maturity?: Maturity;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -298,17 +295,11 @@ export function ProjectCard({
           )}
 
           <div className="mt-3 text-xs text-muted">
-            <span className="font-mono font-semibold text-ink">{todos}</span> {todos === 1 ? "todo" : "todos"}
+            <span className="font-mono font-semibold text-ink">{todos}</span> open paper {todos === 1 ? "TODO" : "TODOs"}
           </div>
 
-          {maturity && (
-            <div className="mt-3">
-              <MaturityMeter maturity={maturity} />
-            </div>
-          )}
-
           <div className="mt-3 flex items-center justify-between border-t border-line/60 pt-2.5 text-[11px] text-faint">
-            <span>Created {formatDate(project.createdAt)}</span>
+            {project.venue ? <span className="truncate">{project.venue}</span> : <span>Created {formatDate(project.createdAt)}</span>}
             <span>Edited {formatDate(project.updatedAt)}</span>
           </div>
 

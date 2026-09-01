@@ -45,9 +45,9 @@ export function Sidebar({
 
   const nav = active
     ? [
-        { href: `${base}/paper`, label: "Draft", icon: "drafts" as const },
+        { href: `${base}/paper`, label: "Paper", icon: "drafts" as const },
         { href: `${base}/mindmap`, label: "Mindmap", icon: "mindmap" as const },
-        { href: `${base}/wiki`, label: "LLM Wiki", icon: "notes" as const },
+        { href: `${base}/wiki`, label: "Wiki", icon: "notes" as const, group: "more" as const },
       ]
     : [
         { href: "/", label: "All projects", icon: "overview" as const, exact: true },

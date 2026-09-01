@@ -26,6 +26,7 @@ export interface NavItem {
   label: string;
   icon: NavIconKey;
   exact?: boolean;
+  group?: "primary" | "more";
 }
 
 export function SidebarNav({ items }: { items: NavItem[] }) {
@@ -37,32 +38,43 @@ export function SidebarNav({ items }: { items: NavItem[] }) {
       </nav>
     );
   }
+  const primary = items.filter((item) => item.group !== "more");
+  const more = items.filter((item) => item.group === "more");
+  const renderItems = (list: NavItem[]) => (
+    <ul className="space-y-0.5">
+      {list.map((item) => {
+        const active = item.exact
+          ? pathname === item.href
+          : pathname === item.href || pathname.startsWith(item.href + "/");
+        const Icon = ICONS[item.icon];
+        return (
+          <li key={item.href}>
+            <Link
+              href={item.href}
+              className={cn(
+                "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors",
+                active
+                  ? "bg-accent-soft font-medium text-accent"
+                  : "text-muted hover:bg-surface-3 hover:text-ink",
+              )}
+            >
+              <Icon size={16} className="shrink-0" />
+              {item.label}
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
   return (
     <nav className="flex-1 overflow-y-auto px-3 py-1">
-      <ul className="space-y-0.5">
-        {items.map((item) => {
-          const active = item.exact
-            ? pathname === item.href
-            : pathname === item.href || pathname.startsWith(item.href + "/");
-          const Icon = ICONS[item.icon];
-          return (
-            <li key={item.href}>
-              <Link
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors",
-                  active
-                    ? "bg-accent-soft font-medium text-accent"
-                    : "text-muted hover:bg-surface-3 hover:text-ink",
-                )}
-              >
-                <Icon size={16} className="shrink-0" />
-                {item.label}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
+      {renderItems(primary)}
+      {more.length > 0 && (
+        <div className="mt-4">
+          <p className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">More</p>
+          {renderItems(more)}
+        </div>
+      )}
     </nav>
   );
 }

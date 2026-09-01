@@ -54,6 +54,7 @@ import {
   projectSchema,
 } from "./schemas";
 import { emptyMindmap, slugifyMindmapId } from "./mindmap-index";
+import { composeObtodo } from "./todo-meta";
 import { mindmapOutline } from "@/features/mindmap/mindmap-state";
 import {
   DailyNote,
@@ -227,7 +228,7 @@ export function createProject(input: { title: string; slug?: string; tagline?: s
     slug,
     title,
     tagline: (input.tagline || "").trim(),
-    overview: "New research project. Add its central question, current evidence, and next decision.",
+    overview: "",
     status: "incubating",
     createdAt: now,
     updatedAt: now,
@@ -240,13 +241,13 @@ export function createProject(input: { title: string; slug?: string; tagline?: s
     level: 2,
     order: 0,
     label: "sec-introduction",
-    tex: "\\obmarker{todo}{Add the opening question, context, and source-backed motivation.}",
+    tex: composeObtodo({ text: "Write the opening motivation." }),
   }]);
   writeMindmapRecord(dir, emptyMindmap(slug, {
     id: DRAFT_MINDMAP_ID,
-    title: "Draft",
+    title: title,
     role: "draft",
-    rootText: `${title}\n${project.tagline || "Research planning map"}`,
+    rootText: title,
   }));
   const created = getProject(slug);
   if (!created) throw new Error("Created project could not be read back.");

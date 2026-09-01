@@ -136,7 +136,6 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
               text: action.text ?? "New topic",
               parentId: action.parentId,
               shape: "leaf",
-              maturity: "empty",
               order: siblingOrders.length ? Math.max(...siblingOrders) + 1 : 0,
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
