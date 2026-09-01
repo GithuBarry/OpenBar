@@ -24,22 +24,22 @@ const FEATURES = [
   {
     icon: FileText,
     title: "One living manuscript",
-    body: "Edit the real TeX include graph in one continuous workspace. The document preview and LaTeX PDF stay connected to the same source files.",
+    body: "Edit the real TeX include graph in one continuous workspace. TODOs and comments stay next to the relevant prose.",
   },
   {
     icon: BookOpenText,
-    title: "Research records beside the draft",
-    body: "Keep tasks, comments, claims, evidence, sources, figures, notes, and knowledge pages tied to the project that created them.",
+    title: "Research state in the repository",
+    body: "Paper, annotations, mindmaps, and project skills live in ordinary files. Browser storage is only for personal layout preferences.",
   },
   {
     icon: Network,
-    title: "Planning that reflects the work",
-    body: "Mindmaps provide an editable planning view with links back to the paper, research records, and supporting material.",
+    title: "A map of current work",
+    body: "The mindmap shows open paper TODOs, recent edits, and ideas without asking you to maintain a separate research dashboard.",
   },
   {
     icon: Bot,
     title: "People and browser agents together",
-    body: "WebMCP gives an agent the live context and hash-checked actions of the page it is helping with, while the human keeps normal editing control.",
+    body: "A fresh agent calls get_project_state, navigates on its own, and edits through the same live paper the human is looking at.",
   },
 ];
 

@@ -1,31 +1,52 @@
 # OpenBar
 
-OpenBar is a TeX-first research workspace where people and browser agents share a live
-manuscript, task list, knowledge pages, and planning map. This repository contains the
-application infrastructure. Private manuscript and project records belong in a separate
-content directory supplied at runtime.
+OpenBar is a **paper-first research workbench**. The manuscript is where research
+becomes real. The mindmap shows current work. The repository stores durable
+state. Humans and browser agents share the same project through WebMCP.
+
+> OpenBar helps research flow directly into the paper while keeping the
+> surrounding work visible, navigable, and agent-accessible from the repository
+> itself.
+
+See [docs/architecture.md](docs/architecture.md) for the product model.
 
 ## What it provides
 
-- A continuous source editor built from the real TeX include graph
-- Automatic TeX preview with `unified-latex` and a Pandoc fallback for complex tables
-- Raw-TeX preservation for escaped characters, nested groups, custom macros, and unsupported content
-- Compact manuscript tasks with optional owner, priority, target date, status, and source links
-- Connected mindmaps backed by parent ids and sibling order
-- Editable wiki, notes, slides, claims, evidence, sources, figures, and artifact links
+- A live TeX editor for the real include graph, with companion preview and PDF compile
+- Inline manuscript TODOs and comments (`\obtodo`, `\obcomment`) that survive Git and other editors
+- A mindmap that derives current paper work without writing overlays into the map file
 - Page-local WebMCP tools plus an authenticated Streamable HTTP MCP endpoint
+- Optional project-local skills (`AGENTS.md`, `skills/*/SKILL.md`)
+
+## Fresh-agent sequence
+
+A new agent conversation should not need remembered OpenBar knowledge:
+
+```text
+get_project_state → search_project → navigate_project → page tools → compile
+```
+
+Universal tools on every project page:
+
+| Tool | Purpose |
+| --- | --- |
+| `get_project_state` | Outline, open TODOs, mindmaps, recent activity, skills, current location |
+| `search_project` | Lexical search over paper, TODOs, comments, mindmap, wiki |
+| `navigate_project` | Move the UI to an id or href from the tools above |
+| `read_project_skill` | Read a project-local or bundled skill |
+
+Paper-page tools then cover reading, replacing sections, TODOs, comments, compile, and lint. Agent edits use the same live editor, undo history, and revision-checked save path as human edits.
 
 ## Main routes
 
-- `/` — project cockpit
-- `/p/<slug>/paper` — source editor, preview, PDF, and Open items
-- `/p/<slug>/mindmap` — connected planning map
-- `/p/<slug>/wiki` — editable research knowledge pages
+- `/` — project list
+- `/p/<slug>/paper` — manuscript editor, preview, PDF, and TODOs
+- `/p/<slug>/mindmap` — operational map plus derived paper work
+- `/p/<slug>/wiki` — optional notes
 - `/api/mcp` — Streamable HTTP MCP endpoint
-- `/api/health` — runtime capability and configuration status
+- `/api/health` — runtime capability status
 
-The legacy `/p/<slug>/agenda` route redirects to the paper page. `get_agenda` remains
-available to agents.
+`/p/<slug>` redirects to the paper.
 
 ## Local setup
 
@@ -45,30 +66,21 @@ pnpm mcp
 
 ```bash
 pnpm typecheck
+pnpm test
 pnpm build
 OB_SMOKE_SLUG=<slug> pnpm smoke
 git diff --check
 ```
 
-## Agent workflow
+## Repository state
 
-Browser WebMCP tools register on the page that owns the live state. Agents read the current
-revision, source ranges, sections, tasks, mindmap, or wiki page, then request hash-checked
-writes through the same operations used by the visible controls. Repository files remain the
-durable source for those edits.
+Research content belongs in the project files:
 
-The HTTP MCP endpoint validates identities, project ids, artifact ids, paths, request origins,
-and expected state. Configure authentication with Cloudflare Access variables or
-`OPENBARRY_MCP_TOKEN`. Set `OPENBARRY_ALLOWED_PATHS` only for explicit source directories.
+- manuscript TeX, bibliography, figures, tables
+- `\obtodo` / `\obcomment` annotations
+- mindmap files
+- `AGENTS.md` and `skills/*/SKILL.md`
 
-## Format model
+Browser storage is only for personal interface preferences.
 
-- TeX manuscripts stay raw and editable.
-- Interactive preview uses `unified-latex` and HAST.
-- Complex table fragments use a debounced Pandoc preview.
-- Explicit conversion uses sandboxing, hashes, and loss reporting.
-- Raw TeX islands preserve source that a smaller projection cannot represent safely.
-- HTML documents support static and interactive rendering policies.
-
-OpenBar is released under the [MIT License](LICENSE). Hosting and a sanitized demo are later
-release steps. Keep private content in a separate mounted content store.
+OpenBar is released under the [MIT License](LICENSE).
