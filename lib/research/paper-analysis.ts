@@ -69,6 +69,8 @@ export interface PaperTodo {
   due?: string;
   /** Optional creation date `created=YYYY-MM-DD`. */
   createdAt?: string;
+  status?: string;
+  completedAt?: string;
   attrs: Record<string, string>;
   macro?: string;
 }

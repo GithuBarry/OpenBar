@@ -8,6 +8,8 @@ import {
   useRef,
 } from "react";
 
+import { Transaction } from "@codemirror/state";
+
 import {
   lookupBundlePartFrom,
   replaceBundlePart,
@@ -179,12 +181,15 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
       if (view) {
         const localFrom = Math.max(0, from - start.virtualFrom);
         const localTo = Math.max(localFrom, to - start.virtualFrom);
+        const sel = view.state.selection.main;
+        const intersects = sel.to >= localFrom && sel.from <= localTo;
+        const hadFocus = view.hasFocus;
         view.dispatch({
           changes: { from: localFrom, to: Math.min(localTo, view.state.doc.length), insert },
-          selection: { anchor: localFrom + insert.length },
-          scrollIntoView: true,
+          ...(intersects ? { selection: { anchor: localFrom + insert.length }, scrollIntoView: true } : {}),
+          annotations: [Transaction.addToHistory.of(true)],
         });
-        view.focus();
+        if (hadFocus || intersects) view.focus();
         return true;
       }
     }

@@ -2,6 +2,7 @@
 
 import "katex/dist/katex.min.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Bold,
   Check,
@@ -49,6 +50,7 @@ import { inlineBundleIncludes } from "@/lib/tex-project/source-bundle-format";
 import { cn } from "@/lib/utils";
 import type { BibEntry } from "@/lib/bibtex";
 import type { PaperCompileStatus } from "@/lib/tex-project/compile";
+import { parseTexFileLines } from "@/lib/tex-project/tex-diagnostics";
 
 import { headingKeyForElement } from "./heading-keys";
 import { SectionMenu } from "./jump-reel";
@@ -74,6 +76,7 @@ import {
   locatePreviewSnippet,
   offsetForBookmarkLine,
   offsetForHeadingKey,
+  offsetForSourceFileLine,
   TEX_TABLE_TPL,
   type EditorTodo,
   type PaperEditorSection,
@@ -85,7 +88,8 @@ type LayoutMode = "document" | "pdf" | "pdf-only";
 type EditorWidth = "compact" | "wide" | "full";
 
 const AUTOSAVE_DELAY = 600;
-const COMPANION_RENDER_DELAY = 2_000;
+const COMPANION_RENDER_DELAY = 200;
+const TABLE_FALLBACK_DELAY = 2_000;
 const COMPILE_POLL_MS = 400;
 const COMPILE_POLL_MAX_MS = 120_000;
 const PAGE_BUDGET_REFRESH_MS = 3 * 60_000;
@@ -116,6 +120,7 @@ type EditorPrefs = {
   splitLeftPct?: number;
   todoOpen?: boolean;
   todoPanelHeight?: number;
+  lastSection?: string;
 };
 
 function prefsKey(project: string) {
@@ -139,6 +144,7 @@ export function PaperEditor({
   bibliographyRaw?: string;
   initialPandocTables?: Record<string, string>;
 }) {
+  const router = useRouter();
   const initialSource = initialBundle.source;
   const [source, setSource] = useState(initialSource);
   const [renderSource, setRenderSource] = useState(initialSource);
@@ -149,6 +155,7 @@ export function PaperEditor({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveConflict, setSaveConflict] = useState(false);
+  const [agentNotice, setAgentNotice] = useState<string | null>(null);
   const [expectedSections, setExpectedSections] = useState(initialSections);
   const [prefsReady, setPrefsReady] = useState(false);
 
@@ -198,6 +205,8 @@ export function PaperEditor({
   compileRef.current = compile;
   const saveErrorRef = useRef(saveError);
   saveErrorRef.current = saveError;
+  const saveConflictRef = useRef(saveConflict);
+  saveConflictRef.current = saveConflict;
   const saveFailureRef = useRef<{ code: string; message: string; currentHash?: string } | null>(null);
   const sectionHashesRef = useRef(new Map(initialSections.map((section) => [section.id, section.hash])));
   const bundleHashRef = useRef(initialBundle.bundleHash);
@@ -453,8 +462,6 @@ export function PaperEditor({
       const baseline = savedSourceRef.current;
       if (text === baseline) return;
       setSaving(true);
-      setSaveError(null);
-      setSaveConflict(false);
       if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
       const result = await persistSourceBundleAction(project, text, bundleHashRef.current);
       if (!result.ok) {
@@ -478,6 +485,7 @@ export function PaperEditor({
         pageBudget: current.pageBudget,
       }));
       setSaveError(null);
+      setSaveConflict(false);
       setSaving(false);
     });
     saveQueueRef.current = job.then(() => undefined, () => undefined);
@@ -526,11 +534,13 @@ export function PaperEditor({
 
   const scheduleSave = useCallback((nextSource: string, immediate = false) => {
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    if (saveConflictRef.current && !immediate) return;
     if (immediate) {
       void doSave(nextSource);
       return;
     }
     saveTimerRef.current = window.setTimeout(() => {
+      if (saveConflictRef.current) return;
       void doSave(nextSource);
     }, AUTOSAVE_DELAY);
   }, [doSave]);
@@ -558,21 +568,24 @@ export function PaperEditor({
   useEffect(() => {
     const requestRevision = ++tablePreviewRevisionRef.current;
     let active = true;
-    if (extractComplexTableFragments(renderSource).length === 0) {
-      if (active && requestRevision === tablePreviewRevisionRef.current) setPandocTables({});
-      return () => { active = false; };
-    }
-    void previewTableFallbacksAction(project, renderSource)
-      .then((tables) => {
-        if (active && requestRevision === tablePreviewRevisionRef.current) setPandocTables(tables);
-      })
-      .catch(() => {
-        // The regular HAST preview remains available when the optional table fallback is unavailable.
-      });
+    const timer = window.setTimeout(() => {
+      if (extractComplexTableFragments(source).length === 0) {
+        if (active && requestRevision === tablePreviewRevisionRef.current) setPandocTables({});
+        return;
+      }
+      void previewTableFallbacksAction(project, source)
+        .then((tables) => {
+          if (active && requestRevision === tablePreviewRevisionRef.current) setPandocTables(tables);
+        })
+        .catch(() => {
+          // The regular HAST preview remains available when the optional table fallback is unavailable.
+        });
+    }, TABLE_FALLBACK_DELAY);
     return () => {
       active = false;
+      window.clearTimeout(timer);
     };
-  }, [project, renderSource]);
+  }, [project, source]);
 
   useEffect(() => {
     let active = true;
@@ -635,6 +648,7 @@ export function PaperEditor({
         if (typeof prefs.todoPanelHeight === "number") {
           setTodoPanelHeight(Math.max(TODO_PANEL_MIN, prefs.todoPanelHeight));
         }
+        if (typeof prefs.lastSection === "string") lastHeadingKeyRef.current = prefs.lastSection;
       }
     } catch {
       // ignore corrupt prefs
@@ -650,8 +664,9 @@ export function PaperEditor({
       splitLeftPct,
       todoOpen,
       todoPanelHeight,
+      lastSection: activeBookmark || lastHeadingKeyRef.current,
     }));
-  }, [editorWidth, layout, prefsReady, project, splitLeftPct, todoOpen, todoPanelHeight]);
+  }, [activeBookmark, editorWidth, layout, prefsReady, project, splitLeftPct, todoOpen, todoPanelHeight]);
 
   const requestCompile = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -754,6 +769,46 @@ export function PaperEditor({
     if (live) editorRef.current?.setSelection(live.from, live.to);
   }, [currentTodo]);
 
+  const jumpToSourceLine = useCallback((file: string, line: number) => {
+    const from = offsetForSourceFileLine(sourceRef.current, file, line);
+    if (from == null) return;
+    editorRef.current?.setSelection(from, from);
+  }, []);
+
+  const applyPaperHash = useCallback((rawHash?: string) => {
+    const hash = decodeURIComponent((rawHash ?? window.location.hash).replace(/^#/, "")).trim();
+    if (!hash) return false;
+    if (expectedSectionsRef.current.some((section) => section.id === hash)) {
+      jumpToExpectedSection(hash);
+      return true;
+    }
+    const todo = collectEditorTodos(sourceRef.current).find((item) => item.id === hash);
+    if (todo) {
+      jumpToTodo(todo);
+      return true;
+    }
+    const bookmark = bookmarksRef.current.find((item) => item.slug === hash);
+    if (bookmark) {
+      jumpToSection(bookmark);
+      return true;
+    }
+    return false;
+  }, [jumpToExpectedSection, jumpToSection, jumpToTodo]);
+
+  useEffect(() => {
+    const onHash = () => { applyPaperHash(); };
+    const timer = window.setTimeout(() => {
+      if (applyPaperHash()) return;
+      const bookmark = bookmarksRef.current.find((item) => item.slug === lastHeadingKeyRef.current);
+      if (bookmark) jumpToSection(bookmark);
+    }, 0);
+    window.addEventListener("hashchange", onHash);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("hashchange", onHash);
+    };
+  }, [applyPaperHash, jumpToSection]);
+
   const resolveTodo = useCallback((todo: EditorTodo) => {
     const current = editorRef.current?.getLiveSource() ?? sourceRef.current;
     const live = currentTodo(todo, current);
@@ -798,6 +853,12 @@ export function PaperEditor({
     }
     const next = editorRef.current?.getLiveSource() ?? before;
     if (next === before) return;
+    const section = expectedSectionsRef.current.find((item) => {
+      const span = sectionBodyRange(before, expectedSectionsRef.current, item.id);
+      return Boolean(span && from >= span.from && from <= span.to);
+    });
+    setAgentNotice(`Agent updated ${section?.title ? `§ ${section.title}` : "the paper"}`);
+    window.setTimeout(() => setAgentNotice(null), 4000);
     const saved = await saveNow(next, signal);
     if (saved) return;
     const failure = saveFailureRef.current;
@@ -879,6 +940,27 @@ export function PaperEditor({
       return { status: status.state, sourceHash: status.sourceHash };
     },
     lint: () => lintLivePaper(liveSource()),
+    navigate: (href) => {
+      try {
+        const url = new URL(href, window.location.origin);
+        if (url.pathname === window.location.pathname) {
+          applyPaperHash(url.hash);
+          window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+          return;
+        }
+      } catch {
+        // Fall through to a full navigation when the href is not a same-origin URL.
+      }
+      router.push(href);
+    },
+    current: () => ({
+      kind: "paper" as const,
+      href: `/p/${project}/paper`,
+      sectionId: expectedSectionsRef.current.find((section) => {
+        const bookmark = bookmarksRef.current.find((item) => item.slug === (activeBookmarkRef.current || lastHeadingKeyRef.current));
+        return bookmark && bookmark.title.toLowerCase() === section.title.toLowerCase();
+      })?.id,
+    }),
   });
 
   const onUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -976,12 +1058,16 @@ export function PaperEditor({
           <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-faint">
             {saving || uploading ? (
               <LoaderCircle size={12} className="animate-spin text-accent" />
+            ) : saveConflict ? (
+              <span className="h-1.5 w-1.5 rounded-full bg-danger" />
             ) : isSaved ? (
               <Check size={12} className="text-m-final" />
             ) : (
               <span className="h-1.5 w-1.5 rounded-full bg-m-draft" />
             )}
-            <span className="hidden font-medium sm:inline">{saving ? "Saving…" : uploading ? "Uploading…" : isSaved ? "Saved" : "Unsaved"}</span>
+            <span className="hidden font-medium sm:inline tabular-nums">
+              {saving ? "Saving…" : uploading ? "Uploading…" : saveConflict ? "Conflict" : isSaved ? "Saved" : "Unsaved"}
+            </span>
           </span>
 
           <button
@@ -998,6 +1084,21 @@ export function PaperEditor({
             <span className="font-medium">Todos</span>
             <span className="font-medium">{todos.filter((todo) => todo.status !== "done").length}</span>
           </button>
+
+          {compile.state === "error" && (
+            <button
+              type="button"
+              onClick={() => {
+                const first = parseTexFileLines(compile.diagnostics || [])[0];
+                if (first) jumpToSourceLine(first.file, first.line);
+                else setLayout("pdf");
+              }}
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-danger/40 bg-danger/10 px-1.5 text-[11px] font-medium text-danger"
+              title={compile.diagnostics?.[0] || compile.message || "Compile failed"}
+            >
+              Compile failed
+            </button>
+          )}
 
           <button
             type="button"
@@ -1024,16 +1125,26 @@ export function PaperEditor({
         </div>
       </div>
 
-      {saveError && (
-        <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-1.5 text-xs text-danger">
-          <p>{saveError}{saveConflict ? " Reload the latest manuscript before saving again." : ""}</p>
-          {saveConflict && (
-            <button type="button" className="btn-outline shrink-0 px-2 py-0.5 text-[11px]" onClick={() => void reloadLatest()}>
-              Reload latest
-            </button>
-          )}
+      {agentNotice && (
+        <div className="shrink-0 rounded-lg border border-line bg-surface px-3 py-1 text-[11px] text-muted">
+          {agentNotice}
         </div>
       )}
+      {saveConflict ? (
+        <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-danger/40 bg-danger/15 px-3 py-2 text-xs text-danger" role="alert">
+          <div>
+            <p className="font-semibold">Conflict</p>
+            <p className="mt-0.5 text-ink">The manuscript changed on disk. Your unsaved buffer is still in the editor.</p>
+          </div>
+          <button type="button" className="btn-outline shrink-0 px-2 py-0.5 text-[11px]" onClick={() => void reloadLatest()}>
+            Reload latest (discards local edits)
+          </button>
+        </div>
+      ) : saveError ? (
+        <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-1.5 text-xs text-danger">
+          <p>{saveError}</p>
+        </div>
+      ) : null}
       {bundleDiagnostics.length > 0 && (
         <div className="shrink-0 rounded-lg border border-warn/30 bg-warn/10 px-3 py-1.5 text-xs text-ink">
           Include graph: {bundleDiagnostics.map((item) => item.message).join(" · ")}
@@ -1096,6 +1207,21 @@ export function PaperEditor({
               ref={previewRef}
               data-ob-scroll="paper-preview"
               onScroll={handlePreviewScroll}
+              onClick={(event) => {
+                if (window.getSelection()?.toString()) return;
+                const target = event.target as HTMLElement;
+                const heading = target.closest(".ob-pv-heading");
+                if (heading && previewRef.current?.contains(heading)) {
+                  const key = heading.getAttribute("data-ob-heading-key");
+                  const bookmark = bookmarksRef.current.find((item) => item.slug === key);
+                  if (bookmark) jumpToSection(bookmark);
+                  return;
+                }
+                const paragraph = target.closest("p");
+                if (!paragraph || !previewRef.current?.contains(paragraph) || !paragraph.textContent) return;
+                const located = locatePreviewSnippet(renderSource, paragraph.textContent.slice(0, 160));
+                if (located) editorRef.current?.setSelection(located.from, located.from);
+              }}
               onMouseUp={() => {
                 const pane = previewRef.current;
                 const sel = window.getSelection();
@@ -1168,7 +1294,7 @@ export function PaperEditor({
               </div>
             </div>
             <div className={cn("ob-split-pane overflow-hidden", layout !== "pdf" && "is-hide")}>
-              <PdfPreview project={project} compile={compile} />
+              <PdfPreview project={project} compile={compile} onJumpToSource={jumpToSourceLine} />
             </div>
           </div>
 
@@ -1363,23 +1489,59 @@ export function PaperEditor({
 
       {layout === "pdf-only" && (
         <div className="flex-1 min-h-0 overflow-hidden rounded-xl border border-transparent bg-surface shadow-card">
-          <PdfPreview project={project} compile={compile} />
+          <PdfPreview project={project} compile={compile} onJumpToSource={jumpToSourceLine} />
         </div>
       )}
     </div>
   );
 }
 
-function PdfPreview({ project, compile }: { project: string; compile: PaperCompileStatus }) {
+function PdfPreview({
+  project,
+  compile,
+  onJumpToSource,
+}: {
+  project: string;
+  compile: PaperCompileStatus;
+  onJumpToSource?: (file: string, line: number) => void;
+}) {
   if (compile.state === "unavailable") {
     return <div className="p-12 text-center text-sm text-muted">LaTeX compilation is not available on this server.</div>;
   }
   if (compile.state === "error") {
+    const fileHits = parseTexFileLines(compile.diagnostics || []);
+    const first = fileHits[0];
     return (
       <div className="flex flex-col gap-3 p-6 text-xs text-danger">
         <div>
-          <p className="font-semibold mb-2">LaTeX compilation error:</p>
-          <pre className="max-h-96 overflow-auto rounded bg-surface-2 p-3 font-mono leading-relaxed">{compile.diagnostics?.join("\n")}</pre>
+          <p className="font-semibold mb-2">Compile failed</p>
+          {first && (
+            <button
+              type="button"
+              className="mb-2 text-left font-medium text-ink underline-offset-2 hover:underline"
+              onClick={() => onJumpToSource?.(first.file, first.line)}
+            >
+              {first.file}:{first.line} — {first.message}
+            </button>
+          )}
+          <div className="max-h-96 overflow-auto rounded bg-surface-2 p-3 font-mono leading-relaxed">
+            {(compile.diagnostics || []).map((line, index) => {
+              const hit = parseTexFileLines([line])[0];
+              if (!hit || !onJumpToSource) {
+                return <div key={`${index}-${line}`}>{line}</div>;
+              }
+              return (
+                <button
+                  key={`${index}-${line}`}
+                  type="button"
+                  className="block w-full text-left hover:underline"
+                  onClick={() => onJumpToSource(hit.file, hit.line)}
+                >
+                  {line}
+                </button>
+              );
+            })}
+          </div>
         </div>
         {compile.pdfAvailable && <LastGoodPdf project={project} />}
       </div>

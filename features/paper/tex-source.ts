@@ -296,6 +296,21 @@ export function offsetForHeadingKey(source: string, slug: string): number | null
   return null;
 }
 
+/** Jump target for a latexmk `file.tex:line` diagnostic in the live bundle. */
+export function offsetForSourceFileLine(source: string, file: string, line: number): number | null {
+  const needle = file.replace(/\\/g, "/").replace(/^\.\//, "");
+  const parts = splitBundleSource(source);
+  const part = parts.find((item) => (
+    item.filePath === needle
+    || item.filePath.endsWith(`/${needle}`)
+    || needle.endsWith(item.filePath)
+  ));
+  const body = part?.body ?? (!parts.length ? source : undefined);
+  if (body == null) return null;
+  const local = offsetForBookmarkLine(body, Math.max(0, line - 1));
+  return (part?.bodyFrom ?? 0) + local;
+}
+
 export function patchEditorTodoAttrs(source: string, todo: EditorTodo, patch: TodoAttrPatch): string {
   if (todo.kind !== "obtodo") return source;
   return patchObtodoInSource(source, todo.from, todo.to, patch);

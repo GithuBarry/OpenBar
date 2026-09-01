@@ -8,11 +8,9 @@ import { convertComplexTables } from "@/lib/tex-project/pandoc-tables";
 import { texPaths } from "@/lib/tex-project/project";
 
 /**
- * The Draft is the single source of truth for manuscript claims, pending
- * experiments, collaborator comments, and TODOs. They are authored inline as
- * OpenBar anchors (\obclaim / \obcomment / \obtodo) and maturity markers.
- * The mindmap is a separate editable planning workspace; it never promotes a
- * claim or removes a draft gate on its own.
+ * The Draft is the live TeX manuscript. TODOs and comments live inline as
+ * `\obtodo` / `\obcomment`. The mindmap is the operational companion for
+ * current work; it never writes derived paper TODOs back into the map file.
  */
 export default async function PaperPage({
   params,

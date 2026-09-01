@@ -384,12 +384,15 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
       const len = view.state.doc.length;
       const start = clampPos(from, len);
       const end = clampPos(to, len);
+      const sel = view.state.selection.main;
+      const intersects = sel.to >= start && sel.from <= end;
+      const hadFocus = view.hasFocus;
       view.dispatch({
         changes: { from: start, to: end, insert },
-        selection: { anchor: start + insert.length },
-        scrollIntoView: true,
+        ...(intersects ? { selection: { anchor: start + insert.length }, scrollIntoView: true } : {}),
+        annotations: [Transaction.addToHistory.of(true)],
       });
-      view.focus();
+      if (hadFocus || intersects) view.focus();
       return true;
     };
 

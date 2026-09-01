@@ -64,7 +64,9 @@ const nextConfig: NextConfig = {
   turbopack: {
     resolveAlias: {
       fs: { browser: "./lib/empty-module.ts" },
+      "node:fs": { browser: "./lib/empty-module.ts" },
       path: { browser: "./lib/empty-module.ts" },
+      "node:path": { browser: "./lib/empty-module.ts" },
       module: { browser: "./lib/empty-module.ts" },
     },
   },

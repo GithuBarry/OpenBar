@@ -6,6 +6,10 @@ import { writeTextAtomic } from "./codec";
 import { inspectPaperPageBudget, type PaperPageBudget } from "./page-budget";
 import { paperSourceHash, texPaths } from "./project";
 import { locateTexRoot } from "./source-graph";
+import { parseTexFileLines, type TexFileLine } from "./tex-diagnostics";
+
+export type { TexFileLine };
+export { parseTexFileLines };
 
 export type CompileState = "idle" | "running" | "success" | "error" | "unavailable";
 
