@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { parseBibtex, type BibEntry } from "@/lib/bibtex";
+import { type BibEntry } from "@/lib/bibtex";
 import { parseBibtexCitationJs, formatBibliographyHtml } from "@/lib/citation";
 import type { Mindmap } from "@/lib/types";
 
@@ -711,7 +711,7 @@ export function writeBibliographyRaw(projectDir: string, raw: string): void {
 
 export function readBibliography(projectDir: string): BibEntry[] {
   const raw = readBibliographyRaw(projectDir);
-  const entries = parseBibtexCitationJs(raw) || parseBibtex(raw);
+  const entries = parseBibtexCitationJs(raw) ?? [];
   return entries.map((entry) => {
     const html = formatBibliographyHtml(entry) || undefined;
     return html ? { ...entry, html } : entry;
@@ -1276,7 +1276,7 @@ function safeUrl(value: string): string {
 }
 
 function bibliographyTex(raw: string): string {
-  const entries = parseBibtex(raw);
+  const entries = parseBibtexCitationJs(raw) ?? [];
   if (!entries.length) return "% No cited bibliography entries yet.\n";
   const items = entries.map((entry) => {
     const fields = entry.fields;
