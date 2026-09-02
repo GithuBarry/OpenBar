@@ -11,11 +11,8 @@ import {
   type LivePaperTodo,
 } from "@/lib/research/webmcp-paper-contract";
 import { buildPaperSourceWebMcpTools, type PaperSourceHost } from "@/lib/research/webmcp-source-contract";
-import { buildSharedWebMcpTools } from "@/lib/research/webmcp-shared-contract";
 import { registerWebMcpToolsIndependent, waitForModelContext } from "@/lib/research/webmcp-register";
-import { lintDraft } from "@/lib/transparency-lint";
-import { lintProsePercentages } from "@/lib/tex-project/tex-lint";
-import { suspiciousTexSequences } from "@/lib/tex-project/tex-repair";
+import { lintPaperSource } from "@/lib/tex-project/tex-lint";
 
 import {
   collectEditorTodos,
@@ -25,29 +22,6 @@ import {
 } from "./tex-source";
 
 export const webmcpOrigin = Annotation.define<"human" | "webmcp">();
-
-interface WebMcpModelContext {
-  registerTool: (
-    tool: {
-      name: string;
-      title?: string;
-      description: string;
-      inputSchema?: unknown;
-      annotations?: { readOnlyHint?: boolean };
-      execute: (
-        args: Record<string, unknown>,
-        options?: { signal?: AbortSignal },
-      ) => Promise<unknown> | unknown;
-    },
-    options?: { signal?: AbortSignal },
-  ) => Promise<void>;
-}
-
-declare global {
-  interface Document {
-    readonly modelContext?: WebMcpModelContext;
-  }
-}
 
 function isChromeLine(line: string): boolean {
   const t = line.trim();
@@ -151,12 +125,11 @@ export function liveSnapshotFromSource(input: {
     const section = sections.find((item) => item.title.toLowerCase() === todo.section.toLowerCase());
     return [{
       id: todo.id,
+      ...(todo.title ? { title: todo.title } : {}),
       text: todo.text,
       sectionId: section?.id,
-      priority: todo.priority,
-      due: todo.due,
-      owner: todo.owner,
       createdAt: todo.createdAt,
+      completed: todo.completed,
     }];
   });
 
@@ -197,29 +170,8 @@ export function liveSnapshotFromSource(input: {
   };
 }
 
-export function lintLivePaper(source: string): { readiness?: string; diagnostics: { severity: "error" | "warning"; code: string; message: string; sectionId?: string }[] } {
-  const lints = lintDraft(source);
-  const diagnostics = [
-    ...lints.map((lint) => ({
-      severity: (lint.severity === "blocker" ? "error" : "warning") as "error" | "warning",
-      code: lint.id,
-      message: lint.title,
-    })),
-    ...lintProsePercentages(source).map((fix) => ({
-      severity: "warning" as const,
-      code: "prose-percent",
-      message: fix.message,
-    })),
-    ...suspiciousTexSequences(source).map((code) => ({
-      severity: "warning" as const,
-      code,
-      message: `Suspicious TeX sequence: ${code}`,
-    })),
-  ];
-  return {
-    readiness: lints.some((lint) => lint.severity === "blocker") ? "blocked" : diagnostics.length ? "needs-work" : "clear",
-    diagnostics,
-  };
+export function lintLivePaper(source: string): { diagnostics: { severity: "error" | "warning"; code: string; message: string; sectionId?: string }[] } {
+  return { diagnostics: lintPaperSource(source) };
 }
 
 export function applyWebMcpChange(
@@ -261,7 +213,7 @@ export function usePaperWebMcp(host: PaperSourceHost): void {
         navigateSection: (sectionId) => hostRef.current.navigateSection(sectionId),
         setReaderMode: (mode) => hostRef.current.setReaderMode(mode),
         replaceSection: (sectionId, tex, signal) => hostRef.current.replaceSection(sectionId, tex, signal),
-        resolveTodo: (todoId, signal) => hostRef.current.resolveTodo(todoId, signal),
+        removeTodo: (todoId, signal) => hostRef.current.removeTodo(todoId, signal),
         compile: (signal) => hostRef.current.compile(signal),
         lint: () => (hostRef.current.lint ? hostRef.current.lint() : { diagnostics: [] }),
         replaceRange: (from, to, text, signal) => hostRef.current.replaceRange(from, to, text, signal),
@@ -269,29 +221,15 @@ export function usePaperWebMcp(host: PaperSourceHost): void {
       const tools = [
         ...buildPaperWebMcpTools(bound),
         ...buildPaperSourceWebMcpTools(bound),
-        ...(bound.sharedActions
-          ? buildSharedWebMcpTools({
-              project: bound.getSnapshot().project,
-              liveSource: () => bound.getSnapshot().source,
-              navigate: (href) => hostRef.current.navigate?.(href),
-              current: () => hostRef.current.current?.(),
-              actions: bound.sharedActions,
-            })
-          : []),
       ];
       const registration = await registerWebMcpToolsIndependent(
-        modelContext.registerTool.bind(modelContext),
+        modelContext,
         tools,
         controller.signal,
+        "paper",
       );
       release = registration.release;
-      if (active && !controller.signal.aborted) {
-        window.dispatchEvent(new CustomEvent("webmcp-ready", {
-          detail: { tools: registration.registered, diagnostics: registration.diagnostics },
-        }));
-      } else {
-        release();
-      }
+      if (!active || controller.signal.aborted) release();
     })();
 
     return () => {

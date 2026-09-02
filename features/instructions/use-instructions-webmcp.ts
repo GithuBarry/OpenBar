@@ -37,7 +37,7 @@ export function useInstructionsWebMcp(host: InstructionsWebMcpHost): void {
         }),
       ];
       const registration = await registerWebMcpToolsIndependent(
-        modelContext.registerTool.bind(modelContext),
+        modelContext,
         tools,
         controller.signal,
         "instructions",

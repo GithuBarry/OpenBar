@@ -32,7 +32,7 @@ export function useSharedProjectWebMcp(input: {
         },
       });
       const registration = await registerWebMcpToolsIndependent(
-        modelContext.registerTool.bind(modelContext),
+        modelContext,
         tools,
         controller.signal,
         "shared",

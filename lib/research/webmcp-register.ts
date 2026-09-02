@@ -1,54 +1,47 @@
-import { failResult } from "./operation-result";
-
 export type WebMcpRegistration = {
   name: string;
   ok: boolean;
   error?: string;
 };
 
-type WebMcpTool = {
+export type WebMcpSurface = "shared" | "paper" | "mindmap" | "wiki" | "instructions" | "setup";
+
+export type WebMcpCatalogEntry = {
+  name: string;
+  title: string;
+  description: string;
+  surface: WebMcpSurface;
+};
+
+export type WebMcpTool = {
   name: string;
   title: string;
   description: string;
   inputSchema: unknown;
   annotations: { readOnlyHint: boolean; untrustedContentHint?: boolean };
-  execute: (args?: unknown, options?: { signal?: AbortSignal }) => Promise<unknown>;
+  execute: (args?: unknown, options?: { signal?: AbortSignal }) => Promise<unknown> | unknown;
 };
 
-type RegisteredTool = {
-  owner: symbol;
-  tool: WebMcpTool;
+type NativeWebMcpTool = {
+  name: string;
+  title?: string;
+  description: string;
 };
 
-type WebMcpRegistry = {
-  active: Map<string, RegisteredTool>;
-  registered: Set<string>;
-  pending: Map<string, Promise<void>>;
+export type WebMcpModelContext = {
+  registerTool: (tool: WebMcpTool, options?: { signal?: AbortSignal }) => Promise<void>;
+  getTools?: () => Promise<readonly NativeWebMcpTool[]>;
 };
 
-type GlobalWebMcp = typeof globalThis & {
-  __openBarryWebMcpRegistry?: WebMcpRegistry;
-};
-
-function registry(): WebMcpRegistry {
-  const root = globalThis as GlobalWebMcp;
-  if (!root.__openBarryWebMcpRegistry) {
-    root.__openBarryWebMcpRegistry = {
-      active: new Map(),
-      registered: new Set(),
-      pending: new Map(),
-    };
+declare global {
+  interface Document {
+    readonly modelContext?: WebMcpModelContext;
   }
-  return root.__openBarryWebMcpRegistry;
 }
 
-function unavailableToolResult(name: string) {
-  return failResult(
-    "capability_unavailable",
-    `The ${name} tool belongs to a page that is no longer open. Call get_project_state, then navigate_project to the relevant location, then retry.`,
-    { retryable: true },
-  );
-}
+type LocalCatalogEntry = WebMcpCatalogEntry & { signal: AbortSignal };
+
+const localCatalog = new Map<string, LocalCatalogEntry>();
 
 function uniqueTools(tools: WebMcpTool[]): WebMcpTool[] {
   const seen = new Set<string>();
@@ -61,68 +54,89 @@ function uniqueTools(tools: WebMcpTool[]): WebMcpTool[] {
   return result;
 }
 
+export function listWebMcpCatalog(): WebMcpCatalogEntry[] {
+  return [...localCatalog.values()].map(({ signal: _signal, ...entry }) => entry);
+}
+
+export async function getWebMcpCatalog(): Promise<WebMcpCatalogEntry[]> {
+  if (typeof document === "undefined") return [];
+  const modelContext = document.modelContext;
+  if (!modelContext?.getTools) return listWebMcpCatalog();
+  try {
+    const tools = await modelContext.getTools();
+    return tools.map((tool) => ({
+      name: tool.name,
+      title: tool.title || tool.name,
+      description: tool.description,
+      surface: localCatalog.get(tool.name)?.surface || "shared",
+    }));
+  } catch {
+    return listWebMcpCatalog();
+  }
+}
+
+export function emitWebMcpCatalog(extra?: {
+  diagnostics?: WebMcpRegistration[];
+  surface?: WebMcpSurface;
+}): void {
+  if (typeof window === "undefined") return;
+  const catalog = listWebMcpCatalog();
+  window.dispatchEvent(new CustomEvent("webmcp-ready", {
+    detail: {
+      tools: catalog.map((item) => item.name),
+      catalog,
+      diagnostics: extra?.diagnostics || [],
+      surface: extra?.surface,
+    },
+  }));
+}
+
 export async function registerWebMcpToolsIndependent(
-  registerTool: (tool: {
-    name: string;
-    title?: string;
-    description: string;
-    inputSchema?: unknown;
-    annotations?: { readOnlyHint?: boolean };
-    execute: (args?: unknown, options?: { signal?: AbortSignal }) => Promise<unknown> | unknown;
-  }, options?: { signal?: AbortSignal }) => Promise<void>,
+  modelContext: WebMcpModelContext,
   tools: WebMcpTool[],
   signal: AbortSignal,
+  surface: WebMcpSurface = "shared",
 ): Promise<{ registered: string[]; diagnostics: WebMcpRegistration[]; release: () => void }> {
-  const owner = Symbol("webmcp-page");
-  const current = registry();
-  // Page-owned builders come before generic shared fallbacks. Keep their first
-  // definition so one browser tool name has one live handler and one diagnostic.
   const dedupedTools = uniqueTools(tools);
   const diagnostics = await Promise.all(
     dedupedTools.map(async (tool): Promise<WebMcpRegistration> => {
       if (signal.aborted) return { name: tool.name, ok: false, error: "aborted" };
-      current.active.set(tool.name, { owner, tool });
-      if (current.registered.has(tool.name)) return { name: tool.name, ok: true };
       try {
-        let pending = current.pending.get(tool.name);
-        if (!pending) {
-          pending = registerTool(
-            {
-              name: tool.name,
-              title: tool.title,
-              description: tool.description,
-              inputSchema: tool.inputSchema,
-              annotations: tool.annotations,
-              execute: (args, options) => {
-                const active = registry().active.get(tool.name);
-                return active ? active.tool.execute(args, options) : unavailableToolResult(tool.name);
-              },
-          });
-          current.pending.set(tool.name, pending);
-        }
-        await pending;
-        current.registered.add(tool.name);
+        await modelContext.registerTool(tool, { signal });
+        if (signal.aborted) return { name: tool.name, ok: false, error: "aborted" };
+        localCatalog.set(tool.name, {
+          name: tool.name,
+          title: tool.title,
+          description: tool.description,
+          surface,
+          signal,
+        });
         return { name: tool.name, ok: true };
       } catch (error) {
-        current.registered.delete(tool.name);
         return {
           name: tool.name,
           ok: false,
           error: error instanceof Error ? error.message : String(error),
         };
-      } finally {
-        current.pending.delete(tool.name);
       }
     }),
   );
+  emitWebMcpCatalog({ diagnostics, surface });
+
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    for (const tool of dedupedTools) {
+      if (localCatalog.get(tool.name)?.signal === signal) localCatalog.delete(tool.name);
+    }
+    emitWebMcpCatalog({ surface });
+  };
+  signal.addEventListener("abort", release, { once: true });
   return {
     registered: diagnostics.filter((item) => item.ok).map((item) => item.name),
     diagnostics,
-    release: () => {
-      for (const tool of dedupedTools) {
-        if (current.active.get(tool.name)?.owner === owner) current.active.delete(tool.name);
-      }
-    },
+    release,
   };
 }
 

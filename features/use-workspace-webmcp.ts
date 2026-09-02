@@ -23,7 +23,7 @@ export function useWorkspaceWebMcp(host: WorkspaceWebMcpHost): void {
       if (!active || controller.signal.aborted || !modelContext?.registerTool) return;
       const bound = hostRef.current;
       const registration = await registerWebMcpToolsIndependent(
-        modelContext.registerTool.bind(modelContext),
+        modelContext,
         buildWorkspaceWebMcpTools(bound),
         controller.signal,
         "shared",

@@ -3,7 +3,6 @@
 import { useEffect, useRef } from "react";
 
 import { buildMindmapWebMcpTools, type MindmapWebMcpHost } from "@/lib/research/webmcp-mindmap-contract";
-import { buildSharedWebMcpTools } from "@/lib/research/webmcp-shared-contract";
 import { registerWebMcpToolsIndependent, waitForModelContext } from "@/lib/research/webmcp-register";
 
 export function useMindmapWebMcp(host: MindmapWebMcpHost): void {
@@ -21,39 +20,28 @@ export function useMindmapWebMcp(host: MindmapWebMcpHost): void {
         sharedActions: hostRef.current.sharedActions,
         getSnapshot: () => hostRef.current.getSnapshot(),
         focusNode: (id) => hostRef.current.focusNode(id),
-        addNode: (parentId, text, expectedRevision) => hostRef.current.addNode(parentId, text, expectedRevision),
-        renameNode: (id, text, expectedRevision) => hostRef.current.renameNode(id, text, expectedRevision),
+        addNode: (parentId, text, expectedRevision, title) => hostRef.current.addNode(parentId, text, expectedRevision, title),
         moveNode: (id, parentId, beforeId, afterId, expectedRevision) => hostRef.current.moveNode(id, parentId, beforeId, afterId, expectedRevision),
         deleteNode: (id, expectedRevision) => hostRef.current.deleteNode(id, expectedRevision),
         setCollapsed: (id, collapsed, expectedRevision) => hostRef.current.setCollapsed(id, collapsed, expectedRevision),
-        setPresentation: (id, patch, expectedRevision) => hostRef.current.setPresentation(id, patch, expectedRevision),
-        linkArtifact: (id, kind, artifactId, label, url, expectedRevision) => hostRef.current.linkArtifact(id, kind, artifactId, label, url, expectedRevision),
+        patchNode: (id, patch, expectedRevision) => hostRef.current.patchNode(id, patch, expectedRevision),
         setActivityHighlight: (since) => hostRef.current.setActivityHighlight(since),
+        placeTodoCard: (todoId, parentId, expectedRevision) => hostRef.current.placeTodoCard?.(todoId, parentId, expectedRevision) as Promise<string>,
+        convertCardToTodo: (id, sectionTitle, expectedRevision) => hostRef.current.convertCardToTodo?.(id, sectionTitle, expectedRevision) as Promise<string>,
+        completeTodo: (todoId) => hostRef.current.completeTodo?.(todoId),
+        reopenTodo: (todoId) => hostRef.current.reopenTodo?.(todoId),
+        focusTodoInPaper: (todoId) => hostRef.current.focusTodoInPaper?.(todoId),
+        renameMap: (title, expectedRevision) => hostRef.current.renameMap?.(title, expectedRevision),
       };
-      const tools = [
-        ...buildMindmapWebMcpTools(bound),
-        ...(bound.sharedActions
-          ? buildSharedWebMcpTools({
-              project: bound.getSnapshot().project,
-              actions: bound.sharedActions,
-              navigate: (href) => hostRef.current.navigate?.(href),
-              current: () => hostRef.current.current?.(),
-            })
-          : []),
-      ];
+      const tools = [...buildMindmapWebMcpTools(bound)];
       const registration = await registerWebMcpToolsIndependent(
-        modelContext.registerTool.bind(modelContext),
+        modelContext,
         tools,
         controller.signal,
+        "mindmap",
       );
       release = registration.release;
-      if (active && !controller.signal.aborted) {
-        window.dispatchEvent(new CustomEvent("webmcp-ready", {
-          detail: { tools: registration.registered, diagnostics: registration.diagnostics, surface: "mindmap" },
-        }));
-      } else {
-        release();
-      }
+      if (!active || controller.signal.aborted) release();
     })();
     return () => {
       active = false;
