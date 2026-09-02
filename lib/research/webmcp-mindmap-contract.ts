@@ -1,5 +1,5 @@
 /**
- * Mindmap page WebMCP tools. Schemas match HTTP MCP mindmap operations.
+ * Mindmap page WebMCP tools. Schemas match the browser WebMCP mindmap contract.
  */
 
 import { failResult, okResult, WEBMCP_ERROR_CODES, type OperationResult } from "./operation-result";
