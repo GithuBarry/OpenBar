@@ -1,5 +1,4 @@
 import { FILE_SEGMENT, safeAssetPath, safeFileSegment } from "./codec";
-import { tabularCellsFromTex } from "./table-ast";
 
 /** OpenBarry Markdown (OBMD) <-> deliberately constrained TeX conversion.
  *
@@ -9,7 +8,7 @@ import { tabularCellsFromTex } from "./table-ast";
  * until wiki/notes fixture parity is complete.
  */
 
-export interface FigureSpec {
+interface FigureSpec {
   id: string;
   path: string;
   caption: string;
@@ -19,11 +18,6 @@ export interface FigureSpec {
   span?: "column" | "page";
   alt?: string;
 }
-
-const KNOWN_ENVIRONMENTS = new Set(["itemize", "enumerate", "tabular", "figure", "figure*", "center"]);
-const KNOWN_COMMANDS = new Set([
-  "obclaim", "obcomment", "obevidence", "obtodo", "obmarker", "obcite", "cite", "citep", "citet", "citealp", "citeauthor", "autocite", "parencite", "textcite", "ref", "label", "textbf", "emph", "textit", "texttt", "textsc", "href", "url", "includegraphics", "item", "hline", "toprule", "midrule", "bottomrule", "section", "subsection", "subsubsection", "paragraph", "subparagraph", "appendix", "begin", "end", "centering", "caption", "pm", "small", "linewidth", "textbackslash", "textasciitilde", "textasciicircum", "textbar", "textless", "textgreater",
-]);
 
 export function markdownToTex(markdown: string): string {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
@@ -121,54 +115,6 @@ export function markdownToTex(markdown: string): string {
   return hasRawIsland ? rendered.replace(/\n+$/u, "") : rendered.replace(/\n{3,}/g, "\n\n").trim();
 }
 
-/** Convert generated/known TeX into a Markdown projection. Prose is always clean markdown, never raw code blocks. */
-export function texToMarkdown(tex: string): string {
-  const normalized = tex.replace(/\r\n/g, "\n");
-  if (!normalized) return "";
-
-  // Unknown TeX must remain an explicit raw island. Returning the whole body
-  // as one island preserves command spelling, spacing, comments, and custom
-  // environments byte-for-byte after LF normalization.
-  if (containsUnsupportedTex(normalized) || containsAmbiguousGrouping(normalized)) return rawTexIsland(normalized.replace(/\n+$/u, ""));
-
-  let source = normalized.trim();
-  const figures: string[] = [];
-  source = source.replace(/(?:%\s*OB-FIGURE\s+(\{[^\n]*\})\s*\n)?\\begin\{(figure\*?)\}(?:\[([^\]]*)\])?\s*([\s\S]*?)\\end\{\2\}/g, (_all, rawMeta?: string, env?: string, position?: string, body?: string) => {
-    const fileMatch = /\\includegraphics(?:\[([^\]]*)\])?\{([^}]+)\}/.exec(body || "");
-    if (!fileMatch) return _all;
-
-    const file = fileMatch[2]!;
-    const graphicOpts = fileMatch[1] || "";
-    const captionArg = commandArg(body || "", "caption");
-    const caption = captionArg ? texInlineToMarkdown(captionArg) : "Figure";
-    const meta = rawMeta ? parseFigureMeta(rawMeta) : {};
-    const width = meta.width || widthFromGraphicOpt(graphicOpts) || "100%";
-    const page = /(?:^|,)\s*page=(\d+)/.exec(graphicOpts)?.[1];
-    const label = commandArg(body || "", "label");
-    const id = safeFileSegment(meta.id || label || file.split("/").pop()?.replace(/\.[^.]+$/, "") || "fig", "figure id");
-    const path = safeAssetPath(meta.path || file);
-    const alt = meta.alt ? ` alt="${escapeMarkdownAttribute(meta.alt)}"` : "";
-    figures.push(`![${caption}](${path})\n{#${id} width="${normalizeWidth(width)}" fig-pos="${position || meta.position || "tbp"}"${page ? ` page="${page}"` : ""}${env === "figure*" ? ' span="page"' : ""}${alt}}`);
-    return `\n\n@@OBFIGURE${figures.length - 1}@@\n\n`;
-  });
-
-  source = source.replace(/\\begin\{(itemize|enumerate)\}([\s\S]*?)\\end\{\1\}/g, (_all, env: string, body: string) => listToMarkdown(env, body));
-
-  source = source.replace(/\\begin\{tabular\}\{[^}]*\}([\s\S]*?)\\end\{tabular\}/g, (_all, body: string) => tabularToMarkdown(body));
-  source = source.replace(/\\(section|subsection|subsubsection|paragraph|subparagraph)\{([^}]*)\}/g, (_all, command: string, title: string) => {
-    const level: Record<string, number> = { section: 1, subsection: 2, subsubsection: 3, paragraph: 4, subparagraph: 5 };
-    return `${"#".repeat(level[command] || 2)} ${texInlineToMarkdown(title)}`;
-  });
-  source = source.replace(/\\appendix\b/g, "<!-- openbarry:appendix -->");
-
-  source = texInlineToMarkdown(source);
-  source = source.replace(/@@OBFIGURE(\d+)@@/g, (_all, raw: string) => figures[Number(raw)] || "");
-  return source
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
 export function figureToTex(spec: FigureSpec): string {
   const safeId = safeFileSegment(spec.id, "figure id");
   const safePath = safeAssetPath(spec.path);
@@ -193,10 +139,6 @@ export function figureToTex(spec: FigureSpec): string {
     `  \\label{${safeId}}`,
     `\\end{${env}}`,
   ].join("\n");
-}
-
-export function markdownFigure(id: string, path: string, caption = "Figure caption"): string {
-  return `![${caption}](${safeAssetPath(path)})\n{#${safeFileSegment(id, "figure id")} width="100%" fig-pos="tbp" page="1"}`;
 }
 
 function parseMarkdownFigure(lines: string[], index: number): { spec: FigureSpec; next: number } | null {
@@ -262,43 +204,6 @@ function splitTableRow(line: string): string[] {
   return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
 }
 
-function tabularToMarkdown(body: string): string {
-  const parsed = tabularCellsFromTex(body).map((row) => row.map((cell) => texInlineToMarkdown(cell)));
-  const rows = parsed.some((row) => row.some(Boolean))
-    ? parsed
-    : body
-      .split(/\\\\/)
-      .map((row) => row.replace(/\\(?:hline|toprule|midrule|bottomrule)\b/g, "").trim())
-      .filter(Boolean)
-      .map((row) => splitTexTableRow(row).map(texInlineToMarkdown));
-  if (!rows.length) return "";
-  const columns = Math.max(...rows.map((row) => row.length));
-  const normalized = rows.map((row) => Array.from({ length: columns }, (_, index) => row[index] || ""));
-  const divider = Array.from({ length: columns }, () => "---");
-  return [
-    `| ${normalized[0]!.join(" | ")} |`,
-    `| ${divider.join(" | ")} |`,
-    ...normalized.slice(1).map((row) => `| ${row.join(" | ")} |`),
-  ].join("\n");
-}
-
-function splitTexTableRow(row: string): string[] {
-  const cells: string[] = [];
-  let current = "";
-  let depth = 0;
-  for (let index = 0; index < row.length; index += 1) {
-    const char = row[index]!;
-    if (char === "{" && row[index - 1] !== "\\") depth += 1;
-    if (char === "}" && row[index - 1] !== "\\") depth = Math.max(0, depth - 1);
-    if (char === "&" && row[index - 1] !== "\\" && depth === 0) {
-      cells.push(current.trim());
-      current = "";
-    } else current += char;
-  }
-  cells.push(current.trim());
-  return cells;
-}
-
 function renderInline(input: string): string {
   const protectedParts: string[] = [];
   const protect = (value: string) => {
@@ -333,13 +238,6 @@ function renderInline(input: string): string {
   return rendered;
 }
 
-function citationToMarkdown(keys: string, locator?: string): string {
-  const list = keys.split(",").map((key) => key.trim()).filter(Boolean);
-  if (!list.length) throw new Error("A citation needs at least one key.");
-  const inner = list.map((key) => `$${key}`).join("; ");
-  return locator ? `[${inner}, ${locator}]` : `[${inner}]`;
-}
-
 function citationToTex(payload: string): string {
   const pieces = payload.split(";").map((value) => value.trim()).filter(Boolean);
   const keys: string[] = [];
@@ -352,59 +250,6 @@ function citationToTex(payload: string): string {
   }
   if (!keys.length) throw new Error("A citation needs at least one key.");
   return locator ? `\\obcite[${escapeTex(locator)}]{${keys.join(",")}}` : `\\cite{${keys.join(",")}}`;
-}
-
-function texInlineToMarkdown(value: string): string {
-  let source = value;
-  source = source.replace(/\\appendix\b/g, "<!-- openbarry:appendix -->");
-  source = source.replace(/\\obmarker\{([^}]*)\}\{([^}]*)\}/g, (_all, kind: string, body: string) => `{?${unescapeTex(kind)}: ${unescapeTex(body)}}`);
-  source = source.replace(/\\obcite\[([^\]]*)\]\{([^}]*)\}/g, (_all, locator: string, keys: string) => citationToMarkdown(keys, unescapeTex(locator)));
-  source = source.replace(/\\(?:cite|citep|citet|citealp|citeauthor|autocite|parencite|textcite)\{([^}]*)\}/g, (_all, keys: string) => citationToMarkdown(keys));
-  source = source.replace(/\\href\{([^}]*)\}\{([^}]*)\}/g, (_all, url: string, label: string) => `[${texInlineToMarkdown(label)}](${unescapeTex(url)})`);
-  source = source.replace(/\\textbf\{([^{}]*)\}/g, (_all, body: string) => `**${texInlineToMarkdown(body)}**`);
-  source = source.replace(/\\(?:emph|textit)\{([^{}]*)\}/g, (_all, body: string) => `*${texInlineToMarkdown(body)}*`);
-  source = source.replace(/\\texttt\{([^{}]*)\}/g, (_all, body: string) => `\`${texInlineToMarkdown(body)}\``);
-  source = source.replace(/\\ref\{([^}]*)\}/g, (_all, id: string) => `@${id}`);
-  source = source.replace(/\\\[([\s\S]*?)\\\]/g, (_all, math: string) => `$$${math}$$`);
-  source = source.replace(/\$([^$\n]+)\$/g, (_all, math: string) => `$${math}$`);
-  return unescapeTex(source);
-}
-
-function containsUnsupportedTex(source: string): boolean {
-  for (const match of source.matchAll(/\\begin\{([^}]+)\}/g)) {
-    if (!KNOWN_ENVIRONMENTS.has(match[1]!)) return true;
-  }
-  for (const match of source.matchAll(/\\([A-Za-z@]+)(?:\*?)/g)) {
-    const command = match[1]!;
-    if (!KNOWN_COMMANDS.has(command) && command !== "" && command !== "\\") return true;
-  }
-  return false;
-}
-
-function containsAmbiguousGrouping(source: string): boolean {
-  let depth = 0;
-  let backslashes = 0;
-  for (const char of source) {
-    if (char === "\\") {
-      backslashes += 1;
-      continue;
-    }
-    const escaped = backslashes % 2 === 1;
-    backslashes = 0;
-    if (char === "{" && !escaped) {
-      depth += 1;
-      if (depth > 1) return true;
-    } else if (char === "}" && !escaped) {
-      depth = Math.max(0, depth - 1);
-    }
-  }
-  return /\\(?:[#$%&_{}]|[A-Za-z@]+)\{\}/.test(source);
-}
-
-function rawTexIsland(source: string): string {
-  const longestRun = Math.max(0, ...[...source.matchAll(/`+/g)].map((match) => match[0].length));
-  const fence = "`".repeat(Math.max(3, longestRun + 1));
-  return `${fence}{=latex}\n${source}\n${fence}`;
 }
 
 function headingCommand(level: number): string {
@@ -436,60 +281,6 @@ function escapeTexUrl(value: string): string {
   return value.replace(/([%#{}])/g, "\\$1");
 }
 
-function unescapeTex(value: string): string {
-  return value
-    .replace(/\\textbackslash\{\}/g, "\\")
-    .replace(/\\textasciitilde\{\}/g, "~")
-    .replace(/\\textasciicircum\{\}/g, "^")
-    .replace(/\\textbar\{\}/g, "|")
-    .replace(/\\textless\{\}/g, "<")
-    .replace(/\\textgreater\{\}/g, ">")
-    .replace(/\\([#$%&_{}])/g, "$1");
-}
-
-function parseFigureMeta(raw: string): Partial<FigureSpec> {
-  const data = JSON.parse(raw) as Partial<FigureSpec>;
-  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("OB-FIGURE metadata must be a JSON object.");
-  return data;
-}
-
-function widthFromGraphicOpt(graphicOpts: string): string | undefined {
-  const raw = /(?:^|,)\s*width=([^,\]]+)/.exec(graphicOpts)?.[1];
-  if (!raw) return undefined;
-  if (/\\(?:line|column)width/.test(raw)) {
-    const fraction = Number.parseFloat(raw);
-    if (!Number.isFinite(fraction) || fraction <= 0) return undefined;
-    return normalizeWidth(`${fraction * 100}%`);
-  }
-  return normalizeWidth(raw);
-}
-
-function commandArg(source: string, command: string): string | undefined {
-  const match = new RegExp(`\\\\${command}\\s*\\{`).exec(source);
-  if (!match) return undefined;
-  const start = match.index + match[0].length;
-  let depth = 1;
-  for (let index = start; index < source.length; index += 1) {
-    const char = source[index]!;
-    if (char === "{" && source[index - 1] !== "\\") depth += 1;
-    else if (char === "}" && source[index - 1] !== "\\") {
-      depth -= 1;
-      if (depth === 0) return source.slice(start, index);
-    }
-  }
-  return undefined;
-}
-
-function listToMarkdown(env: string, body: string): string {
-  const marks = [...body.matchAll(/\\item\s*/g)];
-  if (!marks.length) return `\\begin{${env}}${body}\\end{${env}}`;
-  return marks.map((mark, index) => {
-    const start = mark.index! + mark[0].length;
-    const end = index + 1 < marks.length ? marks[index + 1]!.index! : body.length;
-    return `${env === "itemize" ? "-" : `${index + 1}.`} ${texInlineToMarkdown(body.slice(start, end).trim())}`;
-  }).join("\n");
-}
-
 function widthToTex(value: string): string {
   const normalized = normalizeWidth(value);
   return `${Number.parseFloat(normalized) / 100}`;
@@ -499,10 +290,6 @@ function normalizeWidth(value: string): string {
   const parsed = Number.parseFloat(value.replace(/\\linewidth/g, "").replace("%", ""));
   if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 100) return "100%";
   return `${Math.round(parsed * 100) / 100}%`;
-}
-
-function escapeMarkdownAttribute(value: string): string {
-  return value.replace(/"/g, "\\\"");
 }
 
 function pushBlank(out: string[]): void {

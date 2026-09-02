@@ -27,27 +27,23 @@ import {
   deleteMindmapRecord,
   readProjectRecord,
   readRecord,
-  readDocumentTex,
   renamePaperSection,
   setPaperSectionHeading,
   addPaperSection,
   removePaperSection,
   texPaths,
-  writeBibliographyRaw,
   writeDocument,
   writeMindmapRecord,
   writePaperProject,
   writeProjectRecord,
   writeRecord,
   type PaperSection,
-  type PaperSectionPatch,
   type TexPaper,
   DRAFT_MINDMAP_ID,
 } from "./tex-project/project";
 import { TexEnvelopeError, withWriteLock } from "./tex-project/codec";
 import { mindmapDiskHash } from "./mindmap/v2";
-import { patchSection, patchSections, readPaper, replacePaper } from "./research/paper-service";
-import type { OperationResult } from "./research/operation-result";
+import { readPaper } from "./research/paper-service";
 import { buildSourceBundle } from "./tex-project/source-bundle";
 import type { ClientSourceBundle } from "./tex-project/source-bundle-format";
 import {
@@ -71,14 +67,7 @@ import {
   WikiPage,
 } from "./types";
 
-export interface ContentDiagnostic {
-  file: string;
-  issue: string;
-}
-
-const contentDiagnostics = new Map<string, ContentDiagnostic>();
-
-export const CONTENT_ROOT =
+const CONTENT_ROOT =
   process.env.OPENBARRY_CONTENT || path.join(process.cwd(), "content");
 
 const projectsDir = () => path.join(CONTENT_ROOT, "projects");
@@ -106,12 +95,7 @@ function recordContentDiagnostic(file: string, error: unknown) {
     : error instanceof Error
       ? error.message
       : String(error);
-  contentDiagnostics.set(file, { file, issue });
   console.warn(`Invalid content ${file}: ${issue}`);
-}
-
-export function listContentDiagnostics(): ContentDiagnostic[] {
-  return Array.from(contentDiagnostics.values()).sort((a, b) => a.file.localeCompare(b.file));
 }
 
 function listDir(dir: string): string[] {
@@ -207,7 +191,7 @@ export function saveProject(project: Project): void {
   writeProjectRecord(dir, persisted);
 }
 
-export function slugifyProjectId(title: string): string {
+function slugifyProjectId(title: string): string {
   const slug = title.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   if (!slug || !/^[a-z0-9]/.test(slug)) throw new Error("Could not make a project slug from that title.");
   return slug;
@@ -354,7 +338,7 @@ export function getEditableTexPaper(slug: string): TexPaper | null {
   return result.ok ? result.value : null;
 }
 
-export type PaperEditorState = {
+type PaperEditorState = {
   title: string;
   sections: Array<{
     id: string;
@@ -390,30 +374,6 @@ export function getPaperEditorState(slug: string): PaperEditorState | null {
       diagnostics: bundle.diagnostics,
     },
   };
-}
-
-function unwrapPaperResult<T>(result: OperationResult<T>): T {
-  if (result.ok) return result.value;
-  if (result.code === "stale_disk_state") throw new TexEnvelopeError(result.message);
-  throw new Error(result.message);
-}
-
-export function patchEditableTexPaperSection(
-  slug: string,
-  id: string,
-  baseHash: string,
-  tex: string,
-  heading?: { level?: number; appendix?: boolean },
-): PaperSection {
-  const dir = projectDir(slug);
-  if (!hasTexProject(dir)) throw new Error(`Project ${slug} has no primary TeX manuscript.`);
-  return unwrapPaperResult(patchSection(dir, id, baseHash, tex, heading));
-}
-
-export function patchEditableTexPaperSections(slug: string, patches: PaperSectionPatch[]): PaperSection[] {
-  const dir = projectDir(slug);
-  if (!hasTexProject(dir)) throw new Error(`Project ${slug} has no primary TeX manuscript.`);
-  return unwrapPaperResult(patchSections(dir, patches));
 }
 
 function paperTitle(slug: string): string {
@@ -453,20 +413,6 @@ export function projectContentDir(slug: string): string {
   return projectDir(slug);
 }
 
-export function saveDraft(
-  slug: string,
-  draftSlug: string,
-  source: string,
-  frontMatter: Record<string, unknown> = {},
-): MaturedDraft {
-  const safeDraftSlug = safeSegment(draftSlug, "draft slug");
-  if (safeDraftSlug !== "paper") throw new Error(`Unknown draft "${draftSlug}". Only "paper" is writable.`);
-  const dir = projectDir(slug);
-  const project = getProject(slug);
-  unwrapPaperResult(replacePaper(dir, slug, String(frontMatter.title || project?.title || slug), source));
-  return getDraft(slug, safeDraftSlug)!;
-}
-
 // ---------------------------------------------------------------------------
 // Bibliography
 // ---------------------------------------------------------------------------
@@ -481,11 +427,6 @@ export function getBibliographyRaw(slug: string): string {
   return hasTexProject(dir) ? readBibliographyRaw(dir) : "";
 }
 
-export function saveBibliographyRaw(slug: string, raw: string): void {
-  const dir = projectDir(slug);
-  writeBibliographyRaw(dir, raw);
-}
-
 // ---------------------------------------------------------------------------
 // Wiki
 // ---------------------------------------------------------------------------
@@ -496,17 +437,6 @@ export function listWiki(slug: string): WikiPage[] {
   return listDocumentIds(dir, "wiki")
     .map((id) => getWikiPage(slug, id))
     .filter((page): page is WikiPage => page !== null);
-}
-
-export function getWikiTex(slug: string, pageSlug: string): string | null {
-  try {
-    const safePageSlug = safeSegment(pageSlug, "wiki page slug");
-    const dir = projectDir(slug);
-    if (!hasTexProject(dir)) return null;
-    return readDocumentTex(dir, "wiki", safePageSlug);
-  } catch {
-    return null;
-  }
 }
 
 export function getWikiPage(slug: string, pageSlug: string): WikiPage | null {

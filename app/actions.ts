@@ -16,8 +16,6 @@ import {
   getEditableTexPaper,
   getPaperEditorState,
   getWikiPage,
-  patchEditableTexPaperSection,
-  patchEditableTexPaperSections,
   renameEditablePaperSection,
   setEditablePaperSectionHeading,
   addEditablePaperSection,
@@ -42,7 +40,6 @@ import {
 } from "@/lib/types";
 import { getPaperCompileStatus, requestPaperCompile } from "@/lib/tex-project/compile";
 import { FIGURE_MAX_BYTES, uploadFigureAsset, texPaths, patchDocument, patchDocumentState, readDocument, DRAFT_MINDMAP_ID } from "@/lib/tex-project/project";
-import { TexEnvelopeError } from "@/lib/tex-project/codec";
 import { persistSourceBundle, applyConversionWrite } from "@/lib/tex-project/source-persist";
 import { inspectRepository } from "@/lib/tex-project/source-graph";
 import { getConversionPlan, previewManuscriptConversion } from "@/lib/tex-project/pandoc";
@@ -56,7 +53,6 @@ import type { WorkspaceProjectResult } from "@/lib/research/webmcp-workspace-con
 import {
   deleteProjectSkill,
   deleteWorkspaceSkill,
-  findAgentsMd,
   readAnySkill,
   writeAgentsMd,
   writeProjectSkill,
@@ -69,7 +65,7 @@ import { analyzePaper } from "@/lib/research/paper-analysis";
 import type { SourceOperation } from "@/lib/research/operations";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import { requireProjectAccess, requireWorkbenchAccess } from "@/lib/server/project-access";
-import { paperSectionPatchSchema, wikiMetadataPatchSchema } from "@/lib/schemas";
+import { wikiMetadataPatchSchema } from "@/lib/schemas";
 import { normalizeMindmap, mindmapDiskHash } from "@/lib/mindmap/mindmap";
 import { assertUniqueMindmapTodoIds } from "@/lib/mindmap-index";
 import {
@@ -240,61 +236,6 @@ export async function deleteMindmapAction(slug: string, id: string): Promise<voi
   if (isPrimaryMindmap(existing)) throw new Error("The primary mindmap cannot be deleted.");
   deleteMindmap(slug, id);
   bust(slug);
-}
-
-/** Debounced browser writes target hash-checked TeX sections in one CAS. */
-export async function patchPaperSectionAction(
-  slug: string,
-  sectionId: string,
-  baseHash: string,
-  tex: string,
-): Promise<
-  | { ok: true; id: string; tex: string; hash: string }
-  | { ok: false; reason: "conflict"; currentTex: string; currentHash: string }
-> {
-  await requireProjectAccess(slug);
-  const parsed = paperSectionPatchSchema.parse({ id: sectionId, baseHash, tex });
-  try {
-    const section = patchEditableTexPaperSection(slug, parsed.id, parsed.baseHash, parsed.tex);
-    bust(slug);
-    return { ok: true, id: section.id, tex: section.tex, hash: section.hash };
-  } catch (error) {
-    if (error instanceof TexEnvelopeError && /changed outside this editor/i.test(error.message)) {
-      const current = getEditableTexPaper(slug)?.sections.find((section) => section.id === sectionId);
-      if (current) return { ok: false, reason: "conflict", currentTex: current.tex, currentHash: current.hash };
-    }
-    throw error;
-  }
-}
-
-export async function patchPaperSectionsAction(
-  slug: string,
-  patches: Array<{ id: string; baseHash: string; tex: string; level?: number; appendix?: boolean }>,
-): Promise<
-  | { ok: true; sections: Array<{ id: string; tex: string; hash: string; level: number }> }
-  | { ok: false; reason: "conflict"; conflicts: Array<{ id: string; currentTex: string; currentHash: string }> }
-> {
-  await requireProjectAccess(slug);
-  const parsed = patches.map((patch) => paperSectionPatchSchema.parse(patch));
-  try {
-    const sections = patchEditableTexPaperSections(slug, parsed);
-    bust(slug);
-    return {
-      ok: true,
-      sections: sections.map((section) => ({ id: section.id, tex: section.tex, hash: section.hash, level: section.level })),
-    };
-  } catch (error) {
-    if (error instanceof TexEnvelopeError && /changed outside this editor/i.test(error.message)) {
-      const paper = getEditableTexPaper(slug);
-      const conflicts = parsed.flatMap((patch) => {
-        const current = paper?.sections.find((section) => section.id === patch.id);
-        if (!current || current.hash === patch.baseHash) return [];
-        return [{ id: patch.id, currentTex: current.tex, currentHash: current.hash }];
-      });
-      if (conflicts.length) return { ok: false, reason: "conflict", conflicts };
-    }
-    throw error;
-  }
 }
 
 export async function getEditablePaperAction(slug: string) {
@@ -526,16 +467,6 @@ export async function placeTodoOnMindmapAction(slug: string, todoId: string, par
   return { todoId, parentId, nodeId: next.selectedId };
 }
 
-export async function renameMindmapAction(slug: string, mapId: string, title: string) {
-  await requireProjectAccess(slug);
-  const map = getMindmap(slug, mapId);
-  if (!map) throw new Error("Unknown mindmap.");
-  const next = { ...map, title: title.trim() || map.title, updatedAt: new Date().toISOString() };
-  saveMindmap(slug, next, map.diskHash);
-  bust(slug);
-  return { id: map.id || mapId, title: next.title };
-}
-
 export async function previewConversionAction(
   slug: string,
   filePath: string,
@@ -759,11 +690,6 @@ export async function writeAgentsMdAction(slug: string, body: string, expectedHa
   return result;
 }
 
-export async function readAgentsMdAction(slug: string) {
-  await requireProjectAccess(slug);
-  return findAgentsMd(projectContentDir(slug)) ?? { path: "AGENTS.md", body: "", updatedAt: "" };
-}
-
 export async function writeProjectSkillAction(
   slug: string,
   spec: { id: string; name?: string; description?: string; body: string },
@@ -784,11 +710,6 @@ export async function deleteProjectSkillAction(slug: string, id: string, expecte
 export async function writeWorkspaceAgentsMdAction(body: string, expectedHash?: string) {
   await requireWorkbenchAccess();
   return writeAgentsMd(workspaceRoot(), body, expectedHash);
-}
-
-export async function readWorkspaceAgentsMdAction() {
-  await requireWorkbenchAccess();
-  return findAgentsMd(workspaceRoot()) ?? { path: "AGENTS.md", body: "", updatedAt: "" };
 }
 
 export async function writeWorkspaceSkillAction(

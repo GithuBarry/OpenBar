@@ -70,69 +70,6 @@ export function findMacroMatches(src: string, macroNames: string[]): MacroMatch[
   return matches;
 }
 
-export function preprocessMarkers(src: string): string {
-  // 1. Unwrap any raw LaTeX islands ```{=latex} ... ``` so they render as prose
-  let cleaned = src.replace(/```\{=latex\}\s*([\s\S]*?)\s*```/g, "$1");
-
-  // 2. Convert raw LaTeX figure environments into Markdown image syntax
-  cleaned = cleaned.replace(
-    /\\begin\{(?:figure\*?)\}(?:\[[^\]]*\])?\s*([\s\S]*?)\\end\{(?:figure\*?)\}/g,
-    (_all, body: string) => {
-      const fileMatch = /\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}/.exec(body);
-      const captionMatch = /\\caption\{([\s\S]*?)\}/.exec(body);
-      if (!fileMatch) return _all;
-      const file = fileMatch[1]!;
-      const caption = captionMatch
-        ? captionMatch[1]!
-            .replace(/\\textbf\{([^}]+)\}/g, "$1")
-            .replace(/\\emph\{([^}]+)\}/g, "$1")
-            .replace(/\\textsc\{([^}]+)\}/g, "$1")
-            .trim()
-        : "Figure";
-      return `\n\n![${caption}](${file})\n\n`;
-    }
-  );
-
-  const macros = findMacroMatches(cleaned, ["obclaim", "obcomment", "obtodo", "obevidence"]);
-  let result = "";
-  let lastIndex = 0;
-  for (const m of macros) {
-    result += cleaned.slice(lastIndex, m.index);
-    if (m.name === "obclaim") {
-      const a = parseAnchorAttrs(m.attrs || "");
-      const state = (a.state || "hypothesis").toLowerCase();
-      result += `<span class="ob-claim" data-state="${escapeAttr(state)}" data-id="${escapeAttr(a.id || "")}">${escapeHtml(m.body.trim())}</span>`;
-    } else if (m.name === "obtodo") {
-      result += `<span class="ob-todo">${escapeHtml(m.body.trim())}</span>`;
-    } else if (m.name === "obcomment") {
-      result += `<span class="ob-comment">${escapeHtml(m.body.trim())}</span>`;
-    } else if (m.name === "obevidence") {
-      result += escapeHtml(m.body.trim());
-    }
-    lastIndex = m.index + m.length;
-  }
-  result += cleaned.slice(lastIndex);
-
-  return result
-    // Common LaTeX paper macros
-    .replace(/\\(?:citep|citet|citealp|citealt)\{([^}]+)\}/g, (_all, keys) => `\\cite{${keys}}`)
-    .replace(/\\(?:Cref|autoref|cref)\{([^}]+)\}/g, (_all, ref) => `Section \\ref{${ref}}`)
-    .replace(/\\textsc\{([^}]+)\}/g, (_all, text: string) => `<span class="ob-small-caps">${escapeHtml(text)}</span>`)
-    // {?kind: content} maturity markers
-    .replace(
-      /\{\?\s*(hypothesized|notfinal|placeholder|verify|cite|citation-needed|todo)\b\s*:?\s*([^:}]*?)(?:\s*:\s*([^}]*?))?\s*\}/gi,
-      (_all, kind: string, content: string, note?: string) => {
-        const k = kind.toLowerCase().replace("citation-needed", "cite");
-        const label = escapeHtml(content?.trim() || `${k}`);
-        const title = note ? ` title="${escapeAttr(note)}"` : "";
-        return `<span class="ob-marker ob-marker-${escapeAttr(k)}"${title}>${label}</span>`;
-      },
-    )
-    .replace(/<!--\s*(?:FIGURE|PLOT)\s*:\s*([^>]*?)\s*-->/gi, (_all, cap: string) => {
-      return `<span class="ob-marker ob-marker-placeholder">${escapeHtml(cap)}</span>`;
-    });
-}
-
 export function parseAnchorAttrs(raw: string): Record<string, string> {
   const attrs: Record<string, string> = {};
   let position = 0;
@@ -187,14 +124,6 @@ export function serializeAnchorAttrs(attrs: Record<string, string>): string {
       return /[\s,]/.test(value) ? `${key}="${value.replace(/"/g, "")}"` : `${key}=${value}`;
     })
     .join(", ");
-}
-
-export function escapeAttr(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
-}
-
-export function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 import { safeUrl } from "@/lib/safe-url";

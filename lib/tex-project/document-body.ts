@@ -4,9 +4,6 @@
 
 import { inferDocumentFormat as inferClientDocumentFormat } from "@/lib/document-format";
 import type { StoredDocumentFormat } from "@/lib/document-format";
-import { texToMarkdown } from "./obmd";
-
-export type { StoredDocumentFormat };
 
 export function inferDocumentFormat(body: string, declared?: string): StoredDocumentFormat {
   const inferred = inferClientDocumentFormat(body, declared);
@@ -21,8 +18,4 @@ export function prepareDocumentBody(body: string, _format: StoredDocumentFormat)
   // explicit when an agent or server caller requests a durable sidecar, so a
   // TeX percent, brace, backslash, table, or custom environment stays intact.
   return { body, converted: false };
-}
-
-export function previewTexAsMarkdown(tex: string): string {
-  return texToMarkdown(tex);
 }

@@ -13,20 +13,19 @@ import { getArgsContent } from "@unified-latex/unified-latex-util-arguments";
 import { printRaw } from "@unified-latex/unified-latex-util-print-raw";
 import type { Macro, Node } from "@unified-latex/unified-latex-types";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
-import { toHtml } from "hast-util-to-html";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { createElement, type ReactElement, type ReactNode } from "react";
 
 import { headingOccurrenceKey, texHeadingLevel } from "@/features/paper/heading-keys";
 import { resolveAssetUrl } from "@/lib/marker-codec";
 import { formatReference, refId, type BibEntry } from "@/lib/bibtex";
-import { stripScripts, sanitizeHtmlFragmentSync } from "@/lib/html-policy";
+import { sanitizeHtmlFragmentSync } from "@/lib/html-policy";
 import { extractPreviewMacroBindings } from "./pandoc-macros";
 import { inlineBundleIncludes } from "./source-bundle-format";
 import { wrapComplexTablesForPreview } from "./table-fragments";
 import { parseTexForDisplay } from "./tex-ast";
 
-export type HastPreviewOptions = {
+type HastPreviewOptions = {
   bibliography?: BibEntry[];
   assetBaseUrl?: string;
   pandocTables?: Record<string, string>;
@@ -459,26 +458,6 @@ function previewDivComponent(options: HastPreviewOptions, headingKey: string) {
   };
 }
 
-export function texFragmentToHtml(source: string, options: HastPreviewOptions = {}): string {
-  try {
-    const cites: CiteState = { order: [], num: new Map() };
-    const headingCounts = new Map<string, number>();
-    const previewSource = wrapComplexTablesForPreview(inlineBundleIncludes(source), options.pandocTables);
-    const processor = unified().use(unifiedLatexToHast, {
-      macroReplacements: buildReplacements(options, cites, headingCounts, previewSource),
-    });
-    const hast = processor.runSync(parseTexForDisplay(unwrapDocumentEnv(previewSource)));
-    pruneEmptyTableRows(hast);
-    return stripScripts(toHtml(hast as never));
-  } catch {
-    return "";
-  }
-}
-
-export function texFragmentHeadingKeys(source: string, options: HastPreviewOptions = {}): string[] {
-  return texFragmentPreview(source, options).headingKeys;
-}
-
 export function texFragmentPreview(source: string, options: HastPreviewOptions = {}): {
   tree: ReactElement | null;
   headingKeys: string[];
@@ -502,8 +481,4 @@ export function texFragmentPreview(source: string, options: HastPreviewOptions =
   } catch {
     return { tree: null, headingKeys: [] };
   }
-}
-
-export function texFragmentToJsx(source: string, options: HastPreviewOptions = {}): ReactElement | null {
-  return texFragmentPreview(source, options).tree;
 }

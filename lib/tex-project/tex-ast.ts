@@ -13,14 +13,14 @@ export type TexNode = Ast.Node;
 export type TexMacro = Ast.Macro;
 export type TexEnvironment = Ast.Environment;
 
-export type TexArg = {
+type TexArg = {
   type: "argument";
   openMark: string;
   closeMark: string;
   content: TexNode[];
 };
 
-export type ItemGroup = {
+type ItemGroup = {
   label: TexNode[] | undefined;
   body: TexNode[];
 };
@@ -474,14 +474,6 @@ export function findMacros(tree: unknown, name: string): TexMacro[] {
   return found;
 }
 
-export function findEnvironments(tree: unknown, name?: string): TexEnvironment[] {
-  const found: TexEnvironment[] = [];
-  walkAll(tree, (node) => {
-    if (isEnvironment(node) && (name == null || node.env === name)) found.push(node);
-  });
-  return found;
-}
-
 export function nodesToPlainText(nodes: unknown): string {
   if (nodes == null) return "";
   const list = Array.isArray(nodes) ? nodes : [nodes];
@@ -610,8 +602,4 @@ function printNode(node: unknown): string {
     default:
       return Array.isArray(node.content) ? nodesToTex(node.content) : "";
   }
-}
-
-export function texToPlainText(source: string): string {
-  return nodesToPlainText(parseTexForDisplay(source).content);
 }

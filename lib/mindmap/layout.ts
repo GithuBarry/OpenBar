@@ -7,8 +7,8 @@ import { hierarchy, tree } from "d3-hierarchy";
 import { indexMindmap } from "@/lib/mindmap-index";
 import type { Mindmap, MindmapNode } from "@/lib/types";
 
-export type Point = { x: number; y: number };
-export type Dimensions = { width: number; height: number };
+type Point = { x: number; y: number };
+type Dimensions = { width: number; height: number };
 
 type Datum = { id: string; children: Datum[] };
 
@@ -74,19 +74,4 @@ export function layoutMindmapTree(
   };
   visitConnected(rootId);
   return { positions, reachable, connected };
-}
-
-export function connectedParentPath(mindmap: Mindmap, id: string): string[] | null {
-  const { nodeById } = indexMindmap(mindmap);
-  const path: string[] = [];
-  const seen = new Set<string>();
-  let current = nodeById.get(id);
-  while (current) {
-    if (seen.has(current.id)) return null;
-    seen.add(current.id);
-    path.push(current.id);
-    if (current.id === mindmap.rootId) return path.reverse();
-    current = current.parentId ? nodeById.get(current.parentId) : undefined;
-  }
-  return null;
 }
