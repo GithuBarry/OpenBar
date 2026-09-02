@@ -3,14 +3,25 @@
 ## Goal
 
 Make the paper-first OpenBar workflow predictable across the paper, Primary
-and secondary mindmaps, browser WebMCP, HTTP MCP, demo content, and release
-checks. The existing TODO title, icon editing, reader appearance, metrics,
-and TeX focus work remain part of the product.
+and secondary mindmaps, browser WebMCP, demo content, and release checks. The
+existing TODO title, icon editing, reader appearance, metrics, and TeX focus
+work remain part of the product.
 
 The paper remains the source of truth for TODO identity, title, details,
 timestamps, and completion. Each map owns its card placement, ordinary-card
 content, labels, references, progress, and presentation. A deleted paper TODO
 leaves its map cards in place as repairable missing-source cards.
+
+## Architecture amendment: WebMCP only
+
+OpenBar uses browser WebMCP as its single agent interface. The model can read
+the TeX repository directly when it needs raw manuscript details. WebMCP owns
+actions that depend on the live OpenBar page, including editor state, selected
+mindmap nodes, navigation, focus, and visible feedback.
+
+The HTTP MCP endpoint, standalone MCP server, HTTP client scripts, HTTP-only
+authentication and session code, and HTTP transport documentation are removed.
+This keeps one tool contract and one live state model.
 
 ## Scope and decisions
 
@@ -69,11 +80,11 @@ label.
 - Project instructions describe the demo's chosen organization as local
   vocabulary and explain shared TODO coverage.
 - README describes explicit `pnpm seed:demo` setup.
-- Browser WebMCP is documented as the primary live experience. HTTP MCP is
-  documented as the companion endpoint. The demo script name and comments
-  identify its HTTP transport.
-- HTTP operations use the current shared semantics where the corresponding
-  capability exists. The browser-only capability list remains explicit.
+- Browser WebMCP is the sole agent interface. The home page exposes a small
+  workspace group for listing, searching, and opening projects.
+- Project pages expose only the small project context group plus tools for the
+  page's live state. Raw TeX inspection remains a repository task.
+- The demo journey runs through a browser page and uses page-local WebMCP.
 
 ### Release and deployment
 
@@ -92,9 +103,11 @@ label.
 3. Wire comment kinds through operations, WebMCP, paper UI, and TeX parsing.
 4. Update demo files, seed behavior, README, docs, generic templates, and
    the pinned TeX image.
-5. Align HTTP MCP schemas, registration, descriptions, and error results with
-   the live browser contract where applicable.
-6. Replace duplicated eval behavior with production calls and add focused
+5. Remove the HTTP MCP route, server, scripts, dependency wiring, auth/session
+   code, and stale references from docs and About.
+6. Add the workspace WebMCP group on the home page and keep project-wide tools
+   small and page-aware.
+7. Replace duplicated eval behavior with production calls and add focused
    coverage for deletion, relinking, navigation, roles, metadata, tables,
    and stale writes.
 
@@ -112,8 +125,9 @@ Each production fix gets a short-lived regression check created before the
 fix, run once to confirm the expected failure, then run again after the fix.
 The new scratch test file is removed after the full repair pass. Existing
 project checks remain available for final verification. Live browser smoke
-checks cover home icon editing, paper and mindmap title display, TODO routing,
-Tab child creation, reader appearance, metric details, and TeX focus context.
+checks cover workspace project tools, home icon editing, paper and mindmap
+title display, TODO routing, Tab child creation, reader appearance, metric
+details, and TeX focus context.
 
 ## Completion criteria
 
