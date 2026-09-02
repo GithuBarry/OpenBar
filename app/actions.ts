@@ -1,7 +1,7 @@
 "use server";
 
 /**
- * OpenBarry — server actions (the single write layer).
+ * OpenBar — server actions (the single write layer).
  *
  * Every interactive module calls these instead of talking to the store or the
  * filesystem directly. Keeping writes in one "use server" module means the
@@ -11,7 +11,6 @@
  */
 
 import { revalidatePath } from "next/cache";
-import fs from "node:fs";
 
 import {
   getEditableTexPaper,
@@ -24,56 +23,55 @@ import {
   addEditablePaperSection,
   removeEditablePaperSection,
   projectContentDir,
-  listClaims,
-  listEvidence,
-  listSourceManifest,
   saveProject,
+  getProject,
+  listProjects,
   createProject,
   getMindmap,
   saveMindmap,
   createMindmap,
   deleteMindmap,
   saveWikiPage,
-  saveNote,
-  saveSlideDeck,
-  savePrereg,
-  saveIdea,
-  saveClaim,
-  saveEvidence,
-  saveChallenge,
-  saveMonthlyReview,
+  deleteWikiPage,
+  renameWikiPage,
 } from "@/lib/store";
 import {
-  ClaimCard,
-  DailyNote,
-  EvidenceReceipt,
   Mindmap,
-  MicroChallenge,
-  MonthlyReview,
   Project,
-  SlideDeck,
   WikiPage,
-  ArtifactRef,
 } from "@/lib/types";
-import { Idea, Preregistration } from "@/lib/research";
 import { getPaperCompileStatus, requestPaperCompile } from "@/lib/tex-project/compile";
-import { FIGURE_MAX_BYTES, uploadFigureAsset, texPaths, patchDocument, patchDocumentState, readDocument } from "@/lib/tex-project/project";
+import { FIGURE_MAX_BYTES, uploadFigureAsset, texPaths, patchDocument, patchDocumentState, readDocument, DRAFT_MINDMAP_ID } from "@/lib/tex-project/project";
 import { TexEnvelopeError } from "@/lib/tex-project/codec";
 import { persistSourceBundle, applyConversionWrite } from "@/lib/tex-project/source-persist";
 import { inspectRepository } from "@/lib/tex-project/source-graph";
 import { getConversionPlan, previewManuscriptConversion } from "@/lib/tex-project/pandoc";
 import { convertComplexTables } from "@/lib/tex-project/pandoc-tables";
 import { getRuntimeCapabilities } from "@/lib/research/capabilities";
-import { applyRepositoryMigration, planRepositoryMigration } from "@/lib/research/migration";
-import { renderContextMarkdown } from "@/lib/context-bundle";
-import { projectAgenda } from "@/lib/research/project-agenda";
-import { getProjectState, resolveProjectNavigation, searchProject } from "@/lib/research/project-state";
-import { readBundledSkill, readSkillFile } from "@/lib/research/project-skills";
-import type { CurrentLocation } from "@/lib/research/webmcp-shared-contract";
-import { isPathAllowed } from "@/lib/server/path-policy";
+import { getProjectState, projectStateForAgent, resolveProjectNavigation, searchProject } from "@/lib/research/project-state";
+import { ensureCommentId } from "@/lib/research/paper-analysis";
+import { isPrimaryMindmap } from "@/lib/research/todo-map";
+import type { CurrentLocation, ProjectMetadataPatch, ProjectStateQuery } from "@/lib/research/webmcp-shared-contract";
+import type { WorkspaceProjectResult } from "@/lib/research/webmcp-workspace-contract";
+import {
+  deleteProjectSkill,
+  deleteWorkspaceSkill,
+  findAgentsMd,
+  readAnySkill,
+  writeAgentsMd,
+  writeProjectSkill,
+  writeWorkspaceSkill,
+  workspaceRoot,
+} from "@/lib/research/project-skills";
+import { persistPaperTodoOperation, insertTodoAtSection } from "@/lib/research/paper-todo-persist";
+import { applyMindmapAction, newNodeId } from "@/features/mindmap/mindmap-state";
+import { analyzePaper } from "@/lib/research/paper-analysis";
+import type { SourceOperation } from "@/lib/research/operations";
+import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import { requireProjectAccess, requireWorkbenchAccess } from "@/lib/server/project-access";
 import { paperSectionPatchSchema, wikiMetadataPatchSchema } from "@/lib/schemas";
-import { normalizeMindmap, mindmapDiskHash } from "@/lib/mindmap/v2";
+import { normalizeMindmap, mindmapDiskHash } from "@/lib/mindmap/mindmap";
+import { assertUniqueMindmapTodoIds } from "@/lib/mindmap-index";
 import {
   saveWorkspaceSettings,
   type WorkspaceSettings,
@@ -83,7 +81,6 @@ import {
 /** Revalidate everything under a project (layout scope covers all sub-routes). */
 function bust(slug: string) {
   revalidatePath(`/p/${slug}`, "layout");
-  revalidatePath("/ideas");
   revalidatePath("/");
 }
 
@@ -96,14 +93,15 @@ function normalizeMindmapForSave(slug: string, mindmap: Mindmap): Mindmap {
   const nodeById = new Map<string, Mindmap["nodes"][number]>();
   for (const node of mindmap.nodes) {
     if (!node || typeof node.id !== "string" || !node.id.trim()) throw new Error("Every mindmap topic needs an id.");
+    if (node.title !== undefined && typeof node.title !== "string") throw new Error(`Mindmap topic "${node.id}" has an invalid title.`);
     if (typeof node.text !== "string") throw new Error(`Mindmap topic "${node.id}" needs text.`);
     if (nodeById.has(node.id)) throw new Error(`Mindmap has duplicate topic id "${node.id}".`);
     if (node.parentId !== null && typeof node.parentId !== "string") throw new Error(`Mindmap topic "${node.id}" has an invalid parent.`);
-    if (node.x !== undefined && !Number.isFinite(node.x)) throw new Error(`Mindmap topic "${node.id}" has an invalid x position.`);
-    if (node.y !== undefined && !Number.isFinite(node.y)) throw new Error(`Mindmap topic "${node.id}" has an invalid y position.`);
     if (node.order !== undefined && !Number.isFinite(node.order)) throw new Error(`Mindmap topic "${node.id}" has an invalid order.`);
     nodeById.set(node.id, node);
   }
+
+  assertUniqueMindmapTodoIds(mindmap);
 
   const root = nodeById.get(mindmap.rootId);
   if (!root || root.parentId !== null) throw new Error("Mindmap root is missing or has a parent.");
@@ -161,8 +159,8 @@ function normalizeMindmapTags(value: unknown): string[] {
   return Array.from(new Set(value
     .filter((tag): tag is string => typeof tag === "string")
     .map((tag) => tag.trim())
-    .filter((tag) => tag.length > 0 && tag.length <= 40)))
-    .slice(0, 12);
+    .filter((tag) => tag.length > 0 && tag.length <= 80)))
+    .slice(0, 50);
 }
 
 function normalizeMindmapProgress(value: unknown): number | undefined {
@@ -170,43 +168,9 @@ function normalizeMindmapProgress(value: unknown): number | undefined {
   return Math.round(Math.min(100, Math.max(0, value)) * 10) / 10;
 }
 
-function sourceIds(project: string) {
-  return new Set(listSourceManifest(project).map((entry) => entry.id));
-}
-
-function sourceExists(project: string, source: string) {
-  if (sourceIds(project).has(source)) return true;
-  if (!source || typeof source !== "string") return false;
-  if (!isPathAllowed(source)) return false;
-  try {
-    return Boolean(fs.statSync(source).isFile());
-  } catch {
-    return false;
-  }
-}
-
-function missingExternalRefs(project: string, refs: ArtifactRef[] = []) {
-  const ids = sourceIds(project);
-  return refs.filter((ref) => ref.kind === "external" && !ids.has(ref.id)).map((ref) => ref.id);
-}
-
-function assertEvidenceSourceBacked(evidence: EvidenceReceipt) {
-  if (!sourceExists(evidence.projectId, evidence.source)) {
-    throw new Error(`Evidence source must be an existing source ref id or local file: ${evidence.source}`);
-  }
-  const missing = missingExternalRefs(evidence.projectId, [
-    ...(evidence.rawInputRefs || []),
-    ...(evidence.intermediateRefs || []),
-    ...(evidence.outputRefs || []),
-    ...(evidence.metricRefs || []),
-    ...(evidence.refs || []),
-  ]);
-  if (missing.length) throw new Error(`Evidence references unknown source ref id(s): ${Array.from(new Set(missing)).join(", ")}`);
-}
-
-export async function saveProjectAction(project: Project): Promise<void> {
+export async function saveProjectAction(project: Project, expectedHash = project.diskHash): Promise<void> {
   await requireProjectAccess(project.slug);
-  saveProject(project);
+  saveProject(project, expectedHash);
   bust(project.slug);
 }
 
@@ -271,6 +235,9 @@ export async function createMindmapAction(slug: string, title: string): Promise<
 
 export async function deleteMindmapAction(slug: string, id: string): Promise<void> {
   await requireProjectAccess(slug);
+  if (isPrimaryMindmap(id)) throw new Error("The primary mindmap cannot be deleted.");
+  const existing = getMindmap(slug, id);
+  if (isPrimaryMindmap(existing)) throw new Error("The primary mindmap cannot be deleted.");
   deleteMindmap(slug, id);
   bust(slug);
 }
@@ -437,29 +404,76 @@ export async function getCapabilitiesAction() {
   return getRuntimeCapabilities();
 }
 
+function workspaceProjectSummary(project: Project): WorkspaceProjectResult {
+  const tagline = project.tagline.trim();
+  const icon = project.icon?.trim();
+  return {
+    slug: project.slug,
+    title: project.title,
+    href: `/p/${encodeURIComponent(project.slug)}/paper`,
+    ...(tagline ? { tagline } : {}),
+    ...(icon ? { icon } : {}),
+  };
+}
+
+export async function listWorkspaceProjectsAction(): Promise<WorkspaceProjectResult[]> {
+  await requireWorkbenchAccess();
+  return listProjects().map(workspaceProjectSummary);
+}
+
+export async function searchWorkspaceProjectsAction(query: string): Promise<WorkspaceProjectResult[]> {
+  await requireWorkbenchAccess();
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  return listProjects()
+    .filter((project) => [project.slug, project.title, project.tagline, project.label]
+      .some((value) => value?.toLowerCase().includes(needle)))
+    .map(workspaceProjectSummary);
+}
+
+export async function openWorkspaceProjectAction(slug: string): Promise<WorkspaceProjectResult | null> {
+  await requireWorkbenchAccess();
+  const project = getProject(slug);
+  return project ? workspaceProjectSummary(project) : null;
+}
+
 export async function inspectRepositoryAction(slug: string) {
   await requireProjectAccess(slug);
   return inspectRepository(texPaths(projectContentDir(slug)).manuscriptDir);
 }
 
-export async function getProjectContextAction(slug: string) {
+export async function getProjectStateAction(slug: string, current?: CurrentLocation, query?: ProjectStateQuery) {
   await requireProjectAccess(slug);
-  return renderContextMarkdown(slug);
-}
-
-export async function getAgendaAction(slug: string) {
-  await requireProjectAccess(slug);
-  return projectAgenda(slug);
-}
-
-export async function getProjectStateAction(slug: string, current?: CurrentLocation) {
-  await requireProjectAccess(slug);
-  return getProjectState(slug, current);
+  const state = getProjectState(slug, current);
+  return state ? projectStateForAgent(state, query) : null;
 }
 
 export async function searchProjectAction(slug: string, query: string) {
   await requireProjectAccess(slug);
   return { results: searchProject(slug, query) };
+}
+
+/** Assign a stable id only when a researcher links an existing paper comment. */
+export async function ensurePaperCommentAction(slug: string, sourceStart: number, expectedBundleHash: string) {
+  await requireProjectAccess(slug);
+  if (!Number.isInteger(sourceStart) || sourceStart < 0) throw new Error("Comment source position is invalid.");
+  if (!/^[a-f0-9]{64}$/i.test(expectedBundleHash)) throw new Error("Paper bundle hash is invalid.");
+  const manuscriptDir = texPaths(projectContentDir(slug)).manuscriptDir;
+  const bundle = buildSourceBundle(manuscriptDir);
+  if (bundle.bundleHash !== expectedBundleHash) {
+    throw new Error("Paper changed on disk. Reload before linking the comment.");
+  }
+  const ensured = ensureCommentId(bundle.source, sourceStart);
+  if (!ensured) throw new Error("Could not locate that paper comment in the current source.");
+  if (ensured.source === bundle.source) return { id: ensured.id, hash: bundle.bundleHash, changed: false };
+  const result = persistSourceBundle({
+    manuscriptDir,
+    nextSource: ensured.source,
+    expectedBundleHash,
+  });
+  if (!result.ok) throw new Error(result.message);
+  bust(slug);
+  return { id: ensured.id, hash: result.diskHash || result.value.bundleHash, changed: true };
 }
 
 export async function resolveProjectNavigationAction(slug: string, input: { id?: string; href?: string }) {
@@ -469,32 +483,57 @@ export async function resolveProjectNavigationAction(slug: string, input: { id?:
 
 export async function readProjectSkillAction(slug: string, id: string) {
   await requireProjectAccess(slug);
-  const local = readSkillFile(projectContentDir(slug), id);
+  const local = readAnySkill(projectContentDir(slug), id);
   if (local) return { ...local.skill, body: local.body };
-  const bundled = readBundledSkill(id);
-  if (bundled) return { ...bundled.skill, body: bundled.body };
   throw new Error(`Unknown skill "${id}".`);
 }
 
-export async function planRepositoryMigrationAction(slug: string) {
-  await requireProjectAccess(slug);
-  return planRepositoryMigration(texPaths(projectContentDir(slug)).manuscriptDir, slug);
-}
-
-export async function applyRepositoryMigrationAction(
+export async function updateProjectAction(
   slug: string,
-  planId: string,
-  expectedHash: string,
-  confirm: boolean,
+  patch: ProjectMetadataPatch,
 ) {
   await requireProjectAccess(slug);
-  const result = applyRepositoryMigration(texPaths(projectContentDir(slug)).manuscriptDir, {
-    planId,
-    expectedRepositoryHash: expectedHash,
-    confirm,
-  });
-  if (result.ok) bust(slug);
-  return result;
+  const current = getProject(slug);
+  if (!current) throw new Error(`Unknown project "${slug}".`);
+  if (!patch.expectedHash) throw new Error("Read project state and pass project.hash before saving.");
+  saveProject({
+    ...current,
+    ...(patch.title !== undefined ? { title: patch.title } : {}),
+    ...(patch.venue !== undefined ? { venue: patch.venue } : {}),
+    ...(patch.tagline !== undefined ? { tagline: patch.tagline } : {}),
+    ...(patch.label !== undefined ? { label: patch.label } : {}),
+    updatedAt: new Date().toISOString(),
+  }, patch.expectedHash);
+  bust(slug);
+  return getProject(slug);
+}
+
+export async function placeTodoOnMindmapAction(slug: string, todoId: string, parentId: string) {
+  await requireProjectAccess(slug);
+  const map = getMindmap(slug, DRAFT_MINDMAP_ID);
+  if (!map || !isPrimaryMindmap(map)) throw new Error("Primary mindmap is missing.");
+  const existing = map.nodes.find((node) => node.todoId === todoId);
+  if (existing) {
+    if (existing.parentId === parentId) return { todoId, parentId, nodeId: existing.id };
+    const next = applyMindmapAction(map, { type: "reparent", id: existing.id, parentId });
+    saveMindmap(slug, next.mindmap, map.diskHash);
+    bust(slug);
+    return { todoId, parentId, nodeId: existing.id };
+  }
+  const next = applyMindmapAction(map, { type: "add-node", parentId, id: newNodeId(), todoId });
+  saveMindmap(slug, next.mindmap, map.diskHash);
+  bust(slug);
+  return { todoId, parentId, nodeId: next.selectedId };
+}
+
+export async function renameMindmapAction(slug: string, mapId: string, title: string) {
+  await requireProjectAccess(slug);
+  const map = getMindmap(slug, mapId);
+  if (!map) throw new Error("Unknown mindmap.");
+  const next = { ...map, title: title.trim() || map.title, updatedAt: new Date().toISOString() };
+  saveMindmap(slug, next, map.diskHash);
+  bust(slug);
+  return { id: map.id || mapId, title: next.title };
 }
 
 export async function previewConversionAction(
@@ -557,7 +596,7 @@ export async function applyConversionAction(slug: string, planId: string, expect
   return result;
 }
 
-export async function readDocumentAction(slug: string, kind: "wiki" | "notes" | "slides", id: string) {
+export async function readDocumentAction(slug: string, kind: "wiki", id: string) {
   await requireProjectAccess(slug);
   const document = readDocument(projectContentDir(slug), kind, id);
   return document ? { ...document, bodyHash: document.hash, hash: document.stateHash } : null;
@@ -565,7 +604,7 @@ export async function readDocumentAction(slug: string, kind: "wiki" | "notes" | 
 
 export async function patchDocumentAction(
   slug: string,
-  kind: "wiki" | "notes" | "slides",
+  kind: "wiki",
   id: string,
   baseHash: string,
   body: string,
@@ -613,106 +652,154 @@ export async function patchWikiPageAction(
   return { page: updated, hash: next.stateHash };
 }
 
-export async function renderPreviewAction(slug: string, kind: "wiki" | "notes" | "slides", id: string) {
+export async function renderPreviewAction(slug: string, kind: "wiki", id: string) {
   await requireProjectAccess(slug);
-  const page = kind === "wiki" ? getWikiPage(slug, id) : null;
+  const page = getWikiPage(slug, id);
   const document = readDocument(projectContentDir(slug), kind, id);
   return {
-    format: document?.format || page?.format || "tex",
-    htmlMode: document?.htmlMode || page?.htmlMode,
+    format: "markdown" as const,
     body: document?.markdown || page?.body || "",
     hash: document?.stateHash,
   };
 }
 
-export async function saveWikiAction(page: WikiPage): Promise<void> {
+export async function saveWikiAction(page: WikiPage): Promise<WikiPage> {
   await requireProjectAccess(page.projectId);
   if (getWikiPage(page.projectId, page.slug)) {
     throw new Error("A wiki page with this slug already exists. Open it and save with its current hash.");
   }
   saveWikiPage(page);
   bust(page.projectId);
+  const created = getWikiPage(page.projectId, page.slug);
+  if (!created) throw new Error("Wiki page could not be read after create.");
+  return created;
 }
 
-export async function saveNoteAction(note: DailyNote): Promise<void> {
-  await requireProjectAccess(note.projectId);
-  saveNote(note);
-  bust(note.projectId);
-}
-
-export async function saveSlideDeckAction(deck: SlideDeck): Promise<void> {
-  await requireProjectAccess(deck.projectId);
-  saveSlideDeck(deck);
-  bust(deck.projectId);
-}
-
-export async function savePreregAction(
-  prereg: Preregistration,
-): Promise<void> {
-  await requireProjectAccess(prereg.projectId);
-  savePrereg(prereg);
-  bust(prereg.projectId);
-}
-
-export async function saveIdeaAction(slug: string, idea: Idea): Promise<void> {
+export async function persistPaperTodoAction(
+  slug: string,
+  operation: SourceOperation,
+  expectedBundleHash?: string,
+) {
   await requireProjectAccess(slug);
-  saveIdea(slug, idea);
+  const result = persistPaperTodoOperation({
+    manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
+    operation,
+    expectedBundleHash,
+  });
+  if (result.ok) bust(slug);
+  return result;
+}
+
+export async function insertPaperTodoAtSectionAction(
+  slug: string,
+  sectionTitle: string,
+  text: string,
+  expectedBundleHash?: string,
+  title?: string,
+) {
+  await requireProjectAccess(slug);
+  const manuscriptDir = texPaths(projectContentDir(slug)).manuscriptDir;
+  const bundle = buildSourceBundle(manuscriptDir);
+  const inserted = insertTodoAtSection(bundle.source, sectionTitle, text, undefined, title);
+  if (!inserted.sectionFound) {
+    return {
+      ok: false as const,
+      code: "unknown_section",
+      message: `Unknown paper section "${sectionTitle}".`,
+      retryable: false,
+    };
+  }
+  const result = persistSourceBundle({
+    manuscriptDir,
+    nextSource: inserted.source,
+    expectedBundleHash: expectedBundleHash ?? bundle.bundleHash,
+  });
+  if (result.ok) bust(slug);
+  return { ...result, id: inserted.id };
+}
+
+export async function removePaperTodoAction(slug: string, todoId: string, expectedBundleHash?: string) {
+  await requireProjectAccess(slug);
+  const manuscriptDir = texPaths(projectContentDir(slug)).manuscriptDir;
+  const bundle = buildSourceBundle(manuscriptDir);
+  const todo = analyzePaper(bundle.source).todos.find((item) => item.id === todoId);
+  if (!todo) throw new Error(`Unknown TODO "${todoId}".`);
+  const result = persistPaperTodoOperation({
+    manuscriptDir,
+    operation: { type: "replace_range", from: todo.start, to: todo.end, text: "" },
+    expectedBundleHash: expectedBundleHash ?? bundle.bundleHash,
+  });
+  if (result.ok) bust(slug);
+  return result;
+}
+
+export async function deleteWikiPageAction(slug: string, pageSlug: string, expectedHash: string) {
+  await requireProjectAccess(slug);
+  const page = getWikiPage(slug, pageSlug);
+  if (!page) throw new Error(`Unknown wiki page: ${pageSlug}`);
+  if (page.stateHash !== expectedHash) throw new Error(`Wiki page changed on disk. Reload before deleting it.`);
+  deleteWikiPage(slug, pageSlug, expectedHash);
   bust(slug);
 }
 
-export async function saveClaimAction(claim: ClaimCard): Promise<void> {
-  await requireProjectAccess(claim.projectId);
-  saveClaim(claim);
-  for (const evidence of listEvidence(claim.projectId)) {
-    const shouldLink = claim.evidenceIds.includes(evidence.id);
-    const hasLink = evidence.claimIds.includes(claim.id);
-    if (shouldLink && !hasLink) {
-      saveEvidence({
-        ...evidence,
-        claimIds: [...evidence.claimIds, claim.id],
-      });
-    }
-    if (!shouldLink && hasLink) {
-      saveEvidence({
-        ...evidence,
-        claimIds: evidence.claimIds.filter((id) => id !== claim.id),
-      });
-    }
-  }
-  bust(claim.projectId);
-}
-
-export async function saveEvidenceAction(evidence: EvidenceReceipt): Promise<void> {
-  await requireProjectAccess(evidence.projectId);
-  assertEvidenceSourceBacked(evidence);
-  saveEvidence(evidence);
-  for (const claim of listClaims(evidence.projectId)) {
-    const shouldLink = evidence.claimIds.includes(claim.id);
-    const hasLink = claim.evidenceIds.includes(evidence.id);
-    if (shouldLink && !hasLink) {
-      saveClaim({
-        ...claim,
-        evidenceIds: [...claim.evidenceIds, evidence.id],
-      });
-    }
-    if (!shouldLink && hasLink) {
-      saveClaim({
-        ...claim,
-        evidenceIds: claim.evidenceIds.filter((id) => id !== evidence.id),
-      });
-    }
-  }
-  bust(evidence.projectId);
-}
-
-export async function saveChallengeAction(slug: string, challenge: MicroChallenge): Promise<void> {
+export async function renameWikiPageAction(slug: string, fromSlug: string, toSlug: string, expectedHash: string) {
   await requireProjectAccess(slug);
-  saveChallenge(slug, challenge);
+  const page = getWikiPage(slug, fromSlug);
+  if (!page) throw new Error(`Unknown wiki page: ${fromSlug}`);
+  if (page.stateHash !== expectedHash) throw new Error(`Wiki page changed on disk. Reload before renaming it.`);
+  const renamed = renameWikiPage(slug, fromSlug, toSlug, expectedHash);
+  bust(slug);
+  return renamed;
+}
+
+export async function writeAgentsMdAction(slug: string, body: string, expectedHash?: string) {
+  await requireProjectAccess(slug);
+  const result = writeAgentsMd(projectContentDir(slug), body, expectedHash);
+  bust(slug);
+  return result;
+}
+
+export async function readAgentsMdAction(slug: string) {
+  await requireProjectAccess(slug);
+  return findAgentsMd(projectContentDir(slug)) ?? { path: "AGENTS.md", body: "", updatedAt: "" };
+}
+
+export async function writeProjectSkillAction(
+  slug: string,
+  spec: { id: string; name?: string; description?: string; body: string },
+  expectedHash?: string,
+) {
+  await requireProjectAccess(slug);
+  const skill = writeProjectSkill(projectContentDir(slug), spec, expectedHash);
+  bust(slug);
+  return skill;
+}
+
+export async function deleteProjectSkillAction(slug: string, id: string, expectedHash: string) {
+  await requireProjectAccess(slug);
+  deleteProjectSkill(projectContentDir(slug), id, "project", expectedHash);
   bust(slug);
 }
 
-export async function saveMonthlyReviewAction(review: MonthlyReview): Promise<void> {
-  await requireProjectAccess(review.projectId);
-  saveMonthlyReview(review);
-  bust(review.projectId);
+export async function writeWorkspaceAgentsMdAction(body: string, expectedHash?: string) {
+  await requireWorkbenchAccess();
+  return writeAgentsMd(workspaceRoot(), body, expectedHash);
+}
+
+export async function readWorkspaceAgentsMdAction() {
+  await requireWorkbenchAccess();
+  return findAgentsMd(workspaceRoot()) ?? { path: "AGENTS.md", body: "", updatedAt: "" };
+}
+
+export async function writeWorkspaceSkillAction(
+  spec: { id: string; name?: string; description?: string; body: string },
+  expectedHash?: string,
+) {
+  await requireWorkbenchAccess();
+  return writeWorkspaceSkill(spec, expectedHash);
+}
+
+export async function deleteWorkspaceSkillAction(id: string, expectedHash: string) {
+  await requireWorkbenchAccess();
+  deleteWorkspaceSkill(id, expectedHash);
 }

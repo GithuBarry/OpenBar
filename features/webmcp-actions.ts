@@ -8,21 +8,30 @@
  */
 import {
   applyConversionAction,
-  applyRepositoryMigrationAction,
-  getAgendaAction,
+  deleteProjectSkillAction,
+  deleteWikiPageAction,
+  deleteWorkspaceSkillAction,
   getCapabilitiesAction,
-  getProjectContextAction,
   getProjectStateAction,
+  listWorkspaceProjectsAction,
+  openWorkspaceProjectAction,
   inspectRepositoryAction,
   patchDocumentAction,
   patchWikiPageAction,
-  planRepositoryMigrationAction,
   previewConversionAction,
   readDocumentAction,
   readProjectSkillAction,
   renderPreviewAction,
+  renameWikiPageAction,
   resolveProjectNavigationAction,
+  saveWikiAction,
+  searchWorkspaceProjectsAction,
   searchProjectAction,
+  updateProjectAction,
+  writeAgentsMdAction,
+  writeProjectSkillAction,
+  writeWorkspaceAgentsMdAction,
+  writeWorkspaceSkillAction,
 } from "@/app/actions";
 
 export const sharedWebMcpActions = {
@@ -30,14 +39,17 @@ export const sharedWebMcpActions = {
   searchProject: searchProjectAction,
   resolveNavigation: resolveProjectNavigationAction,
   readProjectSkill: readProjectSkillAction,
-  getProjectContext: getProjectContextAction,
   getCapabilities: getCapabilitiesAction,
   inspectRepository: inspectRepositoryAction,
-  planRepositoryMigration: planRepositoryMigrationAction,
-  applyRepositoryMigration: applyRepositoryMigrationAction,
   previewConversion: previewConversionAction,
   applyConversion: applyConversionAction,
-  getAgenda: getAgendaAction,
+  updateProject: updateProjectAction,
+};
+
+export const workspaceWebMcpActions = {
+  listProjects: listWorkspaceProjectsAction,
+  searchProjects: searchWorkspaceProjectsAction,
+  openProject: openWorkspaceProjectAction,
 };
 
 export const documentWebMcpActions = {
@@ -45,4 +57,26 @@ export const documentWebMcpActions = {
   patchDocument: patchDocumentAction,
   patchWikiPage: patchWikiPageAction,
   renderPreview: renderPreviewAction,
+  createWikiPage: async (project: string, slug: string, title: string, body = "") => {
+    const now = new Date().toISOString();
+    return saveWikiAction({
+      projectId: project,
+      slug,
+      title,
+      body,
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
+  deleteWikiPage: deleteWikiPageAction,
+  renameWikiPage: renameWikiPageAction,
+};
+
+export const instructionsWebMcpActions = {
+  writeAgentsMd: writeAgentsMdAction,
+  writeProjectSkill: writeProjectSkillAction,
+  deleteProjectSkill: deleteProjectSkillAction,
+  writeWorkspaceAgentsMd: writeWorkspaceAgentsMdAction,
+  writeWorkspaceSkill: writeWorkspaceSkillAction,
+  deleteWorkspaceSkill: deleteWorkspaceSkillAction,
 };

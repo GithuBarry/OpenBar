@@ -2,13 +2,17 @@
  * Shared page-scoped WebMCP tools available on every project page.
  */
 
-import { artifactHref } from "./artifact-link";
-import { SHARED_WEBMCP_SCHEMAS, SHARED_WEBMCP_TOOL_NAMES } from "./mcp-tool-schemas";
+import {
+  INSTRUCTIONS_WEBMCP_TOOL_NAMES,
+  PROJECT_WEBMCP_TOOL_NAMES,
+  SHARED_WEBMCP_SCHEMAS,
+  SETUP_WEBMCP_TOOL_NAMES,
+} from "./mcp-tool-schemas";
 import { failResult, okResult, type OperationResult } from "./operation-result";
 import { parseWebMcpArgs, unknownWebMcpArgument, type PaperWebMcpTool } from "./webmcp-paper-contract";
 
 export type CurrentLocation = {
-  kind: "paper" | "mindmap" | "wiki" | "home";
+  kind: "paper" | "mindmap" | "wiki" | "home" | "instructions";
   href: string;
   sectionId?: string;
   nodeId?: string;
@@ -16,21 +20,31 @@ export type CurrentLocation = {
   pageId?: string;
 };
 
-export { SHARED_WEBMCP_TOOL_NAMES };
+export { INSTRUCTIONS_WEBMCP_TOOL_NAMES, PROJECT_WEBMCP_TOOL_NAMES, SETUP_WEBMCP_TOOL_NAMES };
+
+export type ProjectStateQuery = {
+  detail?: "summary" | "full";
+  todoLimit?: number;
+};
+
+export type ProjectMetadataPatch = {
+  expectedHash: string;
+  title?: string;
+  venue?: string;
+  tagline?: string;
+  label?: string;
+};
 
 export type SharedWebMcpActions = {
-  getProjectState: (project: string, current?: CurrentLocation) => Promise<unknown>;
+  getProjectState: (project: string, current?: CurrentLocation, query?: ProjectStateQuery) => Promise<unknown>;
   searchProject: (project: string, query: string) => Promise<unknown>;
   resolveNavigation: (project: string, input: { id?: string; href?: string }) => Promise<{ href: string } | null>;
   readProjectSkill: (project: string, id: string) => Promise<unknown>;
-  getProjectContext: (project: string) => Promise<unknown>;
   getCapabilities: () => Promise<unknown>;
   inspectRepository: (project: string) => Promise<unknown>;
-  planRepositoryMigration: (project: string) => Promise<unknown>;
-  applyRepositoryMigration: (project: string, planId: string, expectedHash: string, confirm: boolean) => Promise<OperationResult<unknown>>;
   previewConversion: (project: string, filePath: string, source: string, to: string, expandProject: boolean) => Promise<unknown>;
   applyConversion: (project: string, planId: string, expectedHash: string, acknowledgeLoss: boolean, dryRun: boolean) => Promise<OperationResult<unknown>>;
-  getAgenda: (project: string) => Promise<unknown>;
+  updateProject: (project: string, patch: ProjectMetadataPatch) => Promise<unknown>;
 };
 
 export type SharedWebMcpHost = {
@@ -61,25 +75,26 @@ const READ_ONLY = new Set<string>([
   "search_project",
   "navigate_project",
   "read_project_skill",
-  "get_project_context",
   "get_capabilities",
   "inspect_repository",
-  "plan_repository_migration",
   "preview_conversion",
-  "get_agenda",
-  "navigate_artifact",
 ]);
 
-const TOOL_META: Record<string, { title: string; description: string }> = {
+type SharedToolName =
+  | (typeof PROJECT_WEBMCP_TOOL_NAMES)[number]
+  | (typeof INSTRUCTIONS_WEBMCP_TOOL_NAMES)[number]
+  | (typeof SETUP_WEBMCP_TOOL_NAMES)[number];
+
+const TOOL_META: Record<SharedToolName, { title: string; description: string }> = {
   get_project_state: {
     title: "Read project state",
     description:
-      "Read this first when entering an OpenBar project or after losing context. Returns the manuscript outline, open paper TODOs, available mindmaps, recent project activity, current location, and project-local skills. This operation does not modify project files.",
+      "Read this first when entering an OpenBar project or after losing context. Default detail=summary returns location, paper title, section TODO counts, Primary Unplaced count, recent activity, mindmaps (id, title, primary, nodeCount, href), skills, and AGENTS.md path/hash. TODOs are {id, title, text, completed, primaryUnplaced, primaryMapNodeId}. Pass detail=full for AGENTS bodies and every TODO. Then search_project or navigate_project for detail. Does not modify files.",
   },
   search_project: {
     title: "Search the project",
     description:
-      "Search paper headings, TeX source, TODO and comment text, mindmap nodes, and wiki notes. Returns ids and hrefs that navigate_project can open. Does not modify project files.",
+      "Search paper headings, TeX source, TODO titles and details, comment text, mindmap titles, labels, refs, shared TODO text, and wiki pages. Returns ids and hrefs that navigate_project can open. Does not modify project files.",
   },
   navigate_project: {
     title: "Navigate the project UI",
@@ -89,12 +104,7 @@ const TOOL_META: Record<string, { title: string; description: string }> = {
   read_project_skill: {
     title: "Read a project skill",
     description:
-      "Read one project-local SKILL.md or bundled OpenBar skill by id from get_project_state. Use this after orientation when the project names a research habit. Does not modify files.",
-  },
-  get_project_context: {
-    title: "Read legacy project context",
-    description:
-      "Compatibility markdown dump of the project. Prefer get_project_state for orientation. Does not modify files.",
+      "Read one project-local SKILL.md, workspace skill, or bundled OpenBar skill by id from get_project_state. Use this after orientation when the project names a research habit. Does not modify files.",
   },
   get_capabilities: {
     title: "Read runtime capabilities",
@@ -104,14 +114,6 @@ const TOOL_META: Record<string, { title: string; description: string }> = {
     title: "Inspect the TeX repository",
     description: "Inspect the manuscript include graph. Useful during import or repository setup, not during ordinary paper writing.",
   },
-  plan_repository_migration: {
-    title: "Plan a repository migration",
-    description: "Preview a repository layout migration. Setup-only; not part of ordinary paper writing.",
-  },
-  apply_repository_migration: {
-    title: "Apply a repository migration",
-    description: "Apply a previously planned repository migration. Setup-only; requires confirm and expectedHash.",
-  },
   preview_conversion: {
     title: "Preview a conversion",
     description: "Preview a Pandoc conversion of manuscript source. Setup-only.",
@@ -120,18 +122,26 @@ const TOOL_META: Record<string, { title: string; description: string }> = {
     title: "Apply a conversion",
     description: "Apply a previously previewed conversion. Setup-only.",
   },
-  get_agenda: {
-    title: "Read the project agenda",
-    description: "Return open manuscript TODOs and deadlines. Prefer get_project_state when you also need outline and skills.",
-  },
-  navigate_artifact: {
-    title: "Navigate to an artifact",
-    description: "Navigate to a typed artifact id. Prefer navigate_project with an href from get_project_state or search_project.",
+  update_project: {
+    title: "Update project metadata",
+    description: "Update the project title, venue, tagline, or optional free-form label. Same fields the human project header and cards edit.",
   },
 };
 
 export function buildSharedWebMcpTools(host: SharedWebMcpHost): PaperWebMcpTool[] {
-  return SHARED_WEBMCP_TOOL_NAMES.map((name) => ({
+  return PROJECT_WEBMCP_TOOL_NAMES.map((name) => sharedTool(host, name));
+}
+
+export function buildInstructionsWebMcpTools(host: SharedWebMcpHost): PaperWebMcpTool[] {
+  return INSTRUCTIONS_WEBMCP_TOOL_NAMES.map((name) => sharedTool(host, name));
+}
+
+export function buildSetupWebMcpTools(host: SharedWebMcpHost): PaperWebMcpTool[] {
+  return SETUP_WEBMCP_TOOL_NAMES.map((name) => sharedTool(host, name));
+}
+
+function sharedTool(host: SharedWebMcpHost, name: SharedToolName): PaperWebMcpTool {
+  return {
     name,
     title: TOOL_META[name]?.title || name.replaceAll("_", " "),
     description: TOOL_META[name]?.description || `Shared operation ${name}. Project is fixed by the open page.`,
@@ -141,7 +151,7 @@ export function buildSharedWebMcpTools(host: SharedWebMcpHost): PaperWebMcpTool[
       untrustedContentHint: true,
     },
     execute: (args) => executeSharedWebMcpTool(host, name, args),
-  }));
+  };
 }
 
 function hostCurrent(host: SharedWebMcpHost): CurrentLocation | undefined {
@@ -150,7 +160,7 @@ function hostCurrent(host: SharedWebMcpHost): CurrentLocation | undefined {
 
 async function executeSharedWebMcpTool(
   host: SharedWebMcpHost,
-  name: (typeof SHARED_WEBMCP_TOOL_NAMES)[number],
+  name: SharedToolName,
   rawArgs: unknown,
 ): Promise<OperationResult<unknown>> {
   const parsedArgs = parseWebMcpArgs(rawArgs);
@@ -160,8 +170,18 @@ async function executeSharedWebMcpTool(
   if (unknown) return failResult("invalid_arguments", `Unknown argument "${unknown}".`, { retryable: false });
   try {
     switch (name) {
-      case "get_project_state":
-        return okResult(await host.actions.getProjectState(host.project, hostCurrent(host)));
+      case "get_project_state": {
+        if (args.detail !== undefined && args.detail !== "summary" && args.detail !== "full") {
+          return failResult("invalid_arguments", 'detail must be "summary" or "full".', { retryable: false });
+        }
+        if (args.todoLimit !== undefined && (!Number.isInteger(args.todoLimit) || (args.todoLimit as number) < 0 || (args.todoLimit as number) > 200)) {
+          return failResult("invalid_arguments", "todoLimit must be an integer from 0 to 200.", { retryable: false });
+        }
+        return okResult(await host.actions.getProjectState(host.project, hostCurrent(host), {
+          detail: args.detail === "full" ? "full" : "summary",
+          todoLimit: typeof args.todoLimit === "number" ? args.todoLimit : undefined,
+        }));
+      }
       case "search_project": {
         const query = requiredString(args, "query");
         if (typeof query !== "string") return query;
@@ -196,39 +216,10 @@ async function executeSharedWebMcpTool(
         if (typeof id !== "string") return id;
         return okResult(await host.actions.readProjectSkill(host.project, id));
       }
-      case "get_project_context":
-        return okResult({ markdown: await host.actions.getProjectContext(host.project) });
       case "get_capabilities":
         return okResult(await host.actions.getCapabilities());
       case "inspect_repository":
         return okResult(await host.actions.inspectRepository(host.project));
-      case "plan_repository_migration":
-        return okResult(await host.actions.planRepositoryMigration(host.project));
-      case "get_agenda":
-        return okResult(await host.actions.getAgenda(host.project));
-      case "navigate_artifact": {
-        const kind = requiredString(args, "kind");
-        if (typeof kind !== "string") return kind;
-        const id = requiredString(args, "id");
-        if (typeof id !== "string") return id;
-        const href = artifactHref(host.project, { kind: kind as never, id });
-        host.navigate?.(href);
-        return okResult({ href });
-      }
-      case "apply_repository_migration": {
-        const planId = requiredString(args, "planId");
-        if (typeof planId !== "string") return planId;
-        const expectedHash = requiredString(args, "expectedHash");
-        if (typeof expectedHash !== "string") return expectedHash;
-        if (typeof args.confirm !== "boolean") return failResult("invalid_arguments", "confirm must be a boolean.", { retryable: false });
-        const result = await host.actions.applyRepositoryMigration(
-          host.project,
-          planId,
-          expectedHash,
-          args.confirm,
-        );
-        return result.ok ? okResult(result.value, { diskHash: result.diskHash }) : result;
-      }
       case "preview_conversion": {
         if (args.filePath !== undefined && (typeof args.filePath !== "string" || !args.filePath.trim())) {
           return failResult("invalid_arguments", "filePath must be a non-empty string.", { retryable: false });
@@ -265,6 +256,22 @@ async function executeSharedWebMcpTool(
           args.dryRun === true,
         );
         return result.ok ? okResult(result.value) : result;
+      }
+      case "update_project": {
+        const expectedHash = requiredString(args, "expectedHash");
+        if (typeof expectedHash !== "string") return expectedHash;
+        const patch: ProjectMetadataPatch = { expectedHash };
+        for (const key of ["title", "venue", "tagline", "label"] as const) {
+          if (args[key] === undefined) continue;
+          if (typeof args[key] !== "string") {
+            return failResult("invalid_arguments", `${key} must be a string.`, { retryable: false });
+          }
+          patch[key] = args[key];
+        }
+        if (!Object.keys(patch).length) {
+          return failResult("invalid_arguments", "Provide title, venue, tagline, or label.", { retryable: false });
+        }
+        return okResult(await host.actions.updateProject(host.project, patch));
       }
     }
   } catch (error) {

@@ -7,20 +7,23 @@ import { z } from "zod";
 
 import type { JsonSchemaObject } from "./webmcp-paper-contract";
 
-export const SHARED_WEBMCP_TOOL_NAMES = [
+export const PROJECT_WEBMCP_TOOL_NAMES = [
   "get_project_state",
   "search_project",
   "navigate_project",
-  "read_project_skill",
-  "get_project_context",
+  "update_project",
+] as const;
+
+export const INSTRUCTIONS_WEBMCP_TOOL_NAMES = ["read_project_skill"] as const;
+
+export const WORKSPACE_WEBMCP_TOOL_NAMES = ["list_projects", "search_projects", "open_project"] as const;
+
+/** Setup / import tools. Registered on the instructions page, not ordinary research pages. */
+export const SETUP_WEBMCP_TOOL_NAMES = [
   "get_capabilities",
   "inspect_repository",
-  "plan_repository_migration",
-  "apply_repository_migration",
   "preview_conversion",
   "apply_conversion",
-  "get_agenda",
-  "navigate_artifact",
 ] as const;
 
 export const DOCUMENT_WEBMCP_TOOL_NAMES = ["read_document", "patch_document", "render_preview"] as const;
@@ -29,13 +32,7 @@ export function objectSchema(properties: Record<string, unknown> = {}, required:
   return { type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false };
 }
 
-export const documentKindSchema = z.enum(["wiki", "notes", "slides"]);
-
-export const applyMigrationZod = z.object({
-  planId: z.string(),
-  expectedHash: z.string(),
-  confirm: z.boolean(),
-});
+export const documentKindSchema = z.enum(["wiki"]);
 
 export const applyConversionZod = z.object({
   planId: z.string(),
@@ -62,11 +59,6 @@ export const patchDocumentZod = z.object({
   body: z.string(),
 });
 
-export const navigateArtifactZod = z.object({
-  kind: z.string(),
-  id: z.string(),
-});
-
 export const searchProjectZod = z.object({
   query: z.string(),
 });
@@ -80,29 +72,60 @@ export const readProjectSkillZod = z.object({
   id: z.string(),
 });
 
+export const updateProjectZod = z.object({
+  expectedHash: z.string(),
+  title: z.string().optional(),
+  venue: z.string().optional(),
+  tagline: z.string().optional(),
+  label: z.string().optional(),
+});
+
 export const SHARED_WEBMCP_SCHEMAS: Record<string, JsonSchemaObject> = {
-  get_project_state: objectSchema(),
+  get_project_state: objectSchema({
+    detail: {
+      type: "string",
+      enum: ["summary", "full"],
+      description: "summary is the default compact orientation. full includes AGENTS.md bodies and every TODO.",
+    },
+    todoLimit: {
+      type: "integer",
+      minimum: 0,
+      maximum: 200,
+      description: "Max TODO rows to include. Default 8 for summary; full includes all unless set.",
+    },
+  }),
   search_project: objectSchema({ query: { type: "string", description: "Case-insensitive substring to find in the paper, TODOs, comments, mindmap, or wiki." } }, ["query"]),
   navigate_project: objectSchema({
     id: { type: "string", description: "An id returned by get_project_state or search_project." },
     href: { type: "string", description: "A project href returned by get_project_state or search_project." },
   }),
   read_project_skill: objectSchema({ id: { type: "string", description: "Skill id from get_project_state." } }, ["id"]),
-  get_project_context: objectSchema(),
   get_capabilities: objectSchema(),
   inspect_repository: objectSchema(),
-  plan_repository_migration: objectSchema(),
-  apply_repository_migration: objectSchema(
-    { planId: { type: "string" }, expectedHash: { type: "string" }, confirm: { type: "boolean" } },
-    ["planId", "expectedHash", "confirm"],
-  ),
   preview_conversion: objectSchema({ filePath: { type: "string" }, to: { type: "string" }, expandProject: { type: "boolean" } }),
   apply_conversion: objectSchema(
     { planId: { type: "string" }, expectedHash: { type: "string" }, acknowledgeLoss: { type: "boolean" }, dryRun: { type: "boolean" } },
     ["planId", "expectedHash"],
   ),
-  get_agenda: objectSchema(),
-  navigate_artifact: objectSchema({ kind: { type: "string" }, id: { type: "string" } }, ["kind", "id"]),
+  update_project: objectSchema({
+    expectedHash: { type: "string", description: "Project hash from get_project_state.project.hash." },
+    title: { type: "string" },
+    venue: { type: "string" },
+    tagline: { type: "string" },
+    label: { type: "string" },
+  }, ["expectedHash"]),
+};
+
+export const WORKSPACE_WEBMCP_SCHEMAS: Record<(typeof WORKSPACE_WEBMCP_TOOL_NAMES)[number], JsonSchemaObject> = {
+  list_projects: objectSchema(),
+  search_projects: objectSchema(
+    { query: { type: "string", description: "Case-insensitive text to match against project slug, title, tagline, or label." } },
+    ["query"],
+  ),
+  open_project: objectSchema(
+    { slug: { type: "string", description: "Project slug from list_projects or search_projects." } },
+    ["slug"],
+  ),
 };
 
 export const DOCUMENT_WEBMCP_SCHEMAS: Record<string, JsonSchemaObject> = {
@@ -112,4 +135,45 @@ export const DOCUMENT_WEBMCP_SCHEMAS: Record<string, JsonSchemaObject> = {
     ["id", "baseHash", "body"],
   ),
   render_preview: objectSchema({ kind: { type: "string" }, id: { type: "string" } }, ["id"]),
+};
+
+/** Page-scoped paper tools that HTTP MCP may also expose later. */
+export const PAPER_MUTATION_TOOL_NAMES = ["patch_paper_table"] as const;
+
+export const patchPaperTableZod = z.object({
+  sectionId: z.string(),
+  tableIndex: z.number().int().min(0),
+  expectedRevision: z.number().int().min(0),
+  updates: z.array(z.object({
+    row: z.number().int().min(0),
+    column: z.number().int().min(0),
+    tex: z.string(),
+  })).min(1).max(1),
+});
+
+export const PAPER_MUTATION_SCHEMAS: Record<(typeof PAPER_MUTATION_TOOL_NAMES)[number], JsonSchemaObject> = {
+  patch_paper_table: objectSchema(
+    {
+      sectionId: { type: "string", description: "Stable section id from get_paper_outline." },
+      tableIndex: { type: "integer", minimum: 0, description: "0-based tabular in this section." },
+      expectedRevision: { type: "integer", minimum: 0, description: "Live editor revision from get_paper_state." },
+      updates: {
+        type: "array",
+        minItems: 1,
+        maxItems: 1,
+        description: "Exactly one cell. Complex tables return capability_unavailable.",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            row: { type: "integer", minimum: 0, description: "0-based row, including the header." },
+            column: { type: "integer", minimum: 0, description: "0-based column." },
+            tex: { type: "string", description: "Replacement cell TeX." },
+          },
+          required: ["row", "column", "tex"],
+        },
+      },
+    },
+    ["sectionId", "tableIndex", "expectedRevision", "updates"],
+  ),
 };
