@@ -1,12 +1,10 @@
 /**
- * Shared operation vocabulary for UI, WebMCP, and HTTP MCP.
- *
- * Pure types plus CAS context. Persistence lives in adapters.
+ * Shared operation vocabulary for UI, browser WebMCP, and server actions.
  */
 
 import type { ConflictPayload, OperationDiagnostic, OperationResult } from "./operation-result";
 
-export type OperationActorKind = "human" | "webmcp" | "http-mcp";
+export type OperationActorKind = "human" | "webmcp";
 
 export type OperationContext = {
   projectId: string;

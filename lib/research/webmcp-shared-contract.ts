@@ -132,6 +132,8 @@ export function buildSharedWebMcpTools(host: SharedWebMcpHost): PaperWebMcpTool[
   return PROJECT_WEBMCP_TOOL_NAMES.map((name) => sharedTool(host, name));
 }
 
+export const buildProjectWebMcpTools = buildSharedWebMcpTools;
+
 export function buildInstructionsWebMcpTools(host: SharedWebMcpHost): PaperWebMcpTool[] {
   return INSTRUCTIONS_WEBMCP_TOOL_NAMES.map((name) => sharedTool(host, name));
 }

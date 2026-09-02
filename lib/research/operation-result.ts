@@ -1,7 +1,7 @@
 /**
  * Shared domain result type for paper/CAS operations.
  *
- * WebMCP, MCP, and server actions share this vocabulary. No MCP SDK, no React.
+ * Browser WebMCP and server actions share this vocabulary. This module has no SDK or React dependency.
  */
 
 export const OPERATION_ERROR_CODES = {

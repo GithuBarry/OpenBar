@@ -1,6 +1,5 @@
 /**
- * Shared Zod + JSON Schema for overlapping WebMCP / HTTP MCP tools.
- * HTTP MCP adds a `project` field; page-scoped WebMCP omits it.
+ * Shared Zod + JSON Schema for browser WebMCP tools.
  */
 
 import { z } from "zod";
@@ -137,7 +136,7 @@ export const DOCUMENT_WEBMCP_SCHEMAS: Record<string, JsonSchemaObject> = {
   render_preview: objectSchema({ kind: { type: "string" }, id: { type: "string" } }, ["id"]),
 };
 
-/** Page-scoped paper tools that HTTP MCP may also expose later. */
+/** Page-scoped paper mutation tools. */
 export const PAPER_MUTATION_TOOL_NAMES = ["patch_paper_table"] as const;
 
 export const patchPaperTableZod = z.object({

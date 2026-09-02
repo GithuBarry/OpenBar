@@ -1,6 +1,6 @@
 /**
- * Shared TeX paper composition. Browser editor, MCP get_draft / update_draft,
- * and the file store all read and write this one format:
+ * Shared TeX paper composition. The browser editor, WebMCP tools, and the file
+ * store all read and write this one format:
  *
  *   \title{Project}
  *   \section{Abstract}

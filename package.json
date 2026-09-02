@@ -13,10 +13,7 @@
     "smoke": "tsx scripts/smoke-frontend.ts",
     "migrate:tex": "tsx scripts/migrate-to-tex.ts",
     "clean": "rm -rf .next tsconfig.tsbuildinfo",
-    "clean:all-generated": "rm -rf .next node_modules tsconfig.tsbuildinfo",
-    "mcp": "next dev -p 3001",
-    "mcp:http": "next dev -p 3001",
-    "mcp:stdio": "tsx mcp/server.ts"
+    "clean:all-generated": "rm -rf .next node_modules tsconfig.tsbuildinfo"
   },
   "dependencies": {
     "@citation-js/core": "0.8.2",
@@ -29,7 +26,6 @@
     "@codemirror/state": "^6.5.0",
     "@codemirror/view": "^6.36.0",
     "@lezer/highlight": "^1.2.1",
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@unified-latex/unified-latex-to-hast": "1.8.4",
     "@unified-latex/unified-latex-types": "^1.8.0",
     "@unified-latex/unified-latex-util-match": "^1.8.0",

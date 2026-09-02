@@ -1,5 +1,5 @@
 /**
- * Pure source-operation reducer shared by the editor, WebMCP, and HTTP MCP.
+ * Pure source-operation reducer shared by the editor, browser WebMCP, and server actions.
  */
 
 import { findMacroMatches, parseAnchorAttrs } from "@/lib/marker-codec";

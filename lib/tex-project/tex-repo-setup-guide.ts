@@ -1,6 +1,6 @@
 /**
- * Agent-facing TeX Git onboarding guide. Lives here so MCP can return it
- * without a browser WebMCP hop. Paper-page WebMCP does not register this.
+ * Agent-facing TeX Git onboarding guide for repository setup flows. Keep this
+ * separate from the ordinary paper-page WebMCP tools.
  */
 
 export const TEX_REPO_SETUP_KINDS = ["existing", "empty", "overleaf", "other-git"] as const;
@@ -10,7 +10,7 @@ const COMMON = {
   durableState:
     "Paper text and OpenBarry records live in .tex bodies or % OB-DATA comment envelopes. Git carries those files between OpenBarry and the remote.",
   credentials:
-    "Use SSH or the operating-system Git credential helper. Supply a credential-free remote URL. Keep tokens, passwords, private keys, and embedded URL credentials outside .tex, Git, MCP arguments, tool output, logs, and browser storage.",
+    "Use SSH or the operating-system Git credential helper. Supply a credential-free remote URL. Keep tokens, passwords, private keys, and embedded URL credentials outside .tex, Git, tool arguments, tool output, logs, and browser storage.",
 };
 
 const FLOWS: Record<TexRepoSetupKind, Record<string, unknown>> = {

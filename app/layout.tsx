@@ -50,7 +50,6 @@ export default function RootLayout({
     >
       <head>
         <ThemeScript />
-        <link rel="model-context" href="/api/mcp" />
       </head>
       <body className="min-h-screen antialiased">
         <Providers>{children}</Providers>

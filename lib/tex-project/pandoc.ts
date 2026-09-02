@@ -280,7 +280,7 @@ export function manuscriptFilePath(
   return { ok: true, abs };
 }
 
-/** Shared preview used by the server action and HTTP MCP `preview_conversion`. */
+/** Shared preview used by the server action and browser WebMCP setup tools. */
 export async function previewManuscriptConversion(input: {
   projectId: string;
   manuscriptDir: string;
