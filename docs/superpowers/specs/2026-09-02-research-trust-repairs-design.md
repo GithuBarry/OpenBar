@@ -22,6 +22,25 @@ mindmap nodes, navigation, focus, and visible feedback.
 The HTTP MCP endpoint, standalone MCP server, HTTP client scripts, HTTP-only
 authentication and session code, and HTTP transport documentation are removed.
 This keeps one tool contract and one live state model.
+The alternative of keeping HTTP MCP with a direct SDK server call has no work
+item under the approved WebMCP-only architecture.
+
+### Reduction pass
+
+- Verify the current Chrome WebMCP implementation before changing the
+  registration helper. When `document.modelContext.registerTool` accepts an
+  `AbortSignal` and `document.modelContext.getTools` reports the live catalog,
+  use that native lifecycle and remove the extra registry state. Keep only the
+  smallest adapter required by observed browser behavior.
+- Let Citation.js parse BibTeX after a temporary fixture corpus covers the
+  entry forms used by OpenBar. Keep OpenBar's small formatting helpers for
+  citation links and paper display, while removing the broad custom parser
+  fallback.
+- Scan callers before deleting compatibility exports and helpers. Remove
+  zero-caller code from the named action, mindmap, marker, derivation, layout,
+  HTML policy, store, document-body, obmd, TeX HAST, and TeX AST areas.
+  Preserve any helper that still supports a live feature or a durable file
+  format.
 
 ## Scope and decisions
 
@@ -107,9 +126,13 @@ label.
    code, and stale references from docs and About.
 6. Add the workspace WebMCP group on the home page and keep project-wide tools
    small and page-aware.
-7. Replace duplicated eval behavior with production calls and add focused
-   coverage for deletion, relinking, navigation, roles, metadata, tables,
-   and stale writes.
+7. Verify and simplify the native WebMCP registration lifecycle.
+8. Make Citation.js the BibTeX parser after fixture checks, then remove the
+   custom parser fallback.
+9. Remove zero-caller compatibility code after a repository-wide caller scan.
+10. Replace duplicated eval behavior with production calls and add focused
+    coverage for deletion, relinking, navigation, roles, metadata, tables,
+    and stale writes.
 
 ## Error handling
 
