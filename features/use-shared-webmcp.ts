@@ -35,6 +35,7 @@ export function useSharedProjectWebMcp(input: {
         modelContext.registerTool.bind(modelContext),
         tools,
         controller.signal,
+        "shared",
       );
       release = registration.release;
       if (!active || controller.signal.aborted) release();

@@ -261,14 +261,16 @@ async function executeSharedWebMcpTool(
         const expectedHash = requiredString(args, "expectedHash");
         if (typeof expectedHash !== "string") return expectedHash;
         const patch: ProjectMetadataPatch = { expectedHash };
+        let hasMetadataPatch = false;
         for (const key of ["title", "venue", "tagline", "label"] as const) {
           if (args[key] === undefined) continue;
           if (typeof args[key] !== "string") {
             return failResult("invalid_arguments", `${key} must be a string.`, { retryable: false });
           }
           patch[key] = args[key];
+          hasMetadataPatch = true;
         }
-        if (!Object.keys(patch).length) {
+        if (!hasMetadataPatch) {
           return failResult("invalid_arguments", "Provide title, venue, tagline, or label.", { retryable: false });
         }
         return okResult(await host.actions.updateProject(host.project, patch));
