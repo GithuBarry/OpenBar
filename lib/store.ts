@@ -22,6 +22,7 @@ import {
   readBibliography,
   readBibliographyRaw,
   readDocument,
+  readDocumentTex,
   readMindmapRecord,
   listMindmapRecords,
   deleteMindmapRecord,
@@ -437,6 +438,17 @@ export function listWiki(slug: string): WikiPage[] {
   return listDocumentIds(dir, "wiki")
     .map((id) => getWikiPage(slug, id))
     .filter((page): page is WikiPage => page !== null);
+}
+
+export function getWikiTex(slug: string, pageSlug: string): string | null {
+  try {
+    const safePageSlug = safeSegment(pageSlug, "wiki page slug");
+    const dir = projectDir(slug);
+    if (!hasTexProject(dir)) return null;
+    return readDocumentTex(dir, "wiki", safePageSlug);
+  } catch {
+    return null;
+  }
 }
 
 export function getWikiPage(slug: string, pageSlug: string): WikiPage | null {
