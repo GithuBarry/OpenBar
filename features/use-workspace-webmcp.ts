@@ -26,7 +26,7 @@ export function useWorkspaceWebMcp(host: WorkspaceWebMcpHost): void {
         modelContext,
         buildWorkspaceWebMcpTools(bound),
         controller.signal,
-        "shared",
+        "workspace",
       );
       release = registration.release;
       if (!active || controller.signal.aborted) release();

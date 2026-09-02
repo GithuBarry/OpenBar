@@ -2,10 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { getWebMcpCatalog, type WebMcpCatalogEntry, type WebMcpSurface } from "@/lib/research/webmcp-register";
+import {
+  getWebMcpCatalog,
+  listWebMcpDiagnostics,
+  type WebMcpCatalogEntry,
+  type WebMcpDiagnostic,
+  type WebMcpSurface,
+} from "@/lib/research/webmcp-register";
 import { cn } from "@/lib/utils";
 
 const SURFACE_LABEL: Record<WebMcpSurface, string> = {
+  workspace: "Workspace",
   shared: "Read project",
   paper: "Paper",
   mindmap: "Mindmap",
@@ -14,18 +21,23 @@ const SURFACE_LABEL: Record<WebMcpSurface, string> = {
   setup: "Setup",
 };
 
-const SURFACE_ORDER: WebMcpSurface[] = ["shared", "paper", "mindmap", "wiki", "instructions", "setup"];
+const SURFACE_ORDER: WebMcpSurface[] = ["workspace", "shared", "paper", "mindmap", "wiki", "instructions", "setup"];
 
 export function AgentReadyIndicator() {
   const [catalog, setCatalog] = useState<WebMcpCatalogEntry[]>([]);
+  const [diagnostics, setDiagnostics] = useState<WebMcpDiagnostic[]>([]);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let disposed = false;
+    let revision = 0;
     const sync = () => {
+      const requestRevision = ++revision;
       void getWebMcpCatalog().then((next) => {
-        if (!disposed) setCatalog(next);
+        if (disposed || requestRevision !== revision) return;
+        setCatalog(next);
+        setDiagnostics(listWebMcpDiagnostics());
       });
     };
     sync();
@@ -66,6 +78,12 @@ export function AgentReadyIndicator() {
   }, [catalog]);
 
   const ready = catalog.length > 0;
+  const issueCount = diagnostics.length;
+  const statusText = ready
+    ? `Agent ready · ${catalog.length} tools${issueCount ? ` · ${issueCount} issues` : ""}`
+    : issueCount
+      ? `Agent issue · ${issueCount}`
+      : "Agent waiting";
 
   return (
     <div ref={rootRef} className="relative">
@@ -74,10 +92,10 @@ export function AgentReadyIndicator() {
         className={cn("ob-agent-ready", ready && "ob-agent-ready-on")}
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
-        title={ready ? "WebMCP tools on this page" : "Waiting for WebMCP"}
+        title={issueCount ? "WebMCP registration issues" : ready ? "WebMCP tools on this page" : "Waiting for WebMCP"}
       >
         <span className="ob-agent-ready-dot" aria-hidden="true" />
-        {ready ? `Agent ready · ${catalog.length} tools` : "Agent waiting"}
+        {statusText}
       </button>
       {open && (
         <div className="ob-agent-ready-panel" role="dialog" aria-label="Available WebMCP tools">
@@ -93,8 +111,20 @@ export function AgentReadyIndicator() {
                 </ul>
               </div>
             ))
-          ) : (
+          ) : issueCount === 0 ? (
             <p className="ob-agent-ready-empty">No WebMCP host is attached. That is normal in Cursor preview.</p>
+          ) : null}
+          {issueCount > 0 && (
+            <div className="ob-agent-ready-group">
+              <p>Registration issues</p>
+              <ul>
+                {diagnostics.map((item) => (
+                  <li key={`${item.surface}:${item.name}`} title={item.error}>
+                    {item.name}: {item.error || "Registration failed"}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       )}

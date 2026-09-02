@@ -16,39 +16,41 @@ export function useInstructionsWebMcp(host: InstructionsWebMcpHost): void {
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
-    let release: (() => void) | undefined;
+    let releases: Array<() => void> = [];
     (async () => {
       const modelContext = await waitForModelContext(30_000, controller.signal);
       if (!active || controller.signal.aborted || !modelContext?.registerTool) return;
       const bound = hostRef.current;
-      const tools = [
-        ...buildInstructionsWebMcpTools(bound),
-        ...buildProjectSkillWebMcpTools({
-          project: bound.project,
-          actions: bound.sharedActions,
-          navigate: (href) => hostRef.current.navigate?.(href),
-          current: () => hostRef.current.current?.(),
-        }),
-        ...buildSetupWebMcpTools({
-          project: bound.project,
-          actions: bound.sharedActions,
-          navigate: (href) => hostRef.current.navigate?.(href),
-          current: () => hostRef.current.current?.(),
-        }),
-      ];
-      const registration = await registerWebMcpToolsIndependent(
-        modelContext,
-        tools,
-        controller.signal,
-        "instructions",
-      );
-      release = registration.release;
-      if (!active || controller.signal.aborted) release();
+      const sharedHost = {
+        project: bound.project,
+        actions: bound.sharedActions,
+        navigate: (href: string) => hostRef.current.navigate?.(href),
+        current: () => hostRef.current.current?.(),
+      };
+      const registrations = await Promise.all([
+        registerWebMcpToolsIndependent(
+          modelContext,
+          [
+            ...buildInstructionsWebMcpTools(bound),
+            ...buildProjectSkillWebMcpTools(sharedHost),
+          ],
+          controller.signal,
+          "instructions",
+        ),
+        registerWebMcpToolsIndependent(
+          modelContext,
+          buildSetupWebMcpTools(sharedHost),
+          controller.signal,
+          "setup",
+        ),
+      ]);
+      releases = registrations.map((registration) => registration.release);
+      if (!active || controller.signal.aborted) releases.forEach((release) => release());
     })();
     return () => {
       active = false;
       controller.abort();
-      release?.();
+      releases.forEach((release) => release());
     };
   }, [host.project]);
 }

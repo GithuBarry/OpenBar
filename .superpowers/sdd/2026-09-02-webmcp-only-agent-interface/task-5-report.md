@@ -2,13 +2,13 @@
 
 ## Status
 
-Implemented the native WebMCP lifecycle reduction for the current browser
-evidence. The hooks pass their own page AbortSignal directly to
-`document.modelContext.registerTool`. The helper keeps one small local catalog
-for page grouping and diagnostics, while Agent Ready reads
-`document.modelContext.getTools()` when that native catalog is available.
-Native signal cleanup owns the registered tool lifecycle. The active-owner,
-pending-registration, Chrome-controller, and execute-routing maps are gone.
+Implemented the native WebMCP lifecycle reduction with a small compatibility
+adapter for the lifecycle behavior that Chrome 152 cannot verify. The hooks
+pass their page AbortSignal directly to `document.modelContext.registerTool`.
+Each native callback carries a local active-owner tombstone, so a callback that
+outlives its page returns `capability_unavailable`. The local catalog remains
+the source of active OpenBar tools and uses native `getTools()` metadata when
+available. This keeps delayed native abort cleanup from restoring stale tools.
 
 All eight requested implementation files remain the only product files in the
 Task 5 change set. Existing edits in those files were preserved because the
@@ -128,6 +128,70 @@ native catalog reporting.
 - The first delegated inline smoke command stopped at the local runner IPC
   permission check. The controller rerun passed with the same lifecycle
   assertions under the available permissions.
+
+## Review fix round
+
+The review correctly identified that native lifecycle cleanup remained
+unverified in the installed browser. The fix retains the smallest state needed
+for that gap:
+
+- Each registration has one active-owner tombstone.
+- Native registration still receives the page AbortSignal unchanged.
+- The native execute callback checks the tombstone and page signal before
+  invoking the live page tool.
+- Agent Ready derives active names and groups from the local catalog, overlays
+  native metadata, and ignores delayed native entries after local release.
+- Agent Ready ignores out-of-order catalog reads and shows active registration
+  errors with their tool names and messages.
+- Workspace tools use the Workspace group. Instructions and project-skill
+  tools use Instructions. Conversion and setup tools use Setup.
+- Every instruction and setup registration keeps its release callback and the
+  shared page abort removes both groups.
+
+### Red lifecycle check
+
+Before the fix, the focused disposable check failed on the released native
+callback:
+
+```text
+AssertionError [ERR_ASSERTION]: a delayed native callback must fail after its page releases
+
+true !== false
+```
+
+### Green lifecycle and route-transition check
+
+The disposable check covered signal identity, stale callback execution,
+delayed native catalog entries, diagnostic lifetime, route-group removal, and
+separate Instructions and Setup groups.
+
+```text
+Task 5 lifecycle smoke passed
+```
+
+Exit code: `0`
+
+### Fix typecheck
+
+```text
+$ tsc --noEmit
+```
+
+Exit code: `0`
+
+### Focused structure and cleanup check
+
+```text
+features/use-workspace-webmcp.ts:29:        "workspace",
+features/instructions/use-instructions-webmcp.ts:38:          "instructions",
+features/instructions/use-instructions-webmcp.ts:44:          "setup",
+features/instructions/use-instructions-webmcp.ts:48:      if (!active || controller.signal.aborted) releases.forEach((release) => release());
+features/instructions/use-instructions-webmcp.ts:53:      releases.forEach((release) => release());
+components/shell/agent-ready.tsx:36:      const requestRevision = ++revision;
+lib/research/webmcp-register.ts:61:    "capability_unavailable",
+```
+
+`git diff --check` returned no output with exit code `0`.
 
 ## Commit
 
