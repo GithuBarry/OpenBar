@@ -129,6 +129,21 @@ $ tsx scripts/smoke-frontend.ts
 Frontend smoke ok: 4 routes × 2 themes + health/assets at http://127.0.0.1:3010
 ```
 
+Post-commit isolation check:
+
+```text
+$ tsc --noEmit
+app/about/page.tsx(9,34): error TS2307: Cannot find module '@/components/about-features'
+app/actions.ts(50,34): error TS2307: Cannot find module '@/lib/research/todo-map'
+...
+```
+
+The detached commit reports earlier integration gaps because prior commits
+already reference broader feature files that remain untracked in the shared
+checkout. The five reviewed missing-export errors are absent from this result.
+The current integrated checkout passes `pnpm typecheck`. Task 8 needs to commit
+or otherwise resolve those broader feature-file dependencies before release.
+
 The first smoke attempt found no listener on port 3010. Starting the existing
 development server restored the expected endpoint, and the full smoke check
 then passed.

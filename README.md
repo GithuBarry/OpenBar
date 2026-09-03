@@ -57,7 +57,7 @@ the project identity.
 | `get_project_state` | Read compact orientation: current location, paper title, section TODO counts, Primary Unplaced, maps, recent activity, skills, and the `AGENTS.md` path and hash. Use `detail=full` for instruction bodies and every TODO. |
 | `search_project` | Search paper headings and TeX, TODOs, comments, mindmap text, labels, refs, and wiki pages. Results include ids and hrefs for navigation. |
 | `navigate_project` | Move the visible project UI to a location returned by `get_project_state` or `search_project`. |
-| `update_project` | Update the project title, venue, tagline, or optional label with the current project hash. |
+| `update_project` | Update editable project metadata such as the icon, title, overview, research kind, color, venue, tagline, label, links, collaborators, or archive state with the current project hash. |
 
 ### Page-local tools
 
@@ -92,6 +92,18 @@ the visible actions of their page. Their project and document identity comes
 from the active page. TeX owns TODO identity, text, and completion. Each map
 owns its card placement, labels, refs, progress, and appearance.
 
+## Private published-paper demo
+
+The release package contains two real published papers from this workspace:
+Command-V and NoveltyBench. The private demo allowlist exposes those two
+projects with their real manuscript source, figures, maps, annotations, and
+project notes. Other workspace projects remain outside the demo image.
+
+The demo banner identifies shared disposable state. The `Reset demo` control
+restores both paper projects from their checked-in copies. The server also
+enforces the two-project allowlist and disables workspace administration,
+imports, uploads, instruction writes, and skill writes in demo mode.
+
 ## Main routes
 
 - `/` — workspace project list and workspace WebMCP tools
@@ -106,6 +118,9 @@ owns its card placement, labels, refs, progress, and appearance.
 
 ## Local setup
 
+The repository targets Node 22 from [.nvmrc](.nvmrc) and pins pnpm 11.9.0 in
+`package.json`.
+
 ```bash
 pnpm install
 pnpm dev
@@ -114,15 +129,27 @@ pnpm dev
 Set `OPENBARRY_CONTENT` to the mounted content directory when the repository
 content lives elsewhere. The local workspace runs against that directory.
 
+To seed the two published-paper projects into a disposable content directory:
+
+```bash
+OPENBARRY_CONTENT=/tmp/openbar-content pnpm seed:demo
+```
+
 ## Release checks
 
 ```bash
 pnpm typecheck
+pnpm test
+pnpm check:domain
 pnpm evals
 pnpm build
-OB_SMOKE_SLUG=<project-slug> pnpm smoke
+OB_SMOKE_SLUGS=command-v,noveltybench pnpm smoke
 git diff --check
 ```
+
+For the private Cloudflare Worker plus Container package, use the build,
+Workers Builds, optional local Container, Access, and custom-hostname steps in
+[deploy/README.md](deploy/README.md).
 
 ## Repository state
 
