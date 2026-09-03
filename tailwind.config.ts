@@ -30,13 +30,6 @@ const config: Config = {
         danger: withVar("--danger"),
         warn: withVar("--warn"),
         ok: withVar("--ok"),
-        m: {
-          empty: withVar("--m-empty"),
-          hypo: withVar("--m-hypo"),
-          draft: withVar("--m-draft"),
-          review: withVar("--m-review"),
-          final: withVar("--m-final"),
-        },
       },
       maxWidth: {
         prose: "72ch",

@@ -49,12 +49,15 @@ export function callerMayAccess(input: {
   token: string | undefined;
   cloudflareIdentity?: { email?: string } | null;
   cloudflareRequired?: boolean;
+  publicDemo?: boolean;
 }): boolean {
   if (input.token && bearerMatches(input.authorization, input.token)) return true;
 
   if (input.cloudflareRequired) {
     return Boolean(input.cloudflareIdentity);
   }
+
+  if (input.publicDemo) return true;
 
   // Browser request headers are caller-controlled. Production access stays
   // closed until a bearer token or verified Access identity is configured.

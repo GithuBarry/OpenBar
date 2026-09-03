@@ -61,7 +61,7 @@ the project identity, so calls use the live project context.
 | `get_project_state` | Return location, paper title, section TODO counts, Primary Unplaced, maps, recent activity, skills, and the `AGENTS.md` path and hash. Summary is the default. Full detail includes instruction bodies and every TODO. |
 | `search_project` | Search paper headings and TeX, TODO titles and text, comments, mindmap titles, labels, refs, shared TODO text, and wiki pages. Results include ids and hrefs for navigation. |
 | `navigate_project` | Navigate the visible project UI to a location returned by `get_project_state` or `search_project`. |
-| `update_project` | Update the project title, venue, tagline, or optional label with the current project hash. |
+| `update_project` | Update editable project metadata such as the icon, title, overview, research kind, color, venue, tagline, label, links, collaborators, or archive state with the current project hash. |
 
 Call `get_project_state` after `open_project`, then search or navigate to the
 specific work. `read_project_skill` is registered on the instructions page
@@ -168,8 +168,8 @@ Contract checks live in `scripts/webmcp-evals.ts` and run with
 
 | Prompt | Expected path |
 | --- | --- |
-| Where do we discuss dense queries? | `search_project` → `navigate_project` |
+| Where do we discuss the converter limits in Command-V? | `search_project` → `navigate_project` |
 | Which paper TODOs are still Unplaced on Primary? | `get_project_state` → `navigate_project` → `get_mindmap` |
 | Add a paper TODO and place it on this map. | paper `add_todo` → mindmap `place_todo_card` |
-| Mark the dense baseline complete. | `complete_todo` writes TeX and updates every bound card |
+| Mark a Command-V TODO complete. | `complete_todo` writes TeX and updates every bound card |
 | Record one new result while keeping the table structure. | `read_paper_section` → smallest `replace_paper_section` or source-range patch → `compile_paper` |

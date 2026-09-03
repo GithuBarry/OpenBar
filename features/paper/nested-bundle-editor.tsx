@@ -18,7 +18,7 @@ import {
 } from "@/lib/tex-project/source-bundle-format";
 import { cn } from "@/lib/utils";
 
-import { TexCodeMirror, type TexCodeMirrorHandle } from "./tex-codemirror";
+import { TexCodeMirror, type TexCodeMirrorHandle, type TexFocusContext } from "./tex-codemirror";
 import { accumulateHeadingCounts } from "./tex-source";
 
 type NestedItem =
@@ -133,13 +133,27 @@ function replaceFileSlice(source: string, filePath: string, localFrom: number, l
   return replaceBundlePart(source, filePath, nextBody);
 }
 
+function localFocusContext(
+  item: Extract<NestedItem, { kind: "file" }>,
+  context: TexFocusContext | null | undefined,
+): TexFocusContext | null {
+  if (!context || context.to <= item.virtualFrom || context.from >= item.virtualTo) return null;
+  return {
+    from: Math.max(0, context.from - item.virtualFrom),
+    to: Math.min(item.text.length, Math.max(0, context.to - item.virtualFrom)),
+    beforeLines: context.beforeLines,
+    afterLines: context.afterLines,
+  };
+}
+
 export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
   value: string;
   onChange: (value: string) => void;
   onScroll?: () => void;
   placeholder?: string;
   className?: string;
-}>(function NestedBundleEditor({ value, onChange, onScroll, placeholder, className }, ref) {
+  focusContext?: TexFocusContext | null;
+}>(function NestedBundleEditor({ value, onChange, onScroll, placeholder, className, focusContext = null }, ref) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const sourceRef = useRef(value);
   sourceRef.current = value;
@@ -243,6 +257,7 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
           focusedKeyRef.current = "pane";
         }}
         placeholder={placeholder}
+        focusContext={focusContext}
         className={className}
       />
     );
@@ -285,6 +300,7 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
               onFocus={() => {
                 focusedKeyRef.current = item.key;
               }}
+              focusContext={localFocusContext(item, focusContext)}
               onChange={(text) => commit(replaceFileSlice(sourceRef.current, item.filePath, item.localFrom, item.localTo, text))}
             />
           </div>

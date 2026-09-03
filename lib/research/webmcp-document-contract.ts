@@ -1,5 +1,5 @@
 /**
- * Wiki / notes / slides WebMCP tools from PLAN.md section 8.
+ * Wiki WebMCP tools.
  */
 
 import { failResult, okResult, type OperationResult } from "./operation-result";
@@ -10,21 +10,24 @@ import type { SharedWebMcpActions, CurrentLocation } from "./webmcp-shared-contr
 export { DOCUMENT_WEBMCP_TOOL_NAMES };
 
 export type DocumentWebMcpActions = {
-  readDocument: (project: string, kind: "wiki" | "notes" | "slides", id: string) => Promise<{ hash: string } | null>;
-  patchDocument: (project: string, kind: "wiki" | "notes" | "slides", id: string, baseHash: string, body: string) => Promise<{ hash: string }>;
+  readDocument: (project: string, kind: "wiki", id: string) => Promise<{ hash: string } | null>;
+  patchDocument: (project: string, kind: "wiki", id: string, baseHash: string, body: string) => Promise<{ hash: string }>;
   patchWikiPage: (
     project: string,
     id: string,
     baseHash: string,
     body: string,
     metadata: unknown,
-  ) => Promise<{ hash: string }>;
-  renderPreview: (project: string, kind: "wiki" | "notes" | "slides", id: string) => Promise<unknown>;
+  ) => Promise<{ hash: string } | { page: unknown; hash: string }>;
+  renderPreview: (project: string, kind: "wiki", id: string) => Promise<unknown>;
+  createWikiPage?: (project: string, slug: string, title: string, body?: string) => Promise<unknown>;
+  deleteWikiPage?: (project: string, slug: string, stateHash: string) => Promise<unknown>;
+  renameWikiPage?: (project: string, from: string, to: string, stateHash: string) => Promise<{ slug: string }>;
 };
 
 export type DocumentWebMcpHost = {
   project: string;
-  kind: "wiki" | "notes" | "slides";
+  kind: "wiki";
   documentId: string;
   actions: DocumentWebMcpActions;
   sharedActions: SharedWebMcpActions;
@@ -33,8 +36,12 @@ export type DocumentWebMcpHost = {
   current?: () => CurrentLocation | undefined;
 };
 
-const WIKI_WEBMCP_TOOL_NAMES = ["update_wiki_page"] as const;
-type DocumentWebMcpToolName = (typeof DOCUMENT_WEBMCP_TOOL_NAMES)[number] | (typeof WIKI_WEBMCP_TOOL_NAMES)[number];
+const WIKI_PAGE_TOOLS = ["update_wiki_page", "delete_wiki_page", "rename_wiki_page"] as const;
+const WIKI_INDEX_TOOLS = ["create_wiki_page"] as const;
+type DocumentWebMcpToolName =
+  | (typeof DOCUMENT_WEBMCP_TOOL_NAMES)[number]
+  | (typeof WIKI_PAGE_TOOLS)[number]
+  | (typeof WIKI_INDEX_TOOLS)[number];
 
 const WIKI_UPDATE_SCHEMA: JsonSchemaObject = {
   type: "object",
@@ -43,41 +50,70 @@ const WIKI_UPDATE_SCHEMA: JsonSchemaObject = {
     baseHash: { type: "string" },
     body: { type: "string" },
     title: { type: "string" },
-    summary: { type: "string" },
     tags: { type: "array", items: { type: "string" } },
-    refs: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          kind: { type: "string" },
-          id: { type: "string" },
-          label: { type: "string" },
-          url: { type: "string" },
-        },
-        required: ["kind", "id"],
-        additionalProperties: false,
-      },
-    },
-    pinnedForAgents: { type: "boolean" },
-    htmlMode: { type: "string", enum: ["static", "interactive"] },
   },
-  required: ["id", "baseHash", "body", "title", "summary", "tags", "refs", "pinnedForAgents"],
+  required: ["id", "baseHash", "body"],
   additionalProperties: false,
 };
 
+const WIKI_CREATE_SCHEMA: JsonSchemaObject = {
+  type: "object",
+  properties: {
+    title: { type: "string" },
+    slug: { type: "string" },
+    body: { type: "string" },
+  },
+  required: ["title"],
+  additionalProperties: false,
+};
+
+const WIKI_DELETE_SCHEMA: JsonSchemaObject = {
+  type: "object",
+  properties: { id: { type: "string" }, baseHash: { type: "string" } },
+  required: ["id", "baseHash"],
+  additionalProperties: false,
+};
+
+const WIKI_RENAME_SCHEMA: JsonSchemaObject = {
+  type: "object",
+  properties: { id: { type: "string" }, to: { type: "string" }, baseHash: { type: "string" } },
+  required: ["id", "to", "baseHash"],
+  additionalProperties: false,
+};
+
+function schemaFor(name: DocumentWebMcpToolName): JsonSchemaObject {
+  if (name === "update_wiki_page") return WIKI_UPDATE_SCHEMA;
+  if (name === "create_wiki_page") return WIKI_CREATE_SCHEMA;
+  if (name === "delete_wiki_page") return WIKI_DELETE_SCHEMA;
+  if (name === "rename_wiki_page") return WIKI_RENAME_SCHEMA;
+  return DOCUMENT_WEBMCP_SCHEMAS[name]!;
+}
+
+function wikiSlug(title: string, slug?: string): string {
+  const raw = (slug || title).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return raw || "page";
+}
+
 export function buildDocumentWebMcpTools(host: DocumentWebMcpHost): PaperWebMcpTool[] {
-  const names: DocumentWebMcpToolName[] = [
-    ...DOCUMENT_WEBMCP_TOOL_NAMES,
-    ...(host.kind === "wiki" ? WIKI_WEBMCP_TOOL_NAMES : []),
-  ];
+  const wiki = host.kind === "wiki";
+  const names: DocumentWebMcpToolName[] = wiki
+    ? host.documentId
+      ? [...DOCUMENT_WEBMCP_TOOL_NAMES, ...WIKI_PAGE_TOOLS, ...WIKI_INDEX_TOOLS]
+      : [...WIKI_INDEX_TOOLS]
+    : [...DOCUMENT_WEBMCP_TOOL_NAMES];
   return names.map((name) => ({
     name,
     title: name.replaceAll("_", " "),
-    description: `Primary ${host.kind} document operation ${name}. Project and document are fixed by the open page.`,
-    inputSchema: name === "update_wiki_page" ? WIKI_UPDATE_SCHEMA : DOCUMENT_WEBMCP_SCHEMAS[name]!,
+    description: name === "create_wiki_page"
+      ? "Create a Markdown wiki page. Actionable work still belongs in paper TODOs."
+      : name === "delete_wiki_page"
+        ? "Delete the open wiki page."
+        : name === "rename_wiki_page"
+          ? "Rename the open wiki page slug."
+          : `Primary ${host.kind} document operation ${name}. Project and document are fixed by the open page.`,
+    inputSchema: schemaFor(name),
     annotations: {
-      readOnlyHint: name !== "patch_document" && name !== "update_wiki_page",
+      readOnlyHint: name === "read_document" || name === "render_preview",
       untrustedContentHint: true,
     },
     execute: (args) => executeDocumentWebMcpTool(host, name, args),
@@ -92,21 +128,42 @@ async function executeDocumentWebMcpTool(
   const parsedArgs = parseWebMcpArgs(rawArgs);
   if (!parsedArgs.ok) return failResult("invalid_arguments", parsedArgs.message, { retryable: false });
   const args = parsedArgs.value;
-  const schema = name === "update_wiki_page" ? WIKI_UPDATE_SCHEMA : DOCUMENT_WEBMCP_SCHEMAS[name]!;
+  const schema = schemaFor(name);
   const unknown = unknownWebMcpArgument(args, schema);
   if (unknown) return failResult("invalid_arguments", `Unknown argument "${unknown}".`, { retryable: false });
   if (args.kind !== undefined && (typeof args.kind !== "string" || args.kind !== host.kind)) {
     return failResult("invalid_arguments", `kind must match the open ${host.kind} page.`, { retryable: false });
   }
-  if (typeof args.id !== "string" || !args.id.trim()) {
-    return failResult("invalid_arguments", "id must be a non-empty string.", { retryable: false });
-  }
-  if (args.id !== host.documentId) {
-    return failResult("invalid_arguments", `id must match the open ${host.kind} document.`, { retryable: false });
-  }
-  const kind = host.kind;
-  const id = args.id;
   try {
+    if (name === "create_wiki_page") {
+      if (host.kind !== "wiki") return failResult("capability_unavailable", "Open a wiki page to create wiki pages.", false);
+      if (!host.actions.createWikiPage) {
+        return failResult("capability_unavailable", "Wiki create is unavailable on this page.", false);
+      }
+      if (typeof args.title !== "string" || !args.title.trim()) {
+        return failResult("invalid_arguments", "title is required.", false);
+      }
+      const slug = wikiSlug(args.title, typeof args.slug === "string" ? args.slug : undefined);
+      const created = await host.actions.createWikiPage(
+        host.project,
+        slug,
+        args.title.trim(),
+        typeof args.body === "string" ? args.body : "",
+      );
+      host.navigate?.(`/p/${host.project}/wiki/${encodeURIComponent(slug)}`);
+      host.refresh?.();
+      return okResult(created);
+    }
+
+    if (typeof args.id !== "string" || !args.id.trim()) {
+      return failResult("invalid_arguments", "id must be a non-empty string.", { retryable: false });
+    }
+    if (host.documentId && args.id !== host.documentId) {
+      return failResult("invalid_arguments", `id must match the open ${host.kind} document.`, { retryable: false });
+    }
+    const kind = host.kind;
+    const id = args.id;
+
     switch (name) {
       case "read_document": {
         const document = await host.actions.readDocument(host.project, kind, id);
@@ -137,17 +194,40 @@ async function executeDocumentWebMcpTool(
         if (typeof args.baseHash !== "string" || !args.baseHash || typeof args.body !== "string") {
           return failResult("invalid_arguments", "baseHash and body are required.", false);
         }
-        const metadata = {
-          title: args.title,
-          summary: args.summary,
-          tags: args.tags,
-          refs: args.refs,
-          pinnedForAgents: args.pinnedForAgents,
-          ...(args.htmlMode === undefined ? {} : { htmlMode: args.htmlMode }),
-        };
+        const metadata: Record<string, unknown> = {};
+        if (typeof args.title === "string") metadata.title = args.title;
+        if (Array.isArray(args.tags)) metadata.tags = args.tags;
         const next = await host.actions.patchWikiPage(host.project, id, args.baseHash, args.body, metadata);
         host.refresh?.();
-        return okResult(next, { diskHash: next.hash });
+        const hash = "hash" in next ? next.hash : undefined;
+        return okResult(next, hash ? { diskHash: hash } : undefined);
+      }
+      case "delete_wiki_page": {
+        if (!host.actions.deleteWikiPage) {
+          return failResult("capability_unavailable", "Wiki delete is unavailable on this page.", false);
+        }
+        if (typeof args.baseHash !== "string" || !args.baseHash) {
+          return failResult("invalid_arguments", "baseHash is required.", false);
+        }
+        await host.actions.deleteWikiPage(host.project, id, args.baseHash);
+        host.navigate?.(`/p/${host.project}/wiki`);
+        host.refresh?.();
+        return okResult({ slug: id });
+      }
+      case "rename_wiki_page": {
+        if (!host.actions.renameWikiPage) {
+          return failResult("capability_unavailable", "Wiki rename is unavailable on this page.", false);
+        }
+        if (typeof args.to !== "string" || !args.to.trim()) {
+          return failResult("invalid_arguments", "to must be a non-empty slug.", false);
+        }
+        if (typeof args.baseHash !== "string" || !args.baseHash) {
+          return failResult("invalid_arguments", "baseHash is required.", false);
+        }
+        const renamed = await host.actions.renameWikiPage(host.project, id, args.to.trim(), args.baseHash);
+        host.navigate?.(`/p/${host.project}/wiki/${encodeURIComponent(renamed.slug)}`);
+        host.refresh?.();
+        return okResult(renamed);
       }
     }
   } catch (error) {
@@ -155,7 +235,7 @@ async function executeDocumentWebMcpTool(
     if (/hash|conflict|stale/i.test(message)) {
       return failResult("stale_disk_state", message, { retryable: true });
     }
-    if (/unknown .*document|invalid path|not found/i.test(message)) {
+    if (/unknown .*document|invalid path|not found|already exists/i.test(message)) {
       return failResult("invalid_path", message, { retryable: false });
     }
     if (/forbidden|unauthorized|permission|access denied/i.test(message)) {

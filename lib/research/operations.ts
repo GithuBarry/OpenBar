@@ -30,26 +30,28 @@ export type AddTodoOperation = {
   type: "add_todo";
   from: number;
   to: number;
+  title?: string;
   text: string;
   id?: string;
-  due?: string;
-  priority?: "p0" | "p1" | "p2" | "p3";
-  owner?: string;
 };
 
 export type UpdateTodoOperation = {
   type: "update_todo";
   id: string;
   expectedSourceHash?: string;
+  title?: string;
   text?: string;
-  due?: string | null;
-  priority?: "p0" | "p1" | "p2" | "p3" | null;
-  owner?: string | null;
-  status?: "open" | "in_progress" | "blocked" | "done";
+  completed?: boolean;
 };
 
 export type CompleteTodoOperation = {
   type: "complete_todo";
+  id: string;
+  expectedSourceHash?: string;
+};
+
+export type ReopenTodoOperation = {
+  type: "reopen_todo";
   id: string;
   expectedSourceHash?: string;
 };
@@ -59,27 +61,13 @@ export type AddCommentOperation = {
   from: number;
   to: number;
   text: string;
+  /** Free project vocabulary such as question, reviewer, or result. */
+  kind?: string;
   id?: string;
 };
 
-export type RenameHeadingOperation = {
-  type: "rename_heading";
-  sectionId: string;
-  title: string;
-};
-
-export type MoveSectionOperation = {
-  type: "move_section";
-  sectionId: string;
-  afterId?: string | null;
-};
-
-export type ConvertDocumentOperation = {
-  type: "convert_document";
-  planId: string;
-  fromFormat: "tex" | "markdown" | "html";
-  toFormat: "tex" | "markdown" | "html";
-  acknowledgeLoss: boolean;
+export type AssignTodoIdsOperation = {
+  type: "assign_todo_ids";
 };
 
 export type SourceOperation =
@@ -87,10 +75,9 @@ export type SourceOperation =
   | AddTodoOperation
   | UpdateTodoOperation
   | CompleteTodoOperation
+  | ReopenTodoOperation
   | AddCommentOperation
-  | RenameHeadingOperation
-  | MoveSectionOperation
-  | ConvertDocumentOperation;
+  | AssignTodoIdsOperation;
 
 export type SourcePatch = {
   filePath: string;

@@ -66,7 +66,7 @@ test("workspace WebMCP lists, searches, and opens projects", async () => {
   let navigated = "";
   const tools = buildWorkspaceWebMcpTools({
     actions: {
-      listProjects: async () => [{ slug: "dense-retrieval", title: "Dense retrieval under load", href: "/p/dense-retrieval/paper" }],
+      listProjects: async () => [{ slug: "command-v", title: "Command-V", href: "/p/command-v/paper" }],
       searchProjects: async (query) => [{ slug: query, title: query, href: `/p/${query}/paper` }],
       openProject: async (slug) => ({ slug, title: slug, href: `/p/${slug}/paper` }),
     },
@@ -75,8 +75,8 @@ test("workspace WebMCP lists, searches, and opens projects", async () => {
   assert.deepEqual(tools.map((tool) => tool.name), ["list_projects", "search_projects", "open_project"]);
   const open = tools.find((tool) => tool.name === "open_project");
   assert.ok(open);
-  const result = await open.execute({ slug: "dense-retrieval" }) as { ok?: boolean };
-  assert.equal(navigated, "/p/dense-retrieval/paper");
+  const result = await open.execute({ slug: "command-v" }) as { ok?: boolean };
+  assert.equal(navigated, "/p/command-v/paper");
   assert.equal(result.ok, true);
 });
 

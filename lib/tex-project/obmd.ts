@@ -2,10 +2,9 @@ import { FILE_SEGMENT, safeAssetPath, safeFileSegment } from "./codec";
 
 /** OpenBarry Markdown (OBMD) <-> deliberately constrained TeX conversion.
  *
- * Editor-path converter for wiki/notes/slides. Not Pandoc: unknown TeX becomes
+ * Editor-path converter for wiki Markdown. Not Pandoc: unknown TeX becomes
  * a raw-TeX island so a save cannot silently flatten TikZ, templates, or
- * custom environments. Pandoc is the cross-format engine; this converter stays
- * until wiki/notes fixture parity is complete.
+ * custom environments.
  */
 
 interface FigureSpec {
@@ -225,7 +224,7 @@ function renderInline(input: string): string {
   source = source.replace(/`([^`]+)`/g, (_all, code: string) => protect(`\\texttt{${escapeTex(code)}}`));
   source = source.replace(/\$\$([\s\S]+?)\$\$/g, (_all, math: string) => protect(`\\[${math}\\]`));
   source = source.replace(/\$([^$\n]+)\$/g, (_all, math: string) => protect(`$${math}$`));
-  source = source.replace(/\{\?\s*(hypothesized|notfinal|placeholder|verify|cite|citation-needed|todo)\b\s*:?\s*([^}]*)\}/gi, (_all, kind: string, body: string) => {
+  source = source.replace(/\{\?\s*(notfinal|placeholder|verify|cite|citation-needed|todo)\b\s*:?\s*([^}]*)\}/gi, (_all, kind: string, body: string) => {
     return protect(`\\obmarker{${escapeTex(kind.toLowerCase())}}{${renderInline(body.trim())}}`);
   });
   source = source.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_all, label: string, url: string) => protect(`\\href{${escapeTexUrl(url)}}{${renderInline(label)}}`));

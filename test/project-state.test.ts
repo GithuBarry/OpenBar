@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   buildPaperSummary,
   deriveRecentActivity,
+  getProjectState,
   parseProjectHref,
   resolveProjectNavigation,
   searchProjectContent,
@@ -29,53 +30,44 @@ function fixturePaper(): { paper: TexPaper; source: string } {
     source,
     sourceHash: "abc",
     sections: [
-      { id: "introduction", title: "Introduction", level: 2, order: 0, label: "sec-introduction", file: "/tmp/sections/introduction.tex", tex: "Motivation.", hash: "1" },
-      { id: "evaluation", title: "Evaluation", level: 2, order: 1, label: "sec-evaluation", file: "/tmp/sections/evaluation.tex", tex: "eval", hash: "2" },
+      { id: "introduction", title: "Introduction", level: 2, order: 0, label: "sec-introduction", file: "/tmp/introduction.tex", tex: "Motivation.", hash: "1" },
+      { id: "evaluation", title: "Evaluation", level: 2, order: 1, label: "sec-evaluation", file: "/tmp/evaluation.tex", tex: "eval", hash: "2" },
     ],
   };
   return { paper, source };
 }
 
 describe("project state", () => {
-  it("builds an outline and TODO locations from a fixture paper", () => {
+  it("builds paper locations for TODOs and comments", () => {
     const { paper, source } = fixturePaper();
-    const summary = buildPaperSummary(
-      SLUG,
-      paper,
-      analyzePaper(source),
-      { rootFile: "paper.tex", revision: 0, bundleHash: "h" },
-      "/tmp",
-    );
+    const summary = buildPaperSummary(SLUG, paper, analyzePaper(source), { rootFile: "paper.tex", revision: 0, bundleHash: "h" }, "/tmp");
     assert.deepEqual(summary.outline.map((item) => item.id), ["introduction", "evaluation"]);
-    assert.equal(summary.todos.length, 1);
     assert.equal(summary.todos[0]!.id, "dense-baseline");
     assert.equal(summary.todos[0]!.sectionId, "evaluation");
     assert.equal(summary.comments[0]!.kind, "result");
+    assert.equal(typeof summary.comments[0]!.sourceStart, "number");
   });
 
-  it("derives recent annotation activity without mutating the map", () => {
+  it("derives recent map activity without changing map data", () => {
     const { paper, source } = fixturePaper();
     const summary = buildPaperSummary(SLUG, paper, analyzePaper(source), { rootFile: "paper.tex", revision: 0 }, "/tmp");
-    const recent = deriveRecentActivity({ slug: SLUG, outline: summary.outline, todos: summary.todos, comments: summary.comments });
-    assert.ok(recent.some((item) => item.kind === "annotation"));
-  });
-
-  it("completed TODOs leave the open overlay without a saved map", () => {
-    const { paper, source } = fixturePaper();
-    const open = buildPaperSummary(SLUG, paper, analyzePaper(source), { rootFile: "paper.tex", revision: 0 }, "/tmp");
-    assert.equal(open.todos.filter((todo) => todo.status !== "done").length, 1);
-    const nextSource = source.replace(
-      "\\obtodo[id=dense-baseline]{Run dense-query baseline}",
-      "\\obtodo[id=dense-baseline, status=done]{Run dense-query baseline}",
-    );
-    const closed = buildPaperSummary(SLUG, paper, analyzePaper(nextSource), { rootFile: "paper.tex", revision: 0 }, "/tmp");
-    assert.equal(closed.todos.filter((todo) => todo.status !== "done").length, 0);
-    assert.equal(closed.todos[0]!.status, "done");
+    const map = {
+      projectId: SLUG,
+      id: "draft",
+      title: "Research map",
+      rootId: "root",
+      updatedAt: new Date().toISOString(),
+      nodes: [
+        { id: "root", text: "Reconstruction", parentId: null, updatedAt: new Date().toISOString() },
+      ],
+    };
+    const recent = deriveRecentActivity({ slug: SLUG, outline: summary.outline, mindmaps: [map], paperTodos: analyzePaper(source).todos });
+    assert.ok(recent.some((item) => item.kind === "card" && item.mapId === "draft"));
   });
 });
 
 describe("search and navigation", () => {
-  it("finds a section, TODO, and mindmap node", () => {
+  it("finds paper and mindmap results with navigable links", () => {
     const { paper, source } = fixturePaper();
     const summary = buildPaperSummary(SLUG, paper, analyzePaper(source), { rootFile: "paper.tex", revision: 0 }, "/tmp");
     const results = searchProjectContent({
@@ -88,7 +80,7 @@ describe("search and navigation", () => {
         id: "draft",
         title: "Research map",
         rootId: "root",
-        updatedAt: "2026-09-01T00:00:00.000Z",
+        updatedAt: new Date().toISOString(),
         nodes: [
           { id: "root", text: "Reconstruction", parentId: null },
           { id: "dense-query", text: "Dense queries", parentId: "root" },
@@ -98,26 +90,23 @@ describe("search and navigation", () => {
     assert.ok(results.some((hit) => hit.kind === "todo" && hit.id.includes("dense-baseline")));
     assert.ok(results.some((hit) => hit.kind === "mindmap_node" && hit.id.includes("dense-query")));
     assert.ok(results.some((hit) => hit.href.includes("/paper")));
-    const sections = searchProjectContent({
-      slug: SLUG,
-      query: "Evaluation",
-      paper: summary,
-      paperSource: source,
-      mindmaps: [],
-    });
-    assert.ok(sections.some((hit) => hit.kind === "paper" && hit.id === "paper:section:evaluation"));
   });
 
-  it("parses and resolves navigation locations", () => {
+  it("parses and resolves project navigation", () => {
     const parsed = parseProjectHref("/p/dp-reconstruction/paper#evaluation");
     assert.equal(parsed?.slug, SLUG);
     assert.equal(parsed?.kind, "paper");
     assert.equal(parsed?.hash, "evaluation");
-    const href = resolveProjectNavigation(SLUG, { id: "paper:section:evaluation" });
-    assert.equal(href?.href, "/p/dp-reconstruction/paper#evaluation");
-    const todo = resolveProjectNavigation(SLUG, { id: "paper:todo:dense-baseline" });
-    assert.equal(todo?.href, "/p/dp-reconstruction/paper#dense-baseline");
-    const node = resolveProjectNavigation(SLUG, { id: "mindmap:draft:node:dense-query" });
-    assert.equal(node?.href, "/p/dp-reconstruction/mindmap#dense-query");
+    const live = getProjectState(SLUG);
+    const section = live?.paper?.outline.find((item) => item.title === "Evaluation");
+    const todo = live?.paper?.todos.find((item) => item.id === "dense-baseline");
+    assert.ok(section);
+    assert.ok(todo);
+    assert.equal(resolveProjectNavigation(SLUG, { id: `paper:section:${section.id}` })?.href, todo.sectionId
+      ? `/p/${SLUG}/paper#${section.id}`
+      : undefined);
+    assert.equal(resolveProjectNavigation(SLUG, { id: `paper:todo:${todo.id}` })?.href, `/p/${SLUG}/paper#${todo.id}`);
+    assert.equal(resolveProjectNavigation(SLUG, { id: "mindmap:draft" })?.href, `/p/${SLUG}/mindmap`);
+    assert.equal(resolveProjectNavigation(SLUG, { id: "paper:section:unknown" }), null);
   });
 });

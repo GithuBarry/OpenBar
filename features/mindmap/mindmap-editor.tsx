@@ -5,13 +5,11 @@ import katex from "katex";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, useTransition, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
-  ChevronDown,
-  ChevronRight,
-  ChevronsDown,
-  ChevronsUp,
   AlertCircle,
   CalendarDays,
   Check,
+  ChevronDown,
+  ChevronRight,
   CircleHelp,
   Keyboard,
   LoaderCircle,
@@ -21,22 +19,18 @@ import {
   PanelRightOpen,
   Plus,
   Redo2,
-  RefreshCw,
   Trash2,
   Undo2,
   X,
   ZoomIn,
 } from "lucide-react";
 
-import { getMindmapAction, saveMindmapAction } from "@/app/actions";
+import { ensurePaperCommentAction, getMindmapAction, insertPaperTodoAtSectionAction, persistPaperTodoAction, removePaperTodoAction, saveMindmapAction } from "@/app/actions";
 import { sharedWebMcpActions } from "@/features/webmcp-actions";
 import { PaperActivityRail } from "@/features/mindmap/paper-activity-rail";
-import { HtmlDocumentFrame } from "@/features/document/html-frame";
-import { htmlFrameCapabilities } from "@/lib/html-policy";
 import {
   cloneMindmap,
   createMindmapSession,
-  descendantsOf,
   indexMindmap,
   mapSignature,
   mindmapReducer,
@@ -56,35 +50,39 @@ import {
   nodeDimensions,
 } from "@/lib/mindmap/layout";
 import { applyMindmapDrop, resolveMindmapDrop } from "@/lib/mindmap/drop-targets";
-import { mindmapDiskHash } from "@/lib/mindmap/v2";
-import { isDerivedEvidenceNode } from "@/lib/mindmap-index";
-import { pruneEvidenceNodes } from "@/lib/mindmap-index";
-import { ARTIFACT_KINDS, artifactHref } from "@/lib/research/artifact-link";
+import { mindmapDiskHash } from "@/lib/mindmap/mindmap";
 import { cn } from "@/lib/utils";
-import type { ArtifactKind, ArtifactRef, Maturity, Mindmap, MindmapNode, MindmapNodeShape } from "@/lib/types";
-import type { ProjectState } from "@/lib/research/project-state";
+import { artifactHref, isArtifactKind } from "@/lib/research/artifact-link";
+import { availableTodoCandidates } from "@/lib/research/map-todo-candidates";
+import { safeUrl } from "@/lib/safe-url";
+import {
+  clampMindmapLabels,
+  isPrimaryMindmap,
+  MAX_MINDMAP_LABEL_CHARS,
+  MAX_MINDMAP_LABELS,
+} from "@/lib/research/webmcp-mindmap-contract";
+import type { ArtifactKind, ArtifactRef, Mindmap, MindmapNode } from "@/lib/types";
+import type { ProjectState, ProjectStateComment } from "@/lib/research/project-state";
+import {
+  joinMindmapCardContent,
+  mindmapCardContentForNode,
+  mindmapCardContentForTodo,
+  nodeActivityAt,
+  ordinaryMindmapCardContent,
+  paperSectionRefs,
+  reconcileTodos,
+  todoCounts,
+  todosFromPaperState,
+} from "@/lib/research/todo-map";
 
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 2.5;
 const AUTOSAVE_DELAY = 700;
 const LAST_WEEK_DAYS = 7;
-
-const MATURITY_ACCENT: Record<Maturity, string> = {
-  empty: "rgb(var(--m-empty))",
-  hypothesized: "rgb(var(--m-hypo))",
-  draft: "rgb(var(--m-draft))",
-  review: "rgb(var(--m-review))",
-  final: "rgb(var(--m-final))",
-};
-
-const COLOR_SWATCHES = [
-  { value: "", label: "Automatic" },
-  { value: "#785ef0", label: "Violet" },
-  { value: "#648fff", label: "Blue" },
-  { value: "#dc267f", label: "Pink" },
-  { value: "#fe6100", label: "Orange" },
-  { value: "#ffb000", label: "Gold" },
-] as const;
+const GRID_SIZE = 32;
+const MIN_MINDMAP_DEPTH = 2;
+const DEFAULT_MINDMAP_DEPTH = 3;
+const MAX_MINDMAP_DEPTH = 5;
 
 type Point = { x: number; y: number };
 type Dimensions = { width: number; height: number };
@@ -124,21 +122,19 @@ export function MindmapEditor({
   initialMindmap,
   draftMindmap,
   paperState,
-  artifactSuggestions = [],
 }: {
   project: string;
   initialMindmap: Mindmap;
   /** A non-destructive fallback the user can explicitly restore from. */
   draftMindmap?: Mindmap | null;
   paperState?: ProjectState | null;
-  artifactSuggestions?: ArtifactRef[];
 }) {
   const router = useRouter();
   const [session, dispatch] = useReducer(mindmapReducer, initialMindmap, createMindmapSession);
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const { mindmap, selectedId, past: history, future, revision } = session;
-  const persistedDiskHashRef = useRef(initialMindmap.diskHash ?? mindmapDiskHash(initialMindmap));
+  const persistedDiskHashRef = useRef(mindmapDiskHash(initialMindmap));
   const [activitySince, setActivitySince] = useState<string | null>(null);
 
   const webMcpSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -187,39 +183,48 @@ export function MindmapEditor({
 
   useMindmapWebMcp({
     sharedActions: sharedWebMcpActions,
-    getSnapshot: () => ({
-      project,
-      mapId: mindmap.id || "draft",
-      revision: sessionRef.current.revision,
-      diskHash: persistedDiskHashRef.current,
-      rootId: sessionRef.current.mindmap.rootId,
-      nodes: sessionRef.current.mindmap.nodes.map((node) => ({
-        id: node.id,
-        parentId: node.parentId,
-        text: node.text,
-        collapsed: node.collapsed,
-        contentFormat: node.contentFormat,
-        maturity: node.maturity,
-        shape: node.shape,
-        color: node.color,
-        refs: node.refs,
-        metadata: node.metadata,
-        tags: node.tags,
-        progress: node.progress,
-        createdAt: node.createdAt,
-        updatedAt: node.updatedAt,
-      })),
-      selectedId: sessionRef.current.selectedId,
-      activitySince: activitySince || undefined,
-    }),
-    focusNode: (id) => dispatch({ type: "select", id }),
-    addNode: async (parentId, text, expectedRevision) => {
-      const id = newNodeId();
-      await persistWebMcpMutation({ type: "add-node", parentId, id, text }, expectedRevision);
-      return id;
+    getSnapshot: () => {
+      const current = sessionRef.current.mindmap;
+      return {
+        project,
+        mapId: current.id || "draft",
+        title: current.title,
+        role: current.role,
+        isPrimary: isPrimaryMindmap(current),
+        revision: sessionRef.current.revision,
+        diskHash: persistedDiskHashRef.current,
+        rootId: current.rootId,
+        nodes: current.nodes.map((node) => {
+          const content = cardContentForNodeWithPaperState(node, paperState);
+          return {
+            id: node.id,
+            parentId: node.parentId,
+            title: content.title,
+            text: content.body,
+            collapsed: node.collapsed,
+            contentFormat: node.contentFormat,
+            todoId: node.todoId,
+            shape: node.shape,
+            color: node.color,
+            refs: node.refs,
+            metadata: node.metadata,
+            tags: node.tags,
+            progress: node.progress,
+            createdAt: node.createdAt,
+            updatedAt: node.updatedAt,
+            completed: Boolean(node.todoId && paperTodoFor(node, paperState)?.completed),
+          };
+        }),
+        selectedId: sessionRef.current.selectedId,
+        activitySince: activitySince || undefined,
+      };
     },
-    renameNode: async (id, text, expectedRevision) => {
-      await persistWebMcpMutation({ type: "edit-text", id, text }, expectedRevision);
+    focusNode: (id) => dispatch({ type: "select", id }),
+    hasTodo: (todoId) => Boolean(paperState?.paper?.todos.some((todo) => todo.id === todoId)),
+    addNode: async (parentId, text, expectedRevision, title) => {
+      const id = newNodeId();
+      await persistWebMcpMutation({ type: "add-node", parentId, id, text, title }, expectedRevision);
+      return id;
     },
     moveNode: async (id, parentId, beforeId, afterId, expectedRevision) => {
       await persistWebMcpMutation({ type: "reparent", id, parentId, beforeId, afterId }, expectedRevision);
@@ -233,30 +238,92 @@ export function MindmapEditor({
         return !node || Boolean(node.collapsed) === collapsed ? null : { type: "collapse", id };
       }, expectedRevision);
     },
-    setPresentation: async (id, patch, expectedRevision) => {
+    patchNode: async (id, patch, expectedRevision) => {
+      const nodePatch: {
+        title?: string;
+        text?: string;
+        tags?: string[];
+        refs?: ArtifactRef[];
+        metadata?: Record<string, unknown>;
+        contentFormat?: MindmapNode["contentFormat"];
+        shape?: MindmapNode["shape"];
+        color?: string;
+        progress?: number;
+      } = {};
+      if (patch.title !== undefined) nodePatch.title = patch.title;
+      if (patch.text !== undefined) nodePatch.text = patch.text;
+      if (patch.labels) nodePatch.tags = patch.labels;
+      if (patch.refs) nodePatch.refs = patch.refs;
+      if (patch.metadata !== undefined) nodePatch.metadata = patch.metadata || undefined;
+      if (patch.presentation) {
+        if (patch.presentation.contentFormat !== undefined) nodePatch.contentFormat = patch.presentation.contentFormat;
+        if (patch.presentation.shape !== undefined) nodePatch.shape = patch.presentation.shape;
+        if (patch.presentation.color !== undefined) nodePatch.color = patch.presentation.color;
+        if (patch.presentation.progress === null) nodePatch.progress = undefined;
+        else if (patch.presentation.progress !== undefined) nodePatch.progress = patch.presentation.progress;
+      }
+      if (Object.keys(nodePatch).length === 0) return;
       await persistWebMcpMutation((current) => {
         const node = indexMindmap(current.mindmap).nodeById.get(id);
-        if (!node || Object.entries(patch).every(([key, value]) => node[key as keyof typeof node] === value)) return null;
-        return { type: "patch-node", id, patch };
-      }, expectedRevision);
-    },
-    linkArtifact: async (id, kind, artifactId, label, url, expectedRevision) => {
-      await persistWebMcpMutation((current) => {
-        const node = indexMindmap(current.mindmap).nodeById.get(id);
-        if (!node) return null;
-        return {
-          type: "patch-node",
-          id,
-          patch: {
-            refs: [
-              ...(node.refs || []).filter((ref) => !(ref.kind === kind && ref.id === artifactId)),
-              { kind, id: artifactId, ...(label?.trim() ? { label: label.trim() } : {}), ...(url ? { url } : {}) },
-            ],
-          },
-        };
+        return node ? { type: "patch-node", id, patch: nodePatch } : null;
       }, expectedRevision);
     },
     setActivityHighlight: (since) => setActivitySince(since || null),
+    placeTodoCard: async (todoId, parentId, expectedRevision) => {
+      const existing = sessionRef.current.mindmap.nodes.find((node) => node.todoId === todoId);
+      if (existing) {
+        dispatch({ type: "select", id: existing.id });
+        return existing.id;
+      }
+      const id = newNodeId();
+      await persistWebMcpMutation({ type: "add-node", parentId, id, todoId }, expectedRevision);
+      return id;
+    },
+    convertCardToTodo: async (id, sectionTitle, expectedRevision) => {
+      const node = indexMindmap(sessionRef.current.mindmap).nodeById.get(id);
+      if (!node) throw new Error("Unknown card.");
+      if (expectedRevision !== undefined && sessionRef.current.revision !== expectedRevision) {
+        throw Object.assign(
+          new Error(`Live mindmap revision is ${sessionRef.current.revision}, not ${String(expectedRevision)}.`),
+          { code: "stale_live_state" },
+        );
+      }
+      const result = await insertPaperTodoAtSectionAction(
+        project,
+        sectionTitle,
+        mindmapTodoPayload(node).text,
+        paperState?.paper?.sourceHash,
+        mindmapTodoPayload(node).title,
+      );
+      if (!result.ok) throw new Error(result.message);
+      try {
+        await persistWebMcpMutation({ type: "bind-todo", id, todoId: result.id }, expectedRevision);
+      } catch (error) {
+        const rollbackHash = result.diskHash ?? result.value.bundleHash;
+        const rollback = await removePaperTodoAction(project, result.id, rollbackHash);
+        if (!rollback.ok) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`Mindmap save failed: ${message} Paper TODO rollback failed: ${rollback.message}`);
+        }
+        throw error;
+      }
+      router.refresh();
+      return result.id;
+    },
+    completeTodo: async (todoId) => {
+      const result = await persistPaperTodoAction(project, { type: "complete_todo", id: todoId }, paperState?.paper?.sourceHash);
+      if (!result.ok) throw new Error(result.message);
+      router.refresh();
+    },
+    reopenTodo: async (todoId) => {
+      const result = await persistPaperTodoAction(project, { type: "reopen_todo", id: todoId }, paperState?.paper?.sourceHash);
+      if (!result.ok) throw new Error(result.message);
+      router.refresh();
+    },
+    focusTodoInPaper: (todoId) => router.push(`/p/${project}/paper#${encodeURIComponent(todoId)}`),
+    renameMap: async (title, expectedRevision) => {
+      await persistWebMcpMutation({ type: "rename-map", title }, expectedRevision);
+    },
     navigate: (href) => {
       try {
         const url = new URL(href, window.location.origin);
@@ -280,6 +347,7 @@ export function MindmapEditor({
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [view, setView] = useState<View>({ x: 36, y: 36, scale: 1 });
+  const [maxDepth, setMaxDepth] = useState(DEFAULT_MINDMAP_DEPTH);
   const viewRef = useRef(view);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const isSpacePressedRef = useRef(false);
@@ -289,37 +357,115 @@ export function MindmapEditor({
   const [savedSignature, setSavedSignature] = useState(() => mapSignature(initialMindmap));
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const [artifactKind, setArtifactKind] = useState<ArtifactKind>("wiki-page");
-  const [artifactId, setArtifactId] = useState("");
-  const [artifactLabel, setArtifactLabel] = useState("");
+  const [convertSection, setConvertSection] = useState("");
+  const [labelDraft, setLabelDraft] = useState("");
+  const [externalDraft, setExternalDraft] = useState({ url: "", label: "" });
+  const [mapTitleDraft, setMapTitleDraft] = useState(initialMindmap.title || "");
+  const [metadataDraft, setMetadataDraft] = useState("");
+  const [metadataError, setMetadataError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setMapTitleDraft(mindmap.title || "");
+  }, [mindmap.title]);
+
+  useEffect(() => {
+    setLabelDraft("");
+    setExternalDraft({ url: "", label: "" });
+    setConvertSection("");
+    const node = mindmap.nodes.find((item) => item.id === selectedId);
+    setMetadataDraft(node?.metadata ? JSON.stringify(node.metadata, null, 2) : "");
+    setMetadataError(null);
+  }, [mindmap.nodes, selectedId]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const interactionRef = useRef<Interaction | null>(null);
   const pendingMoveRef = useRef<{ id: string; x: number; y: number } | null>(null);
+  const pendingTodoOpenRef = useRef<number | null>(null);
   const editBaselineRef = useRef<Mindmap | null>(null);
   const didFitRef = useRef(false);
+  const previousMaxDepthRef = useRef(DEFAULT_MINDMAP_DEPTH);
   const viewAnimRef = useRef<number | null>(null);
 
   const [dragPreview, setDragPreview] = useState<{ id: string; x: number; y: number } | null>(null);
 
+  const reconciliation = useMemo(
+    () => reconcileTodos(mindmap, todosFromPaperState(paperState?.paper?.todos || [])),
+    [mindmap, paperState?.paper?.todos],
+  );
+  const coverageById = useMemo(() => {
+    const map = new Map<string, { complete: number; total: number }>();
+    const { childrenByParent } = indexMindmap(mindmap);
+    for (const node of mindmap.nodes) {
+      if (node.todoId) continue;
+      const linked = paperSectionRefs(node).length > 0;
+      const directTodo = (childrenByParent.get(node.id) || []).some((child) => Boolean(child.todoId));
+      if (!linked && !directTodo) continue;
+      map.set(node.id, todoCounts(reconciliation, node.id, mindmap));
+    }
+    return map;
+  }, [mindmap, reconciliation]);
+
   const layout = useMemo(() => {
-    const next = createCanvasLayout(mindmap);
+    const extraHeight = new Map<string, number>();
+    for (const node of mindmap.nodes) {
+      let extra = 0;
+      if (paperSectionRefs(node).length) extra += 16;
+      const coverage = coverageById.get(node.id);
+      if (coverage && coverage.total > 0) extra += 22;
+      if (extra) extraHeight.set(node.id, extra);
+    }
+    const next = createCanvasLayout(mindmap, extraHeight, maxDepth, paperState);
     if (dragPreview && next.positions.has(dragPreview.id)) {
       next.positions.set(dragPreview.id, { x: dragPreview.x, y: dragPreview.y });
     }
     return next;
-  }, [mindmap, dragPreview]);
+  }, [mindmap, dragPreview, coverageById, maxDepth, paperState?.paper?.todos]);
   const selected = layout.nodeById.get(selectedId) || layout.nodeById.get(mindmap.rootId);
   const dirty = mapSignature(mindmap) !== savedSignature;
+
+  useEffect(() => {
+    const selectedDepth = mindmapNodeDepth(mindmap, selectedId);
+    if (selectedDepth === null || selectedDepth <= maxDepth) return;
+    const { nodeById } = indexMindmap(mindmap);
+    let current = nodeById.get(selectedId);
+    let currentDepth = selectedDepth;
+    while (current?.parentId && currentDepth > maxDepth) {
+      current = nodeById.get(current.parentId);
+      currentDepth -= 1;
+    }
+    if (current && current.id !== selectedId) dispatch({ type: "select", id: current.id });
+  }, [mindmap, maxDepth, selectedId]);
   const activityNodeIds = useMemo(() => {
     if (!activitySince) return new Set<string>();
-    return new Set(mindmap.nodes
-      .filter((node) => isMindmapNodeActiveSince(node, activitySince))
-      .map((node) => node.id));
-  }, [activitySince, mindmap.nodes]);
-  const quietBranchIds = useMemo(() => (
-    activitySince ? findQuietBranchIds(mindmap, activityNodeIds) : []
-  ), [activityNodeIds, activitySince, mindmap]);
+    const sinceMs = Date.parse(`${activitySince}T00:00:00`);
+    const extra = new Map(
+      (paperState?.recent || [])
+        .filter((item) => {
+          if (!item.nodeId) return false;
+          const mapId = "mapId" in item ? (item as { mapId?: string }).mapId : undefined;
+          return !mapId || mapId === (mindmap.id || "draft");
+        })
+        .map((item) => [item.nodeId!, item.at]),
+    );
+    const recentSectionIds = new Set(
+      (paperState?.paper?.outline || [])
+        .filter((section) => section.updatedAt && Date.parse(section.updatedAt) >= sinceMs)
+        .map((section) => section.id),
+    );
+    const active = new Set<string>();
+    for (const node of mindmap.nodes) {
+      const at = extra.get(node.id) || nodeActivityAt(node, reconciliation);
+      const own = Boolean(at && Date.parse(at) >= sinceMs);
+      const viaSection = paperSectionRefs(node).some((ref) => recentSectionIds.has(ref.id));
+      if (own || viaSection) active.add(node.id);
+    }
+    const { nodeById } = indexMindmap(mindmap);
+    for (const id of [...active]) {
+      const node = nodeById.get(id);
+      if (node?.todoId && node.parentId) active.add(node.parentId);
+    }
+    return active;
+  }, [activitySince, mindmap, paperState?.recent, paperState?.paper?.outline, reconciliation]);
 
   const updateView = useCallback((updater: View | ((prev: View) => View)) => {
     setView((prev) => {
@@ -417,6 +563,12 @@ export function MindmapEditor({
     });
     return () => cancelAnimationFrame(frame);
   }, [fitToCanvas]);
+
+  useEffect(() => {
+    if (previousMaxDepthRef.current === maxDepth) return;
+    previousMaxDepthRef.current = maxDepth;
+    fitToCanvas(true);
+  }, [fitToCanvas, maxDepth]);
 
   useEffect(() => () => {
     if (viewAnimRef.current != null) cancelAnimationFrame(viewAnimRef.current);
@@ -602,21 +754,44 @@ export function MindmapEditor({
   }
 
   function startEditing(id: string) {
+    const node = indexMindmap(sessionRef.current.mindmap).nodeById.get(id);
+    if (node?.todoId) {
+      dispatch({ type: "select", id });
+      return;
+    }
     dispatch({ type: "select", id });
     beginTextTransaction();
     setEditingId(id);
   }
 
   function updateNodeText(id: string, text: string) {
+    const node = indexMindmap(sessionRef.current.mindmap).nodeById.get(id);
+    if (!node || node.todoId) return;
+    const parts = splitCardText(text);
     setSaveError(null);
-    dispatch({ type: "edit-text", id, text });
+    dispatch({ type: "edit-card", id, title: parts.title, text: parts.body });
   }
 
-  function addChild(parentId = selected?.id || mindmap.rootId) {
-    if (!indexMindmap(sessionRef.current.mindmap).nodeById.has(parentId)) return;
+  function updateNodeCard(id: string, title: string, text: string) {
+    const node = indexMindmap(sessionRef.current.mindmap).nodeById.get(id);
+    if (!node || node.todoId) return;
+    setSaveError(null);
+    dispatch({ type: "edit-card", id, title, text });
+  }
+
+  function addChild(parentId?: string) {
+    const current = sessionRef.current.mindmap;
+    const currentIndex = indexMindmap(current);
+    const currentSelected = currentIndex.nodeById.get(sessionRef.current.selectedId);
+    const nextParentId = parentId || currentSelected?.id || current.rootId;
+    const parent = currentIndex.nodeById.get(nextParentId);
+    if (!parent) return;
+    if (parent.collapsed) dispatch({ type: "collapse", id: parent.id });
+    const parentDepth = mindmapNodeDepth(current, parent.id) || 1;
+    if (parentDepth >= maxDepth && parentDepth < MAX_MINDMAP_DEPTH) setMaxDepth(parentDepth + 1);
     const id = newNodeId();
     setSaveError(null);
-    dispatch({ type: "add-node", parentId, id });
+    dispatch({ type: "add-node", parentId: nextParentId, id, title: "New topic" });
     requestAnimationFrame(() => startEditing(id));
   }
 
@@ -638,23 +813,23 @@ export function MindmapEditor({
     dispatch({ type: "delete-subtree", id: node.id });
   }
 
+  function placeUnplacedTodo(todoId: string, parentId = selected?.id || mindmap.rootId) {
+    const existing = sessionRef.current.mindmap.nodes.find((node) => node.todoId === todoId);
+    if (existing) {
+      dispatch({ type: "select", id: existing.id });
+      return;
+    }
+    if (!indexMindmap(sessionRef.current.mindmap).nodeById.has(parentId)) return;
+    const id = newNodeId();
+    setSaveError(null);
+    dispatch({ type: "add-node", parentId, id, todoId });
+  }
+
   const toggleCollapse = useCallback((id = selected?.id) => {
     if (!id) return;
     setSaveError(null);
     dispatch({ type: "collapse", id });
   }, [selected?.id]);
-
-  function collapseQuietBranches() {
-    if (!quietBranchIds.length) return;
-    const current = sessionRef.current.mindmap;
-    const quiet = new Set(quietBranchIds);
-    const next = {
-      ...current,
-      nodes: current.nodes.map((node) => quiet.has(node.id) ? { ...node, collapsed: true } : node),
-    };
-    setSaveError(null);
-    dispatch({ type: "replace", mindmap: next, selectedId: selected?.id });
-  }
 
   function moveSibling(direction: -1 | 1) {
     if (!selected || selected.parentId === null) return;
@@ -786,23 +961,6 @@ export function MindmapEditor({
     };
   }, [dirty, fitToCanvas, isPending, redo, save, toggleCollapse, undo, zoomAt]);
 
-  function resetFromDraft() {
-    if (!draftMindmap) return;
-    if (!window.confirm("Replace this editable map with the current draft-derived outline? You can undo before saving.")) return;
-    setSaveError(null);
-    setEditingId(null);
-    dispatch({ type: "replace", mindmap: cloneMindmap(draftMindmap), selectedId: draftMindmap.rootId });
-  }
-
-  function pruneReceipts() {
-    const current = sessionRef.current.mindmap;
-    const next = pruneEvidenceNodes(current);
-    if (next === current) return;
-    if (!window.confirm("Remove evidence/receipt cards from this map? Claims and open todos stay.")) return;
-    setSaveError(null);
-    dispatch({ type: "replace", mindmap: next, selectedId: indexMindmap(next).nodeById.has(selectedId) ? selectedId : next.rootId });
-  }
-
   function selectDirection(direction: "parent" | "child" | "previous" | "next") {
     const node = layout.nodeById.get(selected?.id || "");
     if (!node) return;
@@ -881,6 +1039,17 @@ export function MindmapEditor({
       before: cloneMindmap(sessionRef.current.mindmap),
       moved: false,
     };
+        const todoId = sessionRef.current.mindmap.nodes.find((node) => node.id === id)?.todoId;
+        if (todoId) {
+          if (pendingTodoOpenRef.current != null) window.clearTimeout(pendingTodoOpenRef.current);
+          pendingTodoOpenRef.current = window.setTimeout(() => {
+            const current = interactionRef.current;
+            if (current?.kind === "node" && current.pointerId === event.pointerId && !current.moved) {
+              router.push(`/p/${project}/paper#${encodeURIComponent(todoId)}`);
+            }
+            pendingTodoOpenRef.current = null;
+          }, 180);
+    }
   }
 
   function onPointerMove(event: PointerEvent<HTMLDivElement>) {
@@ -897,7 +1066,13 @@ export function MindmapEditor({
     const currentView = viewRef.current;
     const dx = (event.clientX - interaction.startClient.x) / currentView.scale;
     const dy = (event.clientY - interaction.startClient.y) / currentView.scale;
-    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) interaction.moved = true;
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+      interaction.moved = true;
+      if (pendingTodoOpenRef.current != null) {
+        window.clearTimeout(pendingTodoOpenRef.current);
+        pendingTodoOpenRef.current = null;
+      }
+    }
     setSaveError(null);
     pendingMoveRef.current = {
       id: interaction.id,
@@ -912,6 +1087,10 @@ export function MindmapEditor({
     if (!interaction || interaction.pointerId !== event.pointerId) return;
     const pending = pendingMoveRef.current;
     pendingMoveRef.current = null;
+    if (pendingTodoOpenRef.current != null) {
+      window.clearTimeout(pendingTodoOpenRef.current);
+      pendingTodoOpenRef.current = null;
+    }
     setDragPreview(null);
     if (interaction.kind === "node" && interaction.moved) {
       const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-mind-node]");
@@ -931,6 +1110,10 @@ export function MindmapEditor({
         }
       }
       dispatch({ type: "record-history", before: interaction.before });
+    }
+    if (interaction.kind === "node" && !interaction.moved) {
+      const clicked = indexMindmap(sessionRef.current.mindmap).nodeById.get(interaction.id);
+      if (clicked?.todoId) router.push(`/p/${project}/paper#${encodeURIComponent(clicked.todoId)}`);
     }
     interactionRef.current = null;
     setIsPanning(false);
@@ -986,15 +1169,61 @@ export function MindmapEditor({
     }
   }
 
-  const receiptCount = mindmap.nodes.filter(isDerivedEvidenceNode).length;
   const saveConflict = Boolean(saveError && /conflict|changed.*reload|stale/i.test(saveError));
-  const selectedChildren = selected ? layout.children.get(selected.id) || [] : [];
-  const bannedParents = selected ? descendantsOf(mindmap, selected.id) : null;
-  const availableParents = selected && bannedParents
-    ? mindmap.nodes.filter((node) => node.id !== selected.id && !bannedParents.has(node.id))
-    : [];
   const paperSections = paperState?.paper?.outline || [];
-  const paperRef = (selected?.refs || []).find((ref) => ref.kind === "draft-section" || ref.kind === "draft-todo");
+  const selectedTodo = selected ? paperTodoFor(selected, paperState) : undefined;
+  const selectedMissing = Boolean(selected?.todoId && !selectedTodo);
+  const selectedRefs = selected?.refs || [];
+  const paperSourceHash = paperState?.paper?.sourceHash;
+  const selectedParts = selected && !selected.todoId
+    ? ordinaryMindmapCardContent(selected)
+    : { title: "", body: "" };
+  const selectedCardContent = selected ? mindmapCardContentForNode(selected, reconciliation) : undefined;
+  const selectedChildren = selected ? (indexMindmap(mindmap).childrenByParent.get(selected.id) || []) : [];
+  const projectLabels = useMemo(() => {
+    const seen = new Set<string>();
+    const labels: string[] = [];
+    for (const node of mindmap.nodes) {
+      for (const tag of node.tags || []) {
+        const key = tag.toLocaleLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        labels.push(tag);
+      }
+    }
+    return labels;
+  }, [mindmap.nodes]);
+  const paperComments = paperState?.paper?.comments || [];
+  const paperCommentKind = isArtifactKind("paper-comment") ? ("paper-comment" as ArtifactKind) : undefined;
+
+  async function linkPaperComment(comment: ProjectStateComment) {
+    if (!selected || !paperCommentKind) return;
+    let id = commentRefId(comment);
+    if (!id) {
+      if (comment.sourceStart === undefined || !paperState?.paper?.sourceHash) {
+        setSaveError("Reload the paper before linking this comment.");
+        return;
+      }
+      try {
+        const ensured = await ensurePaperCommentAction(project, comment.sourceStart, paperState.paper.sourceHash);
+        id = ensured.id;
+        router.refresh();
+      } catch (error) {
+        setSaveError(error instanceof Error ? error.message : "Could not assign an id to the paper comment.");
+        return;
+      }
+    }
+    dispatch({
+      type: "patch-node",
+      id: selected.id,
+      patch: {
+        refs: [
+          ...(selected.refs || []).filter((item) => !(item.kind === paperCommentKind && item.id === id)),
+          { kind: paperCommentKind, id, label: comment.text.slice(0, 80) },
+        ],
+      },
+    });
+  }
 
   useEffect(() => {
     const apply = () => {
@@ -1009,85 +1238,65 @@ export function MindmapEditor({
   }, []);
 
   return (
-    <section className={cn(
-      "mindmap-editor",
-      !showInspector && "mindmap-editor-no-inspector",
-      paperState && "mindmap-editor-with-activity",
-    )}>
-      {paperState && (
+    <section className="mindmap-editor">
+      <div className="mindmap-workspace">
+        {paperState && (
         <PaperActivityRail
           state={paperState}
-          onPinTodo={(todo) => {
-            const id = newNodeId();
-            dispatch({ type: "add-node", parentId: mindmap.rootId, id, text: todo.text });
-            dispatch({
-              type: "patch-node",
-              id,
-              patch: { refs: [{ kind: "draft-todo", id: todo.id, label: todo.text }] },
-            });
-          }}
+          nodes={mindmap.nodes}
+          onPlaceTodo={(todoId) => placeUnplacedTodo(todoId)}
         />
-      )}
-      <div className="mindmap-workspace">
+        )}
         <div className="mindmap-toolbar" aria-label="Mindmap controls">
-          <div className="flex min-w-0 flex-wrap items-center gap-1">
-            <ToolbarButton title="Add child topic (Tab)" onClick={() => addChild()}><Plus size={15} /> Topic</ToolbarButton>
-            <ToolbarButton title="Add sibling topic (Enter)" onClick={addSibling}><Plus size={15} /> Sibling</ToolbarButton>
+          <div className="flex min-w-0 flex-nowrap items-center gap-0.5">
+            <ToolbarButton title="Add child topic (Tab)" onClick={() => addChild()}><Plus size={15} /></ToolbarButton>
             <ToolbarButton title="Delete selected topic (Delete)" onClick={deleteSelected} disabled={!selected || selected.id === mindmap.rootId} danger><Trash2 size={14} /></ToolbarButton>
             <span className="mx-1 h-5 w-px bg-line" />
-            <ToolbarButton title="Undo (⌘Z)" onClick={undo} disabled={!history.length}><Undo2 size={14} /><span className="hidden lg:inline">Undo</span></ToolbarButton>
-            <ToolbarButton title="Redo (⌘⇧Z / Ctrl+Y)" onClick={redo} disabled={!future.length}><Redo2 size={14} /><span className="hidden lg:inline">Redo</span></ToolbarButton>
+            <ToolbarButton title="Undo (⌘Z)" onClick={undo} disabled={!history.length}><Undo2 size={14} /></ToolbarButton>
+            <ToolbarButton title="Redo (⌘⇧Z / Ctrl+Y)" onClick={redo} disabled={!future.length}><Redo2 size={14} /></ToolbarButton>
             <span className="mx-1 h-5 w-px bg-line" />
             <ToolbarButton title="Zoom out (⌘-)" onClick={() => zoomAt(0.85, undefined, true)}><Minus size={14} /></ToolbarButton>
             <button type="button" className="mindmap-zoom-readout" title="Fit map to screen (⌘0)" onClick={() => fitToCanvas(true)}>{Math.round(view.scale * 100)}%</button>
             <ToolbarButton title="Zoom in (⌘+)" onClick={() => zoomAt(1.18, undefined, true)}><ZoomIn size={14} /></ToolbarButton>
             <ToolbarButton title="Fit map to screen (⌘0)" onClick={() => fitToCanvas(true)}><Maximize size={14} /></ToolbarButton>
-            <span className="mx-1 h-5 w-px bg-line" />
-            <div className="mindmap-activity-controls" aria-label="Activity highlight controls">
-              <button
-                type="button"
-                className={cn("mindmap-toolbar-button mindmap-activity-button", activitySince === daysAgoDate(LAST_WEEK_DAYS) && "mindmap-activity-button-active")}
-                title="Highlight cards updated in the past seven days"
-                onClick={() => setActivitySince((current) => current === daysAgoDate(LAST_WEEK_DAYS) ? null : daysAgoDate(LAST_WEEK_DAYS))}
+            <label className="mindmap-depth-control" title="Show topics through this hierarchy depth">
+              <span>Depth</span>
+              <select
+                value={maxDepth}
+                aria-label="Maximum visible mindmap depth"
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  if (Number.isInteger(next) && next >= MIN_MINDMAP_DEPTH && next <= MAX_MINDMAP_DEPTH) setMaxDepth(next);
+                }}
               >
-                <CalendarDays size={13} /> Last 7d
-              </button>
+                <option value={2}>2</option>
+                <option value={3}>3</option>
+                <option value={4}>4</option>
+                <option value={5}>5</option>
+              </select>
+            </label>
+            <span className="mx-1 h-5 w-px bg-line" />
+            <button
+              type="button"
+              className={cn("mindmap-toolbar-button", activitySince && "mindmap-activity-button-active")}
+              title="Highlight cards updated in the past seven days"
+              onClick={() => setActivitySince((current) => current ? null : daysAgoDate(LAST_WEEK_DAYS))}
+            >
+              <CalendarDays size={13} /> Last 7d
+            </button>
+            {activitySince && (
               <label className="mindmap-activity-date" title="Highlight cards updated on or after this date">
                 <span className="sr-only">Highlight activity since</span>
                 <input
                   type="date"
-                  value={activitySince || ""}
-                  onChange={(event) => setActivitySince(event.target.value || null)}
+                  value={activitySince}
+                  onChange={(event) => setActivitySince(event.target.value || daysAgoDate(LAST_WEEK_DAYS))}
                   aria-label="Highlight activity since a date"
                 />
               </label>
-              {activitySince && (
-                <button type="button" className="mindmap-toolbar-button" title="Show every card without an activity highlight" onClick={() => setActivitySince(null)}>
-                  Clear
-                </button>
-              )}
-            </div>
-            {activitySince && (
-              <ToolbarButton
-                title="Collapse branches with no card updated in the selected period"
-                onClick={collapseQuietBranches}
-                disabled={quietBranchIds.length === 0}
-              >
-                <ChevronsDown size={13} /><span className="hidden xl:inline">Collapse quiet</span>
-              </ToolbarButton>
             )}
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {draftMindmap && (
-              <ToolbarButton title="Replace this map with a fresh outline from the draft" onClick={resetFromDraft}>
-                <RefreshCw size={13} /> Reset from draft
-              </ToolbarButton>
-            )}
-            {receiptCount > 0 && (
-              <ToolbarButton title="Remove evidence/receipt cards from this map" onClick={pruneReceipts}>
-                <Trash2 size={13} /> Prune receipts ({receiptCount})
-              </ToolbarButton>
-            )}
+          <div className="flex shrink-0 items-center gap-1">
             <div className="relative">
               <ToolbarButton title="Keyboard shortcuts" onClick={() => setShowShortcuts((open) => !open)}>
                 <Keyboard size={14} />
@@ -1108,7 +1317,7 @@ export function MindmapEditor({
                 </div>
               )}
             </div>
-            <ToolbarButton title={showInspector ? "Hide topic editor" : "Show topic editor"} onClick={() => setShowInspector((shown) => !shown)}>
+            <ToolbarButton title={showInspector ? "Hide inspector" : "Show inspector"} onClick={() => setShowInspector((shown) => !shown)}>
               {showInspector ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
             </ToolbarButton>
             {saveError ? (
@@ -1136,9 +1345,13 @@ export function MindmapEditor({
             (isPanning || interactionRef.current?.kind === "pan") && "mindmap-panning",
             isSpacePressed && !isPanning && "mindmap-space-ready",
           )}
+          style={{
+            backgroundPosition: `${view.x}px ${view.y}px`,
+            backgroundSize: `${GRID_SIZE * view.scale}px ${GRID_SIZE * view.scale}px`,
+          }}
           tabIndex={0}
           role="application"
-          aria-label="Editable mindmap canvas. Use Tab to add a child, Enter for a sibling, arrow keys to move, E to edit, C to collapse, and Command-S to save."
+          aria-label={`Editable mindmap canvas showing through depth ${maxDepth}. Use Tab to add a child, Enter for a sibling, arrow keys to move, E to edit, C to collapse, and Command-S to save.`}
           onPointerDown={onViewportPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={endPointerInteraction}
@@ -1186,6 +1399,12 @@ export function MindmapEditor({
                 <CanvasNode
                   key={node.id}
                   node={node}
+                  displayText={joinMindmapCardContent(mindmapCardContentForNode(node, reconciliation))}
+                  completed={Boolean(paperTodoFor(node, paperState)?.completed)}
+                  missing={Boolean(node.todoId && !paperTodoFor(node, paperState))}
+                  sectionLabel={paperSectionRefs(node).map((ref) => sectionRefLabel(ref, paperSections)).join(" · ")}
+                  coverage={coverageById.get(node.id)}
+                  activityLabel={activityNodeIds.has(node.id) ? relativeActivityLabel(nodeActivityAt(node, reconciliation)) : null}
                   position={position}
                   dimensions={dimensions}
                   orphan={!layout.reachable.has(node.id)}
@@ -1194,7 +1413,11 @@ export function MindmapEditor({
                   editing={node.id === editingId}
                   onPointerDown={(event) => onNodePointerDown(event, node.id, position)}
                   onDoubleClick={() => startEditing(node.id)}
-                  onSelect={() => dispatch({ type: "select", id: node.id })}
+                  onSelect={() => {
+                    dispatch({ type: "select", id: node.id });
+                    if (node.todoId) router.push(`/p/${project}/paper#${encodeURIComponent(node.todoId)}`);
+                  }}
+                  onDropTodo={(todoId) => placeUnplacedTodo(todoId, node.id)}
                   onTextChange={(text) => updateNodeText(node.id, text)}
                   onTextFocus={beginTextTransaction}
                   onTextBlur={() => finishTextTransaction(true)}
@@ -1213,10 +1436,10 @@ export function MindmapEditor({
                     // example immediately after adding a topic), fall through
                     // to the canvas history instead of swallowing ⌘Z there.
                     if (mod && key === "z") {
-                      const baselineText = editBaselineRef.current
-                        ? indexMindmap(editBaselineRef.current).nodeById.get(node.id)?.text
+                      const baselineNode = editBaselineRef.current
+                        ? indexMindmap(editBaselineRef.current).nodeById.get(node.id)
                         : undefined;
-                      if (baselineText === node.text) {
+                      if (baselineNode && editableCardText(baselineNode) === editableCardText(node)) {
                         const redoAction = event.shiftKey;
                         event.preventDefault();
                         finishTextTransaction(true);
@@ -1237,362 +1460,495 @@ export function MindmapEditor({
 
         {saveError && <p className="mindmap-save-error" role="alert">{saveError}</p>}
         <footer className="mindmap-footer">
-          <span>{mindmap.nodes.length} topic{mindmap.nodes.length === 1 ? "" : "s"}</span>
+          <span>{layout.nodes.length === mindmap.nodes.length ? mindmap.nodes.length : `${layout.nodes.length} of ${mindmap.nodes.length}`} topic{mindmap.nodes.length === 1 ? "" : "s"} · depth {maxDepth}</span>
           {activitySince && <span>{activityNodeIds.size} active since {formatMindmapDate(activitySince)}</span>}
         </footer>
       </div>
 
       {showInspector && selected && (
-        <aside className="mindmap-inspector" aria-label="Selected topic editor">
+        <aside className="mindmap-inspector" aria-label="Selected card">
           <div className="mindmap-inspector-heading">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">Topic editor</p>
-              <h2 className="mt-0.5 truncate text-sm font-semibold">{firstLine(selected.text) || "Untitled topic"}</h2>
+            <div className="min-w-0">
+              <p className="mindmap-inspector-kicker">{selected.todoId ? "Paper TODO" : "Card"}</p>
+              <h2 className="mindmap-inspector-title truncate">{selectedCardContent?.title || "Untitled"}</h2>
             </div>
-            <button type="button" className="btn-ghost h-7 w-7 p-0" title="Close editor" onClick={() => setShowInspector(false)}><X size={14} /></button>
+            <button type="button" className="btn-ghost h-7 w-7 p-0" title="Close inspector" onClick={() => setShowInspector(false)}><X size={14} /></button>
           </div>
 
-          <label className="mindmap-field">
-            <span>Text</span>
-            <textarea
-              value={selected.text}
-              onFocus={beginTextTransaction}
-              onChange={(event) => updateNodeText(selected.id, event.target.value)}
-              onBlur={() => finishTextTransaction(true)}
-              rows={5}
-              placeholder="Topic title\nOptional detail"
-            />
-            <small>First line is the topic title. Use a second line for context.</small>
-          </label>
-
-          <label className="mindmap-field">
-            <span>Paper</span>
-            <select
-              value={paperRef?.kind === "draft-section" ? paperRef.id : ""}
-              onChange={(event) => {
-                const section = paperSections.find((item) => item.id === event.target.value);
-                setSaveError(null);
-                const refs = (selected.refs || []).filter((ref) => ref.kind !== "draft-section");
-                if (section) refs.unshift({ kind: "draft-section", id: section.id, label: section.title });
-                dispatch({ type: "patch-node", id: selected.id, patch: { refs } });
-              }}
-            >
-              <option value="">No paper section</option>
-              {paperSections.map((section) => (
-                <option key={section.id} value={section.id}>{section.title}</option>
-              ))}
-            </select>
-            <div className="mt-1 flex flex-wrap gap-1">
-              {paperRef && (
-                <a className="btn-outline px-2 py-0.5 text-[11px]" href={artifactHref(project, paperRef)}>Open in paper</a>
+          {selected.todoId ? (
+            <div className="mindmap-inspector-group mindmap-inspector-group-flush">
+              <div className="mindmap-field">
+                <span>Paper TODO</span>
+                {selectedMissing ? (
+                  <p className="text-xs text-warn">Missing paper TODO: {selected.todoId}</p>
+                ) : (
+                  <div className={cn("mindmap-inspector-todo-text", selectedTodo?.completed && "is-done")}>
+                    <div className="mindmap-node-title">{selectedCardContent?.title}</div>
+                    {selectedCardContent?.body.trim() && (
+                      <p className="mindmap-node-detail"><NodeRichText text={selectedCardContent.body} /></p>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="mindmap-inspector-actions">
+                <a className="btn-outline" href={`/p/${project}/paper#${encodeURIComponent(selected.todoId)}`}>Open in paper</a>
+                {!selectedMissing && (
+                  <button
+                    type="button"
+                    className="btn-outline"
+                    onClick={() => {
+                      void persistPaperTodoAction(
+                        project,
+                        { type: selectedTodo?.completed ? "reopen_todo" : "complete_todo", id: selected.todoId! },
+                        paperState?.paper?.sourceHash,
+                      ).then((result) => {
+                        if (!result.ok) setSaveError(result.message);
+                        else router.refresh();
+                      });
+                    }}
+                  >
+                    {selectedTodo?.completed ? "Reopen" : "Complete"}
+                  </button>
+                )}
+                {!selectedMissing && selected.todoId && paperSourceHash && (
+                  <button
+                    type="button"
+                    className="btn-outline text-warn"
+                onClick={() => {
+                      if (!window.confirm("Delete this TODO from the paper? Its mindmap card and child topics will stay in place so you can repair or convert the card.")) return;
+                      void removePaperTodoAction(project, selected.todoId!, paperSourceHash)
+                        .then((result) => {
+                          if (!result.ok) {
+                            setSaveError(result.message);
+                            return;
+                          }
+                          router.refresh();
+                        })
+                        .catch((error) => setSaveError(error instanceof Error ? error.message : "Could not delete the paper TODO."));
+                    }}
+                  >
+                    Delete paper TODO
+                  </button>
+                )}
+                {selectedMissing && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn-outline"
+                      onClick={() => {
+                        const content = selectedCardContent || { title: `Missing paper TODO: ${selected.todoId}`, body: "" };
+                        dispatch({ type: "unbind-todo", id: selected.id, title: content.title, text: content.body });
+                      }}
+                    >
+                      Convert to ordinary card
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-outline"
+                      onClick={() => dispatch({ type: "delete-subtree", id: selected.id })}
+                    >
+                      Delete card
+                    </button>
+                  </>
+                )}
+              </div>
+              {selectedMissing && availableTodoCandidates(paperState?.paper?.todos || [], mindmap.nodes, selected.id).length > 0 && (
+                <label className="mindmap-field">
+                  <span>Relink to paper TODO</span>
+                  <select
+                    defaultValue=""
+                    onChange={(event) => {
+                      const todoId = event.target.value;
+                      if (!todoId) return;
+                      dispatch({ type: "bind-todo", id: selected.id, todoId });
+                    }}
+                  >
+                    <option value="">Choose an available TODO…</option>
+                    {availableTodoCandidates(paperState?.paper?.todos || [], mindmap.nodes, selected.id).map((todo) => (
+                      <option key={todo.id} value={todo.id}>{todo.text}</option>
+                    ))}
+                  </select>
+                </label>
               )}
-              {paperSections.length > 0 && (
-                <button
-                  type="button"
-                  className="btn-outline px-2 py-0.5 text-[11px]"
-                  onClick={async () => {
-                    const target = paperRef?.kind === "draft-section" ? paperRef.id : paperSections[0]?.id;
-                    if (!target) return;
-                    try { await navigator.clipboard.writeText(selected.text); } catch { /* clipboard is optional */ }
-                    router.push(`/p/${project}/paper#${encodeURIComponent(target)}`);
-                  }}
-                >
-                  Put in paper…
-                </button>
-              )}
+              <small>TeX owns the title, main text, and completion.</small>
             </div>
-          </label>
-
-          {selected.createdAt && (
-            <p className="mindmap-date-row">
-              Created {formatMindmapDate(selected.createdAt)}
-              {selected.updatedAt && <> · Updated {formatMindmapDate(selected.updatedAt)}</>}
-            </p>
+          ) : (
+            <div className="mindmap-inspector-group mindmap-inspector-group-flush">
+              <label className="mindmap-field">
+                <span>Title</span>
+                <input
+                  value={selectedParts.title}
+                  onFocus={beginTextTransaction}
+                  onChange={(event) => updateNodeCard(selected.id, event.target.value, selectedParts.body)}
+                  onBlur={() => finishTextTransaction(true)}
+                  placeholder="Title"
+                  aria-label="Card title"
+                />
+              </label>
+              <label className="mindmap-field">
+                <span>Main text</span>
+                <textarea
+                  value={selectedParts.body}
+                  onFocus={beginTextTransaction}
+                  onChange={(event) => updateNodeCard(selected.id, selectedParts.title, event.target.value)}
+                  onBlur={() => finishTextTransaction(true)}
+                  rows={4}
+                  placeholder="Optional note"
+                  aria-label="Card main text"
+                />
+              </label>
+            </div>
           )}
 
-          <label className="mindmap-field">
-            <span>Tags</span>
-            <input
-              value={(selected.tags || []).join(", ")}
-              onChange={(event) => {
-                setSaveError(null);
-                dispatch({ type: "patch-node", id: selected.id, patch: { tags: splitMindmapTags(event.target.value) } });
-              }}
-              placeholder="experiment, priority, blocker"
-            />
-          </label>
-
-          <details className="mindmap-details">
-            <summary>Details</summary>
-            <div className="mindmap-field">
-            <span>Progress <strong>{formatProgress(selected.progress)}%</strong></span>
-            <div className="mindmap-progress-inputs">
-              <input
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                value={selected.progress ?? 0}
-                aria-label="Topic progress"
-                onChange={(event) => {
-                  setSaveError(null);
-                  dispatch({ type: "patch-node", id: selected.id, patch: { progress: Number(event.target.value) } });
-                }}
-              />
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="1"
-                value={selected.progress ?? 0}
-                aria-label="Topic progress percentage"
-                onChange={(event) => {
-                  const next = Number(event.target.value);
-                  if (!Number.isFinite(next)) return;
-                  setSaveError(null);
-                  dispatch({ type: "patch-node", id: selected.id, patch: { progress: Math.min(100, Math.max(0, next)) } });
-                }}
-              />
-            </div>
-            <small>Use percentage progress for the level of detail that matters to this plan.</small>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <label className="mindmap-field">
-              <span>Maturity</span>
-              <select
-                value={selected.maturity || ""}
-                onChange={(event) => {
-                  setSaveError(null);
-                  dispatch({
-                    type: "patch-node",
-                    id: selected.id,
-                    patch: { maturity: (event.target.value || undefined) as Maturity | undefined },
-                  });
-                }}
-              >
-                <option value="">None</option>
-                <option value="empty">Empty</option>
-                <option value="hypothesized">Hypothesized</option>
-                <option value="draft">Draft</option>
-                <option value="review">Review</option>
-                <option value="final">Final</option>
-              </select>
-            </label>
-            <label className="mindmap-field">
-              <span>Style</span>
-              <select
-                value={selected.id === mindmap.rootId ? "root" : selected.shape || "leaf"}
-                disabled={selected.id === mindmap.rootId}
-                onChange={(event) => {
-                  setSaveError(null);
-                  dispatch({ type: "patch-node", id: selected.id, patch: { shape: event.target.value as MindmapNodeShape } });
-                }}
-              >
-                {selected.id === mindmap.rootId && <option value="root">Root</option>}
-                <option value="branch">Branch</option>
-                <option value="leaf">Leaf</option>
-                <option value="note">Note</option>
-                <option value="callout">Callout</option>
-              </select>
-            </label>
-          </div>
-
-          <label className="mindmap-field">
-            <span>Content format</span>
-            <select
-              value={selected.contentFormat || "plain"}
-              title="HTML is rendered inside an isolated card. Other formats keep the source text visible."
-              onChange={(event) => {
-                setSaveError(null);
-                dispatch({
-                  type: "patch-node",
-                  id: selected.id,
-                  patch: { contentFormat: event.target.value as MindmapNode["contentFormat"] },
-                });
-              }}
-            >
-              <option value="plain">Plain text</option>
-              <option value="markdown">Markdown source</option>
-              <option value="tex">TeX source</option>
-              <option value="html">HTML card</option>
-            </select>
-            <small>Use HTML for a compact custom card. The browser renders it in a restricted frame.</small>
-          </label>
-
-          <div className="mindmap-field">
-            <span>Accent</span>
-            <div className="mindmap-swatches">
-              {COLOR_SWATCHES.map((swatch) => (
-                <button
-                  key={swatch.value || "automatic"}
-                  type="button"
-                  className={cn("mindmap-swatch", (selected.color || "") === swatch.value && "mindmap-swatch-selected")}
-                  title={swatch.label}
-                  aria-label={`Set accent to ${swatch.label}`}
-                  onClick={() => {
-                    setSaveError(null);
-                    dispatch({ type: "patch-node", id: selected.id, patch: { color: swatch.value || undefined } });
-                  }}
-                >
-                  <span style={{ background: swatch.value || nodeAccent(selected) }} />
-                </button>
-              ))}
-            </div>
-          </div>
-          </details>
-
-          {selected.id !== mindmap.rootId && (
-            <>
+          {!selected.todoId && paperSections.length > 0 && (
+            <div className="mindmap-inspector-group">
               <label className="mindmap-field">
-                <span>Parent</span>
-                <select
-                  value={selected.parentId || ""}
-                  onChange={(event) => {
-                    setSaveError(null);
-                    dispatch({ type: "reparent", id: selected.id, parentId: event.target.value });
-                  }}
-                >
-                  {availableParents.map((node) => <option key={node.id} value={node.id}>{firstLine(node.text) || "Untitled topic"}</option>)}
+                <span>Convert to TODO</span>
+                <select value={convertSection} onChange={(event) => setConvertSection(event.target.value)}>
+                  <option value="">Place TODO in paper…</option>
+                  {paperSections.map((section) => (
+                    <option key={section.id} value={section.title}>{section.title}</option>
+                  ))}
                 </select>
               </label>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button type="button" className="btn-outline text-xs" onClick={() => moveSibling(-1)} title="Move before previous sibling"><ChevronsUp size={13} /> Move up</button>
-                <button type="button" className="btn-outline text-xs" onClick={() => moveSibling(1)} title="Move after next sibling"><ChevronsDown size={13} /> Move down</button>
-              </div>
-            </>
-          )}
-
-          <div className="mindmap-field">
-            <span>Linked artifacts</span>
-            {artifactSuggestions.length > 0 && (
-              <select
-                value=""
-                aria-label="Add a suggested artifact"
-                title="Add a project artifact already known to OpenBarry"
-                onChange={(event) => {
-                  const item = artifactSuggestions[Number(event.target.value)];
-                  if (!item) return;
-                  const refs = [
-                    ...(selected.refs || []).filter((ref) => !(ref.kind === item.kind && ref.id === item.id)),
-                    item,
-                  ];
-                  dispatch({ type: "patch-node", id: selected.id, patch: { refs } });
-                }}
-              >
-                <option value="">Add a suggested artifact…</option>
-                {artifactSuggestions.map((item, index) => (
-                  <option key={`${item.kind}:${item.id}`} value={index}>
-                    {item.kind.replaceAll("-", " ")} · {item.label || item.id}
-                  </option>
-                ))}
-              </select>
-            )}
-            <div className="mt-1 grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-1">
-              <select
-                value={artifactKind}
-                aria-label="Artifact type"
-                title="Choose the kind of research artifact to link"
-                onChange={(event) => setArtifactKind(event.target.value as ArtifactKind)}
-              >
-                {ARTIFACT_KINDS.map((kind) => <option key={kind} value={kind}>{kind.replaceAll("-", " ")}</option>)}
-              </select>
-              <input
-                value={artifactId}
-                aria-label="Artifact identifier"
-                placeholder={artifactKind === "web" || artifactKind === "external" ? "https://…" : "Artifact id"}
-                title="Use an id for local artifacts or an http(s) URL for a web artifact"
-                onChange={(event) => setArtifactId(event.target.value)}
-              />
-            </div>
-            <div className="mt-1 grid grid-cols-[minmax(0,1fr)_auto] gap-1">
-              <input
-                value={artifactLabel}
-                aria-label="Artifact label"
-                placeholder="Optional label"
-                title="A short label that explains the linked artifact"
-                onChange={(event) => setArtifactLabel(event.target.value)}
-              />
               <button
                 type="button"
-                className="btn-outline px-2 py-1 text-[11px]"
-                title="Add this artifact link"
-                disabled={!artifactId.trim()}
+                className="btn-outline mindmap-convert-btn"
+                disabled={!convertSection}
                 onClick={() => {
-                  const id = artifactId.trim();
-                  const external = artifactKind === "web" || artifactKind === "external";
-                  if (external && !/^https?:\/\//i.test(id)) {
-                    setSaveError("Web artifacts need an http(s) URL.");
-                    return;
-                  }
+                  void (async () => {
+                    const result = await insertPaperTodoAtSectionAction(
+                      project,
+                      convertSection,
+                      mindmapTodoPayload(selected).text,
+                      paperState?.paper?.sourceHash,
+                      mindmapTodoPayload(selected).title,
+                    );
+                    if (!result.ok) {
+                      setSaveError(result.message);
+                      return;
+                    }
+                    dispatch({ type: "bind-todo", id: selected.id, todoId: result.id });
+                    setConvertSection("");
+                    router.refresh();
+                  })();
+                }}
+              >
+                Make TODO
+              </button>
+              <small>Inserts a pending paper TODO in that section. This card becomes that TODO.</small>
+            </div>
+          )}
+
+          {selectedChildren.length > 0 && (
+            <div className="mindmap-inspector-actions">
+              <button type="button" className="btn-outline" onClick={() => toggleCollapse(selected.id)}>
+                {selected.collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                {selected.collapsed ? "Expand children" : "Collapse children"}
+              </button>
+            </div>
+          )}
+
+          <div className="mindmap-inspector-group">
+            <div className="mindmap-field">
+              <span>Labels</span>
+              {(selected.tags || []).length > 0 && (
+                <div className="mb-1.5 flex flex-wrap gap-1">
+                  {(selected.tags || []).map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      className="inline-flex items-center gap-0.5 rounded-full border border-line bg-surface-2 px-1.5 py-0.5 text-[11px]"
+                      title={`Remove ${tag}`}
+                      onClick={() => dispatch({
+                        type: "patch-node",
+                        id: selected.id,
+                        patch: { tags: (selected.tags || []).filter((item) => item !== tag) },
+                      })}
+                    >
+                      {tag} <X size={10} />
+                    </button>
+                  ))}
+                </div>
+              )}
+              <input
+                value={labelDraft}
+                list="mindmap-label-suggestions"
+                maxLength={MAX_MINDMAP_LABEL_CHARS}
+                placeholder="Add label and press Enter"
+                aria-label="Add label"
+                disabled={(selected.tags || []).length >= MAX_MINDMAP_LABELS}
+                onChange={(event) => setLabelDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  const next = labelDraft.trim();
+                  if (!next || next.length > MAX_MINDMAP_LABEL_CHARS) return;
+                  const tags = clampMindmapLabels([...(selected.tags || []), next]);
                   setSaveError(null);
-                  const item: ArtifactRef = {
-                    kind: artifactKind,
-                    id,
-                    ...(artifactLabel.trim() ? { label: artifactLabel.trim() } : {}),
-                    ...(external ? { url: id } : {}),
-                  };
+                  dispatch({ type: "patch-node", id: selected.id, patch: { tags } });
+                  setLabelDraft("");
+                }}
+              />
+              <datalist id="mindmap-label-suggestions">
+                {projectLabels.map((tag) => <option key={tag} value={tag} />)}
+              </datalist>
+            </div>
+          </div>
+
+          <div className="mindmap-inspector-group">
+            <div className="mindmap-field">
+              <span>References</span>
+              {selectedRefs.length === 0 && <p className="text-xs text-faint">No linked sections, comments, or URLs.</p>}
+            <ul className="mindmap-ref-list">
+              {selectedRefs.map((ref) => {
+                const href = artifactHref(project, ref);
+                const external = ref.kind === "web" || ref.kind === "external";
+                return (
+                  <li key={`${ref.kind}:${ref.id}`}>
+                    <a href={href} {...(external ? { target: "_blank", rel: "noreferrer" } : {})}>
+                      ↗ {refDisplayLabel(ref, paperSections, paperState?.paper?.comments || [])}
+                    </a>
+                    <button
+                      type="button"
+                      className="mindmap-ref-remove"
+                      title="Remove reference"
+                      onClick={() => dispatch({
+                        type: "patch-node",
+                        id: selected.id,
+                        patch: { refs: (selected.refs || []).filter((item) => !(item.kind === ref.kind && item.id === ref.id)) },
+                      })}
+                    >
+                      <X size={11} />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            {paperSections.length > 0 && (
+              <select
+                className="mt-1"
+                value=""
+                aria-label="Link paper section"
+                onChange={(event) => {
+                  const section = paperSections.find((item) => item.id === event.target.value);
+                  if (!section) return;
                   dispatch({
                     type: "patch-node",
                     id: selected.id,
                     patch: {
                       refs: [
-                        ...(selected.refs || []).filter((ref) => !(ref.kind === item.kind && ref.id === item.id)),
-                        item,
+                        ...(selected.refs || []).filter((item) => !(item.kind === "paper-section" && item.id === section.id)),
+                        { kind: "paper-section", id: section.id, label: section.title },
                       ],
                     },
                   });
-                  setArtifactId("");
-                  setArtifactLabel("");
                 }}
               >
-                Add
-              </button>
-            </div>
-            <small>Links can point to paper work, project records, wiki pages, sources, or the web.</small>
-            {(selected.refs || []).length > 0 && (
-              <ul className="mt-1 space-y-1 text-xs">
-                {(selected.refs || []).map((ref) => {
-                  const href = artifactHref(project, ref);
-                  const external = /^https?:\/\//i.test(href);
+                <option value="">+ Paper section</option>
+                {paperSections.map((section) => (
+                  <option key={section.id} value={section.id}>{section.title}</option>
+                ))}
+              </select>
+            )}
+            {paperCommentKind && paperComments.length > 0 && (
+              <select
+                className="mt-1"
+                value=""
+                aria-label="Link paper comment"
+                onChange={(event) => {
+                  const comment = paperComments.find((item, index) => commentOptionValue(item, index) === event.target.value);
+                  if (!comment) return;
+                  void linkPaperComment(comment);
+                }}
+              >
+                <option value="">+ Paper comment</option>
+                {paperComments.map((comment, index) => {
+                  const value = commentOptionValue(comment, index);
                   return (
-                    <li key={`${ref.kind}:${ref.id}`} className="flex min-w-0 items-center justify-between gap-2">
-                      <a
-                        href={href}
-                        className="min-w-0 truncate text-accent hover:underline"
-                        title={ref.label || ref.id}
-                        target={external ? "_blank" : undefined}
-                        rel={external ? "noreferrer" : undefined}
-                      >
-                        {ref.label || ref.id}
-                      </a>
-                      <button
-                        type="button"
-                        className="text-[11px] text-muted hover:text-danger"
-                        title={`Remove ${ref.label || ref.id}`}
-                        onClick={() => dispatch({
-                          type: "patch-node",
-                          id: selected.id,
-                          patch: { refs: (selected.refs || []).filter((item) => !(item.kind === ref.kind && item.id === ref.id)) },
-                        })}
-                      >
-                        Remove
-                      </button>
-                    </li>
+                    <option key={value} value={value}>
+                      {comment.kind ? `${comment.kind}: ` : ""}{comment.text.slice(0, 72)}
+                    </option>
                   );
                 })}
-              </ul>
+              </select>
             )}
+            <div className="mt-1 flex flex-col gap-1">
+              <input
+                value={externalDraft.url}
+                onChange={(event) => setExternalDraft((current) => ({ ...current, url: event.target.value }))}
+                placeholder="https://…"
+                aria-label="External URL"
+              />
+              <input
+                value={externalDraft.label}
+                onChange={(event) => setExternalDraft((current) => ({ ...current, label: event.target.value }))}
+                placeholder="Optional label"
+                aria-label="External link label"
+              />
+              <button
+                type="button"
+                className="btn-outline px-2 py-0.5 text-[11px]"
+                onClick={() => {
+                  const url = safeUrl(externalDraft.url);
+                  if (!url) return;
+                  dispatch({
+                    type: "patch-node",
+                    id: selected.id,
+                    patch: {
+                      refs: [
+                        ...(selected.refs || []).filter((item) => !(item.kind === "external" && (item.id === url || item.url === url))),
+                        { kind: "external", id: url, url, ...(externalDraft.label.trim() ? { label: externalDraft.label.trim() } : {}) },
+                      ],
+                    },
+                  });
+                  setExternalDraft({ url: "", label: "" });
+                }}
+              >
+                + External link
+              </button>
+            </div>
+            </div>
           </div>
 
-          <div className="mindmap-inspector-actions">
-            <button type="button" className="btn-outline text-xs" disabled={selectedChildren.length === 0} onClick={() => toggleCollapse(selected.id)}>
-              {selected.collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
-              {selected.collapsed ? "Expand" : "Collapse"}
-            </button>
-            <button type="button" className="btn-outline text-xs" onClick={() => startEditing(selected.id)}>Edit text</button>
+          <div className="mindmap-inspector-group">
+            <label className="mindmap-field">
+              <span>Metadata</span>
+              <textarea
+                value={metadataDraft}
+                onChange={(event) => {
+                  setMetadataDraft(event.target.value);
+                  setMetadataError(null);
+                }}
+                onBlur={() => {
+                  const value = metadataDraft.trim();
+                  if (!value) {
+                    setMetadataError(null);
+                    dispatch({ type: "patch-node", id: selected.id, patch: { metadata: undefined } });
+                    return;
+                  }
+                  try {
+                    const parsed = JSON.parse(value);
+                    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Metadata must be a JSON object.");
+                    setMetadataError(null);
+                    dispatch({ type: "patch-node", id: selected.id, patch: { metadata: parsed as Record<string, unknown> } });
+                  } catch (error) {
+                    setMetadataError(error instanceof Error ? error.message : "Metadata must be valid JSON.");
+                  }
+                }}
+                rows={4}
+                placeholder='{"key": "value"}'
+                aria-label="Card metadata JSON"
+              />
+              {metadataError && <small className="text-danger">{metadataError}</small>}
+            </label>
           </div>
+
+          <details className="mindmap-inspector-group mindmap-inspector-more">
+            <summary>More</summary>
+            <label className="mindmap-field">
+              <span>Map title</span>
+              <input
+                value={mapTitleDraft}
+                onChange={(event) => setMapTitleDraft(event.target.value)}
+                onBlur={() => {
+                  const title = mapTitleDraft.trim();
+                  if (title && title !== (mindmap.title || "")) {
+                    setSaveError(null);
+                    dispatch({ type: "rename-map", title });
+                  } else {
+                    setMapTitleDraft(mindmap.title || "");
+                  }
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") (event.target as HTMLInputElement).blur();
+                }}
+                placeholder="Map title"
+                aria-label="Mindmap title"
+              />
+            </label>
+            <div className="mindmap-field">
+              <span>Progress</span>
+              {selected.progress == null ? (
+                <button
+                  type="button"
+                  className="btn-outline mindmap-convert-btn"
+                  onClick={() => dispatch({ type: "patch-node", id: selected.id, patch: { progress: 0 } })}
+                >
+                  Set progress
+                </button>
+              ) : (
+                <>
+                  <div className="mindmap-progress-inputs">
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={selected.progress}
+                      aria-label="Topic progress"
+                      onChange={(event) => {
+                        setSaveError(null);
+                        dispatch({ type: "patch-node", id: selected.id, patch: { progress: Number(event.target.value) } });
+                      }}
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={selected.progress}
+                      aria-label="Topic progress percentage"
+                      onChange={(event) => {
+                        const next = Number(event.target.value);
+                        if (!Number.isFinite(next)) return;
+                        setSaveError(null);
+                        dispatch({ type: "patch-node", id: selected.id, patch: { progress: Math.min(100, Math.max(0, next)) } });
+                      }}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="mt-1 text-[11px] text-accent hover:underline"
+                    onClick={() => dispatch({ type: "patch-node", id: selected.id, patch: { progress: undefined } })}
+                  >
+                    Hide progress
+                  </button>
+                </>
+              )}
+              <small>Optional local planning bar. Not TODO completion.</small>
+            </div>
+            <div className="mindmap-field">
+              <span>Appearance</span>
+              {selected.parentId !== null && (
+                <select
+                  value={selected.shape || "leaf"}
+                  aria-label="Card shape"
+                  onChange={(event) => dispatch({
+                    type: "patch-node",
+                    id: selected.id,
+                    patch: { shape: event.target.value as MindmapNode["shape"] },
+                  })}
+                >
+                  <option value="branch">Branch</option>
+                  <option value="leaf">Leaf</option>
+                  <option value="note">Note</option>
+                  <option value="callout">Callout</option>
+                </select>
+              )}
+              <input
+                className={selected.parentId !== null ? "mt-1.5" : undefined}
+                value={selected.color || ""}
+                onChange={(event) => dispatch({
+                  type: "patch-node",
+                  id: selected.id,
+                  patch: { color: event.target.value.trim() || undefined },
+                })}
+                placeholder="CSS color"
+                aria-label="Card color"
+              />
+            </div>
+          </details>
         </aside>
       )}
     </section>
@@ -1601,6 +1957,12 @@ export function MindmapEditor({
 
 function CanvasNode({
   node,
+  displayText,
+  completed,
+  missing,
+  sectionLabel,
+  coverage,
+  activityLabel,
   position,
   dimensions,
   orphan,
@@ -1610,12 +1972,19 @@ function CanvasNode({
   onPointerDown,
   onDoubleClick,
   onSelect,
+  onDropTodo,
   onTextChange,
   onTextFocus,
   onTextBlur,
   onTextKeyDown,
 }: {
   node: MindmapNode;
+  displayText: string;
+  completed: boolean;
+  missing: boolean;
+  sectionLabel?: string;
+  coverage?: { complete: number; total: number };
+  activityLabel?: string | null;
   position: Point;
   dimensions: Dimensions;
   orphan: boolean;
@@ -1625,22 +1994,24 @@ function CanvasNode({
   onPointerDown: (event: PointerEvent<HTMLElement>) => void;
   onDoubleClick: () => void;
   onSelect: () => void;
+  onDropTodo: (todoId: string) => void;
   onTextChange: (text: string) => void;
   onTextFocus: () => void;
   onTextBlur: () => void;
   onTextKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
 }) {
-  const [title, ...details] = node.text.split("\n");
+  const [title, ...details] = displayText.split("\n");
   const tags = node.tags || [];
   return (
     <article
       data-mind-node={node.id}
       role="treeitem"
       aria-selected={selected}
-      aria-label={mindmapNodeLabel(node)}
-      title={mindmapNodeLabel(node)}
+      aria-label={title || mindmapNodeLabel(node)}
+      title={title || mindmapNodeLabel(node)}
       className={cn(
         "mindmap-node-card",
+        node.todoId && "mindmap-node-todo",
         node.parentId === null && "mindmap-node-root",
         node.shape === "note" && "mindmap-node-note",
         node.shape === "callout" && "mindmap-node-callout",
@@ -1648,6 +2019,8 @@ function CanvasNode({
         selected && "mindmap-node-selected",
         active && "mindmap-node-active",
         editing && "mindmap-node-editing",
+        completed && "mindmap-node-complete",
+        missing && "mindmap-node-missing",
       )}
       style={{
         left: position.x,
@@ -1659,36 +2032,64 @@ function CanvasNode({
       onPointerDown={onPointerDown}
       onDoubleClick={onDoubleClick}
       onClick={onSelect}
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes("application/x-openbar-todo")) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+        }
+      }}
+      onDrop={(event) => {
+        const todoId = event.dataTransfer.getData("application/x-openbar-todo");
+        if (!todoId) return;
+        event.preventDefault();
+        onDropTodo(todoId);
+      }}
     >
       {editing ? (
         <textarea
           autoFocus
           className="mindmap-node-textarea"
-          value={node.text}
-          aria-label="Topic text"
+          value={editableCardText(node)}
+          aria-label="Topic title and main text"
           rows={4}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
-          onFocus={onTextFocus}
+          onFocus={(event) => {
+            onTextFocus();
+            if (editableCardText(node) === "New topic") event.currentTarget.select();
+          }}
           onChange={(event) => onTextChange(event.target.value)}
           onBlur={onTextBlur}
           onKeyDown={onTextKeyDown}
         />
-      ) : node.contentFormat === "html" ? (
-        <div
-          className="mindmap-node-html"
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <HtmlDocumentFrame html={node.text} mode="static" capabilities={htmlFrameCapabilities("static")} compact />
-        </div>
       ) : (
         <>
-          <div className="mindmap-node-title"><NodeRichText text={title || "Untitled topic"} /></div>
-          {details.join("\n").trim() && <p className="mindmap-node-detail"><NodeRichText text={details.join("\n")} /></p>}
+          {node.todoId ? (
+            <div className="mindmap-node-todo-text">
+              <span className="mr-1">{completed ? "☑" : missing ? "⚠" : "☐"}</span>
+              <span className="font-semibold"><NodeRichText text={title || `Missing paper TODO: ${node.todoId}`} /></span>
+              {details.join("\n").trim() && <p className="mindmap-node-detail"><NodeRichText text={details.join("\n")} /></p>}
+            </div>
+          ) : (
+            <>
+              <div className="mindmap-node-title"><NodeRichText text={title || "Untitled topic"} /></div>
+              {details.join("\n").trim() && <p className="mindmap-node-detail"><NodeRichText text={details.join("\n")} /></p>}
+            </>
+          )}
+          {sectionLabel && <p className="mindmap-node-section">§ {sectionLabel}</p>}
+          {coverage && coverage.total > 0 && (
+            <div className="mindmap-coverage">
+              <span className="tabular-nums">{coverage.complete} / {coverage.total} TODOs</span>
+              <div className="mindmap-coverage-bar" aria-hidden="true">
+                <span style={{ width: `${Math.round((coverage.complete / coverage.total) * 100)}%` }} />
+              </div>
+            </div>
+          )}
           <div className="mindmap-node-meta">
-            {node.progress !== undefined && <span className="mindmap-node-progress">{formatProgress(node.progress)}%</span>}
-            {node.maturity && <span>{node.maturity}</span>}
+            {!(coverage && coverage.total > 0) && node.progress !== undefined && !completed && <span className="mindmap-node-progress">{formatProgress(node.progress)}%</span>}
+            {completed && <span>complete</span>}
+            {missing && <span>missing paper TODO</span>}
+            {activityLabel && <span>{activityLabel}</span>}
             {tags.slice(0, 2).map((tag) => <span className="mindmap-node-tag" key={tag}>{tag}</span>)}
             {tags.length > 2 && <span className="mindmap-node-tag">+{tags.length - 2}</span>}
             {node.collapsed && <span>+ collapsed</span>}
@@ -1709,36 +2110,6 @@ function calendarDate(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-function isMindmapNodeActiveSince(node: MindmapNode, since: string): boolean {
-  const date = node.updatedAt || node.createdAt;
-  return Boolean(date && Date.parse(date) >= Date.parse(`${since}T00:00:00`));
-}
-
-function findQuietBranchIds(mindmap: Mindmap, activeNodeIds: Set<string>): string[] {
-  const { nodeById, childrenByParent } = indexMindmap(mindmap);
-  const quiet: string[] = [];
-  const visit = (id: string, path = new Set<string>()): boolean => {
-    if (path.has(id)) return false;
-    const node = nodeById.get(id);
-    if (!node) return false;
-    const nextPath = new Set(path);
-    nextPath.add(id);
-    const children = childrenByParent.get(id) || [];
-    const hasActivity = activeNodeIds.has(id) || children.some((child) => visit(child.id, nextPath));
-    if (id !== mindmap.rootId && children.length > 0 && !hasActivity && !node.collapsed) quiet.push(id);
-    return hasActivity;
-  };
-  visit(mindmap.rootId);
-  return quiet;
-}
-
-function splitMindmapTags(value: string): string[] {
-  return Array.from(new Set(value.split(",")
-    .map((tag) => tag.trim())
-    .filter((tag) => tag.length > 0 && tag.length <= 40)))
-    .slice(0, 12);
-}
-
 function formatProgress(progress: number | undefined): string {
   const value = Math.min(100, Math.max(0, progress ?? 0));
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
@@ -1752,7 +2123,8 @@ function formatMindmapDate(value: string): string {
 }
 
 function mindmapNodeLabel(node: MindmapNode): string {
-  const bits = [firstLine(node.text) || "Untitled topic"];
+  const title = node.title !== undefined ? node.title.trim() : firstLine(node.text);
+  const bits = [title || "Untitled topic"];
   if (node.progress !== undefined) bits.push(`${formatProgress(node.progress)}% progress`);
   if (node.tags?.length) bits.push(`Tags: ${node.tags.join(", ")}`);
   if (node.createdAt) bits.push(`Created ${formatMindmapDate(node.createdAt)}`);
@@ -1786,16 +2158,28 @@ function ToolbarButton({
   );
 }
 
-function createCanvasLayout(mindmap: Mindmap): CanvasLayout {
-  const { nodeById, childrenByParent: children } = indexMindmap(mindmap);
+function createCanvasLayout(
+  mindmap: Mindmap,
+  extraHeight?: Map<string, number>,
+  maxDepth = MAX_MINDMAP_DEPTH,
+  paperState?: ProjectState | null,
+): CanvasLayout {
   const safeNodes = Array.isArray(mindmap?.nodes) ? mindmap.nodes : [];
+  const visibleIds = visibleMindmapNodeIds(mindmap, maxDepth);
+  const visibleNodes = safeNodes.filter((node) => visibleIds.has(node.id));
+  const visibleMindmap = { ...mindmap, nodes: visibleNodes };
+  const { nodeById, childrenByParent: children } = indexMindmap(visibleMindmap);
   const dimensions = new Map<string, Dimensions>();
-  for (const node of safeNodes) dimensions.set(node.id, nodeDimensions(node));
-  const { positions, reachable, connected } = layoutMindmapTree(mindmap, dimensions);
-  const recoveryAnchorId = positions.has(mindmap.rootId)
-    ? mindmap.rootId
+  for (const node of visibleNodes) {
+    const size = nodeDimensions(node, paperTodoText(node, paperState));
+    const extra = extraHeight?.get(node.id) || 0;
+    dimensions.set(node.id, extra ? { ...size, height: size.height + extra } : size);
+  }
+  const { positions, reachable, connected } = layoutMindmapTree(visibleMindmap, dimensions);
+  const recoveryAnchorId = positions.has(visibleMindmap.rootId)
+    ? visibleMindmap.rootId
     : [...reachable].find((id) => positions.has(id));
-  const orphanNodes = safeNodes.filter((node) => !connected.has(node.id));
+  const orphanNodes = visibleNodes.filter((node) => !connected.has(node.id));
   const connectedBottom = Math.max(0, ...[...reachable].map((id) => {
     const point = positions.get(id);
     const size = dimensions.get(id) || { width: NODE_WIDTH, height: NODE_HEIGHT };
@@ -1822,7 +2206,7 @@ function createCanvasLayout(mindmap: Mindmap): CanvasLayout {
   // Collapsed descendants remain connected to their parent and stay hidden.
   // Disconnected nodes remain visible in the recovery row so malformed maps
   // stay recoverable from the editor.
-  const nodes = safeNodes.filter((node) => reachable.has(node.id) || !connected.has(node.id));
+  const nodes = visibleNodes.filter((node) => reachable.has(node.id) || !connected.has(node.id));
   const width = Math.max(960, ...(nodes.length ? nodes.map((node) => {
     const point = positions.get(node.id) || { x: 80, y: 88 };
     const size = dimensions.get(node.id) || { width: NODE_WIDTH, height: NODE_HEIGHT };
@@ -1834,6 +2218,57 @@ function createCanvasLayout(mindmap: Mindmap): CanvasLayout {
     return point.y + size.height + 120;
   }) : [640]));
   return { nodes, nodeById, children, reachable, recoveryAnchorId, positions, dimensions, width, height };
+}
+
+function visibleMindmapNodeIds(mindmap: Mindmap, maxDepth: number): Set<string> {
+  const nodes = Array.isArray(mindmap?.nodes) ? mindmap.nodes : [];
+  const { nodeById, childrenByParent } = indexMindmap(mindmap);
+  const rootId = nodeById.has(mindmap.rootId)
+    ? mindmap.rootId
+    : (nodes.find((node) => node.parentId === null)?.id || nodes[0]?.id);
+  const limit = Math.max(MIN_MINDMAP_DEPTH, Math.min(MAX_MINDMAP_DEPTH, Math.round(maxDepth)));
+  const visible = new Set<string>();
+  const visitToDepth = (id: string, depth: number, path = new Set<string>()) => {
+    const node = nodeById.get(id);
+    if (!node || path.has(id) || depth > limit) return;
+    visible.add(id);
+    const nextPath = new Set(path);
+    nextPath.add(id);
+    for (const child of childrenByParent.get(id) || []) visitToDepth(child.id, depth + 1, nextPath);
+  };
+  const connected = new Set<string>();
+  const visitConnected = (id: string, path = new Set<string>()) => {
+    const node = nodeById.get(id);
+    if (!node || path.has(id)) return;
+    connected.add(id);
+    const nextPath = new Set(path);
+    nextPath.add(id);
+    for (const child of childrenByParent.get(id) || []) visitConnected(child.id, nextPath);
+  };
+  if (rootId) {
+    visitToDepth(rootId, 1);
+    visitConnected(rootId);
+  }
+  for (const node of nodes) {
+    if (!connected.has(node.id)) visible.add(node.id);
+  }
+  return visible;
+}
+
+function mindmapNodeDepth(mindmap: Mindmap, id: string): number | null {
+  const { nodeById } = indexMindmap(mindmap);
+  let current = nodeById.get(id);
+  if (!current) return null;
+  let depth = 1;
+  const seen = new Set<string>();
+  while (current.parentId) {
+    if (seen.has(current.id)) return null;
+    seen.add(current.id);
+    current = nodeById.get(current.parentId);
+    if (!current) return null;
+    depth += 1;
+  }
+  return depth;
 }
 
 function NodeRichText({ text }: { text: string }) {
@@ -1870,11 +2305,88 @@ function connectorPath(from: Point, fromSize: Dimensions, to: Point, toSize: Dim
 }
 
 function nodeAccent(node: MindmapNode) {
-  return node.color || (node.maturity ? MATURITY_ACCENT[node.maturity] : "rgb(var(--accent))");
+  return node.color || "rgb(var(--accent))";
+}
+
+function paperTodoFor(node: MindmapNode, paperState?: ProjectState | null) {
+  if (!node.todoId) return undefined;
+  return paperState?.paper?.todos.find((todo) => todo.id === node.todoId);
+}
+
+function paperTodoText(node: MindmapNode, paperState?: ProjectState | null): string {
+  return joinMindmapCardContent(cardContentForNodeWithPaperState(node, paperState));
 }
 
 function firstLine(text: string) {
-  return text.split("\n")[0].trim();
+  return splitCardText(text).title.trim();
+}
+
+function splitCardText(text: string): { title: string; body: string } {
+  const nl = text.indexOf("\n");
+  if (nl < 0) return { title: text, body: "" };
+  return { title: text.slice(0, nl), body: text.slice(nl + 1) };
+}
+
+function editableCardContent(node: MindmapNode): { title: string; body: string } {
+  if (node.title !== undefined) return { title: node.title, body: node.text };
+  return splitCardText(node.text);
+}
+
+function editableCardText(node: MindmapNode): string {
+  return joinMindmapCardContent(editableCardContent(node));
+}
+
+function mindmapTodoPayload(node: MindmapNode): { title?: string; text: string } {
+  const content = ordinaryMindmapCardContent(node);
+  const title = content.title.trim();
+  return {
+    ...(title ? { title } : {}),
+    text: content.body.trim(),
+  };
+}
+
+function cardContentForNodeWithPaperState(node: MindmapNode, paperState?: ProjectState | null) {
+  if (!node.todoId) return ordinaryMindmapCardContent(node);
+  const todo = paperTodoFor(node, paperState);
+  if (todo) return mindmapCardContentForTodo(todo);
+  const fallback = ordinaryMindmapCardContent(node);
+  return {
+    title: fallback.title || `Missing paper TODO: ${node.todoId}`,
+    body: fallback.body,
+  };
+}
+
+function commentRefId(comment: ProjectStateComment): string | undefined {
+  const id = comment.id?.trim();
+  return id || undefined;
+}
+
+function commentOptionValue(comment: ProjectStateComment, index: number): string {
+  return commentRefId(comment) || (comment.sourceStart === undefined ? `comment:${index}` : `offset:${comment.sourceStart}`);
+}
+
+function sectionRefLabel(ref: ArtifactRef, outline: Array<{ id: string; title: string }>): string {
+  return ref.label || outline.find((section) => section.id === ref.id)?.title || ref.id;
+}
+
+function refDisplayLabel(ref: ArtifactRef, outline: Array<{ id: string; title: string }>, comments: ProjectStateComment[]): string {
+  if (ref.label?.trim()) return ref.label.trim();
+  if (ref.kind === "paper-section") return sectionRefLabel(ref, outline);
+  if (ref.kind === "paper-comment") {
+    const comment = comments.find((item) => commentRefId(item) === ref.id);
+    if (comment) return comment.text.slice(0, 80) || ref.id;
+  }
+  if (ref.kind === "web" || ref.kind === "external") return ref.url || ref.id;
+  return ref.id;
+}
+
+function relativeActivityLabel(at: string): string | null {
+  if (!at) return null;
+  const date = new Date(at.includes("T") ? at : `${at}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) return "updated today";
+  return `updated ${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
 }
 
 function isEditableTarget(target: EventTarget | null) {

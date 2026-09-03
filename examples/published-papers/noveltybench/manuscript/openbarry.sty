@@ -1,0 +1,56 @@
+% OpenBarry manuscript support.
+% Designed to coexist with the document class and publisher style chosen by
+% the project. The package only supplies OpenBarry research macros.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{openbarry}[2026/08/26 OpenBarry research macros]
+
+% 1. Package options:
+% \usepackage{openbarry}            -> colored draft markers for collaborative editing
+% \usepackage[final]{openbarry}     -> clean publication text (comments, todos, and markers hidden)
+% \usepackage[neutral]{openbarry}   -> neutral text colors (no magenta/orange/blue)
+\newif\if@obfinal\@obfinalfalse
+\newif\if@obneutral\@obneutralfalse
+
+\DeclareOption{final}{\@obfinaltrue}
+\DeclareOption{submission}{\@obfinaltrue}
+\DeclareOption{neutral}{\@obneutraltrue}
+\ProcessOptions\relax
+
+% 2. Safe conditional package loading (prevents option clashes with conference styles)
+\@ifpackageloaded{xcolor}{}{%
+  \PassOptionsToPackage{table,xcdraw}{xcolor}%
+  \RequirePackage{xcolor}%
+}
+\@ifpackageloaded{hyperref}{}{%
+  \RequirePackage{hyperref}%
+}
+\@ifpackageloaded{url}{}{\RequirePackage{url}}
+
+% 3. Universal macro definitions with \providecommand
+\if@obfinal
+  % Final / submission mode: emit clean prose, drop todos/markers entirely
+  \providecommand{\obclaim}[2][]{#2}
+  \providecommand{\obevidence}[2][]{#2}
+  \providecommand{\obcomment}[2][]{}
+  \providecommand{\obtodo}[2][]{}
+  \providecommand{\obmarker}[2]{}
+  \providecommand{\obcite}[2][]{\cite{#2}\if\relax\detokenize{#1}\relax\else, #1\fi}
+\else
+  \if@obneutral
+    % Neutral draft mode: keep todos visible in gray/black
+    \providecommand{\obclaim}[2][]{#2}
+    \providecommand{\obevidence}[2][]{#2}
+    \providecommand{\obcomment}[2][]{\textit{[Comment: #2]}}
+    \providecommand{\obtodo}[2][]{\textit{[TODO: #2]}}
+    \providecommand{\obmarker}[2]{\textit{[#1: #2]}}
+    \providecommand{\obcite}[2][]{\cite{#2}\if\relax\detokenize{#1}\relax\else, #1\fi}
+  \else
+    % Standard OpenBarry colored draft mode
+    \providecommand{\obclaim}[2][]{\textcolor{magenta!75!black}{#2}}
+    \providecommand{\obevidence}[2][]{#2}
+    \providecommand{\obcomment}[2][]{\textcolor{gray!75!black}{\textit{[Comment: #2]}}}
+    \providecommand{\obtodo}[2][]{\textcolor{orange!85!black}{[TODO: #2]}}
+    \providecommand{\obmarker}[2]{\textcolor{orange!85!black}{[#1: #2]}}
+    \providecommand{\obcite}[2][]{\cite{#2}\if\relax\detokenize{#1}\relax\else, #1\fi}
+  \fi
+\fi

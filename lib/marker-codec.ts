@@ -6,12 +6,80 @@ export interface MacroMatch {
   length: number;
 }
 
+const VERBATIM_ENVIRONMENTS = new Set(["verbatim", "Verbatim", "lstlisting", "minted", "comment"]);
+
+function isEscaped(source: string, index: number): boolean {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && source[cursor] === "\\"; cursor -= 1) backslashes += 1;
+  return backslashes % 2 === 1;
+}
+
+function skipBalanced(source: string, start: number, open: string, close: string): number | undefined {
+  let depth = 1;
+  let inComment = false;
+  let quote: string | undefined;
+  for (let cursor = start + 1; cursor < source.length; cursor += 1) {
+    const char = source[cursor];
+    if (inComment) {
+      if (char === "\n") inComment = false;
+      continue;
+    }
+    if (quote) {
+      if (char === "\\") cursor += 1;
+      else if (char === quote) quote = undefined;
+      continue;
+    }
+    if (char === "%" && !isEscaped(source, cursor)) {
+      inComment = true;
+      continue;
+    }
+    if (char === "\\") {
+      cursor += 1;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === open) depth += 1;
+    else if (char === close) {
+      depth -= 1;
+      if (depth === 0) return cursor + 1;
+    }
+  }
+  return undefined;
+}
+
+function skipVerbatimEnvironment(source: string, index: number): number | undefined {
+  const begin = /^\\begin\{([^}]+)\}/.exec(source.slice(index));
+  if (!begin || !VERBATIM_ENVIRONMENTS.has(begin[1]!)) return undefined;
+  const endToken = `\\end{${begin[1]}}`;
+  const end = source.indexOf(endToken, index + begin[0].length);
+  return end < 0 ? source.length : end + endToken.length;
+}
+
 export function findMacroMatches(src: string, macroNames: string[]): MacroMatch[] {
   const matches: MacroMatch[] = [];
   const nameSet = new Set(macroNames);
   let i = 0;
+  let inComment = false;
   while (i < src.length) {
-    if (src[i] === "\\" && (i === 0 || src[i - 1] !== "\\")) {
+    if (inComment) {
+      if (src[i] === "\n") inComment = false;
+      i += 1;
+      continue;
+    }
+    if (src[i] === "%" && !isEscaped(src, i)) {
+      inComment = true;
+      i += 1;
+      continue;
+    }
+    const verbatimEnd = src[i] === "\\" ? skipVerbatimEnvironment(src, i) : undefined;
+    if (verbatimEnd !== undefined) {
+      i = verbatimEnd;
+      continue;
+    }
+    if (src[i] === "\\" && !isEscaped(src, i)) {
       const matchName = src.slice(i + 1).match(/^[A-Za-z0-9@*]+/);
       if (matchName && nameSet.has(matchName[0])) {
         const name = matchName[0];
@@ -19,38 +87,18 @@ export function findMacroMatches(src: string, macroNames: string[]): MacroMatch[
         let attrs = "";
         while (pos < src.length && /\s/.test(src[pos])) pos++;
         if (pos < src.length && src[pos] === "[") {
-          let bDepth = 1;
           const bStart = pos + 1;
-          let bp = bStart;
-          while (bp < src.length && bDepth > 0) {
-            if (src[bp] === "\\") {
-              bp += 2;
-              continue;
-            }
-            if (src[bp] === "[") bDepth++;
-            else if (src[bp] === "]") bDepth--;
-            bp++;
-          }
-          if (bDepth === 0) {
+          const bp = skipBalanced(src, pos, "[", "]");
+          if (bp !== undefined) {
             attrs = src.slice(bStart, bp - 1);
             pos = bp;
           }
         }
         while (pos < src.length && /\s/.test(src[pos])) pos++;
         if (pos < src.length && src[pos] === "{") {
-          let depth = 1;
           const bodyStart = pos + 1;
-          let p = bodyStart;
-          while (p < src.length && depth > 0) {
-            if (src[p] === "\\") {
-              p += 2;
-              continue;
-            }
-            if (src[p] === "{") depth++;
-            else if (src[p] === "}") depth--;
-            p++;
-          }
-          if (depth === 0) {
+          const p = skipBalanced(src, pos, "{", "}");
+          if (p !== undefined) {
             const body = src.slice(bodyStart, p - 1);
             matches.push({
               name,
@@ -92,9 +140,19 @@ export function parseAnchorAttrs(raw: string): Record<string, string> {
 
     if (raw[position] === "\"" || raw[position] === "'") {
       const quote = raw[position++];
-      const valueStart = position;
-      while (position < raw.length && raw[position] !== quote) position++;
-      attrs[key] = raw.slice(valueStart, position);
+      let value = "";
+      while (position < raw.length) {
+        const char = raw[position];
+        if (char === "\\" && position + 1 < raw.length && [quote, "\\", "]"].includes(raw[position + 1]!)) {
+          value += raw[position + 1];
+          position += 2;
+          continue;
+        }
+        if (char === quote) break;
+        value += char;
+        position += 1;
+      }
+      attrs[key] = value;
       if (position < raw.length) position++;
       continue;
     }
@@ -106,7 +164,7 @@ export function parseAnchorAttrs(raw: string): Record<string, string> {
   return attrs;
 }
 
-const ATTR_KEY_ORDER = ["id", "claim", "priority", "due", "created", "section", "state", "tags", "evidence"];
+const ATTR_KEY_ORDER = ["id", "title", "created", "updated", "completed"];
 
 export function serializeAnchorAttrs(attrs: Record<string, string>): string {
   const keys = Object.keys(attrs).filter((key) => (attrs[key] || "").trim());
@@ -121,7 +179,9 @@ export function serializeAnchorAttrs(attrs: Record<string, string>): string {
   return keys
     .map((key) => {
       const value = attrs[key]!.trim();
-      return /[\s,]/.test(value) ? `${key}="${value.replace(/"/g, "")}"` : `${key}=${value}`;
+      if (!/[\s,\[\]"]/.test(value)) return `${key}=${value}`;
+      const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\]/g, "\\]");
+      return `${key}="${escaped}"`;
     })
     .join(", ");
 }

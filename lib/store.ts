@@ -12,59 +12,51 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 
-import { analyzeDraft } from "./maturity";
 import { type BibEntry } from "./bibtex";
-import { Idea, Preregistration } from "./research";
 import {
   hasTexProject,
   listDocumentIds,
-  listRecords,
   readBibliography,
   readBibliographyRaw,
   readDocument,
   readDocumentTex,
+  documentFile,
   readMindmapRecord,
   listMindmapRecords,
   deleteMindmapRecord,
   readProjectRecord,
-  readRecord,
+  nativeBodyRel,
+  resolveNativeBodyAbs,
   renamePaperSection,
   setPaperSectionHeading,
   addPaperSection,
   removePaperSection,
   texPaths,
   writeDocument,
+  patchDocumentState,
   writeMindmapRecord,
   writePaperProject,
   writeProjectRecord,
-  writeRecord,
   type PaperSection,
   type TexPaper,
   DRAFT_MINDMAP_ID,
 } from "./tex-project/project";
-import { TexEnvelopeError, withWriteLock } from "./tex-project/codec";
-import { mindmapDiskHash } from "./mindmap/v2";
+import { TexEnvelopeError, sha256, withWriteLock } from "./tex-project/codec";
+import { mindmapDiskHash } from "./mindmap/mindmap";
 import { readPaper } from "./research/paper-service";
 import { buildSourceBundle } from "./tex-project/source-bundle";
 import type { ClientSourceBundle } from "./tex-project/source-bundle-format";
 import {
   projectSchema,
 } from "./schemas";
-import { emptyMindmap, slugifyMindmapId } from "./mindmap-index";
+import { assertUniqueMindmapTodoIds, emptyMindmap, persistableMindmap, slugifyMindmapId } from "./mindmap-index";
+import { isPrimaryMindmap } from "./research/todo-map";
 import { composeObtodo } from "./todo-meta";
-import { mindmapOutline } from "@/features/mindmap/mindmap-state";
+import { normalizeMindmap } from "./mindmap/mindmap";
+import { filterProjectsForPublicDemo } from "./server/demo-mode";
 import {
-  DailyNote,
-  ClaimCard,
-  EvidenceReceipt,
-  Maturity,
-  MaturedDraft,
   Mindmap,
-  MicroChallenge,
-  MonthlyReview,
   Project,
-  SourceManifestEntry,
-  SlideDeck,
   WikiPage,
 } from "./types";
 
@@ -141,25 +133,72 @@ export function listProjects(): Project[] {
   const projects = slugs
     .map((slug) => getProject(slug))
     .filter((p): p is Project => p != null);
-  const order: Record<Project["status"], number> = {
-    active: 0,
-    incubating: 1,
-    submitted: 2,
-    paused: 3,
-    archived: 4,
+  return projects.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+}
+
+/** Project catalog for pages and browser WebMCP. Keep listProjects raw for scripts and checks. */
+export function listVisibleProjects(): Project[] {
+  return filterProjectsForPublicDemo(listProjects());
+}
+
+function listedProjectFallback(slug: string, dir: string, raw: unknown): Project {
+  const rec = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const text = (key: string): string => typeof rec[key] === "string" ? rec[key].trim() : "";
+  const stamp = fileMtime(texPaths(dir).projectFile);
+  const project: Project = {
+    id: slug,
+    slug,
+    title: text("title") || slug,
+    tagline: text("tagline"),
+    overview: text("overview"),
+    createdAt: text("createdAt") || stamp,
+    updatedAt: text("updatedAt") || stamp,
+    links: [],
   };
-  return projects.sort(
-    (a, b) =>
-      order[a.status] - order[b.status] ||
-      (b.updatedAt || "").localeCompare(a.updatedAt || ""),
-  );
+  if (text("icon")) project.icon = text("icon");
+  if (text("venue")) project.venue = text("venue");
+  if (text("label")) project.label = text("label");
+  project.diskHash = projectFileHash(dir);
+  return project;
+}
+
+function projectFileHash(dir: string): string | undefined {
+  try {
+    return sha256(fs.readFileSync(texPaths(dir).projectFile));
+  } catch {
+    return undefined;
+  }
+}
+
+function coerceProjectLinkKinds(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const rec = raw as Record<string, unknown>;
+  if (!Array.isArray(rec.links)) return raw;
+  const kinds = new Set(["overleaf", "latex", "arxiv", "web", "repo"]);
+  return {
+    ...rec,
+    links: rec.links.map((link) => {
+      if (!link || typeof link !== "object") return link;
+      const item = link as Record<string, unknown>;
+      return { ...item, kind: typeof item.kind === "string" && kinds.has(item.kind) ? item.kind : "web" };
+    }),
+  };
 }
 
 export function getProject(slug: string): Project | null {
   if (typeof slug !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(slug)) return null;
   const dir = projectDir(slug);
   if (!hasTexProject(dir)) return null;
-  return parseTexRecord(texPaths(dir).projectFile, readProjectRecord<unknown>(dir), projectSchema);
+  const raw = coerceProjectLinkKinds(readProjectRecord<unknown>(dir));
+  const parsed = parseTexRecord(texPaths(dir).projectFile, raw, projectSchema);
+  if (!parsed) return listedProjectFallback(slug, dir, raw);
+  return {
+    ...parsed,
+    tagline: parsed.tagline || "",
+    overview: parsed.overview || "",
+    links: parsed.links || [],
+    diskHash: projectFileHash(dir),
+  };
 }
 
 /** Drop blank optional identity fields so they can be removed from the web UI. */
@@ -170,26 +209,34 @@ function persistableProject(project: Project): Project {
     title: project.title.trim() || project.slug,
     tagline: project.tagline.trim(),
     overview: project.overview.trim(),
-    status: project.status,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     links: Array.isArray(project.links) ? project.links : [],
   };
-  if (project.mode) next.mode = project.mode;
   if (project.venue?.trim()) next.venue = project.venue.trim();
   if (project.color?.trim()) next.color = project.color.trim();
   if (project.icon?.trim()) next.icon = project.icon.trim();
   const collaborators = (project.collaborators ?? []).map((name) => name.trim()).filter(Boolean);
   if (collaborators.length) next.collaborators = collaborators;
   if (project.researchKind?.trim()) next.researchKind = project.researchKind.trim();
-  if (project.milestones?.length) next.milestones = project.milestones;
+  if (project.archivedAt) next.archivedAt = project.archivedAt;
+  if (project.label?.trim()) next.label = project.label.trim();
   return next;
 }
 
-export function saveProject(project: Project): void {
+export function saveProject(project: Project, expectedHash?: string): void {
   const dir = projectDir(project.slug);
   const persisted = projectSchema.parse(persistableProject(project));
-  writeProjectRecord(dir, persisted);
+  const file = texPaths(dir).projectFile;
+  withWriteLock(file, () => {
+    if (expectedHash) {
+      const currentHash = projectFileHash(dir);
+      if (!currentHash || currentHash !== expectedHash) {
+        throw new TexEnvelopeError(`Project changed on disk${currentHash ? ` (hash ${currentHash})` : ""}. Reload before saving.`);
+      }
+    }
+    writeProjectRecord(dir, persisted);
+  });
 }
 
 function slugifyProjectId(title: string): string {
@@ -214,26 +261,35 @@ export function createProject(input: { title: string; slug?: string; tagline?: s
     title,
     tagline: (input.tagline || "").trim(),
     overview: "",
-    status: "incubating",
     createdAt: now,
     updatedAt: now,
     links: [],
   };
-  writeProjectRecord(dir, persistableProject(project));
-  writePaperProject(dir, title, [{
-    id: "introduction",
-    title: "Introduction",
-    level: 2,
-    order: 0,
-    label: "sec-introduction",
-    tex: composeObtodo({ text: "Write the opening motivation." }),
-  }]);
-  writeMindmapRecord(dir, emptyMindmap(slug, {
-    id: DRAFT_MINDMAP_ID,
-    title: title,
-    role: "draft",
-    rootText: title,
-  }));
+  fs.mkdirSync(projectsDir(), { recursive: true });
+  const staging = fs.mkdtempSync(path.join(projectsDir(), `.${slug}.tmp-`));
+  try {
+    writeProjectRecord(staging, persistableProject(project));
+    writePaperProject(staging, title, [{
+      id: "introduction",
+      title: "Introduction",
+      level: 2,
+      order: 0,
+      label: "sec-introduction",
+      tex: composeObtodo({ text: "Write the opening motivation." }),
+    }]);
+    writeMindmapRecord(staging, emptyMindmap(slug, {
+      id: DRAFT_MINDMAP_ID,
+      title: title,
+      role: "draft",
+      rootText: title,
+    }));
+    if (fs.existsSync(dir)) throw new Error(`Project "${slug}" appeared while it was being created.`);
+    if (!hasTexProject(staging)) throw new Error(`Project "${slug}" is incomplete after creation.`);
+    fs.renameSync(staging, dir);
+  } catch (error) {
+    if (fs.existsSync(staging)) fs.rmSync(staging, { recursive: true, force: true });
+    throw error;
+  }
   const created = getProject(slug);
   if (!created) throw new Error("Created project could not be read back.");
   return created;
@@ -246,13 +302,16 @@ export function createProject(input: { title: string; slug?: string; tagline?: s
 export function getMindmap(slug: string, id = DRAFT_MINDMAP_ID): Mindmap | null {
   const dir = projectDir(slug);
   if (!hasTexProject(dir)) return null;
-  return readMindmapRecord(dir, id);
+  const map = readMindmapRecord(dir, id);
+  if (!map) return null;
+  const normalized = normalizeMindmap(map);
+  return { ...normalized, diskHash: mindmapDiskHash(normalized) };
 }
 
 export function listMindmaps(slug: string): Mindmap[] {
   const dir = projectDir(slug);
   if (!hasTexProject(dir)) return [];
-  return listMindmapRecords(dir);
+  return listMindmapRecords(dir, recordContentDiagnostic).map(normalizeMindmap);
 }
 
 export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: string): void {
@@ -270,7 +329,9 @@ export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: s
         throw new TexEnvelopeError(`Mindmap changed on disk${currentHash ? ` (hash ${currentHash})` : ""}. Reload before saving.`);
       }
     }
-    writeMindmapRecord(dir, { ...mindmap, projectId: slug });
+    const normalized = normalizeMindmap({ ...mindmap, projectId: slug });
+    assertUniqueMindmapTodoIds(normalized);
+    writeMindmapRecord(dir, persistableMindmap(normalized));
   });
 }
 
@@ -278,7 +339,7 @@ export function createMindmap(slug: string, title: string): Mindmap {
   const dir = projectDir(slug);
   if (!hasTexProject(dir)) throw new Error(`Project ${slug} has no primary TeX manuscript.`);
   const base = slugifyMindmapId(title);
-  const existing = new Set(listMindmapRecords(dir).map((map) => map.id));
+  const existing = new Set(listMindmapRecords(dir, recordContentDiagnostic).map((map) => map.id));
   let id = base === DRAFT_MINDMAP_ID || base === "mindmap" ? `${base}-map` : base;
   let n = 2;
   while (existing.has(id)) {
@@ -291,45 +352,13 @@ export function createMindmap(slug: string, title: string): Mindmap {
 }
 
 export function deleteMindmap(slug: string, id: string): void {
+  if (isPrimaryMindmap(id)) throw new Error("The primary mindmap cannot be deleted.");
+  const existing = getMindmap(slug, id);
+  if (isPrimaryMindmap(existing)) throw new Error("The primary mindmap cannot be deleted.");
   deleteMindmapRecord(projectDir(slug), id);
 }
 
-export { mindmapOutline, DRAFT_MINDMAP_ID };
-
-// ---------------------------------------------------------------------------
-// Drafts (maturing documents)
-// ---------------------------------------------------------------------------
-
-export function listDrafts(slug: string): string[] {
-  const dir = projectDir(slug);
-  return hasTexProject(dir) && fs.existsSync(texPaths(dir).paperFile) ? ["paper"] : [];
-}
-
-export function getDraft(slug: string, draftSlug: string): MaturedDraft | null {
-  const safeDraftSlug = safeSegment(draftSlug, "draft slug");
-  if (safeDraftSlug !== "paper") return null;
-  const dir = projectDir(slug);
-  const paper = getEditableTexPaper(slug);
-  if (!paper) return null;
-  const analysis = analyzeDraft(paper.source);
-  return {
-    projectId: slug,
-    slug: "paper",
-    title: paper.title,
-    source: paper.source,
-    sections: analysis.sections,
-    completion: analysis.completion,
-    overallMaturity: analysis.overallMaturity,
-    updatedAt: fileMtime(texPaths(dir).paperFile),
-  };
-}
-
-/** Composed manuscript TeX without section scoring. Prefer this over getDraft when callers only need source. */
-export function getPaperSource(slug: string, draftSlug = "paper"): string | null {
-  const safeDraftSlug = safeSegment(draftSlug, "draft slug");
-  if (safeDraftSlug !== "paper") return null;
-  return getEditableTexPaper(slug)?.source ?? null;
-}
+export { DRAFT_MINDMAP_ID };
 
 export function getEditableTexPaper(slug: string): TexPaper | null {
   const dir = projectDir(slug);
@@ -435,8 +464,15 @@ export function getBibliographyRaw(slug: string): string {
 export function listWiki(slug: string): WikiPage[] {
   const dir = projectDir(slug);
   if (!hasTexProject(dir)) return [];
-  return listDocumentIds(dir, "wiki")
-    .map((id) => getWikiPage(slug, id))
+  return listDocumentIds(dir, "wiki", recordContentDiagnostic)
+    .map((id) => {
+      try {
+        return getWikiPage(slug, id);
+      } catch (error) {
+        recordContentDiagnostic(documentFile(dir, "wiki", id), error);
+        return null;
+      }
+    })
     .filter((page): page is WikiPage => page !== null);
 }
 
@@ -462,257 +498,105 @@ export function getWikiPage(slug: string, pageSlug: string): WikiPage | null {
     projectId: slug,
     slug: safePageSlug,
     title: d.title || safePageSlug,
-    summary: d.summary || "",
     body: document.markdown,
     tags: d.tags || [],
-    refs: d.refs || [],
-    pinnedForAgents: d.pinnedForAgents || false,
-    format: document.format || d.format,
-    htmlMode: document.htmlMode || d.htmlMode,
     bodyHash: document.hash,
     stateHash: document.stateHash,
+    format: document.format,
+    ...(typeof d.bodyPath === "string" ? { bodyPath: d.bodyPath } : {}),
     createdAt: d.createdAt || d.updatedAt || fileMtime(document.file),
     updatedAt: d.updatedAt || fileMtime(document.file),
   };
 }
 
-export function saveWikiPage(page: WikiPage): void {
+export function saveWikiPage(page: WikiPage, expectedHash?: string): void {
   const dir = projectDir(page.projectId);
   const existing = getWikiPage(page.projectId, page.slug);
-  const { body, bodyHash: _bodyHash, stateHash: _stateHash, ...metadata } = withCreatedAt({ ...page }, existing);
-  writeDocument(dir, "wiki", page.slug, metadata as Record<string, unknown>, body);
-}
-
-// ---------------------------------------------------------------------------
-// Daily notes
-// ---------------------------------------------------------------------------
-
-export function listNotes(slug: string): DailyNote[] {
-  const dir = projectDir(slug);
-  if (!hasTexProject(dir)) return [];
-  return listDocumentIds(dir, "notes")
-    .map((id) => getNote(slug, id))
-    .filter((note): note is DailyNote => note !== null)
-    .sort((a, b) => b.date.localeCompare(a.date));
-}
-
-export function getNote(slug: string, date: string): DailyNote | null {
-  const safeDate = safeSegment(date, "note date");
-  const dir = projectDir(slug);
-  if (!hasTexProject(dir)) return null;
-  const document = readDocument<Record<string, unknown>>(dir, "notes", safeDate);
-  if (!document) return null;
-  const d = document.metadata as Partial<DailyNote>;
-  return {
-    projectId: slug,
-    date: safeDate,
-    body: document.markdown,
-    did: d.did,
-    next: d.next,
-    blockers: d.blockers,
-    refs: d.refs || [],
-    createdAt: d.createdAt || d.updatedAt || fileMtime(document.file),
-    updatedAt: d.updatedAt || fileMtime(document.file),
+  if (expectedHash !== undefined && !existing) {
+    throw new Error(`Unknown wiki page: ${page.slug}`);
+  }
+  const now = nowISO();
+  const metadata = {
+    title: page.title,
+    createdAt: existing?.createdAt || page.createdAt || now,
+    updatedAt: now,
+    ...(page.tags?.length ? { tags: page.tags } : {}),
+    ...(page.format ? { format: page.format } : {}),
+    ...(page.bodyPath ? { bodyPath: page.bodyPath } : {}),
   };
+  if (expectedHash !== undefined) {
+    patchDocumentState(dir, "wiki", page.slug, expectedHash, metadata, page.body);
+    return;
+  }
+  writeDocument(dir, "wiki", page.slug, metadata, page.body);
 }
 
-export function saveNote(note: DailyNote): void {
-  const dir = projectDir(note.projectId);
-  const existing = getNote(note.projectId, note.date);
-  const { body, ...metadata } = withCreatedAt({ ...note }, existing);
-  writeDocument(dir, "notes", note.date, metadata as Record<string, unknown>, body);
+function wikiBodyPath(page: WikiPage): string | undefined {
+  if (page.format !== "markdown" && page.format !== "html") return undefined;
+  return page.bodyPath || nativeBodyRel("wiki", page.slug, page.format);
 }
 
-// ---------------------------------------------------------------------------
-// Slides
-// ---------------------------------------------------------------------------
+function removeWikiEnvelope(dir: string, pageSlug: string): void {
+  const file = documentFile(dir, "wiki", safeSegment(pageSlug, "wiki page slug"));
+  if (fs.existsSync(file)) fs.rmSync(file);
+}
 
-export function listSlideDecks(slug: string): SlideDeck[] {
+function removeWikiSidecar(dir: string, page: WikiPage): void {
+  const bodyPath = wikiBodyPath(page);
+  if (!bodyPath) return;
+  const bodyFile = resolveNativeBodyAbs(dir, bodyPath);
+  if (bodyFile && fs.existsSync(bodyFile)) fs.rmSync(bodyFile);
+}
+
+export function deleteWikiPage(slug: string, pageSlug: string, expectedHash?: string): void {
   const dir = projectDir(slug);
-  if (!hasTexProject(dir)) return [];
-  return listRecords<SlideDeck>(dir, "slides")
-    .map((deck) => ({ ...deck, createdAt: deck.createdAt || deck.updatedAt }))
-    .sort((a, b) => b.week.localeCompare(a.week));
+  const safePageSlug = safeSegment(pageSlug, "wiki page slug");
+  const file = documentFile(dir, "wiki", safePageSlug);
+  withWriteLock(file, () => {
+    const page = getWikiPage(slug, safePageSlug);
+    if (expectedHash !== undefined) {
+      if (!page) throw new Error(`Unknown wiki page: ${safePageSlug}`);
+      if (page.stateHash !== expectedHash) {
+        throw new TexEnvelopeError(`Wiki page changed on disk. Reload before deleting it.`);
+      }
+    }
+    if (page) removeWikiSidecar(dir, page);
+    removeWikiEnvelope(dir, safePageSlug);
+  });
 }
 
-export function getSlideDeck(slug: string, week: string): SlideDeck | null {
+export function renameWikiPage(slug: string, fromSlug: string, toSlug: string, expectedHash?: string): WikiPage {
   const dir = projectDir(slug);
-  if (!hasTexProject(dir)) return null;
-  const deck = readRecord<SlideDeck>(dir, "slides", safeSegment(week, "slide week"));
-  return deck ? { ...deck, createdAt: deck.createdAt || deck.updatedAt } : null;
-}
-
-export function saveSlideDeck(deck: SlideDeck): void {
-  const dir = projectDir(deck.projectId);
-  writeRecord(dir, "slides", deck.week, withCreatedAt(deck, getSlideDeck(deck.projectId, deck.week)));
-}
-
-// ---------------------------------------------------------------------------
-// Preregistrations & ideas
-// ---------------------------------------------------------------------------
-
-export function listPreregs(slug: string): Preregistration[] {
-  const dir = projectDir(slug);
-  if (!hasTexProject(dir)) return [];
-  return listRecords<Preregistration>(dir, "preregs").sort((a, b) =>
-    (b.updatedAt || "").localeCompare(a.updatedAt || ""),
-  );
-}
-
-export function getPrereg(slug: string, id: string): Preregistration | null {
-  return listPreregs(slug).find((p) => p.id === id) || null;
-}
-
-export function savePrereg(prereg: Preregistration): void {
-  const dir = projectDir(prereg.projectId);
-  writeRecord(dir, "preregs", prereg.id, withCreatedAt(prereg, getPrereg(prereg.projectId, prereg.id)));
-}
-
-export function listIdeas(slug: string): Idea[] {
-  const dir = projectDir(slug);
-  if (!hasTexProject(dir)) return [];
-  return listRecords<Idea>(dir, "ideas").sort((a, b) =>
-    (b.updatedAt || "").localeCompare(a.updatedAt || ""),
-  );
-}
-
-export function listIdeaDeposit(): {
-  idea: Idea;
-  project: Pick<Project, "slug" | "title" | "icon" | "color">;
-}[] {
-  return listProjects()
-    .flatMap((project) =>
-      listIdeas(project.slug).map((idea) => ({
-        idea,
-        project: {
-          slug: project.slug,
-          title: project.title,
-          icon: project.icon,
-          color: project.color,
-        },
-      })),
-    )
-    .sort((a, b) => (b.idea.updatedAt || "").localeCompare(a.idea.updatedAt || ""));
-}
-
-export function saveIdea(slug: string, idea: Idea): void {
-  const dir = projectDir(slug);
-  const existing = listIdeas(slug).find((item) => item.id === idea.id) || null;
-  writeRecord(dir, "ideas", idea.id, withCreatedAt(idea, existing));
-}
-
-// ---------------------------------------------------------------------------
-// Research graph: claims, evidence, challenges, monthly reviews
-// ---------------------------------------------------------------------------
-
-export function listClaims(slug: string): ClaimCard[] {
-  const dir = projectDir(slug);
-  if (!hasTexProject(dir)) return [];
-  return listRecords<ClaimCard>(dir, "claims")
-    .map((claim) => ({ ...claim, createdAt: claim.createdAt || claim.updatedAt }))
-    .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
-}
-
-export function getClaim(slug: string, id: string): ClaimCard | null {
-  const dir = projectDir(slug);
-  if (!hasTexProject(dir)) return null;
-  const claim = readRecord<ClaimCard>(dir, "claims", safeSegment(id, "claim id"));
-  return claim ? { ...claim, createdAt: claim.createdAt || claim.updatedAt } : null;
-}
-
-export function saveClaim(claim: ClaimCard): void {
-  const dir = projectDir(claim.projectId);
-  writeRecord(dir, "claims", claim.id, withCreatedAt(claim, getClaim(claim.projectId, claim.id)));
-}
-
-export function listEvidence(slug: string): EvidenceReceipt[] {
-  const dir = projectDir(slug);
-  if (!hasTexProject(dir)) return [];
-  return listRecords<EvidenceReceipt>(dir, "evidence")
-    .map((evidence) => ({ ...evidence, createdAt: evidence.createdAt || evidence.updatedAt }))
-    .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
-}
-
-export function getEvidence(slug: string, id: string): EvidenceReceipt | null {
-  const dir = projectDir(slug);
-  if (!hasTexProject(dir)) return null;
-  const evidence = readRecord<EvidenceReceipt>(dir, "evidence", safeSegment(id, "evidence id"));
-  return evidence ? { ...evidence, createdAt: evidence.createdAt || evidence.updatedAt } : null;
-}
-
-export function saveEvidence(evidence: EvidenceReceipt): void {
-  const dir = projectDir(evidence.projectId);
-  writeRecord(dir, "evidence", evidence.id, withCreatedAt(evidence, getEvidence(evidence.projectId, evidence.id)));
-}
-
-export function listSourceManifest(slug: string): SourceManifestEntry[] {
-  const dir = projectDir(slug);
-  if (!hasTexProject(dir)) return [];
-  return listRecords<SourceManifestEntry>(dir, "sources").sort((a, b) =>
-    (b.fetchedAt || b.mtime || "").localeCompare(a.fetchedAt || a.mtime || ""),
-  );
-}
-
-export function saveSourceManifestEntry(slug: string, entry: SourceManifestEntry): void {
-  const dir = projectDir(slug);
-  writeRecord(dir, "sources", entry.id, { ...entry, projectId: slug });
-}
-
-export function listChallenges(slug: string): MicroChallenge[] {
-  const dir = projectDir(slug);
-  if (!hasTexProject(dir)) return [];
-  return listRecords<MicroChallenge>(dir, "challenges").sort((a, b) =>
-    (b.lastRaisedAt || b.createdAt || "").localeCompare(a.lastRaisedAt || a.createdAt || ""),
-  );
-}
-
-export function saveChallenge(slug: string, challenge: MicroChallenge): void {
-  const dir = projectDir(slug);
-  writeRecord(dir, "challenges", challenge.id, { ...challenge, projectId: slug });
-}
-
-export function listMonthlyReviews(slug: string): MonthlyReview[] {
-  const dir = projectDir(slug);
-  if (!hasTexProject(dir)) return [];
-  return listRecords<MonthlyReview>(dir, "monthly-reviews").map(normalizeMonthlyReview).sort((a, b) =>
-    b.month.localeCompare(a.month),
-  );
-}
-
-export function saveMonthlyReview(review: MonthlyReview): void {
-  const dir = projectDir(review.projectId);
-  writeRecord(dir, "monthly-reviews", review.month, { ...normalizeMonthlyReview(review), updatedAt: nowISO() });
-}
-
-function normalizeMonthlyReview(review: MonthlyReview): MonthlyReview {
-  const { daphneAsk, discussionAsk, ...rest } = review;
-  const resolvedDiscussionAsk = discussionAsk || daphneAsk;
-  return {
-    ...rest,
-    ...(resolvedDiscussionAsk ? { discussionAsk: resolvedDiscussionAsk } : {}),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-export function projectMaturitySummary(slug: string): {
-  drafts: { slug: string; title: string; completion: number; maturity: Maturity }[];
-  avgCompletion: number;
-} {
-  const drafts = listDrafts(slug)
-    .map((d) => getDraft(slug, d))
-    .filter((d): d is MaturedDraft => d != null)
-    .map((d) => ({
-      slug: d.slug,
-      title: d.title,
-      completion: d.completion,
-      maturity: d.overallMaturity,
-    }));
-  const avgCompletion =
-    drafts.length > 0
-      ? drafts.reduce((s, d) => s + d.completion, 0) / drafts.length
-      : 0;
-  return { drafts, avgCompletion };
+  const safeFromSlug = safeSegment(fromSlug, "wiki page slug");
+  const nextId = safeSegment(toSlug, "wiki page slug");
+  const sourceFile = documentFile(dir, "wiki", safeFromSlug);
+  return withWriteLock(sourceFile, () => {
+    const page = getWikiPage(slug, safeFromSlug);
+    if (!page) throw new Error(`Unknown wiki page "${fromSlug}".`);
+    if (expectedHash !== undefined && page.stateHash !== expectedHash) {
+      throw new TexEnvelopeError(`Wiki page changed on disk. Reload before renaming it.`);
+    }
+    if (nextId !== safeFromSlug && getWikiPage(slug, nextId)) throw new Error(`Wiki page "${nextId}" already exists.`);
+    if (nextId === safeFromSlug) return page;
+    const oldBodyPath = wikiBodyPath(page);
+    const nextBodyPath = page.format === "markdown" || page.format === "html"
+      ? oldBodyPath === nativeBodyRel("wiki", safeFromSlug, page.format)
+        ? nativeBodyRel("wiki", nextId, page.format)
+        : oldBodyPath
+      : undefined;
+    saveWikiPage({
+      ...page,
+      slug: nextId,
+      updatedAt: nowISO(),
+      ...(nextBodyPath ? { bodyPath: nextBodyPath } : {}),
+    });
+    removeWikiEnvelope(dir, safeFromSlug);
+    if (oldBodyPath && oldBodyPath !== nextBodyPath) {
+      const oldBodyFile = resolveNativeBodyAbs(dir, oldBodyPath);
+      if (oldBodyFile && fs.existsSync(oldBodyFile)) fs.rmSync(oldBodyFile);
+    }
+    const renamed = getWikiPage(slug, nextId);
+    if (!renamed) throw new Error("Wiki page could not be renamed.");
+    return renamed;
+  });
 }

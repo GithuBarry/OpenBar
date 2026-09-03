@@ -3,9 +3,10 @@ import { BookOpenText } from "lucide-react";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { PaperEditor } from "@/features/paper/paper-editor";
-import { getBibliography, getBibliographyRaw, getPaperEditorState, getProject, projectContentDir } from "@/lib/store";
+import { DRAFT_MINDMAP_ID, getBibliography, getBibliographyRaw, getMindmap, getPaperEditorState, getProject, projectContentDir } from "@/lib/store";
 import { convertComplexTables } from "@/lib/tex-project/pandoc-tables";
 import { texPaths } from "@/lib/tex-project/project";
+import { isPublicDemoMode } from "@/lib/server/demo-mode";
 
 /**
  * The Draft is the live TeX manuscript. TODOs and comments live inline as
@@ -22,6 +23,12 @@ export default async function PaperPage({
   if (!project) notFound();
 
   const paper = getPaperEditorState(slug);
+  const map = getMindmap(slug, DRAFT_MINDMAP_ID);
+  const placementTargets = (map?.nodes || []).map((node) => ({
+    id: node.id,
+    label: ((node.title?.trim() || node.text.split("\n")[0].trim() || node.todoId || node.id)).slice(0, 80),
+  }));
+  const boundTodoIds = (map?.nodes || []).flatMap((node) => (node.todoId ? [node.todoId] : []));
   const bibliography = getBibliography(slug);
   const pandocTables = paper
     ? await convertComplexTables({
@@ -36,6 +43,7 @@ export default async function PaperPage({
         title={project.title}
         subtitle={project.tagline || `${project.title} manuscript`}
         project={project}
+        readOnlyProject={isPublicDemoMode()}
         icon={<BookOpenText size={18} />}
       />
       <main className="h-[calc(100vh-68px)] w-full overflow-hidden p-2 sm:p-3">
@@ -49,9 +57,11 @@ export default async function PaperPage({
           bibliography={bibliography}
           bibliographyRaw={getBibliographyRaw(slug)}
           initialPandocTables={pandocTables}
+          placementTargets={placementTargets}
+          boundTodoIds={boundTodoIds}
           />
         ) : (
-          <p className="rounded-lg border border-line bg-surface px-4 py-3 text-sm text-muted">This project has not been migrated to its primary TeX manuscript yet.</p>
+          <p className="rounded-lg border border-line bg-surface px-4 py-3 text-sm text-muted">This project has no TeX manuscript yet.</p>
         )}
       </main>
     </>

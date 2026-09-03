@@ -390,10 +390,42 @@ async function withMkdirLockAsync<T>(lock: string, file: string, operation: () =
 }
 
 export function writeTextAtomic(file: string, text: string): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
-  fs.writeFileSync(tmp, text, "utf8");
-  fs.renameSync(tmp, file);
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = path.join(dir, `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(tmp, "w");
+    fs.writeFileSync(descriptor, text, "utf8");
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    fs.renameSync(tmp, file);
+    try {
+      const directoryDescriptor = fs.openSync(dir, "r");
+      try {
+        fs.fsyncSync(directoryDescriptor);
+      } finally {
+        fs.closeSync(directoryDescriptor);
+      }
+    } catch {
+      // Directory fsync is unavailable on some platforms. The file itself is durable.
+    }
+  } catch (error) {
+    if (descriptor !== undefined) {
+      try {
+        fs.closeSync(descriptor);
+      } catch {
+        // Preserve the original write error.
+      }
+    }
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      // Preserve the original write error.
+    }
+    throw error;
+  }
 }
 
 export function safeFileSegment(value: string, label = "path segment"): string {

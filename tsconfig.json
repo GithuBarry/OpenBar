@@ -40,6 +40,8 @@
     "lib/**/*.tsx",
     "lib/**/*.d.ts",
     "mcp/**/*.ts",
+    "cloudflare/**/*.ts",
+    "worker-configuration.d.ts",
     "test/**/*.ts",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"

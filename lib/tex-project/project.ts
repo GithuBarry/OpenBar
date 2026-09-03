@@ -43,7 +43,7 @@ import {
 } from "./structural-edits";
 import { escapeTexText, paperTitleCommand } from "./tex-encode";
 import { resolveProjectAsset, ASSET_EXTENSIONS } from "./asset-resolver";
-import { mindmapDiskHash } from "@/lib/mindmap/v2";
+import { mindmapDiskHash } from "@/lib/mindmap/mindmap";
 
 export const TEX_SCHEMAS = {
   project: "openbarry/project@1",
@@ -67,8 +67,6 @@ export interface TexPaths {
   bibliographyFile: string;
   figuresDir: string;
   wikiDir: string;
-  notesDir: string;
-  slidesDir: string;
   mindmapsDir: string;
   buildDir: string;
 }
@@ -98,7 +96,6 @@ export interface StoredDocument<T extends Record<string, unknown>> {
   stateHash: string;
   file: string;
   format?: "tex" | "markdown" | "html";
-  htmlMode?: "static" | "interactive";
 }
 
 export interface BibliographyRecord {
@@ -125,8 +122,6 @@ export function texPaths(projectDir: string): TexPaths {
     bibliographyFile: path.join(openbarryDir, "references.tex"),
     figuresDir: path.join(manuscriptDir, "figures"),
     wikiDir: path.join(manuscriptDir, "wiki"),
-    notesDir: path.join(manuscriptDir, "notes"),
-    slidesDir: path.join(manuscriptDir, "slides"),
     mindmapsDir: path.join(openbarryDir, "mindmaps"),
     buildDir: path.join(projectDir, ".openbarry", "build"),
   };
@@ -151,7 +146,7 @@ export function hasTexProject(projectDir: string): boolean {
 
 export function ensureTexProjectDirectories(projectDir: string): TexPaths {
   const paths = texPaths(projectDir);
-  for (const dir of [paths.manuscriptDir, paths.sectionsDir, paths.openbarryDir, paths.figuresDir, paths.wikiDir, paths.notesDir, paths.slidesDir, paths.mindmapsDir]) {
+  for (const dir of [paths.manuscriptDir, paths.sectionsDir, paths.openbarryDir, paths.figuresDir, paths.wikiDir, paths.mindmapsDir]) {
     fs.mkdirSync(dir, { recursive: true });
   }
   return paths;
@@ -209,7 +204,7 @@ export function writeMindmapRecord(projectDir: string, mindmap: Mindmap): void {
       TEX_SCHEMAS.mindmap,
       "mindmap",
       { ...normalized, id: DRAFT_MINDMAP_ID, role: "draft" },
-      "OpenBarry draft-linked mindmap; TeX ignores this comment-only file.",
+      "OpenBar draft-linked mindmap; TeX ignores this comment-only file.",
     );
     return;
   }
@@ -219,11 +214,14 @@ export function writeMindmapRecord(projectDir: string, mindmap: Mindmap): void {
     TEX_SCHEMAS.mindmap,
     id,
     { ...normalized, id, role: "planning" },
-    "OpenBarry planning mindmap; TeX ignores this comment-only file.",
+    "OpenBar planning mindmap; TeX ignores this comment-only file.",
   );
 }
 
-export function listMindmapRecords(projectDir: string): Mindmap[] {
+export function listMindmapRecords(
+  projectDir: string,
+  onInvalidFile?: (file: string, error: unknown) => void,
+): Mindmap[] {
   const maps: Mindmap[] = [];
   const draft = readMindmapRecord(projectDir, DRAFT_MINDMAP_ID);
   if (draft) maps.push(draft);
@@ -238,6 +236,12 @@ export function listMindmapRecords(projectDir: string): Mindmap[] {
     if (!file.endsWith(".tex")) continue;
     const id = file.slice(0, -4);
     if (isDraftMindmapId(id)) continue;
+    try {
+      safeFileSegment(id, "mindmap id");
+    } catch (error) {
+      onInvalidFile?.(path.join(dir, file), error);
+      continue;
+    }
     const map = readMindmapRecord(projectDir, id);
     if (map) maps.push(map);
   }
@@ -318,7 +322,7 @@ export function readTexPaper(projectDir: string, projectId: string, title: strin
     }
     sections.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   }
-  // Keep the established expanded paper view for claim analysis and MCP draft
+  // Keep the established expanded paper view for paper analysis and MCP draft
   // consumers. Preserve the declared root bytes alongside it so callers that
   // edit the manuscript source can use the real file through SourceBundle.
   const source = composePaperTex(documentTitle, sections);
@@ -670,6 +674,7 @@ export function writePaperProject(
     }
   }
   if (!fs.existsSync(paths.styleFile)) writeTextAtomic(paths.styleFile, openBarryStyle());
+  if (!fs.existsSync(paths.bibliographyFile)) writeBibliographyRaw(projectDir, "");
   writeTextAtomic(paths.paperFile, paperRootTex(title, [...main, PAPER_REFERENCES_INPUT, ...appendixInputs]));
   return readTexPaper(projectDir, "", title)!;
 }
@@ -718,22 +723,19 @@ export function readBibliography(projectDir: string): BibEntry[] {
   });
 }
 
-export function documentFile(projectDir: string, kind: "wiki" | "notes" | "slides", id: string): string {
-  const paths = texPaths(projectDir);
-  const dir = kind === "wiki" ? paths.wikiDir : kind === "notes" ? paths.notesDir : paths.slidesDir;
-  return path.join(dir, `${safeFileSegment(id, `${kind} id`)}.tex`);
+export function documentFile(projectDir: string, kind: "wiki", id: string): string {
+  return path.join(texPaths(projectDir).wikiDir, `${safeFileSegment(id, `${kind} id`)}.tex`);
 }
 
-function documentKindDir(projectDir: string, kind: "wiki" | "notes" | "slides"): string {
-  const paths = texPaths(projectDir);
-  return kind === "wiki" ? paths.wikiDir : kind === "notes" ? paths.notesDir : paths.slidesDir;
+function documentKindDir(projectDir: string, kind: "wiki"): string {
+  return texPaths(projectDir).wikiDir;
 }
 
-function nativeBodyRel(kind: "wiki" | "notes" | "slides", id: string, format: "markdown" | "html"): string {
+export function nativeBodyRel(kind: "wiki", id: string, format: "markdown" | "html"): string {
   return `${kind}/${id}.${format === "html" ? "html" : "md"}`;
 }
 
-function resolveNativeBodyAbs(projectDir: string, bodyPath: unknown): string | null {
+export function resolveNativeBodyAbs(projectDir: string, bodyPath: unknown): string | null {
   if (typeof bodyPath !== "string" || !bodyPath || bodyPath.includes("\0") || bodyPath.includes("\\")) return null;
   if (path.posix.isAbsolute(bodyPath) || /^[A-Za-z]:[\\/]/.test(bodyPath)) return null;
   if (bodyPath.split("/").some((segment) => segment === "..")) return null;
@@ -766,10 +768,26 @@ function resolveNativeBodyAbs(projectDir: string, bodyPath: unknown): string | n
   return abs;
 }
 
-export function listDocumentIds(projectDir: string, kind: "wiki" | "notes" | "slides"): string[] {
+export function listDocumentIds(
+  projectDir: string,
+  kind: "wiki",
+  onInvalidFile?: (file: string, error: unknown) => void,
+): string[] {
   const dir = documentKindDir(projectDir, kind);
   try {
-    return fs.readdirSync(dir).filter((file) => file.endsWith(".tex")).map((file) => file.slice(0, -4)).sort();
+    return fs.readdirSync(dir)
+      .filter((file) => file.endsWith(".tex"))
+      .map((file) => file.slice(0, -4))
+      .filter((id) => {
+        try {
+          safeFileSegment(id, `${kind} id`);
+          return true;
+        } catch (error) {
+          onInvalidFile?.(path.join(dir, `${id}.tex`), error);
+          return false;
+        }
+      })
+      .sort();
   } catch {
     return [];
   }
@@ -777,7 +795,7 @@ export function listDocumentIds(projectDir: string, kind: "wiki" | "notes" | "sl
 
 export function readDocument<T extends Record<string, unknown>>(
   projectDir: string,
-  kind: "wiki" | "notes" | "slides",
+  kind: "wiki",
   id: string,
 ): StoredDocument<T> | null {
   const file = documentFile(projectDir, kind, id);
@@ -790,12 +808,11 @@ export function readDocument<T extends Record<string, unknown>>(
   }
   const metadata = getDataBlock<T>(source, TEX_SCHEMAS.document, safeFileSegment(id, `${kind} id`));
   const editable = getEditBlock(source, safeFileSegment(id, `${kind} id`));
-  if (!metadata || !editable) throw new Error(`${file} has an incomplete OpenBarry document envelope.`);
+  if (!metadata || !editable) throw new Error(`${file} has an incomplete OpenBar document envelope.`);
   const declared = typeof (metadata.data as { format?: unknown }).format === "string"
     ? String((metadata.data as { format?: string }).format)
     : undefined;
   const format = inferDocumentFormat(editable.body, declared);
-  const htmlMode = (metadata.data as { htmlMode?: "static" | "interactive" }).htmlMode;
   const nativeAbs = resolveNativeBodyAbs(projectDir, (metadata.data as { bodyPath?: unknown }).bodyPath)
     || (format === "markdown" || format === "html"
       ? resolveNativeBodyAbs(projectDir, nativeBodyRel(kind, safeFileSegment(id, `${kind} id`), format))
@@ -810,7 +827,6 @@ export function readDocument<T extends Record<string, unknown>>(
       stateHash: sha256(`${source}\0${storedBody}`),
       file,
       format,
-      ...(htmlMode ? { htmlMode } : {}),
     };
   }
   return {
@@ -826,7 +842,7 @@ export function readDocument<T extends Record<string, unknown>>(
 /** Raw edit-block TeX. Missing files or envelopes return null instead of throwing. */
 export function readDocumentTex(
   projectDir: string,
-  kind: "wiki" | "notes" | "slides",
+  kind: "wiki",
   id: string,
 ): string | null {
   const file = documentFile(projectDir, kind, id);
@@ -846,7 +862,7 @@ export function readDocumentTex(
 
 function writeDocumentUnlocked<T extends Record<string, unknown>>(
   projectDir: string,
-  kind: "wiki" | "notes" | "slides",
+  kind: "wiki",
   id: string,
   metadata: T,
   markdown: string,
@@ -855,7 +871,6 @@ function writeDocumentUnlocked<T extends Record<string, unknown>>(
   const safeId = safeFileSegment(id, `${kind} id`);
   const format = inferDocumentFormat(markdown, typeof (metadata as { format?: unknown }).format === "string" ? String((metadata as { format?: string }).format) : undefined);
   const preparedBody = prepareDocumentBody(markdown, format === "html" ? "html" : format);
-  const htmlMode = (metadata as { htmlMode?: "static" | "interactive" }).htmlMode;
   if (format === "markdown" || format === "html") {
     const declaredPath = (metadata as Record<string, unknown>).bodyPath;
     const bodyPath = typeof declaredPath === "string" ? declaredPath : nativeBodyRel(kind, safeId, format);
@@ -865,7 +880,7 @@ function writeDocumentUnlocked<T extends Record<string, unknown>>(
     const pointer = `% ${format} body lives at ${bodyPath}. Conversion is an explicit apply step.\n`;
     writeTextAtomic(
       documentFile(projectDir, kind, safeId),
-      `${serializeDataFile(TEX_SCHEMAS.document, safeId, { ...metadata, format, bodyPath, ...(htmlMode ? { htmlMode } : {}) }, `${kind} metadata.`)}\n${serializeEditBlock(TEX_SCHEMAS.markdown, safeId, pointer)}`,
+      `${serializeDataFile(TEX_SCHEMAS.document, safeId, { ...metadata, format, bodyPath }, `${kind} metadata.`)}\n${serializeEditBlock(TEX_SCHEMAS.markdown, safeId, pointer)}`,
     );
     return;
   }
@@ -877,7 +892,7 @@ function writeDocumentUnlocked<T extends Record<string, unknown>>(
 
 export function writeDocument<T extends Record<string, unknown>>(
   projectDir: string,
-  kind: "wiki" | "notes" | "slides",
+  kind: "wiki",
   id: string,
   metadata: T,
   markdown: string,
@@ -890,7 +905,7 @@ export function writeDocument<T extends Record<string, unknown>>(
 
 export function patchDocument(
   projectDir: string,
-  kind: "wiki" | "notes" | "slides",
+  kind: "wiki",
   id: string,
   baseHash: string,
   markdown: string,
@@ -925,7 +940,7 @@ export function patchDocument(
  */
 export function patchDocumentState<T extends Record<string, unknown>>(
   projectDir: string,
-  kind: "wiki" | "notes" | "slides",
+  kind: "wiki",
   id: string,
   baseHash: string,
   metadata: T,
@@ -1005,7 +1020,7 @@ export function patchDocumentState<T extends Record<string, unknown>>(
 
 export function patchDocumentTex(
   projectDir: string,
-  kind: "wiki" | "notes" | "slides",
+  kind: "wiki",
   id: string,
   baseHash: string,
   tex: string,

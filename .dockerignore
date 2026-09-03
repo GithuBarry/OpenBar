@@ -1,0 +1,14 @@
+node_modules
+.next
+.next-*
+content/projects
+content/workspace.tex
+.git
+.github
+.worktrees
+.scratch
+scratch
+.superpowers
+*.log
+*.tmp
+.DS_Store

@@ -7,14 +7,23 @@
  *   pnpm dev
  *   pnpm smoke
  */
+import { fetchWithRetry } from "./smoke-http";
+
 const base = process.env.OB_SMOKE_BASE || "http://127.0.0.1:3000";
-const slug = process.env.OB_SMOKE_SLUG;
-if (!slug) throw new Error("OB_SMOKE_SLUG is required for a project-specific frontend smoke run.");
-const routes = ["/", `/p/${slug}/paper`, `/p/${slug}/mindmap`, `/p/${slug}/wiki`];
+const slugs = (process.env.OB_SMOKE_SLUGS || process.env.OB_SMOKE_SLUG || "command-v,noveltybench")
+  .split(",")
+  .map((slug) => slug.trim())
+  .filter(Boolean);
+if (!slugs.length) throw new Error("OB_SMOKE_SLUGS must contain at least one project slug.");
+const routes = [
+  "/",
+  "/about",
+  ...slugs.flatMap((slug) => [`/p/${slug}/paper`, `/p/${slug}/mindmap`, `/p/${slug}/wiki`]),
+];
 const themes = ["paper", "dark"];
 
 async function check(url: string, init?: RequestInit): Promise<{ ok: boolean; status: number; body: string }> {
-  const response = await fetch(url, init);
+  const response = await fetchWithRetry(url, init);
   const body = await response.text();
   return { ok: response.ok, status: response.status, body };
 }
@@ -25,7 +34,7 @@ async function main() {
     for (const route of routes) {
       const url = `${base}${route}`;
       try {
-        const response = await fetch(url, { headers: { cookie: `ob-theme=${theme}` } });
+        const response = await fetchWithRetry(url, { headers: { cookie: `ob-theme=${theme}` } });
         if (!response.ok) failures.push(`${theme} ${route} → ${response.status}`);
       } catch (error) {
         failures.push(`${theme} ${route} → ${error instanceof Error ? error.message : String(error)}`);
@@ -45,15 +54,22 @@ async function main() {
       }
       const tools = json.tools as Record<string, unknown> | undefined;
       if (!tools || typeof tools.latexpand !== "boolean") failures.push("health missing latexpand");
+      if (process.env.OB_EXPECT_PUBLIC_DEMO === "1") {
+        if (json.mode !== "public-demo") failures.push(`health mode → ${String(json.mode)}`);
+        const demoSlugs = json.demoSlugs as unknown;
+        if (!Array.isArray(demoSlugs) || slugs.some((slug) => !demoSlugs.includes(slug))) {
+          failures.push("health missing configured demo slugs");
+        }
+      }
     }
   } catch (error) {
     failures.push(`health → ${error instanceof Error ? error.message : String(error)}`);
   }
 
   try {
-    const traversal = await check(`${base}/api/p/${slug}/asset/../package.json`);
+    const traversal = await check(`${base}/api/p/${slugs[0]}/asset/../package.json`);
     if (traversal.status !== 404) failures.push(`asset traversal → ${traversal.status}`);
-    const protocol = await check(`${base}/api/p/${slug}/asset/${encodeURIComponent("//evil.test/x.png")}`);
+    const protocol = await check(`${base}/api/p/${slugs[0]}/asset/${encodeURIComponent("//evil.test/x.png")}`);
     if (protocol.ok) failures.push("protocol-relative asset resolved");
   } catch (error) {
     failures.push(`asset isolation → ${error instanceof Error ? error.message : String(error)}`);

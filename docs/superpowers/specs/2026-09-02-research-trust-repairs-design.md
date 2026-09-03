@@ -93,11 +93,12 @@ label.
 
 ### Demo and transport story
 
-- The checked-in dense-retrieval demo contains a real Transferability secondary
-  map with shared TODO cards and ordinary cards.
-- Its paper includes an intentionally incomplete result matrix.
-- Project instructions describe the demo's chosen organization as local
-  vocabulary and explain shared TODO coverage.
+- The checked-in private demo contains the real published Command-V and
+  NoveltyBench projects from the workspace.
+- Their paper source, figures, Primary maps, annotations, wiki files, and
+  project skills stay together in the selected fixtures.
+- The demo allowlist contains exactly `command-v` and `noveltybench`.
+- Private and unpublished workspace projects stay outside the demo image.
 - README describes explicit `pnpm seed:demo` setup.
 - Browser WebMCP is the sole agent interface. The home page exposes a small
   workspace group for listing, searching, and opening projects.
@@ -158,6 +159,6 @@ details, and TeX focus context.
   ownership rules.
 - Temporary repair tests are removed.
 - Existing and final release checks pass.
-- The dense demo visibly exercises Primary Unplaced, a secondary map, shared
-  TODOs, and incomplete paper structure.
+- The private demo visibly exercises the real Command-V and NoveltyBench
+  paper and Primary map state.
 - The running app opens the paper view cleanly after verification.

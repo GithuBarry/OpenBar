@@ -326,8 +326,8 @@ function buildReplacements(
   };
 
   const replacements: Record<string, (node: Macro) => Node> = {
-    obclaim: (node: Macro) => htmlLike({ tag: "span", attributes: { className: "ob-claim-inline", title: "Claim" }, content: lastArg(node) }),
-    obevidence: (node: Macro) => htmlLike({ tag: "span", attributes: { className: "ob-evidence-inline", title: "Evidence note" }, content: lastArg(node) }),
+    obclaim: (node: Macro) => htmlLike({ tag: "span", attributes: { className: "ob-claim-inline" }, content: lastArg(node) }),
+    obevidence: (node: Macro) => htmlLike({ tag: "span", attributes: { className: "ob-evidence-inline" }, content: lastArg(node) }),
     obcomment: (node: Macro) => htmlLike({ tag: "span", attributes: { className: "ob-comment-inline", title: "Comment" }, content: lastArg(node) }),
     obtodo: (node: Macro) => htmlLike({ tag: "span", attributes: { className: "ob-todo-inline", title: "TODO" }, content: lastArg(node) }),
     obmarker: (node: Macro) => htmlLike({

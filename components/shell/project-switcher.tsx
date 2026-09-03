@@ -9,20 +9,14 @@ import { CreateProjectButton } from "@/components/project/create-project";
 import { Project } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const STATUS_DOT: Record<Project["status"], string> = {
-  active: "bg-ok",
-  incubating: "bg-m-hypo",
-  submitted: "bg-accent",
-  paused: "bg-warn",
-  archived: "bg-faint",
-};
-
 export function ProjectSwitcher({
   projects,
   activeSlug,
+  allowCreate = true,
 }: {
   projects: Project[];
   activeSlug?: string;
+  allowCreate?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -60,15 +54,17 @@ export function ProjectSwitcher({
             )}
           >
             <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-surface text-base">
-              {p.icon ?? <span className={cn("h-2 w-2 rounded-full", STATUS_DOT[p.status])} />}
+              {p.icon ?? "🧪"}
             </span>
             <span className="flex-1 truncate">{p.title}</span>
             {p.slug === activeSlug && <Check size={14} className="text-accent" />}
           </button>
         ))}
-        <div className="mt-1 border-t border-line pt-1">
-          <CreateProjectButton compact className="w-full [&>button]:w-full [&>button]:justify-center" />
-        </div>
+        {allowCreate && (
+          <div className="mt-1 border-t border-line pt-1">
+            <CreateProjectButton compact className="w-full [&>button]:w-full [&>button]:justify-center" />
+          </div>
+        )}
       </Pop>
     </div>
   );

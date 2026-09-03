@@ -1,0 +1,70 @@
+% OB-SECTION {"id":"method","label":"sec-method","level":2,"order":3,"title":"Computing and Using Activation Profiles"}
+
+\section{Computing and Using Activation Profiles}
+\label{sec-method}
+% OB-EDIT-BEGIN openbarry/markdown@1 id=method
+Let $M$ denote a transformer LLM with layers $L_m$ and hidden states $h_m^{\ell}\in\mathbb{R}^{d_m}$.
+\cmdv{} uses three models: the donor $M_D$, a finetuned donor $M_{D'}$ that differs only by residual interventions, and the recipient $M_R$.
+Let $P=\{p_1,\ldots,p_N\}$ be a set of prompts.
+
+\paragraph{Algorithm.}
+(1)~For each model $m\in\{D,R\}$ and layer $\ell_m$, store last-token activations of every $p_i$ as a matrix $A_m^{\ell_m}\in\mathbb{R}^{N\times d_m}$.
+(2)~For each adapted donor layer $\ell_D$, match $\ell_R=\lfloor\alpha\cdot \ell_D\rfloor$ with $\alpha=|L_R|/|L_D|$, then set
+$C_{R\to D}=(A_R^{\ell_R})^{\dagger}A_D^{\ell_D}$ and $C_{D\to R}=(A_D^{\ell_D})^{\dagger}A_R^{\ell_R}$.
+(3)~At recipient inference, convert, apply $\Delta I^{\ell_D}$, convert back, and add:
+$h^{\ell_R}\leftarrow h^{\ell_R}+C_{D\to R}\bigl(\Delta I^{\ell_D}(h^{\ell_R}C_{R\to D})\bigr)$.
+
+\subsection{Activation profiling}
+
+Following Zou et al.~\cite{zou2023repre}, we use last-token activations to match the adapter configuration.
+For Llama-3.1-8B-Instruct ($d=4096$, 32 layers), $N=100$ prompts yield a $(100,4096)$ matrix per layer.
+Intuitively, that matrix encodes how each residual dimension responds across diverse user prompts.
+
+\obtodo[id=cv-lima-profiles, created=2025-02-18T09:10:00.000Z, updated=2025-03-04T21:16:08.000Z, completed=2025-03-04T21:16:08.000Z]{Capture last-token LIMA train activations, N=1030, batch 4, bfloat16, every layer of each model in Table 2.}
+
+We use $N=1030$ prompts from the LIMA training split~\cite{zhou2023lima}.
+The prompts cover open-ended questions, creative writing, and factual queries.
+LIMA is easy to obtain and is not specialized to the downstream tasks---\cmdv{} does not depend on task-specific profiling data.
+Activation profiles are task-agnostic and need only be built once per model.
+
+\subsection{From activation profiles to representation transfer}
+
+\paragraph{Representation adapters.}
+We train DiReFT~\cite{wu2024reft} interventions that act on a frozen base model:
+\begin{equation}
+I(h)=h+W_2^{\top}(W_1 h+b),\qquad \Delta I(h)=I(h)-h.
+\end{equation}
+Rank is 8 in our experiments (the ReFT range is typically 4 to 32).
+Every ReFT module intervenes only on selected prompt tokens, here last tokens, once per sequence rather than once per decoded token.
+We train a module on every other donor layer, adding less than $0.04\%$ parameters.
+
+\paragraph{Layer correspondence.}
+Layer-specific functions tend to scale linearly with depth~\cite{tenney2019}.
+We use
+\begin{equation}
+\ell_R=\lfloor\alpha\cdot \ell_D\rfloor\qquad\text{where}\qquad\alpha=|L_R|/|L_D|.
+\end{equation}
+MSE-minimizing matches collapse onto early recipient layers and contradict late-layer semantics; see Appendix~\ref{sec-appendix}.
+
+\obtodo[id=cv-layer-match, created=2025-03-05T11:00:00.000Z, updated=2025-03-28T16:44:19.000Z, completed=2025-03-28T16:44:19.000Z]{Ablate linear depth matching against total-MSE layer assignment on Llama 3.1 8B to 3.2 3B.}
+\obcomment[kind=result]{MSE matching dumps everything onto the earliest recipient layers and tanks downstream tasks. Keep the linear map.}
+
+\paragraph{Layer converter.}
+Let $X\in\mathbb{R}^{N\times d_R}$ and $Y\in\mathbb{R}^{N\times d_D}$ be paired last-token activations.
+Least squares with the Moore-Penrose pseudoinverse gives
+\begin{equation}
+C_{R\to D}=X^{\dagger}Y,\qquad C_{D\to R}=Y^{\dagger}X.
+\end{equation}
+A bidirectional converter between Llama-3.2-3B ($d=3072$) and Llama-3.1-8B ($d=4096$) has shapes $(4096,3072)$ and $(3072,4096)$.
+The maps are cycle-consistent in the least-squares sense and are computed on CPU.
+
+\obtodo[id=cv-converters, created=2025-03-06T08:40:00.000Z, updated=2025-03-29T12:07:55.000Z, completed=2025-03-29T12:07:55.000Z]{Derive all layer-pair converters. Time the MacBook Pro CPU path.}
+\obcomment[kind=result]{6.35s mean for 14--18 layer pairs on a MacBook Pro CPU. 3B-to-8B is 25.2M params per pair, 14 pairs, 352.8M converter params, still cheap vs backprop.}
+
+\paragraph{Transfer mechanism.}
+\begin{equation}
+h^{{\ell_R},\mathrm{intervened}}=h^{\ell_R}+C_{D\to R}\bigl(\Delta I^{\ell_D}(C_{R\to D}(h^{\ell_R}))\bigr).
+\end{equation}
+If profiles already exist, an edge device can apply an 8B adapter to a 3B model without downloading the 8B weights.
+Even when profiles must be built, the pass skips decoding and uses less peak memory than generation.
+% OB-EDIT-END id=method

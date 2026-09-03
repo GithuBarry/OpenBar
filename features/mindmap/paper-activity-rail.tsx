@@ -1,99 +1,109 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Check, FileText, Pin } from "lucide-react";
 
 import type { ProjectState } from "@/lib/research/project-state";
-
-function relativeWhen(iso?: string): string {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  const delta = Date.now() - date.getTime();
-  if (delta < 60_000) return "just now";
-  if (delta < 3_600_000) return `${Math.round(delta / 60_000)} min ago`;
-  if (delta < 86_400_000) return `${Math.round(delta / 3_600_000)} h ago`;
-  if (delta < 2 * 86_400_000) return "yesterday";
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
+import { availableTodoCandidates } from "@/lib/research/map-todo-candidates";
+import { DRAFT_MINDMAP_ID, isPrimaryMindmap, mindmapCardContentForTodo } from "@/lib/research/todo-map";
+import type { MindmapNode } from "@/lib/types";
 
 export function PaperActivityRail({
   state,
-  onPinTodo,
+  nodes,
+  onPlaceTodo,
 }: {
   state: ProjectState;
-  onPinTodo?: (todo: NonNullable<ProjectState["paper"]>["todos"][number]) => void;
+  nodes: ReadonlyArray<Pick<MindmapNode, "id" | "todoId">>;
+  onPlaceTodo?: (todoId: string) => void;
 }) {
-  const openTodos = (state.paper?.todos || []).filter((todo) => todo.status !== "done");
-  const grouped = new Map<string, typeof openTodos>();
-  for (const todo of openTodos) {
-    const key = todo.sectionTitle || "Paper";
-    const list = grouped.get(key);
-    if (list) list.push(todo);
-    else grouped.set(key, [todo]);
-  }
-  const recent = state.recent.slice(0, 8);
+  const [query, setQuery] = useState("");
+  const viewingPrimary = state.currentMap?.primary ?? isPrimaryMindmap(state.current?.mapId || DRAFT_MINDMAP_ID);
+  const paperTodos = state.paper?.todos || [];
+  const items = useMemo(
+    () => availableTodoCandidates(paperTodos, nodes),
+    [nodes, paperTodos],
+  );
+  const needle = query.trim().toLowerCase();
+  const visible = needle
+    ? items.filter((todo) => `${(todo as { title?: string }).title || ""}\n${todo.text}\n${todo.id}`.toLowerCase().includes(needle))
+    : items;
+  const missing = viewingPrimary
+    ? (state.todoSync?.warnings || []).filter((warning) => warning.kind === "missing-source")
+    : [];
+  const duplicates = viewingPrimary
+    ? (state.todoSync?.warnings || []).filter((warning) => warning.kind === "duplicate-tex-id" || warning.kind === "duplicate-binding")
+    : [];
+  const idless = viewingPrimary
+    ? (state.todoSync?.warnings || []).find((warning) => warning.kind === "idless-todo")
+    : undefined;
+  if (items.length === 0 && duplicates.length === 0 && missing.length === 0 && !idless) return null;
 
   return (
-    <aside className="mindmap-activity" aria-label="Paper work">
-      <div className="mindmap-activity-heading">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">Paper work</p>
-        <p className="mt-0.5 text-sm font-semibold text-ink">
-          {openTodos.length} open TODO{openTodos.length === 1 ? "" : "s"}
+    <aside className="mindmap-activity" aria-label={viewingPrimary ? "Unplaced TODOs" : "Add paper TODO"}>
+      {duplicates.map((warning, index) => (
+        <p key={`${warning.kind}-${index}`} className="mindmap-activity-warn text-danger">
+          {warning.kind === "duplicate-tex-id" ? `TeX id ${warning.todoId} appears twice.` : `Card bindings for ${warning.todoId} collide.`}
         </p>
-      </div>
-
-      <div className="mindmap-activity-scroll">
-        {openTodos.length === 0 ? (
-          <p className="px-3 py-2 text-xs text-muted">No open manuscript TODOs.</p>
-        ) : (
-          [...grouped.entries()].map(([section, todos]) => (
-            <div key={section} className="mindmap-activity-group">
-              <p className="mindmap-activity-label">{section}</p>
-              {todos.map((todo) => (
-                <div key={todo.id} className="mindmap-activity-item">
-                  <Link href={todo.href} className="min-w-0 flex-1 text-left hover:text-accent">
-                    <span className="block truncate">{todo.text}</span>
-                    <span className="mt-0.5 flex items-center gap-1 text-[10px] text-faint">
-                      <FileText size={10} /> Paper
-                    </span>
-                  </Link>
-                  {onPinTodo && (
-                    <button
-                      type="button"
-                      className="shrink-0 rounded p-1 text-faint hover:bg-surface-2 hover:text-ink"
-                      title="Pin to map"
-                      onClick={() => onPinTodo(todo)}
-                    >
-                      <Pin size={12} />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          ))
-        )}
-
-        {recent.length > 0 && (
-          <div className="mindmap-activity-group">
-            <p className="mindmap-activity-label">Recent</p>
-            {recent.map((item, index) => (
-              <Link key={`${item.kind}-${index}-${item.href}`} href={item.href} className="mindmap-activity-item hover:text-accent">
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1">
-                    {item.kind === "todo_completed" && <Check size={11} className="shrink-0 text-m-final" />}
-                    <span className="truncate">{item.title}</span>
-                  </span>
-                  <span className="mt-0.5 block text-[10px] text-faint">
-                    {item.kind === "section_edit" ? "edited " : item.kind === "todo_completed" ? "completed " : ""}
-                    {relativeWhen(item.at)}
-                  </span>
-                </span>
+      ))}
+      {idless && (
+        <p className="mindmap-activity-warn text-warn">Assign stable IDs to {idless.count} TODOs in the paper.</p>
+      )}
+      {missing.map((warning) => (
+        <p key={warning.nodeId} className="mindmap-activity-warn text-warn">
+          Card still points at {warning.todoId}
+        </p>
+      ))}
+      {(items.length > 0) && (
+        <div className="mindmap-activity-row">
+          <p className="mindmap-activity-label">
+            {viewingPrimary ? `Unplaced ${items.length}` : "Add paper TODO"}
+          </p>
+          {!viewingPrimary && (
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search"
+              className="input h-6 w-full px-1.5 py-0 text-[11px]"
+              aria-label="Search paper TODOs"
+            />
+          )}
+          {visible.map((todo) => (
+            <div
+              key={todo.id}
+              className="mindmap-activity-item"
+              draggable={Boolean(onPlaceTodo)}
+              onDragStart={(event) => {
+                event.dataTransfer.setData("application/x-openbar-todo", todo.id);
+                event.dataTransfer.effectAllowed = "move";
+              }}
+            >
+              {(() => {
+                const content = mindmapCardContentForTodo(todo);
+                return (
+              <Link
+                href={todo.href}
+                className={`min-w-0 truncate hover:text-accent ${todo.completed ? "line-through text-faint" : ""}`}
+              >
+                <span className="font-medium">{content.title || "Untitled TODO"}</span>
+                {content.body.trim() && <span className="text-muted"> · {content.body.trim()}</span>}
               </Link>
-            ))}
-          </div>
-        )}
-      </div>
+                );
+              })()}
+              {onPlaceTodo && (
+                <button
+                  type="button"
+                  className="shrink-0 text-[10px] text-accent hover:underline"
+                  title={viewingPrimary ? "Place under the selected card" : "Add this paper TODO to this map"}
+                  onClick={() => onPlaceTodo(todo.id)}
+                >
+                  {viewingPrimary ? "Place" : "Add"}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </aside>
   );
 }

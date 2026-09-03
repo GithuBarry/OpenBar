@@ -1,0 +1,43 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "openbar-private-demo",
+  "main": "cloudflare/worker.ts",
+  "compatibility_date": "2026-09-02",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "containers": [
+    {
+      "name": "openbar-demo",
+      "class_name": "OpenBarContainer",
+      "image": "./deploy/openbar.Dockerfile",
+      "image_build_context": ".",
+      "max_instances": 1,
+      "instance_type": "standard-1",
+      "ssh": {
+        "enabled": false
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "OPENBAR_CONTAINER",
+        "class_name": "OpenBarContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["OpenBarContainer"]
+    }
+  ],
+  "dev": {
+    "port": 8787,
+    "enable_containers": true,
+    "generate_types": true
+  }
+}

@@ -94,7 +94,7 @@ export default async function AboutPage() {
           <div className="rounded-xl border border-line bg-canvas p-6">
             <div className="flex items-center gap-2 text-accent"><LockKeyhole size={17} /><span className="text-sm font-semibold">Agent Ready</span></div>
             <p className="mt-3 text-sm leading-6 text-muted">
-              Agent Ready reports browser WebMCP registration on the active project page. The home page registers workspace tools. Project pages add the four project context tools. Paper, mindmap, wiki, and instructions pages add tools for the page currently open.
+              Agent Ready reports browser WebMCP registration on the active project page. The home page registers workspace tools. Project pages add the four project context tools, including complete project metadata editing. Paper, mindmap, wiki, and instructions pages add tools for the page currently open.
             </p>
             <p className="mt-4 text-sm leading-6 text-muted">
               A compatible browser agent follows the workspace journey through this active catalog. WebMCP handles live editor state, selected cards, navigation, focus, and visible page actions. Page-local tools leave the catalog as the page changes. Set <code className="rounded bg-surface-2 px-1 py-0.5 text-[12px]">OPENBARRY_CONTENT</code> when the content folder is mounted elsewhere.

@@ -14,11 +14,22 @@ import {
 } from "@codemirror/commands";
 import { codeFolding, foldEffect, foldGutter, foldKeymap, foldService, HighlightStyle, indentUnit, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
 import { search, searchKeymap } from "@codemirror/search";
-import { Annotation, Compartment, EditorState, Transaction } from "@codemirror/state";
 import {
+  Annotation,
+  Compartment,
+  EditorState,
+  RangeSetBuilder,
+  StateEffect,
+  StateField,
+  Transaction,
+} from "@codemirror/state";
+import {
+  Decoration,
+  type DecorationSet,
   drawSelection,
   EditorView,
   keymap,
+  lineNumbers,
   placeholder as cmPlaceholder,
 } from "@codemirror/view";
 import { stex } from "@codemirror/legacy-modes/mode/stex";
@@ -113,6 +124,54 @@ function collapseInitialPackageGroups(view: EditorView): void {
 
 const fromPropSync = Annotation.define<boolean>();
 
+export type TexFocusContext = {
+  from: number;
+  to: number;
+  beforeLines: number;
+  afterLines: number;
+};
+
+const focusContextEffect = StateEffect.define<TexFocusContext | null>();
+
+const FOCUS_LINE = Decoration.line({ class: "ob-cm-context-focus" });
+const CONTEXT_LINE = Decoration.line({ class: "ob-cm-context-faded" });
+
+function focusContextDecorations(state: EditorState, context: TexFocusContext | null): DecorationSet {
+  if (!context || state.doc.lines === 0) return Decoration.none;
+
+  const from = Math.max(0, Math.min(context.from, state.doc.length));
+  const to = Math.max(from, Math.min(context.to, state.doc.length));
+  const firstTargetLine = state.doc.lineAt(from).number;
+  const lastTargetLine = state.doc.lineAt(Math.max(from, to - 1)).number;
+  const firstContextLine = Math.max(1, firstTargetLine - Math.max(0, context.beforeLines));
+  const lastContextLine = Math.min(state.doc.lines, lastTargetLine + Math.max(0, context.afterLines));
+  const builder = new RangeSetBuilder<Decoration>();
+
+  for (let lineNumber = firstContextLine; lineNumber <= lastContextLine; lineNumber += 1) {
+    const line = state.doc.line(lineNumber);
+    const decoration = lineNumber >= firstTargetLine && lineNumber <= lastTargetLine ? FOCUS_LINE : CONTEXT_LINE;
+    builder.add(line.from, line.from, decoration);
+  }
+  return builder.finish();
+}
+
+function focusContextField(initialContext: TexFocusContext | null) {
+  let context = initialContext;
+  return StateField.define<DecorationSet>({
+    create: (state) => focusContextDecorations(state, context),
+    update: (decorations, transaction) => {
+      const effect = transaction.effects.find((item) => item.is(focusContextEffect));
+      if (effect) {
+        context = effect.value;
+        return focusContextDecorations(transaction.state, context);
+      }
+      if (transaction.docChanged) return focusContextDecorations(transaction.state, context);
+      return decorations;
+    },
+    provide: (field) => EditorView.decorations.from(field),
+  });
+}
+
 const obHighlightStyle = HighlightStyle.define([
   { tag: tags.comment, color: "rgb(var(--faint))", fontStyle: "italic" },
   { tag: tags.keyword, color: "rgb(var(--accent) / 0.9)" },
@@ -129,7 +188,7 @@ const obEditorTheme = EditorView.theme({
     height: "100%",
     backgroundColor: "transparent",
     color: "rgb(var(--ink))",
-    fontSize: "0.875rem",
+    fontSize: "calc(0.875rem * var(--paper-editor-font-scale, 1))",
     border: "none",
     outline: "none",
   },
@@ -138,16 +197,19 @@ const obEditorTheme = EditorView.theme({
   },
   ".cm-scroller": {
     fontFamily: "var(--font-mono)",
-    fontSize: "0.875rem",
-    lineHeight: "1.625rem",
+    fontSize: "calc(0.875rem * var(--paper-editor-font-scale, 1))",
+    lineHeight: "calc(1.5rem * var(--paper-editor-font-scale, 1))",
     overflow: "auto",
     height: "100%",
+    minWidth: 0,
     padding: "2rem",
   },
   ".cm-content": {
     fontFamily: "var(--font-mono)",
-    fontSize: "0.875rem",
-    lineHeight: "1.625rem",
+    fontSize: "calc(0.875rem * var(--paper-editor-font-scale, 1))",
+    lineHeight: "calc(1.5rem * var(--paper-editor-font-scale, 1))",
+    flexShrink: 1,
+    minWidth: 0,
     padding: 0,
     caretColor: "rgb(var(--ink))",
     color: "rgb(var(--ink))",
@@ -176,14 +238,14 @@ const obEditorTheme = EditorView.theme({
   },
   ".ob-cm-claim, .ob-cm-claim *": { color: "rgb(var(--accent))" },
   ".cm-line .ob-cm-claim-body, .cm-line .ob-cm-claim-body *": { color: "rgb(var(--ink))" },
-  ".ob-cm-todo, .ob-cm-todo *": { color: "rgb(var(--m-draft))" },
+  ".ob-cm-todo, .ob-cm-todo *": { color: "rgb(var(--warn))" },
   ".cm-line .ob-cm-todo-body, .cm-line .ob-cm-todo-body *": { color: "rgb(var(--ink))" },
   ".ob-cm-comment, .ob-cm-comment *": { color: "rgb(var(--muted))" },
-  ".ob-cm-marker, .ob-cm-marker *": { color: "rgb(var(--m-hypo))" },
+  ".ob-cm-marker, .ob-cm-marker *": { color: "rgb(var(--accent))" },
   ".ob-cm-cite, .ob-cm-cite *, .ob-cm-ref, .ob-cm-ref *": { color: "rgb(var(--accent) / 0.9)" },
   ".ob-cm-brace-marker": {
-    color: "rgb(var(--m-hypo))",
-    backgroundColor: "rgb(var(--m-hypo) / 0.2)",
+    color: "rgb(var(--accent))",
+    backgroundColor: "rgb(var(--accent) / 0.2)",
   },
   ".ob-ed-heading, .ob-ed-heading *": {
     fontWeight: "700",
@@ -194,14 +256,22 @@ const obEditorTheme = EditorView.theme({
     backgroundColor: "rgb(var(--accent) / 0.08)",
     fontStyle: "italic",
   },
+  ".ob-cm-context-faded": {
+    opacity: "0.42",
+    transition: "opacity 140ms ease",
+  },
+  ".ob-cm-context-focus": {
+    opacity: "1",
+    backgroundColor: "rgb(var(--accent) / 0.045)",
+  },
 });
 
 const obNestedTheme = EditorView.theme({
   "&": {
-    height: "auto",
+    height: "auto !important",
     backgroundColor: "transparent",
     color: "rgb(var(--ink))",
-    fontSize: "0.875rem",
+    fontSize: "calc(0.8125rem * var(--paper-editor-font-scale, 1))",
     border: "none",
     outline: "none",
   },
@@ -210,16 +280,27 @@ const obNestedTheme = EditorView.theme({
   },
   ".cm-scroller": {
     fontFamily: "var(--font-mono)",
-    fontSize: "0.875rem",
-    lineHeight: "1.625rem",
-    overflow: "visible",
-    height: "auto",
-    padding: "0.7rem 0.9rem",
+    fontSize: "calc(0.78rem * var(--paper-editor-font-scale, 1))",
+    lineHeight: "calc(1.3rem * var(--paper-editor-font-scale, 1))",
+    overflowX: "hidden",
+    overflowY: "visible",
+    height: "auto !important",
+    minWidth: 0,
+    maxWidth: "100%",
+    width: "100%",
+    padding: "0.25rem 0.4rem",
   },
   ".cm-content": {
     fontFamily: "var(--font-mono)",
-    fontSize: "0.875rem",
-    lineHeight: "1.625rem",
+    fontSize: "calc(0.78rem * var(--paper-editor-font-scale, 1))",
+    lineHeight: "calc(1.3rem * var(--paper-editor-font-scale, 1))",
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: "100%",
+    width: "100%",
+    whiteSpace: "break-spaces",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
     padding: 0,
     caretColor: "rgb(var(--ink))",
     color: "rgb(var(--ink))",
@@ -235,18 +316,26 @@ const obNestedTheme = EditorView.theme({
   },
   ".ob-cm-claim, .ob-cm-claim *": { color: "rgb(var(--accent))" },
   ".cm-line .ob-cm-claim-body, .cm-line .ob-cm-claim-body *": { color: "rgb(var(--ink))" },
-  ".ob-cm-todo, .ob-cm-todo *": { color: "rgb(var(--m-draft))" },
+  ".ob-cm-todo, .ob-cm-todo *": { color: "rgb(var(--warn))" },
   ".cm-line .ob-cm-todo-body, .cm-line .ob-cm-todo-body *": { color: "rgb(var(--ink))" },
   ".ob-cm-comment, .ob-cm-comment *": { color: "rgb(var(--muted))" },
-  ".ob-cm-marker, .ob-cm-marker *": { color: "rgb(var(--m-hypo))" },
+  ".ob-cm-marker, .ob-cm-marker *": { color: "rgb(var(--accent))" },
   ".ob-cm-cite, .ob-cm-cite *, .ob-cm-ref, .ob-cm-ref *": { color: "rgb(var(--accent) / 0.9)" },
   ".ob-cm-brace-marker": {
-    color: "rgb(var(--m-hypo))",
-    backgroundColor: "rgb(var(--m-hypo) / 0.2)",
+    color: "rgb(var(--accent))",
+    backgroundColor: "rgb(var(--accent) / 0.2)",
   },
   ".ob-ed-heading, .ob-ed-heading *": {
     fontWeight: "700",
     color: "rgb(var(--accent))",
+  },
+  ".ob-cm-context-faded": {
+    opacity: "0.42",
+    transition: "opacity 140ms ease",
+  },
+  ".ob-cm-context-focus": {
+    opacity: "1",
+    backgroundColor: "rgb(var(--accent) / 0.045)",
   },
 });
 
@@ -341,6 +430,7 @@ export type TexCodeMirrorProps = {
   className?: string;
   variant?: "pane" | "nested";
   headingCounts?: Map<string, number>;
+  focusContext?: TexFocusContext | null;
 };
 
 function seedKeyOf(counts?: Map<string, number>): string {
@@ -358,6 +448,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
     className,
     variant = "pane",
     headingCounts,
+    focusContext = null,
   }, ref) {
     const hostRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
@@ -370,6 +461,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
     const placeholderRef = useRef(placeholder);
     const headingCountsRef = useRef(headingCounts);
     const variantRef = useRef(variant);
+    const focusContextRef = useRef(focusContext);
     onChangeRef.current = onChange;
     onScrollRef.current = onScroll;
     onFocusRef.current = onFocus;
@@ -377,6 +469,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
     placeholderRef.current = placeholder;
     headingCountsRef.current = headingCounts;
     variantRef.current = variant;
+    focusContextRef.current = focusContext;
 
     const applyLocal = (from: number, to: number, insert: string): boolean => {
       const view = viewRef.current;
@@ -447,6 +540,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
       const placeholderComp = placeholderCompRef.current;
       const seedComp = seedCompRef.current;
       const nested = variantRef.current === "nested";
+      const focusField = focusContextField(focusContextRef.current);
       const view = new EditorView({
         parent: host,
         state: EditorState.create({
@@ -456,7 +550,8 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
             syntaxHighlighting(obHighlightStyle),
             history(),
             drawSelection(),
-            codeFolding(),
+            codeFolding({ placeholderText: "⋯" }),
+            lineNumbers(),
             foldGutter(),
             foldService.of(packageFoldService),
             foldService.of(headingFoldService),
@@ -487,6 +582,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
             search(),
             seedComp.of(headingCountSeed.of(new Map(headingCountsRef.current))),
             obMarkerDecorations,
+            focusField,
             EditorState.transactionFilter.of((tr) => {
               if (nested || !tr.docChanged) return tr;
               const text = tr.startState.doc.toString();
@@ -528,6 +624,15 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
         viewRef.current = null;
       };
     }, []);
+
+    const focusContextKey = focusContext
+      ? `${focusContext.from}:${focusContext.to}:${focusContext.beforeLines}:${focusContext.afterLines}`
+      : "";
+    useEffect(() => {
+      const view = viewRef.current;
+      if (!view) return;
+      view.dispatch({ effects: focusContextEffect.of(focusContextRef.current) });
+    }, [focusContextKey]);
 
     useEffect(() => {
       const view = viewRef.current;

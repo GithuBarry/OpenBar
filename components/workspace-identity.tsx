@@ -8,7 +8,7 @@ import { saveWorkspaceSettingsAction } from "@/app/actions";
 import type { WorkspaceSettings } from "@/lib/workspace";
 
 /** A compact editor for the repository-backed name shown across the workspace. */
-export function WorkspaceIdentity({ workspace }: { workspace: WorkspaceSettings }) {
+export function WorkspaceIdentity({ workspace, readOnly = false }: { workspace: WorkspaceSettings; readOnly?: boolean }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(workspace.name);
@@ -56,6 +56,15 @@ export function WorkspaceIdentity({ workspace }: { workspace: WorkspaceSettings 
     });
   };
 
+  if (readOnly) {
+    return (
+      <div className="ob-workspace-identity flex min-w-0 flex-col">
+        <div className="ob-workspace-name truncate text-ink">{workspace.name}</div>
+        {workspace.tagline && <div className="ob-workspace-tagline truncate text-muted">{workspace.tagline}</div>}
+      </div>
+    );
+  }
+
   if (editing) {
     return (
       <form
@@ -94,7 +103,7 @@ export function WorkspaceIdentity({ workspace }: { workspace: WorkspaceSettings 
   }
 
   return (
-    <div className="group flex min-w-0 items-start gap-1.5">
+    <div className="ob-workspace-identity group flex min-w-0 items-start gap-2.5">
       <button
         type="button"
         onClick={() => setEditing(true)}
@@ -102,8 +111,15 @@ export function WorkspaceIdentity({ workspace }: { workspace: WorkspaceSettings 
         aria-label="Edit workspace name"
         title="Edit workspace name"
       >
-        <div className="truncate font-serif text-xl font-semibold leading-tight text-ink">{workspace.name}</div>
-        {workspace.tagline && <div className="truncate text-xs text-muted">{workspace.tagline}</div>}
+        <div className="ob-workspace-name truncate text-ink">{workspace.name}</div>
+        {workspace.tagline && (
+          <>
+            <div className="ob-workspace-tagline ob-workspace-tagline-full truncate text-muted">{workspace.tagline}</div>
+            <div className="ob-workspace-tagline ob-workspace-tagline-compact truncate text-muted">
+              {workspace.tagline.length > 20 ? "Serving Draft" : workspace.tagline}
+            </div>
+          </>
+        )}
       </button>
       <button
         type="button"
@@ -114,7 +130,7 @@ export function WorkspaceIdentity({ workspace }: { workspace: WorkspaceSettings 
       >
         <Edit3 size={13} />
       </button>
-      {saved && <span className="mt-1 flex items-center gap-1 text-[11px] font-medium text-m-final"><Check size={12} /> Saved</span>}
+      {saved && <span className="mt-1 flex items-center gap-1 text-[11px] font-medium text-ok"><Check size={12} /> Saved</span>}
     </div>
   );
 }

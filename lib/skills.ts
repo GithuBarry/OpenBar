@@ -66,7 +66,7 @@ For research code specifically: correctness and auditability of scientific claim
 
 - Pre-register: write the hypothesis and the concrete expected outcome BEFORE running the experiment. Compare results to the frozen prediction; don't rewrite the prediction after seeing results (no HARKing).
 - Name the question, not just the method. Don't get stuck optimizing a method and lose the goal. Prefer research questions that stay interesting whichever way the result comes out.
-- Every empirical claim needs pointable evidence (a run id, a figure, a metric, a source span). No evidence → say "no evidence cited" and mark the claim as hypothesized.
+- Every empirical claim needs pointable evidence (a run id, a figure, a metric, a source span). No evidence → say so; do not invent a result.
 - Inspect the thing before the metric. Inspect raw inputs, intermediate states, raw outputs, evaluator traces, dropped cases, and table source files before trusting aggregate numbers.
 - Track denominators, filters, prompts, costs, retries, seeds, failures, exclusions, and hidden defaults. Fuzzy accounting turns results into decoration.
 - Preserve single source of truth. Leave experiment dashboards, compute logs, manuscript claims, shared notes, and repository artifacts in their source systems. Add lightweight anchors, manifests, hashes, and small excerpts so OpenBar can link and challenge the work.
@@ -77,20 +77,20 @@ For research code specifically: correctness and auditability of scientific claim
 - Complete a full end-to-end unit of any method quickly before scaling it up.`,
   },
   {
-    id: "maturation-writing",
-    title: "Draft maturation (don't one-shot, don't changelog)",
-    when: "Editing a research draft, paper section, abstract, or any maturing document.",
-    source: "OpenBar writing and maturity practice",
-    body: `A research draft matures from empty scaffold to final over many passes. Your job is to advance maturity by ONE honest step, never to finish it in one shot and never to turn it into a changelog.
+    id: "paper-writing",
+    title: "Write into the paper",
+    when: "Editing a research draft, paper section, abstract, or related work.",
+    source: "OpenBar writing practice",
+    body: `Write the paper. Unfinished actions are \\obtodo anchors in that paper.
 
-- Do not declare the draft/section/paper finished. Report which sections and claims remain immature.
-- Wrap unverified content in maturity markers so the tracker can see it: {?hypothesized: claim}, {?verify: claim}, TODO:, <!-- FIGURE: caption -->, [[cite]]. Leaving a marker in place is correct, not lazy.
-- Never silently delete a marker to make a section look done. Resolve it with real evidence or leave it.
-- Preserve the maturity ceiling: a section with any unverified value is not final.
-- Edit in place so the document reads as a coherent artifact. Process narration belongs in daily notes, not the draft.
-- Match the project's existing voice and notation; reuse its own terms from the wiki/mindmap rather than inventing new labels.
+- Prefer ordinary TeX for claims that belong in the manuscript.
+- Put remaining work in \\obtodo[id=…]{…}. Completing a TODO can be a decision with no new prose.
+- Do not invent a parallel task tracker in the wiki or mindmap.
+- Leave unverified numbers out or mark them as comments, not as fake results.
+- Edit in place so the document reads as a coherent artifact. Process narration belongs in the wiki if it is useful later.
+- Match the project's existing voice and notation.
 
-Prose quality: prefer concrete specificity over polished generality, plain words over synonym-chasing, and don't perform (no keynote cadence, no ceremonial wrap-ups). Fit the format to the medium.`,
+Prose quality: prefer concrete specificity over polished generality, plain words over synonym-chasing, and don't perform (no keynote cadence, no ceremonial wrap-ups).`,
   },
   {
     id: "status-report",

@@ -27,7 +27,7 @@ export function requireManagedManuscript(manuscriptDir: string): OperationResult
   if (inspection.migrationRequired) {
     return failResult(
       "migration_required",
-      "This repository does not have enough OpenBarry section metadata for a safe in-place structural edit. Inspect the include graph and apply a migration plan first.",
+      "This repository does not have enough OpenBar section metadata for a safe in-place structural edit. Inspect the include graph and apply a migration plan first.",
       { retryable: false, diagnostics: inspection.diagnostics },
     );
   }

@@ -3,12 +3,10 @@
 import katex from "katex";
 import React, { useMemo, type ReactElement, type ReactNode } from "react";
 
-import { MaturityMark } from "@/components/maturity-mark";
 import { headingOccurrenceKey, texHeadingLevel } from "@/features/paper/heading-keys";
 import { referenceFields, refId, type BibEntry } from "@/lib/bibtex";
 import { parseAnchorAttrs, resolveAssetUrl } from "@/lib/marker-codec";
 import { safeUrl } from "@/lib/safe-url";
-import type { MaturityMarkerKind } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   envName,
@@ -25,17 +23,6 @@ import {
   type TexNode,
   type TexRoot,
 } from "@/lib/tex-project/tex-ast";
-
-const CLAIM_STYLE: Record<string, { cls: string; label: string }> = {
-  seed: { cls: "text-m-hypo", label: "seed" },
-  hypothesis: { cls: "text-m-hypo", label: "hypothesis" },
-  "weak-evidence": { cls: "text-m-draft", label: "weak evidence" },
-  "moderate-evidence": { cls: "text-m-draft", label: "moderate evidence" },
-  "strong-evidence": { cls: "text-m-review", label: "strong evidence" },
-  "paper-ready": { cls: "text-ink", label: "paper-ready" },
-  submitted: { cls: "text-ink", label: "submitted" },
-  killed: { cls: "text-faint line-through", label: "killed" },
-};
 
 const HEADING_MACROS = new Set(["title", "section", "subsection", "subsubsection", "paragraph", "subparagraph"]);
 const CITE_MACROS = new Set(["cite", "citep", "citet", "citealp", "citeauthor", "autocite", "parencite", "textcite", "obcite"]);
@@ -138,7 +125,6 @@ const CHAR_MACROS: Record<string, string> = {
   dagger: "†",
   ddagger: "‡",
 };
-const MARKER_KINDS = new Set(["hypothesized", "notfinal", "placeholder", "verify", "cite", "citation-needed", "todo"]);
 
 type WalkContext = {
   headingCounts: Map<string, number>;
@@ -249,32 +235,9 @@ function hasBlockChild(nodes: readonly unknown[]): boolean {
   return nodes.some((node) => isBlockNode(node) || isParbreak(node));
 }
 
-function asMarkerKind(kind: string): MaturityMarkerKind | "cite" {
-  const normalized = kind.toLowerCase().replace("citation-needed", "cite");
-  if (MARKER_KINDS.has(normalized) || normalized === "cite") return normalized as MaturityMarkerKind | "cite";
-  return "hypothesized";
-}
-
-function ClaimInline({ state, id, children }: { state: string; id?: string; children: ReactNode }) {
-  const style = CLAIM_STYLE[state] ?? CLAIM_STYLE.hypothesis;
-  return (
-    <span className="ob-claim-inline" data-claim={id || undefined} title={`Claim: ${id ? `${id} · ` : ""}${style.label}`}>
-      {children}
-    </span>
-  );
-}
-
 function TodoInline({ children }: { children: ReactNode }) {
   return (
     <span className="ob-todo-inline" title="TODO">
-      {children}
-    </span>
-  );
-}
-
-function EvidenceInline({ children }: { children: ReactNode }) {
-  return (
-    <span className="ob-evidence-inline" title="Evidence note">
       {children}
     </span>
   );
@@ -346,17 +309,16 @@ function consumeFollowingLabel(nodes: readonly TexNode[], start: number): { id: 
 
 function renderProseString(text: string, ctx: WalkContext): ReactNode[] {
   const out: ReactNode[] = [];
-  const markerRe = /\{\?\s*(hypothesized|notfinal|placeholder|verify|cite|citation-needed|todo)\b\s*:?\s*([^}]*)\}/gi;
+  const markerRe = /\{\?\s*(notfinal|placeholder|verify|cite|citation-needed|todo)\b\s*:?\s*([^}]*)\}/gi;
   let last = 0;
   let match: RegExpExecArray | null;
   while ((match = markerRe.exec(text)) !== null) {
     if (match.index > last) out.push(text.slice(last, match.index));
-    const kind = asMarkerKind(match[1] || "hypothesized");
-    const body = (match[2] || "").trim() || kind;
+    const body = (match[2] || match[1] || "").trim();
     out.push(
-      <MaturityMark key={ctx.nextKey()} kind={kind}>
+      <span key={ctx.nextKey()} className="ob-marker-inline" title={match[1] || "marker"}>
         {body}
-      </MaturityMark>,
+      </span>,
     );
     last = match.index + match[0].length;
   }
@@ -443,30 +405,16 @@ function renderMacro(node: unknown, ctx: WalkContext): ReactNode {
       </a>
     );
   }
-  if (name === "obclaim") {
-    const attrs = parseAnchorAttrs(nodesToPlainText(optionalArg(node) ?? []));
-    const state = (attrs.state || "hypothesis").toLowerCase();
-    return (
-      <ClaimInline key={ctx.nextKey()} state={state} id={attrs.id}>
-        {renderInline(mandatoryArgs(node)[0] ?? [], ctx)}
-      </ClaimInline>
-    );
-  }
   if (name === "obtodo") {
     return <TodoInline key={ctx.nextKey()}>{renderInline(mandatoryArgs(node)[0] ?? [], ctx)}</TodoInline>;
-  }
-  if (name === "obevidence") {
-    return <EvidenceInline key={ctx.nextKey()}>{renderInline(mandatoryArgs(node)[0] ?? [], ctx)}</EvidenceInline>;
   }
   if (name === "obcomment") {
     return <CommentInline key={ctx.nextKey()}>{renderInline(mandatoryArgs(node)[0] ?? [], ctx)}</CommentInline>;
   }
   if (name === "obmarker") {
-    const kind = asMarkerKind(nodesToPlainText(mandatoryArgs(node)[0] ?? []).trim());
-    const label = kind === "citation-needed" ? "cite" : kind;
     return (
-      <span key={ctx.nextKey()} className={cn("ob-marker-inline", `ob-marker-${label}`)} data-marker={kind} title={label}>
-        {renderInline(mandatoryArgs(node)[1] ?? [], ctx)}
+      <span key={ctx.nextKey()} className="ob-marker-inline">
+        {renderInline(mandatoryArgs(node)[1] ?? mandatoryArgs(node)[0] ?? [], ctx)}
       </span>
     );
   }

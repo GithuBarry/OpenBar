@@ -10,6 +10,8 @@ import {
 } from "./mcp-tool-schemas";
 import { failResult, okResult, type OperationResult } from "./operation-result";
 import { parseWebMcpArgs, unknownWebMcpArgument, type PaperWebMcpTool } from "./webmcp-paper-contract";
+import { safeUrl } from "@/lib/safe-url";
+import type { ProjectLink } from "@/lib/types";
 
 export type CurrentLocation = {
   kind: "paper" | "mindmap" | "wiki" | "home" | "instructions";
@@ -32,7 +34,14 @@ export type ProjectMetadataPatch = {
   title?: string;
   venue?: string;
   tagline?: string;
+  overview?: string;
+  researchKind?: string;
+  color?: string;
+  icon?: string;
   label?: string;
+  links?: ProjectLink[];
+  collaborators?: string[];
+  archivedAt?: string | null;
 };
 
 export type SharedWebMcpActions = {
@@ -85,6 +94,15 @@ type SharedToolName =
   | (typeof INSTRUCTIONS_WEBMCP_TOOL_NAMES)[number]
   | (typeof SETUP_WEBMCP_TOOL_NAMES)[number];
 
+export type SharedWebMcpProfile = "full" | "public-demo";
+
+const PUBLIC_DEMO_PROJECT_TOOLS = [
+  "get_project_state",
+  "search_project",
+  "navigate_project",
+  "read_project_skill",
+] as const satisfies readonly SharedToolName[];
+
 const TOOL_META: Record<SharedToolName, { title: string; description: string }> = {
   get_project_state: {
     title: "Read project state",
@@ -124,12 +142,13 @@ const TOOL_META: Record<SharedToolName, { title: string; description: string }> 
   },
   update_project: {
     title: "Update project metadata",
-    description: "Update the project title, venue, tagline, or optional free-form label. Same fields the human project header and cards edit.",
+    description: "Update any editable project metadata: title, venue, tagline, overview, research kind, color, icon, label, links, collaborators, or archive state. TeX project metadata remains the shared source.",
   },
 };
 
-export function buildSharedWebMcpTools(host: SharedWebMcpHost): PaperWebMcpTool[] {
-  return PROJECT_WEBMCP_TOOL_NAMES.map((name) => sharedTool(host, name));
+export function buildSharedWebMcpTools(host: SharedWebMcpHost, profile: SharedWebMcpProfile = "full"): PaperWebMcpTool[] {
+  const names = profile === "public-demo" ? PUBLIC_DEMO_PROJECT_TOOLS : PROJECT_WEBMCP_TOOL_NAMES;
+  return names.map((name) => sharedTool(host, name));
 }
 
 export const buildProjectWebMcpTools = buildSharedWebMcpTools;
@@ -264,7 +283,7 @@ async function executeSharedWebMcpTool(
         if (typeof expectedHash !== "string") return expectedHash;
         const patch: ProjectMetadataPatch = { expectedHash };
         let hasMetadataPatch = false;
-        for (const key of ["title", "venue", "tagline", "label"] as const) {
+        for (const key of ["title", "venue", "tagline", "overview", "researchKind", "color", "icon", "label"] as const) {
           if (args[key] === undefined) continue;
           if (typeof args[key] !== "string") {
             return failResult("invalid_arguments", `${key} must be a string.`, { retryable: false });
@@ -272,8 +291,55 @@ async function executeSharedWebMcpTool(
           patch[key] = args[key];
           hasMetadataPatch = true;
         }
+        if (args.collaborators !== undefined) {
+          if (!Array.isArray(args.collaborators) || args.collaborators.length > 100) {
+            return failResult("invalid_arguments", "collaborators must be an array with at most 100 names.", { retryable: false });
+          }
+          const collaborators: string[] = [];
+          for (const collaborator of args.collaborators) {
+            if (typeof collaborator !== "string" || collaborator.trim().length > 160) {
+              return failResult("invalid_arguments", "Each collaborator must be a string of at most 160 characters.", { retryable: false });
+            }
+            if (collaborator.trim()) collaborators.push(collaborator.trim());
+          }
+          patch.collaborators = collaborators;
+          hasMetadataPatch = true;
+        }
+        if (args.links !== undefined) {
+          if (!Array.isArray(args.links) || args.links.length > 50) {
+            return failResult("invalid_arguments", "links must be an array with at most 50 entries.", { retryable: false });
+          }
+          const links: ProjectLink[] = [];
+          for (const item of args.links) {
+            if (!item || typeof item !== "object" || Array.isArray(item)) {
+              return failResult("invalid_arguments", "Each link must contain label, url, and kind.", { retryable: false });
+            }
+            const link = item as Record<string, unknown>;
+            const extra = Object.keys(link).find((key) => !["label", "url", "kind"].includes(key));
+            if (extra) return failResult("invalid_arguments", `Unknown link property "${extra}".`, { retryable: false });
+            if (typeof link.label !== "string" || link.label.trim().length > 240) {
+              return failResult("invalid_arguments", "Each link label must be a string of at most 240 characters.", { retryable: false });
+            }
+            if (typeof link.url !== "string" || link.url.trim().length > 2_000 || !safeUrl(link.url)) {
+              return failResult("invalid_arguments", "Each link url must be a safe http(s) URL of at most 2,000 characters.", { retryable: false });
+            }
+            if (link.kind !== "overleaf" && link.kind !== "latex" && link.kind !== "arxiv" && link.kind !== "web" && link.kind !== "repo") {
+              return failResult("invalid_arguments", "Each link kind must be overleaf, latex, arxiv, web, or repo.", { retryable: false });
+            }
+            links.push({ label: link.label.trim(), url: safeUrl(link.url)!, kind: link.kind });
+          }
+          patch.links = links;
+          hasMetadataPatch = true;
+        }
+        if (args.archivedAt !== undefined) {
+          if (args.archivedAt !== null && (typeof args.archivedAt !== "string" || !Number.isFinite(Date.parse(args.archivedAt)))) {
+            return failResult("invalid_arguments", "archivedAt must be an ISO date-time or null to unarchive.", { retryable: false });
+          }
+          patch.archivedAt = args.archivedAt === null ? null : String(args.archivedAt);
+          hasMetadataPatch = true;
+        }
         if (!hasMetadataPatch) {
-          return failResult("invalid_arguments", "Provide title, venue, tagline, or label.", { retryable: false });
+          return failResult("invalid_arguments", "Provide at least one project metadata field.", { retryable: false });
         }
         return okResult(await host.actions.updateProject(host.project, patch));
       }

@@ -8,12 +8,10 @@ import {
 } from "@codemirror/view";
 
 import { findMacroMatches } from "@/lib/marker-codec";
-import { CURLY_MARKER_KIND } from "@/lib/research/paper-analysis";
 import { headingOccurrenceKey, texHeadingLevel } from "./heading-keys";
 import { splitBundleSource } from "@/lib/tex-project/source-bundle-format";
 
 const MACRO_NAMES = [
-  "obclaim",
   "obtodo",
   "obcomment",
   "obmarker",
@@ -26,7 +24,6 @@ const MACRO_NAMES = [
 ];
 
 const MACRO_CLASS: Record<string, string> = {
-  obclaim: "ob-cm-claim",
   obtodo: "ob-cm-todo",
   obcomment: "ob-cm-comment",
   obmarker: "ob-cm-marker",
@@ -42,7 +39,6 @@ const MACRO_MARKS: Record<string, Decoration> = Object.fromEntries(
   [...new Set(Object.values(MACRO_CLASS))].map((cls) => [cls, Decoration.mark({ class: cls })]),
 );
 
-const CLAIM_BODY_MARK = Decoration.mark({ class: "ob-cm-claim-body" });
 const TODO_BODY_MARK = Decoration.mark({ class: "ob-cm-todo-body" });
 
 const BRACE_MARK = Decoration.mark({ class: "ob-cm-brace-marker" });
@@ -193,7 +189,7 @@ function collectMacros(text: string, ranges: MarkRange[]): void {
     const cls = MACRO_CLASS[match.name];
     const decoration = cls ? MACRO_MARKS[cls] : undefined;
     if (!decoration) continue;
-    if (match.name === "obclaim" || match.name === "obtodo") {
+    if (match.name === "obtodo") {
       const split = splitChromeAndBody(text, match.index, match.length, match.body);
       if (split) {
         if (split.chromeTo > match.index) {
@@ -209,7 +205,7 @@ function collectMacros(text: string, ranges: MarkRange[]): void {
           ranges.push({
             from: split.bodyFrom,
             to: split.bodyTo,
-            decoration: match.name === "obclaim" ? CLAIM_BODY_MARK : TODO_BODY_MARK,
+            decoration: TODO_BODY_MARK,
             rank: 0,
             kind: `${match.name}-body`,
           });
@@ -238,7 +234,7 @@ function collectBraceMarkers(text: string, ranges: MarkRange[]): void {
     const close = matchDelimited(text, from, "{", "}");
     if (close === null) continue;
     const inner = text.slice(from + 2, close - 1).trimStart();
-    if (!CURLY_MARKER_KIND.test(inner)) continue;
+    if (!/^(notfinal|placeholder|verify|cite|citation-needed|todo)\b/i.test(inner)) continue;
     ranges.push({ from, to: close, decoration: BRACE_MARK, rank: 1, kind: "brace" });
     searchFrom = close;
   }

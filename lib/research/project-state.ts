@@ -1,14 +1,31 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
-import { analyzePaper, type PaperAnalysis, type PaperHeading, type PaperNote, type PaperTodo } from "@/lib/research/paper-analysis";
-import { bundledSkills, discoverSkillsInDir, findAgentsMd, type ProjectSkill } from "@/lib/research/project-skills";
-import type { CurrentLocation } from "@/lib/research/webmcp-shared-contract";
-import { parseTodoStatus } from "@/lib/todo-meta";
-import { getEditableTexPaper, getProject, listMindmaps, listWiki, projectContentDir } from "@/lib/store";
+import { analyzePaper, paperTodoIsOpen, type PaperAnalysis, type PaperHeading, type PaperNote, type PaperTodo } from "@/lib/research/paper-analysis";
+import {
+  bundledSkills,
+  discoverSkillsInDir,
+  discoverWorkspaceSkills,
+  findAgentsMd,
+  mergeSkills,
+  workspaceRoot,
+  type ProjectSkill,
+} from "@/lib/research/project-skills";
+import type { CurrentLocation, ProjectStateQuery } from "@/lib/research/webmcp-shared-contract";
+import { getEditableTexPaper, getMindmap, getProject, listMindmaps, listWiki, projectContentDir } from "@/lib/store";
 import { DRAFT_MINDMAP_ID, texPaths, type PaperSection, type TexPaper } from "@/lib/tex-project/project";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import type { Mindmap, Project, WikiPage } from "@/lib/types";
+import {
+  findPrimaryMindmap,
+  isPrimaryMindmap,
+  nodeActivityAt,
+  ordinaryMindmapCardContent,
+  reconcileTodos,
+  todoActivityAt,
+  type TodoReconciliation,
+} from "@/lib/research/todo-map";
 
 export type { CurrentLocation };
 
@@ -23,26 +40,40 @@ export type ProjectStateOutlineItem = {
 
 export type ProjectStateTodo = {
   id: string;
+  /** Short TeX-owned label shown above the TODO body. */
+  title?: string;
   text: string;
   sectionId?: string;
   sectionTitle?: string;
   file?: string;
-  status?: string;
+  completed: boolean;
+  /** TeX TODO with no card on the Primary map. */
+  primaryUnplaced?: boolean;
+  primaryMapNodeId?: string;
+  /** Alias of primaryUnplaced for the current mindmap editor. */
+  unplaced: boolean;
+  mapNodeId?: string;
   href: string;
+  mindmapHref?: string;
 };
 
 export type ProjectStateComment = {
+  id?: string;
   text: string;
   kind?: string;
   sectionId?: string;
   sectionTitle?: string;
+  /** Offset in the composed TeX source used when assigning an id on first link. */
+  sourceStart?: number;
   href: string;
 };
 
 export type RecentActivityItem = {
-  kind: "section_edit" | "todo_completed" | "annotation";
+  kind: "card" | "todo" | "section_edit";
   title: string;
   sectionId?: string;
+  nodeId?: string;
+  mapId?: string;
   at: string;
   href: string;
 };
@@ -60,8 +91,18 @@ export type ProjectState = {
   project: {
     slug: string;
     title: string;
+    /** SHA-256 of the project metadata envelope for compare-and-swap writes. */
+    hash: string;
     venue?: string;
     tagline?: string;
+    overview?: string;
+    researchKind?: string;
+    color?: string;
+    icon?: string;
+    links: Project["links"];
+    collaborators?: string[];
+    archivedAt?: string;
+    label?: string;
   };
   current?: CurrentLocation;
   paper: {
@@ -73,10 +114,20 @@ export type ProjectState = {
     todos: ProjectStateTodo[];
     comments: ProjectStateComment[];
   } | null;
-  mindmaps: Array<{ id: string; title: string; href: string; nodeCount: number }>;
+  mindmaps: Array<{ id: string; title: string; primary: boolean; href: string; nodeCount: number }>;
+  wiki: Array<{ slug: string; title: string; href: string; updatedAt: string }>;
   recent: RecentActivityItem[];
   skills: ProjectSkill[];
-  agentsMd?: { path: string };
+  agentsMd?: { path: string; body: string; hash: string };
+  workspaceAgentsMd?: { path: string; body: string; hash: string };
+  /** Open mindmap only. Bound ids on this map; not agent orientation. */
+  currentMap?: { id: string; primary: boolean; boundTodoIds: string[] };
+  todoSync?: {
+    primaryMapId: string;
+    unplaced: number;
+    missing: number;
+    warnings: TodoReconciliation["warnings"];
+  };
 };
 
 function paperHref(slug: string, hash?: string): string {
@@ -85,7 +136,7 @@ function paperHref(slug: string, hash?: string): string {
 }
 
 function mindmapHref(slug: string, mapId?: string, nodeId?: string): string {
-  const id = !mapId || mapId === DRAFT_MINDMAP_ID ? "" : `/${encodeURIComponent(mapId)}`;
+  const id = isPrimaryMindmap(mapId || DRAFT_MINDMAP_ID) ? "" : `/${encodeURIComponent(mapId!)}`;
   const base = `/p/${encodeURIComponent(slug)}/mindmap${id}`;
   return nodeId ? `${base}#${encodeURIComponent(nodeId)}` : base;
 }
@@ -154,12 +205,18 @@ function snippetAround(text: string, query: string, radius = 72): string {
 }
 
 export function openTodoStatus(todo: PaperTodo): boolean {
-  return parseTodoStatus(todo.attrs.status || todo.status) !== "done";
+  return paperTodoIsOpen(todo);
 }
 
 export function commentKind(note: PaperNote): string | undefined {
   const kind = note.attrs.kind?.trim();
   return kind || undefined;
+}
+
+/** Stable TeX `[id=…]`, including a thin attrs.id fallback if PaperNote.id is unset. */
+export function commentId(note: PaperNote): string | undefined {
+  const id = (note.id || note.attrs.id)?.trim();
+  return id || undefined;
 }
 
 export function buildPaperSummary(
@@ -186,17 +243,19 @@ export function buildPaperSummary(
     };
   });
 
-  const todos = analysis.todos.map((todo) => {
+  const todos = analysis.todos.filter((todo) => todo.id).map((todo) => {
     const section = matchSection(paper.sections, headingBeforeLine(analysis.outline, todo.line), todo.section);
-    const status = parseTodoStatus(todo.attrs.status || todo.status);
     return {
-      id: todo.id,
+      id: todo.id!,
+      title: todo.title || "",
       text: todo.text,
       sectionId: section?.id,
       sectionTitle: section?.title || todo.section,
       file: relFile(section?.file, manuscriptDir),
-      status: status === "open" ? undefined : status,
-      href: paperHref(slug, todo.id),
+      completed: !paperTodoIsOpen(todo),
+      primaryUnplaced: true,
+      unplaced: true,
+      href: paperHref(slug, todo.id!),
     };
   });
 
@@ -204,12 +263,15 @@ export function buildPaperSummary(
     .filter((note) => note.macro === "obcomment")
     .map((note) => {
       const section = matchSection(paper.sections, headingBeforeLine(analysis.outline, note.line), note.section);
+      const id = commentId(note);
       return {
+        ...(id ? { id } : {}),
         text: note.text,
         kind: commentKind(note),
         sectionId: section?.id,
         sectionTitle: section?.title || note.section,
-        href: paperHref(slug, section?.id),
+        sourceStart: note.start,
+        href: paperHref(slug, id || section?.id),
       };
     });
 
@@ -227,13 +289,34 @@ export function buildPaperSummary(
 export function deriveRecentActivity(input: {
   slug: string;
   outline: ProjectStateOutlineItem[];
-  todos: ProjectStateTodo[];
-  comments: ProjectStateComment[];
+  mindmaps: Mindmap[];
+  paperTodos?: PaperTodo[];
+  primaryReconciliation?: TodoReconciliation;
   limit?: number;
 }): RecentActivityItem[] {
   const items: RecentActivityItem[] = [];
+  const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const texTodos = input.paperTodos || [];
+  for (const map of input.mindmaps) {
+    const mapId = map.id || DRAFT_MINDMAP_ID;
+    const rec = isPrimaryMindmap(map) && input.primaryReconciliation
+      ? input.primaryReconciliation
+      : reconcileTodos(map, texTodos);
+    for (const node of map.nodes) {
+      const at = nodeActivityAt(node, rec);
+      if (!at || Date.parse(at) < since) continue;
+      items.push({
+        kind: node.todoId ? "todo" : "card",
+        title: rec.bound.find((item) => item.node.id === node.id)?.displayText || ordinaryMindmapCardContent(node).title || node.id,
+        nodeId: node.id,
+        mapId,
+        at,
+        href: mindmapHref(input.slug, mapId, node.id),
+      });
+    }
+  }
   for (const section of input.outline) {
-    if (!section.updatedAt) continue;
+    if (!section.updatedAt || Date.parse(section.updatedAt) < since) continue;
     items.push({
       kind: "section_edit",
       title: section.title,
@@ -242,25 +325,18 @@ export function deriveRecentActivity(input: {
       href: paperHref(input.slug, section.id),
     });
   }
-  for (const todo of input.todos) {
-    if (todo.status !== "done") continue;
-    items.push({
-      kind: "todo_completed",
-      title: todo.text,
-      sectionId: todo.sectionId,
-      at: new Date().toISOString().slice(0, 10),
-      href: todo.href,
-    });
-  }
-  for (const comment of input.comments) {
-    if (comment.kind !== "result" && comment.kind !== "finding") continue;
-    items.push({
-      kind: "annotation",
-      title: comment.text,
-      sectionId: comment.sectionId,
-      at: new Date().toISOString(),
-      href: comment.href,
-    });
+  if (input.primaryReconciliation) {
+    for (const item of input.primaryReconciliation.unplaced) {
+      const at = todoActivityAt(item.todo);
+      if (!at || Date.parse(at) < since) continue;
+      const id = item.todo.id || "";
+      items.push({
+        kind: "todo",
+        title: item.displayText,
+        at,
+        href: paperHref(input.slug, id),
+      });
+    }
   }
   items.sort((a, b) => b.at.localeCompare(a.at));
   return items.slice(0, input.limit ?? 12);
@@ -275,19 +351,55 @@ export function buildProjectState(input: {
   mindmaps: Mindmap[];
   wiki?: WikiPage[];
   skills: ProjectSkill[];
-  agentsMd?: { path: string };
+  agentsMd?: { path: string; body: string; updatedAt?: string };
+  workspaceAgentsMd?: { path: string; body: string; updatedAt?: string };
   current?: CurrentLocation;
 }): ProjectState {
   const slug = input.project.slug;
   const paper = input.paper && input.analysis && input.bundle && input.manuscriptDir
     ? buildPaperSummary(slug, input.paper, input.analysis, input.bundle, input.manuscriptDir)
     : null;
+  const primary = findPrimaryMindmap(input.mindmaps);
+  const primaryMapId = primary?.id || DRAFT_MINDMAP_ID;
+  const reconciliation = reconcileTodos(primary || null, input.analysis?.todos || []);
+  if (paper) {
+    const bound = new Map(reconciliation.bound.map((item) => [item.todo.id, item]));
+    paper.todos = paper.todos.map((todo) => {
+      const card = bound.get(todo.id);
+      const primaryUnplaced = !card;
+      return {
+        ...todo,
+        primaryUnplaced,
+        unplaced: primaryUnplaced,
+        primaryMapNodeId: card?.node.id,
+        mapNodeId: card?.node.id,
+        mindmapHref: card ? mindmapHref(slug, primaryMapId, card.node.id) : mindmapHref(slug, primaryMapId),
+      };
+    });
+  }
+  const openMapId = input.current?.kind === "mindmap" ? (input.current.mapId || DRAFT_MINDMAP_ID) : undefined;
+  const openMap = openMapId
+    ? input.mindmaps.find((map) => {
+      const id = map.id || DRAFT_MINDMAP_ID;
+      return (isPrimaryMindmap(map) && isPrimaryMindmap(openMapId)) || id === openMapId;
+    })
+    : undefined;
+  const agents = input.agentsMd;
   return {
     project: {
       slug,
       title: input.project.title,
+      hash: input.project.diskHash || "",
       ...(input.project.venue ? { venue: input.project.venue } : {}),
       ...(input.project.tagline ? { tagline: input.project.tagline } : {}),
+      ...(input.project.overview ? { overview: input.project.overview } : {}),
+      ...(input.project.researchKind ? { researchKind: input.project.researchKind } : {}),
+      ...(input.project.color ? { color: input.project.color } : {}),
+      ...(input.project.icon ? { icon: input.project.icon } : {}),
+      links: input.project.links,
+      ...(input.project.collaborators?.length ? { collaborators: input.project.collaborators } : {}),
+      ...(input.project.archivedAt ? { archivedAt: input.project.archivedAt } : {}),
+      ...(input.project.label ? { label: input.project.label } : {}),
     },
     ...(input.current ? { current: input.current } : {}),
     paper,
@@ -296,16 +408,55 @@ export function buildProjectState(input: {
       return {
         id,
         title: map.title || input.project.title,
+        primary: isPrimaryMindmap(map),
         href: mindmapHref(slug, id),
         nodeCount: map.nodes.length,
       };
     }),
-    recent: paper
-      ? deriveRecentActivity({ slug, outline: paper.outline, todos: paper.todos, comments: paper.comments })
-      : [],
+    wiki: (input.wiki || []).map((page) => ({
+      slug: page.slug,
+      title: page.title,
+      href: `/p/${encodeURIComponent(slug)}/wiki/${encodeURIComponent(page.slug)}`,
+      updatedAt: page.updatedAt,
+    })),
+    recent: deriveRecentActivity({
+      slug,
+      outline: paper?.outline || [],
+      mindmaps: input.mindmaps,
+      paperTodos: input.analysis?.todos || [],
+      primaryReconciliation: reconciliation,
+    }),
     skills: input.skills,
-    ...(input.agentsMd ? { agentsMd: input.agentsMd } : {}),
+    ...(agents ? { agentsMd: { path: agents.path, body: agents.body, hash: hashAgents(agents.body) } } : {}),
+    ...(input.workspaceAgentsMd
+      ? {
+          workspaceAgentsMd: {
+            path: input.workspaceAgentsMd.path,
+            body: input.workspaceAgentsMd.body,
+            hash: hashAgents(input.workspaceAgentsMd.body),
+          },
+        }
+      : {}),
+    ...(openMap
+      ? {
+          currentMap: {
+            id: openMap.id || DRAFT_MINDMAP_ID,
+            primary: isPrimaryMindmap(openMap),
+            boundTodoIds: [...new Set((openMap.nodes || []).flatMap((node) => (node.todoId?.trim() ? [node.todoId.trim()] : [])))],
+          },
+        }
+      : {}),
+    todoSync: {
+      primaryMapId,
+      unplaced: reconciliation.unplaced.length,
+      missing: reconciliation.missing.length,
+      warnings: reconciliation.warnings,
+    },
   };
+}
+
+function hashAgents(body: string): string {
+  return createHash("sha256").update(body).digest("hex");
 }
 
 export function getProjectState(slug: string, current?: CurrentLocation): ProjectState | null {
@@ -316,8 +467,7 @@ export function getProjectState(slug: string, current?: CurrentLocation): Projec
   const paths = texPaths(dir);
   const bundle = paper ? buildSourceBundle(paths.manuscriptDir) : undefined;
   const analysis = paper ? analyzePaper(paper.source) : undefined;
-  const projectSkills = discoverSkillsInDir(dir);
-  const skills = projectSkills.length ? projectSkills : bundledSkills();
+  const skills = mergeSkills(discoverSkillsInDir(dir), discoverWorkspaceSkills(), bundledSkills());
   return buildProjectState({
     project,
     paper,
@@ -328,8 +478,91 @@ export function getProjectState(slug: string, current?: CurrentLocation): Projec
     wiki: listWiki(slug),
     skills,
     agentsMd: findAgentsMd(dir),
+    workspaceAgentsMd: findAgentsMd(workspaceRoot()),
     current,
   });
+}
+
+export function projectStateForAgent(state: ProjectState, query: ProjectStateQuery = {}): unknown {
+  const detail = query.detail === "full" ? "full" : "summary";
+  const todoLimit = query.todoLimit ?? (detail === "full" ? Infinity : 8);
+  const paper = state.paper;
+  const primaryUnplaced = (todo: ProjectStateTodo) => todo.primaryUnplaced ?? todo.unplaced;
+  const openTodos = paper?.todos.filter((todo) => !todo.completed) || [];
+  const unplaced = paper?.todos.filter(primaryUnplaced) || [];
+  const todoRows = (list: ProjectStateTodo[]) => list.slice(0, Number.isFinite(todoLimit) ? todoLimit : list.length).map((todo) => ({
+    id: todo.id,
+    title: todo.title,
+    text: todo.text,
+    completed: todo.completed,
+    primaryUnplaced: primaryUnplaced(todo),
+    primaryMapNodeId: todo.primaryMapNodeId || todo.mapNodeId,
+  }));
+  const maps = state.mindmaps.map((map) => ({
+    id: map.id,
+    title: map.title,
+    primary: map.primary,
+    nodeCount: map.nodeCount,
+    href: map.href,
+  }));
+  const todoSync = state.todoSync && {
+    primaryMapId: state.todoSync.primaryMapId,
+    unplaced: state.todoSync.unplaced,
+    missing: state.todoSync.missing,
+    warnings: state.todoSync.warnings,
+  };
+
+  if (detail === "full") {
+    return {
+      detail,
+      project: state.project,
+      current: state.current,
+      paper: paper && {
+        ...paper,
+        todos: todoRows(paper.todos),
+      },
+      todos: todoRows(paper?.todos || []),
+      recent: state.recent,
+      mindmaps: maps,
+      wiki: state.wiki,
+      skills: state.skills,
+      agentsMd: state.agentsMd,
+      workspaceAgentsMd: state.workspaceAgentsMd,
+      todoSync,
+    };
+  }
+
+  return {
+    detail,
+    project: state.project,
+    current: state.current,
+    paper: paper && {
+      title: paper.title,
+      rootFile: paper.rootFile,
+      sections: paper.outline.length,
+      openTodos: openTodos.length,
+      primaryUnplaced: unplaced.length,
+      outline: paper.outline.map((section) => ({
+        id: section.id,
+        title: section.title,
+        openTodos: section.openTodos,
+      })),
+    },
+    todos: todoLimit > 0 ? todoRows([...unplaced, ...openTodos.filter((todo) => !primaryUnplaced(todo))]) : undefined,
+    recent: state.recent.slice(0, 6).map((item) => ({
+      kind: item.kind,
+      title: item.title,
+      at: item.at,
+      href: item.href,
+      mapId: item.mapId,
+    })),
+    mindmaps: maps,
+    wiki: state.wiki.map((page) => ({ slug: page.slug, title: page.title, href: page.href })),
+    skills: state.skills.map((skill) => ({ id: skill.id, name: skill.name, source: skill.source })),
+    agentsMd: state.agentsMd && { path: state.agentsMd.path, hash: state.agentsMd.hash },
+    workspaceAgentsMd: state.workspaceAgentsMd && { path: state.workspaceAgentsMd.path, hash: state.workspaceAgentsMd.hash },
+    todoSync,
+  };
 }
 
 export function searchProjectContent(input: {
@@ -360,21 +593,25 @@ export function searchProjectContent(input: {
       }
     }
     for (const todo of input.paper.todos) {
-      if (todo.text.toLowerCase().includes(needle) || todo.id.toLowerCase().includes(needle)) {
+      if (todo.title?.toLowerCase().includes(needle) || todo.text.toLowerCase().includes(needle) || todo.id.toLowerCase().includes(needle)) {
         hits.push({
           id: `paper:todo:${todo.id}`,
           kind: "todo",
-          title: todo.sectionTitle || "TODO",
-          snippet: todo.text,
+          title: todo.title || todo.sectionTitle || "TODO",
+          snippet: todo.title ? `${todo.title}\n${todo.text}` : todo.text,
           file: todo.file,
           href: todo.href,
         });
       }
     }
     for (const [index, comment] of input.paper.comments.entries()) {
-      if (comment.text.toLowerCase().includes(needle) || (comment.kind || "").toLowerCase().includes(needle)) {
+      if (
+        comment.text.toLowerCase().includes(needle)
+        || (comment.kind || "").toLowerCase().includes(needle)
+        || (comment.id || "").toLowerCase().includes(needle)
+      ) {
         hits.push({
-          id: `paper:comment:${index}`,
+          id: comment.id ? `paper:comment:${comment.id}` : `paper:comment:${index}`,
           kind: "comment",
           title: comment.sectionTitle || comment.kind || "Comment",
           snippet: comment.text,
@@ -403,23 +640,39 @@ export function searchProjectContent(input: {
     }
   }
 
+  const todosById = new Map((input.paper?.todos || []).map((todo) => [todo.id, todo]));
   for (const map of input.mindmaps) {
     const mapId = map.id || DRAFT_MINDMAP_ID;
+    const mapTitle = map.title?.trim() || mapId;
+    if (mapTitle.toLowerCase().includes(needle)) {
+      hits.push({
+        id: `mindmap:${mapId}`,
+        kind: "mindmap_node",
+        title: mapTitle,
+        snippet: mapTitle,
+        href: mindmapHref(slug, mapId),
+      });
+    }
     for (const node of map.nodes) {
-      if (!node.text.toLowerCase().includes(needle)) continue;
-      const title = node.text.split("\n")[0]?.trim() || node.id;
+      const todo = node.todoId ? todosById.get(node.todoId) : undefined;
+      const refBits = (node.refs || []).flatMap((ref) => [ref.kind, ref.id, ref.label, ref.url]);
+      const hay = [mapTitle, node.title, node.text, node.todoId, todo?.title, todo?.text, ...(node.tags || []), ...refBits]
+        .filter(Boolean)
+        .join("\n");
+      if (!hay.toLowerCase().includes(needle)) continue;
+      const nodeTitle = todo?.title?.trim() || (todo ? todo.text.split("\n")[0]?.trim() : "") || ordinaryMindmapCardContent(node).title || node.todoId || node.id;
       hits.push({
         id: `mindmap:${mapId}:node:${node.id}`,
         kind: "mindmap_node",
-        title,
-        snippet: snippetAround(node.text, query),
+        title: `${mapTitle} · ${nodeTitle}`,
+        snippet: snippetAround(hay, query),
         href: mindmapHref(slug, mapId, node.id),
       });
     }
   }
 
   for (const page of input.wiki || []) {
-    const blob = `${page.title}\n${page.summary}\n${page.body}`;
+    const blob = `${page.title}\n${page.body}`;
     if (!blob.toLowerCase().includes(needle)) continue;
     hits.push({
       id: `wiki:${page.slug}`,
@@ -460,67 +713,96 @@ export function searchProject(slug: string, query: string): SearchHit[] {
 
 export function parseProjectHref(href: string): {
   slug: string;
-  kind: "paper" | "mindmap" | "wiki";
+  kind: "paper" | "mindmap" | "wiki" | "instructions";
   hash: string;
   mapId?: string;
   wikiPage?: string;
 } | null {
-  const trimmed = href.trim();
-  const [pathPart, hashPart = ""] = trimmed.split("#");
-  const match = (pathPart || "").match(/^\/p\/([^/?#]+)(?:\/(paper|mindmap|wiki)(?:\/([^/?#]+))?)?/);
+  const match = href.trim().match(/^\/p\/([^/?#]+)\/(paper|mindmap|wiki|instructions)(?:\/([^/?#]+))?(?:#([^#]*))?$/);
   if (!match) return null;
-  const slug = decodeURIComponent(match[1]!);
-  const page = (match[2] || "paper") as "paper" | "mindmap" | "wiki";
-  const rest = match[3] ? decodeURIComponent(match[3]) : undefined;
-  const hash = decodeURIComponent(hashPart);
-  if (page === "mindmap") return { slug, kind: "mindmap", hash, mapId: rest };
-  if (page === "wiki") return { slug, kind: "wiki", hash, wikiPage: rest };
-  return { slug, kind: "paper", hash };
+  try {
+    const slug = decodeURIComponent(match[1]!);
+    const page = match[2] as "paper" | "mindmap" | "wiki" | "instructions";
+    const rest = match[3] ? decodeURIComponent(match[3]) : undefined;
+    const hash = decodeURIComponent(match[4] || "");
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(slug)) return null;
+    if (rest && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(rest)) return null;
+    if (page === "paper" || page === "instructions") {
+      if (rest) return null;
+      return { slug, kind: page, hash };
+    }
+    if (page === "mindmap") return { slug, kind: "mindmap", hash, ...(rest ? { mapId: rest } : {}) };
+    return { slug, kind: "wiki", hash, ...(rest ? { wikiPage: rest } : {}) };
+  } catch {
+    return null;
+  }
 }
 
 export function resolveProjectNavigation(slug: string, input: { id?: string; href?: string }): { href: string } | null {
   const href = input.href?.trim();
   if (href) {
-    if (href.startsWith("/p/")) return { href };
     const parsed = parseProjectHref(href);
-    if (parsed) return { href };
+    if (!parsed || parsed.slug !== slug) return null;
+    if (parsed.kind === "mindmap" && parsed.mapId && !getMindmap(slug, parsed.mapId)) return null;
+    if (parsed.kind === "wiki" && parsed.wikiPage && !listWiki(slug).some((page) => page.slug === parsed.wikiPage)) return null;
+    return { href };
   }
   const id = input.id?.trim();
   if (!id) return null;
   const base = `/p/${encodeURIComponent(slug)}`;
-  if (id.startsWith("paper:todo:")) return { href: paperHref(slug, id.slice("paper:todo:".length)) };
-  if (id.startsWith("paper:section:")) return { href: paperHref(slug, id.slice("paper:section:".length)) };
+  const state = getProjectState(slug);
+  if (!state) return null;
+  if (id.startsWith("paper:todo:")) {
+    const todoId = id.slice("paper:todo:".length);
+    return state.paper?.todos.some((todo) => todo.id === todoId) ? { href: paperHref(slug, todoId) } : null;
+  }
+  if (id.startsWith("paper:section:")) {
+    const sectionId = id.slice("paper:section:".length);
+    return state.paper?.outline.some((section) => section.id === sectionId) ? { href: paperHref(slug, sectionId) } : null;
+  }
   if (id.startsWith("paper:comment:")) {
-    const state = getProjectState(slug);
-    const index = Number(id.slice("paper:comment:".length));
-    const comment = state?.paper?.comments[index];
-    return { href: comment?.href || paperHref(slug) };
+    const rest = id.slice("paper:comment:".length);
+    const comments = state.paper?.comments || [];
+    const byId = comments.find((comment) => comment.id === rest);
+    if (byId) return { href: byId.href };
+    return null;
   }
   if (id.startsWith("paper:")) {
     const rest = id.slice("paper:".length);
     const sectionId = rest.split(":")[0];
-    return { href: paperHref(slug, sectionId) };
+    return state.paper?.outline.some((section) => section.id === sectionId) ? { href: paperHref(slug, sectionId) } : null;
   }
-  if (id.startsWith("todo:")) return { href: paperHref(slug, id.slice(5)) };
+  if (id.startsWith("todo:")) {
+    const todoId = id.slice(5);
+    return state.paper?.todos.some((todo) => todo.id === todoId) ? { href: paperHref(slug, todoId) } : null;
+  }
   if (id.startsWith("mindmap:")) {
     const parts = id.slice("mindmap:".length).split(":");
-    const mapId = parts[0];
-    const nodeIndex = parts.indexOf("node");
-    const nodeId = nodeIndex >= 0 ? parts[nodeIndex + 1] : parts.length === 1 ? parts[0] : parts[2];
-    if (nodeIndex >= 0) return { href: mindmapHref(slug, mapId, nodeId) };
-    if (parts.length === 1) return { href: mindmapHref(slug, undefined, parts[0]) };
-    return { href: mindmapHref(slug, mapId, nodeId) };
+    if (parts.length !== 1 && (parts.length !== 4 || parts[1] !== "node")) return null;
+    const mapId = parts[0]?.trim();
+    if (!mapId) return null;
+    const map = getMindmap(slug, mapId);
+    if (!map) return null;
+    if (parts.length === 1) return { href: mindmapHref(slug, map.id) };
+    const nodeId = parts[3]?.trim();
+    if (!nodeId || !map.nodes.some((node) => node.id === nodeId)) return null;
+    return { href: mindmapHref(slug, map.id, nodeId) };
   }
-  if (id.startsWith("wiki:")) return { href: `${base}/wiki/${encodeURIComponent(id.slice(5))}` };
+  if (id.startsWith("wiki:")) {
+    const page = id.slice(5);
+    return listWiki(slug).some((item) => item.slug === page)
+      ? { href: `${base}/wiki/${encodeURIComponent(page)}` }
+      : null;
+  }
 
-  const state = getProjectState(slug);
-  if (!state) return { href: paperHref(slug) };
   if (state.paper?.todos.some((todo) => todo.id === id)) return { href: paperHref(slug, id) };
+  const comment = state.paper?.comments.find((item) => item.id === id);
+  if (comment) return { href: comment.href };
   if (state.paper?.outline.some((section) => section.id === id)) return { href: paperHref(slug, id) };
   for (const map of listMindmaps(slug)) {
     if (map.nodes.some((node) => node.id === id)) {
       return { href: mindmapHref(slug, map.id, id) };
     }
   }
-  return { href: paperHref(slug) };
+  return null;
 }

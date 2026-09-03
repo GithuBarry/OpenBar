@@ -3,21 +3,35 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { BookOpenText, Database, FileText, Link2, LoaderCircle, Plus, Sparkles } from "lucide-react";
+import { FileText, LoaderCircle, Plus } from "lucide-react";
 
 import { saveWikiAction } from "@/app/actions";
-import { useSharedProjectWebMcp } from "@/features/use-shared-webmcp";
+import { documentWebMcpActions, sharedWebMcpActions } from "@/features/webmcp-actions";
 import { WikiPage } from "@/lib/types";
 import { relativeTime } from "@/lib/utils";
 
+import { useWikiWebMcp } from "./use-wiki-webmcp";
+
+function snippet(body: string): string {
+  const paragraph = body.replace(/^#+\s.*$/m, "").trim().split(/\n\n+/)[0] || "";
+  return paragraph.replace(/[#*_`]/g, "").trim().slice(0, 220);
+}
+
 export function WikiIndex({ slug, pages }: { slug: string; pages: WikiPage[] }) {
   const router = useRouter();
-  useSharedProjectWebMcp({
+  useWikiWebMcp({
     project: slug,
-    current: { kind: "wiki", href: `/p/${slug}/wiki` },
+    kind: "wiki",
+    documentId: "",
+    actions: documentWebMcpActions,
+    sharedActions: sharedWebMcpActions,
+    refresh: () => router.refresh(),
+    navigate: (href) => router.push(href),
+    current: () => ({ kind: "wiki", href: `/p/${slug}/wiki` }),
   });
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
+  const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -31,10 +45,7 @@ export function WikiIndex({ slug, pages }: { slug: string; pages: WikiPage[] }) 
         projectId: slug,
         slug: pageSlug,
         title: title.trim(),
-        summary: "",
-        body: "Replace this page with sourced notes.",
-        tags: [],
-        refs: [],
+        body: "",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });
@@ -49,12 +60,24 @@ export function WikiIndex({ slug, pages }: { slug: string; pages: WikiPage[] }) 
     }
   }
 
-  const sorted = [...pages].sort((a, b) => Number(b.pinnedForAgents ?? false) - Number(a.pinnedForAgents ?? false) || a.title.localeCompare(b.title));
-  const pinned = sorted.filter((page) => page.pinnedForAgents);
-  const rest = sorted.filter((page) => !page.pinnedForAgents);
+  const sorted = [...pages]
+    .filter((page) => {
+      const hay = `${page.title}\n${page.body}`.toLowerCase();
+      return !query.trim() || hay.includes(query.trim().toLowerCase());
+    })
+    .sort((a, b) => a.title.localeCompare(b.title));
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-end">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {pages.length > 0 && (
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search pages"
+            className="input h-8 w-48 text-sm"
+            aria-label="Search wiki pages"
+          />
+        )}
         {open ? (
           <form onSubmit={(event) => void onCreate(event)} className="flex items-center gap-2">
             <input
@@ -77,49 +100,32 @@ export function WikiIndex({ slug, pages }: { slug: string; pages: WikiPage[] }) 
       </div>
       {error && <p className="text-xs text-danger">{error}</p>}
       {!pages.length && !open && (
-        <div className="rounded-card border border-dashed border-line bg-surface/60 px-4 py-8 text-center text-sm text-faint">No wiki pages yet.</div>
+        <div className="rounded-card border border-dashed border-line bg-surface/60 px-4 py-8 text-center text-sm text-faint">
+          Optional supporting notes. Actionable work belongs in paper TODOs.
+        </div>
       )}
-      {pinned.length > 0 && (
-        <section>
-          <h2 className="mb-2 flex items-center gap-1.5 text-sm font-semibold"><Sparkles size={14} className="text-accent" /> Agent-pinned memory</h2>
-          <div className="wiki-grid">
-            {pinned.map((page) => <WikiCard key={page.slug} slug={slug} page={page} strong />)}
-          </div>
-        </section>
+      {pages.length > 0 && sorted.length === 0 && (
+        <p className="text-sm text-faint">No pages match that search.</p>
       )}
-      {rest.length > 0 && (
-        <section>
-          <h2 className="mb-2 flex items-center gap-1.5 text-sm font-semibold"><BookOpenText size={14} className="text-accent" /> Supporting pages</h2>
-          <div className="wiki-grid">
-            {rest.map((page) => <WikiCard key={page.slug} slug={slug} page={page} />)}
-          </div>
-        </section>
+      {sorted.length > 0 && (
+        <div className="wiki-grid">
+          {sorted.map((page) => (
+            <Link key={page.slug} href={`/p/${slug}/wiki/${page.slug}`} className="wiki-card">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="line-clamp-2 font-medium">{page.title}</div>
+                  {snippet(page.body) && <p className="mt-1 line-clamp-3 text-sm leading-6 text-muted">{snippet(page.body)}</p>}
+                </div>
+                <FileText size={17} className="shrink-0 text-muted" />
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
+                {(page.tags || []).slice(0, 3).map((tag) => <span key={tag} className="chip text-[10px]">#{tag}</span>)}
+                <span>updated {relativeTime(page.updatedAt)}</span>
+              </div>
+            </Link>
+          ))}
+        </div>
       )}
     </div>
   );
-}
-
-function WikiCard({ slug, page, strong = false }: { slug: string; page: WikiPage; strong?: boolean }) {
-  return (
-    <Link href={`/p/${slug}/wiki/${page.slug}`} className={strong ? "wiki-card wiki-card-strong" : "wiki-card"}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="line-clamp-2 font-medium">{page.title}</div>
-          {page.summary && <p className="mt-1 line-clamp-3 text-sm leading-6 text-muted">{page.summary}</p>}
-        </div>
-        {iconFor(page.slug)}
-      </div>
-      <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
-        {page.refs.length > 0 && <span className="chip text-[10px]"><Link2 size={9} /> {page.refs.length} refs</span>}
-        {page.tags.slice(0, 3).map((tag) => <span key={tag} className="chip text-[10px]">#{tag}</span>)}
-        <span>created {relativeTime(page.createdAt)}</span>
-        <span>updated {relativeTime(page.updatedAt)}</span>
-      </div>
-    </Link>
-  );
-}
-
-function iconFor(slug: string) {
-  if (slug.includes("artifact") || slug.includes("evidence")) return <Database size={17} className="shrink-0 text-accent" />;
-  return <FileText size={17} className="shrink-0 text-muted" />;
 }

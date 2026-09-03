@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { isLoopbackHost } from "@/lib/server/access-policy";
+import { isPublicDemoMode } from "@/lib/server/demo-mode";
 
 /**
  * Next.js 16 proxy (replaces deprecated middleware.ts). When Cloudflare Access
@@ -9,11 +10,12 @@ import { isLoopbackHost } from "@/lib/server/access-policy";
  * JWT verification still happens in requireWorkbenchAccess.
  */
 export function proxy(request: NextRequest) {
+  if (isPublicDemoMode()) return NextResponse.next();
   const configured = Boolean(process.env.CLOUDFLARE_ACCESS_TEAM_DOMAIN && process.env.CLOUDFLARE_ACCESS_AUD);
   if (!configured || process.env.NODE_ENV !== "production") {
     return NextResponse.next();
   }
-  const host = request.headers.get("x-forwarded-host") || request.headers.get("host") || "";
+  const host = request.nextUrl.host;
   if (isLoopbackHost(host)) return NextResponse.next();
   const jwt = request.headers.get("cf-access-jwt-assertion") || request.cookies.get("CF_Authorization")?.value;
   if (!jwt) {

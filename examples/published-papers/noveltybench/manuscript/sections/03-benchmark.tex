@@ -1,0 +1,83 @@
+% OB-SECTION {"id":"benchmark","label":"sec-benchmark","level":2,"order":3,"title":"Benchmark"}
+
+\section{Benchmark}
+\label{sec-benchmark}
+% OB-EDIT-BEGIN openbarry/markdown@1 id=benchmark
+Our benchmark evaluates language model diversity using two distinct datasets: \textbf{NB-Curated}, which contains 100 prompts manually curated by the authors, and \textbf{NB-WildChat}, which consists of 1,000 prompts automatically curated from real user interactions with ChatGPT.
+LLM performance is evaluated based on the quality and novelty of the set of generations produced by the LLM.
+
+\subsection{Dataset curation}
+
+To test language models' capabilities to produce novel generations, we need a dataset of prompts that elicit diverse responses.
+
+\paragraph{NB-Curated.}
+The curated dataset is designed to contain four distinct categories where diversity is expected.
+
+\begin{itemize}
+\item \textbf{Randomness:} prompts that involve randomizing over a set of options. Example: \emph{Roll a make-believe 20-sided die.}
+\item \textbf{Factual knowledge:} prompts that request underspecified factual information. Example: \emph{List a capital city in Africa.}
+\item \textbf{Creative writing:} prompts that involve generating a creative form of text. Example: \emph{Tell me a riddle.}
+\item \textbf{Subjectivity:} prompts that request subjective answers or opinions. Example: \emph{What's the best car to get in 2023?}
+\end{itemize}
+
+\obtodo[id=nb-curated-write, created=2024-10-14T16:03:12.000Z, updated=2024-11-22T21:47:03.000Z, completed=2024-11-22T21:47:03.000Z]{Write 100 NB-Curated prompts across randomness, factual knowledge, creative writing, and subjectivity.}
+\obtodo[id=nb-human-annotate, created=2024-11-12T10:08:00.000Z, updated=2024-12-18T19:26:41.000Z, completed=2024-12-18T19:26:41.000Z]{Collect eight author responses for each of the 100 curated prompts.}
+\obcomment[kind=result]{8 humans x 100 prompts. Homogeneous annotator pool (same institution), so treat this as a lower bound on human diversity, not a population estimate.}
+
+The authors of the paper then write responses to each of the prompts, resulting in 8 human responses per prompt.
+Since this is a rather homogeneous set of human annotators (all work/study at the same institution), we expect this response set to represent an approximate lower bound on actual human diversity.
+However, as we will show in Section~\ref{sec-evaluation}, even this group produced more diverse responses than most state-of-the-art language models.
+
+\paragraph{NB-WildChat.}
+WildChat is a collection of 1M real user conversations with ChatGPT~\cite{zhao2023wildchat}.
+We cannot use this dataset directly because the vast majority of its prompts do not allow for multiple valid answers.
+During processing, we first used Llama Guard 3~\cite{chi2024} to filter out inappropriate user prompts.
+A small number of IPs contributed a disproportionately high number of interactions, leading to topic bias (e.g., towards anime); we deduplicated the dataset based on user IP.
+After preprocessing, we used GPT-4o as a classifier to select prompts expected to elicit diverse generations (prompt in Appendix~\ref{sec-appendix}).
+To make sure that the selected prompts match the desired criteria, we manually labeled 100 prompts from the dataset (with 50 accepted and 50 rejected by GPT-4o), and found an 85\% agreement between the classifier and the human labels.
+
+\obtodo[id=nb-wildchat-filter, created=2024-12-02T11:20:00.000Z, updated=2025-01-16T08:55:17.000Z, completed=2025-01-16T08:55:17.000Z]{Filter WildChat-1M with Llama Guard 3, IP dedup, then GPT-4o diversity classifier to 1,000 prompts.}
+\obtodo[id=nb-wildchat-verify, created=2025-01-16T09:12:00.000Z, updated=2025-01-24T17:03:09.000Z, completed=2025-01-24T17:03:09.000Z]{Manually label 100 WildChat candidates, 50 accepted and 50 rejected by GPT-4o.}
+\obcomment[kind=result]{85 percent agreement with GPT-4o on the 100-prompt audit. Good enough to ship the 1,000-prompt split.}
+
+\subsection{Evaluating novelty}
+
+Models with diversity alone would not be sufficient for users: each of the individual generations should also be of high quality, with the ultimate goal of maximizing the cumulative utility of a user who interacts with the model.
+
+\paragraph{Partitioning the output space.}
+Traditional metrics like $n$-gram overlap or embedding similarity often fail to capture meaningful diversity.
+We mainly consider \emph{functional equivalence}: two generations are different if and only if a user who has seen one generation would likely benefit from seeing the other.
+For example, in a story generation task, if two generations are retelling the original story with identical plot but different character names, then we consider them to be functionally equivalent.
+
+The authors annotated 1,100 pairs of generations conditioned on prompts from both NB-Curated and NB-WildChat, sampled from a diverse set of models.
+From these annotated pairs, we used 1,000 for training and fine-tuned a \texttt{deberta-v3-large} model~\cite{he2021deberta} to predict binary functional equivalence.
+On a held-out test set of 100 pairs, the classifier achieved 79\% accuracy compared to human labels, with an F1 score of 0.811.
+
+\obtodo[id=nb-equiv-annotate, created=2025-01-06T14:00:00.000Z, updated=2025-01-31T22:18:05.000Z, completed=2025-01-31T22:18:05.000Z]{Annotate 1,100 generation pairs for functional equivalence. Train on 1,000, hold out 100.}
+\obtodo[id=nb-deberta-train, created=2025-02-01T09:40:00.000Z, updated=2025-02-11T13:27:51.000Z, completed=2025-02-11T13:27:51.000Z]{Fine-tune deberta-v3-large on the 1,000 training pairs and pick an operating threshold.}
+\obcomment[kind=result]{Held-out: 79 percent accuracy, F1 0.811. BLEU/ROUGE/BERTScore all worse; keep DeBERTa as the partitioner. Classifier truncates each response to 128 tokens --- note that in the repo README.}
+
+With the equivalence classifier, we partition $k$ sample generations into classes.
+For each new generation, we compare it against a random generation from each existing class.
+If the classifier determines it is functionally equivalent to any existing class, we assign it to the first such class found; otherwise, we create a new class.
+We define
+\begin{equation}
+\mathrm{distinct}_k := \bigl|\bigl\{c_i \mid i \in [k]\bigr\}\bigr|,
+\end{equation}
+where $c_i$ is the equivalence class of the $i$-th generation.
+
+\paragraph{Unified measure of diversity and quality.}
+Inspired by rank-biased precision~\cite{moffat2008}, we assume the user has patience $p \in [0,1]$: after each generation they request another with probability $p$.
+The utility of a generation that is functionally equivalent to a previous generation is zero:
+\begin{equation}
+\mathrm{utility}_k := \frac{1-p}{1-p^k} \sum_{i=1}^{k} p^{i-1} \cdot \mathbf{1}[c_i \neq c_j, \forall j < i] \cdot u_i.
+\end{equation}
+In our evaluation setup, we set the patience level to $0.8$.
+As $p \to 0$, the metric converges to quality evaluation of a single generation.
+
+\paragraph{Computing utility.}
+We use the Skywork-Reward-Gemma-2-27B-v0.2 model~\cite{liu2024skywork} to score the quality of individual generations, chosen as a top RewardBench~\cite{lambert2024} model.
+Reward scores are mapped into $\{1,2,\ldots,10\}$ by calibrating against GPT-4 quality scores on 2,400 MT-Bench~\cite{zheng2023mtbench} generations.
+
+\obtodo[id=nb-utility-calibrate, created=2025-02-12T10:05:00.000Z, updated=2025-02-20T18:44:12.000Z, completed=2025-02-20T18:44:12.000Z]{Calibrate Skywork-Reward scores to a 1-10 utility using MT-Bench GPT-4 judgments.}
+% OB-EDIT-END id=benchmark

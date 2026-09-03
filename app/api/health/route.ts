@@ -1,5 +1,6 @@
 import { getRuntimeCapabilities } from "@/lib/research/capabilities";
 import { accessHealthStatus } from "@/lib/server/cloudflare-access";
+import { isPublicDemoMode, publicDemoSlugs } from "@/lib/server/demo-mode";
 
 export const dynamic = "force-dynamic";
 
@@ -20,5 +21,7 @@ export async function GET() {
     cloudflareAccess: access.cloudflareAccess,
     issuerConfigured: access.issuerConfigured,
     serviceTokensConfigured: access.serviceTokensConfigured,
+    mode: isPublicDemoMode() ? "public-demo" : "private-workbench",
+    demoSlugs: isPublicDemoMode() ? publicDemoSlugs() : [],
   });
 }

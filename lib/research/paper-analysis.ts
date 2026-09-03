@@ -1,16 +1,13 @@
 /**
  * One TeX analysis pass on unified-latex.
  *
- * Live macros in comments are not claims/todos (`% \obtodo` is not live).
- * `% OB:` directives stay as intentional comment metadata.
- * No MCP, no React.
+ * Live macros in comments are not TODOs (`% \obtodo` is not live).
+ * OpenBar TODOs are `\obtodo` only. No MCP, no React.
  */
 
-import { parseAnchorAttrs } from "@/lib/marker-codec";
-import { claimFromAnchor, claimFromRecord, type Claim } from "@/lib/research/claim-model";
-import { todoMetaFromAttrs, type TodoPriority } from "@/lib/todo-meta";
-import { isClaimTag } from "@/lib/research/claim-tags";
-import type { Maturity, MaturityMarker, MaturityMarkerKind } from "@/lib/types";
+import { findMacroMatches, parseAnchorAttrs, serializeAnchorAttrs } from "@/lib/marker-codec";
+import { todoIsComplete, todoMetaFromAttrs, todoTitleFromAttrs } from "@/lib/todo-meta";
+import { escapeTexText } from "@/lib/tex-project/tex-encode";
 import {
   isMacro,
   mandatoryArgs,
@@ -20,7 +17,7 @@ import {
   type TexMacro,
 } from "@/lib/tex-project/tex-ast";
 
-export type PaperAnchorKind = "claim" | "evidence" | "comment" | "todo" | "source" | "raw" | "question";
+export type PaperAnchorKind = "comment" | "todo" | "source" | "raw" | "question";
 
 export interface PaperHeading {
   command: string;
@@ -33,46 +30,19 @@ export interface PaperDirective {
   line: number;
 }
 
-export interface PaperClaim extends Claim {
-  line: number;
-  section?: string;
-  attrs: Record<string, string>;
-  macro?: string;
-}
-
-export interface PaperEvidence {
-  id: string;
-  summary: string;
-  line: number;
-  claimIds: string[];
-  sourceRef?: string;
-  rawRefs: string[];
-  metricRefs: string[];
-  sampleCount?: number;
-  limitations?: string;
-  attrs: Record<string, string>;
-  macro?: string;
-}
-
 export interface PaperTodo {
-  id: string;
+  id: string | null;
+  title?: string;
   text: string;
   line: number;
   start: number;
   end: number;
-  claimId?: string;
   section?: string;
-  owner?: string;
-  /** Optional `priority=p0|p1|p2` (aliases: high/medium/low). */
-  priority?: TodoPriority;
-  /** Optional target date `due=YYYY-MM-DD`. */
-  due?: string;
-  /** Optional creation date `created=YYYY-MM-DD`. */
   createdAt?: string;
-  status?: string;
+  updatedAt?: string;
   completedAt?: string;
   attrs: Record<string, string>;
-  macro?: string;
+  macro: string;
 }
 
 export interface PaperCitation {
@@ -83,69 +53,53 @@ export interface PaperCitation {
 
 export interface PaperNote {
   kind: "comment" | "source" | "raw" | "question";
+  /** Stable id from `[id=…]` when present. Generated on insert / first link. */
+  id?: string;
   text: string;
   line: number;
+  start: number;
+  end: number;
   section?: string;
   attrs: Record<string, string>;
   macro: string;
+}
+
+/** Paper-local hole. Not a mindmap TODO. `kind` is free-form (`todo`, `plot`, `verify`, …). */
+export interface PaperMarker {
+  kind: string;
+  text: string;
+  line: number;
+  start: number;
+  end: number;
+  section?: string;
 }
 
 export interface PaperDiagnostic {
   code: string;
   message: string;
   line?: number;
-  claimId?: string;
-}
-
-export interface PaperMaturitySnapshot {
-  overall: Maturity;
-  markerCounts: Record<MaturityMarkerKind, number>;
+  todoId?: string;
 }
 
 export interface PaperAnalysis {
   outline: PaperHeading[];
-  claims: PaperClaim[];
-  evidence: PaperEvidence[];
   todos: PaperTodo[];
   citations: PaperCitation[];
-  markers: MaturityMarker[];
-  maturity: PaperMaturitySnapshot;
-  diagnostics: PaperDiagnostic[];
   comments: PaperNote[];
+  markers: PaperMarker[];
+  diagnostics: PaperDiagnostic[];
   directives: PaperDirective[];
-  curlyMarkers: MaturityMarker[];
-  lineTodos: MaturityMarker[];
 }
 
-const ANCHOR_MACROS: Record<string, PaperAnchorKind> = {
-  obclaim: "claim",
-  obevidence: "evidence",
+const NOTE_MACROS: Record<string, PaperNote["kind"]> = {
   obcomment: "comment",
-  obtodo: "todo",
   obsource: "source",
   obraw: "raw",
   obquestion: "question",
-  claimgap: "todo",
-  evidencegap: "todo",
 };
 
 const HEADING_COMMANDS = ["section", "subsection", "subsubsection", "paragraph", "subparagraph", "title"];
 const CITE_COMMANDS = ["cite", "citep", "citet", "obcite"];
-
-export const CURLY_MARKER =
-  /\{\?\s*(hypothesized|notfinal|placeholder|verify|cite|citation-needed|todo)\b\s*:?\s*([^:}]*?)(?:\s*:\s*([^}]*?))?\s*\}/gi;
-export const CURLY_MARKER_KIND =
-  /^(?:hypothesized|notfinal|placeholder|verify|cite|citation-needed|todo)\b/i;
-const TODO_MARKER = /(?:^|\s)TODO(?:\([^)]*\))?\s*:?\s*([^\n]*)/gi;
-const KIND_ALIASES: Record<string, MaturityMarkerKind> = {
-  hypothesized: "hypothesized",
-  notfinal: "notfinal",
-  placeholder: "placeholder",
-  verify: "verify",
-  cite: "citation-needed",
-  "citation-needed": "citation-needed",
-  todo: "todo",
-};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -168,7 +122,6 @@ function offsetOf(node: unknown, which: "start" | "end"): number | undefined {
   return typeof offset === "number" ? offset : undefined;
 }
 
-/** Original TeX for an argument, using unified-latex source positions — not a second parser. */
 function nodesToSource(source: string, nodes: unknown): string {
   const list = Array.isArray(nodes) ? nodes : [nodes];
   let start: number | undefined;
@@ -224,88 +177,28 @@ function macroNameOf(node: TexMacro): string {
   return node.content.replace(/\*$/, "");
 }
 
-function splitIds(raw?: string): string[] {
-  if (!raw) return [];
-  return raw
-    .split(/[,\s]+/)
-    .map((id) => id.trim())
-    .filter(Boolean);
+function parseOptionalAttrs(source: string, node: unknown): Record<string, string> {
+  const opt = optionalArg(node);
+  const raw = opt?.length ? nodesToSource(source, opt) || nodesToPlainText(opt) : "";
+  return parseAnchorAttrs(raw);
 }
 
-function safeTags(raw?: string): string[] {
-  if (!raw) return [];
-  return [...new Set(raw.split(/[,\s]+/).filter(Boolean).filter(isClaimTag))];
-}
-
-function pushRegexMarkers(
-  text: string,
-  line: number,
-  baseOffset: number,
-  pattern: RegExp,
-  kindFor: (match: RegExpExecArray) => { kind: MaturityMarkerKind; content: string; note?: string },
-  into: MaturityMarker[],
-): void {
-  pattern.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text))) {
-    const parsed = kindFor(match);
-    into.push({
-      kind: parsed.kind,
-      content: parsed.content.trim(),
-      note: parsed.note?.trim() || undefined,
-      start: baseOffset + match.index,
-      end: baseOffset + match.index + match[0].length,
-      line,
-    });
+function attachCommentMatches(source: string, comments: PaperNote[]): void {
+  const matches = findMacroMatches(source, ["obcomment", "obsource", "obraw", "obquestion"]);
+  let index = 0;
+  for (const comment of comments) {
+    while (index < matches.length && matches[index]!.name !== comment.macro) index += 1;
+    const match = matches[index];
+    if (!match) continue;
+    index += 1;
+    const attrs = parseAnchorAttrs(match.attrs.replace(/,(?=[A-Za-z])/g, ", "));
+    comment.attrs = { ...comment.attrs, ...attrs };
+    const id = attrs.id?.trim();
+    if (id) comment.id = id;
+    else delete comment.id;
+    comment.start = match.index;
+    comment.end = match.index + match.length;
   }
-}
-
-function emptyMarkerCounts(): Record<MaturityMarkerKind, number> {
-  return {
-    hypothesized: 0,
-    notfinal: 0,
-    todo: 0,
-    placeholder: 0,
-    "citation-needed": 0,
-    verify: 0,
-  };
-}
-
-function asPaperClaim(attrs: Record<string, string>, text: string, line: number, macro: string): PaperClaim {
-  const id = attrs.id || `claim-L${line}`;
-  const tags = safeTags(attrs.tags);
-  let claim: Claim;
-  try {
-    claim = claimFromAnchor({ ...attrs, id, ...(tags.length ? { tags: tags.join(",") } : { tags: "" }) }, text);
-  } catch {
-    claim = {
-      id,
-      text,
-      evidenceIds: splitIds(attrs.evidence || attrs.evidenceIds),
-      challengeIds: splitIds(attrs.challenges || attrs.challengeIds),
-      tags,
-      assessments: [],
-      state: attrs.state,
-    };
-  }
-  return { ...claim, line, section: attrs.section || undefined, attrs, macro };
-}
-
-function asPaperEvidence(attrs: Record<string, string>, summary: string, line: number, macro: string): PaperEvidence {
-  const samples = attrs.samples ? Number(attrs.samples) : undefined;
-  return {
-    id: attrs.id || `evidence-L${line}`,
-    summary,
-    line,
-    claimIds: splitIds(attrs.claim || attrs.claims || attrs.claimIds),
-    sourceRef: attrs.source,
-    rawRefs: splitIds(attrs.raw || attrs.rawRefs),
-    metricRefs: splitIds(attrs.metric || attrs.metricRefs),
-    sampleCount: Number.isFinite(samples) ? samples : undefined,
-    limitations: attrs.limitations,
-    attrs,
-    macro,
-  };
 }
 
 function asPaperTodo(
@@ -316,152 +209,45 @@ function asPaperTodo(
   start = 0,
   end = 0,
 ): PaperTodo {
+  const id = attrs.id?.trim() || null;
+  const title = todoTitleFromAttrs(attrs);
+  const meta = todoMetaFromAttrs(attrs);
   return {
-    id: attrs.id || `todo-off-${start}`,
+    id,
+    ...(title ? { title } : {}),
     text,
     line,
     start,
     end,
-    claimId: attrs.claim,
-    section: attrs.section,
-    ...todoMetaFromAttrs(attrs),
+    section: attrs.section || undefined,
+    ...meta,
     attrs,
     macro,
   };
 }
 
-function ingestDirective(
-  raw: string,
-  line: number,
-  into: { claims: PaperClaim[]; evidence: PaperEvidence[]; todos: PaperTodo[] },
-): void {
-  const jsonMatch = raw.match(/^\s*(\{.*\})\s*$/);
-  if (jsonMatch) {
-    try {
-      const data = JSON.parse(jsonMatch[1]!) as Record<string, unknown>;
-      const type = String(data.type || "").toLowerCase();
-      if (type === "claim") {
-        const id = String(data.id || `claim-L${line}`);
-        try {
-          const claim = claimFromRecord({ ...data, id });
-          into.claims.push({
-            ...claim,
-            line,
-            section: typeof data.section === "string" ? data.section : undefined,
-            attrs: {
-              id,
-              ...(typeof data.state === "string" ? { state: data.state } : {}),
-              ...(typeof data.section === "string" ? { section: data.section } : {}),
-              ...(typeof data.scope === "string" ? { scope: data.scope } : {}),
-              ...(typeof data.weakness === "string" ? { weakness: data.weakness } : {}),
-              ...(typeof data.next === "string" ? { next: data.next } : {}),
-            },
-            macro: "ob-directive",
-          });
-        } catch {
-          into.claims.push(
-            asPaperClaim(
-              {
-                id,
-                ...(typeof data.state === "string" ? { state: data.state } : {}),
-                ...(typeof data.section === "string" ? { section: data.section } : {}),
-                evidence: Array.isArray(data.evidence) ? data.evidence.map(String).join(",") : String(data.evidence || ""),
-              },
-              String(data.text || data.claim || ""),
-              line,
-              "ob-directive",
-            ),
-          );
-        }
-      }
-      if (type === "evidence") {
-        const claimIds = Array.isArray(data.claims)
-          ? data.claims.map(String)
-          : typeof data.claims === "string"
-            ? splitIds(data.claims)
-            : data.claim
-              ? splitIds(String(data.claim))
-              : [];
-        const rawRefs = Array.isArray(data.raw) ? data.raw.map(String) : typeof data.raw === "string" ? splitIds(data.raw) : [];
-        const metricRefs = Array.isArray(data.metrics)
-          ? data.metrics.map(String)
-          : typeof data.metrics === "string"
-            ? splitIds(data.metrics)
-            : [];
-        into.evidence.push({
-          id: String(data.id || `evidence-L${line}`),
-          summary: String(data.summary || data.text || ""),
-          line,
-          claimIds,
-          sourceRef: data.source ? String(data.source) : undefined,
-          rawRefs,
-          metricRefs,
-          sampleCount: typeof data.samples === "number" ? data.samples : undefined,
-          limitations: data.limitations ? String(data.limitations) : undefined,
-          attrs: { id: String(data.id || "") },
-          macro: "ob-directive",
-        });
-      }
-    } catch {
-      return;
-    }
-    return;
-  }
-
-  const [kindPart, rest] = raw.trim().split(/\s+/, 2);
-  const kind = kindPart.replace(/:$/, "").toLowerCase();
-  const attrs = parseAnchorAttrs(rest || "");
-  if (kind === "claim") {
-    into.claims.push(asPaperClaim(attrs, attrs.text || attrs.claim || "", line, "ob-directive"));
-  }
-  if (kind === "evidence") {
-    into.evidence.push(asPaperEvidence(attrs, attrs.summary || attrs.text || "", line, "ob-directive"));
-  }
-  if (kind === "todo" || kind === "todo_evidence") {
-    into.todos.push(asPaperTodo(attrs, attrs.text || attrs.need || "", line, "ob-directive"));
-  }
-}
-
-function maturityFrom(markers: MaturityMarker[]): PaperMaturitySnapshot {
-  const markerCounts = emptyMarkerCounts();
-  for (const marker of markers) markerCounts[marker.kind] += 1;
-  let overall: Maturity = "review";
-  if (markers.length === 0) overall = "empty";
-  else if (markerCounts.hypothesized > 0 || markerCounts.placeholder > 0) overall = "hypothesized";
-  else if (
-    markerCounts.todo > 0 ||
-    markerCounts.notfinal > 0 ||
-    markerCounts["citation-needed"] > 0 ||
-    markerCounts.verify > 0
-  ) {
-    overall = "draft";
-  }
-  return { overall, markerCounts };
-}
-
-function diagnosticsOf(claims: PaperClaim[], evidence: PaperEvidence[]): PaperDiagnostic[] {
+function todoDiagnostics(todos: PaperTodo[]): PaperDiagnostic[] {
   const diagnostics: PaperDiagnostic[] = [];
   const seen = new Map<string, number>();
-  for (const claim of claims) {
-    const prior = seen.get(claim.id);
+  for (const todo of todos) {
+    if (!todo.id) {
+      diagnostics.push({
+        code: "missing-todo-id",
+        message: "This \\obtodo needs a stable id. Assign IDs to join it with the mindmap.",
+        line: todo.line,
+      });
+      continue;
+    }
+    const prior = seen.get(todo.id);
     if (prior != null) {
       diagnostics.push({
-        code: "duplicate-claim-id",
-        message: `Claim id "${claim.id}" appears more than once.`,
-        line: claim.line,
-        claimId: claim.id,
+        code: "duplicate-todo-id",
+        message: `TODO id "${todo.id}" appears more than once. Bindings are blocked until ids are unique.`,
+        line: todo.line,
+        todoId: todo.id,
       });
     } else {
-      seen.set(claim.id, claim.line);
-    }
-    const linked = claim.evidenceIds.length > 0 || evidence.some((item) => item.claimIds.includes(claim.id));
-    if (!linked) {
-      diagnostics.push({
-        code: "claim-without-linked-evidence",
-        message: `Claim "${claim.id}" has no linked evidence.`,
-        line: claim.line,
-        claimId: claim.id,
-      });
+      seen.set(todo.id, todo.line);
     }
   }
   return diagnostics;
@@ -483,46 +269,57 @@ export function analyzePaper(source: string): PaperAnalysis {
     }
   });
 
-  const claims: PaperClaim[] = [];
-  const evidence: PaperEvidence[] = [];
   const todos: PaperTodo[] = [];
   const comments: PaperNote[] = [];
-  for (const directive of directives) {
-    ingestDirective(directive.raw, directive.line, { claims, evidence, todos });
-  }
-
+  const markers: PaperMarker[] = [];
   const seen = new Set<unknown>();
+  let currentSection: string | undefined;
   for (const node of liveMacros) {
     if (seen.has(node)) continue;
     const name = macroNameOf(node);
-    const kind = ANCHOR_MACROS[name];
-    if (!kind) continue;
-    seen.add(node);
-    const attrs = parseAnchorAttrs(nodesToPlainText(optionalArg(node) ?? []));
-    const text = nodesToSource(source, mandatoryArgs(node)[0] ?? []).trim();
-    const line = lineOf(node);
-    if (kind === "claim") claims.push(asPaperClaim(attrs, text, line, name));
-    else if (kind === "evidence") evidence.push(asPaperEvidence(attrs, text, line, name));
-    else if (kind === "todo") {
-      todos.push(asPaperTodo(attrs, text, line, name, offsetOf(node, "start") ?? 0, offsetOf(node, "end") ?? 0));
+    if (HEADING_COMMANDS.includes(name)) {
+      currentSection = nodesToPlainText(mandatoryArgs(node)[0] ?? []).trim() || currentSection;
     }
-    else comments.push({ kind, text, line, section: attrs.section, attrs, macro: name });
+    if (name === "obtodo") {
+      seen.add(node);
+      const attrs = parseOptionalAttrs(source, node);
+      const text = nodesToSource(source, mandatoryArgs(node)[0] ?? []).trim();
+      todos.push(asPaperTodo(attrs, text, lineOf(node), name, offsetOf(node, "start") ?? 0, offsetOf(node, "end") ?? 0));
+      continue;
+    }
+    if (name === "obmarker") {
+      seen.add(node);
+      const args = mandatoryArgs(node);
+      markers.push({
+        kind: nodesToPlainText(args[0] ?? []).trim(),
+        text: nodesToSource(source, args[1] ?? []).trim(),
+        line: lineOf(node),
+        start: offsetOf(node, "start") ?? 0,
+        end: offsetOf(node, "end") ?? 0,
+        section: currentSection,
+      });
+      continue;
+    }
+    const noteKind = NOTE_MACROS[name];
+    if (!noteKind) continue;
+    seen.add(node);
+    const attrs = parseOptionalAttrs(source, node);
+    const text = nodesToSource(source, mandatoryArgs(node)[0] ?? []).trim();
+    const id = attrs.id?.trim() || undefined;
+    comments.push({
+      kind: noteKind,
+      ...(id ? { id } : {}),
+      text,
+      line: lineOf(node),
+      start: offsetOf(node, "start") ?? 0,
+      end: offsetOf(node, "end") ?? 0,
+      section: attrs.section || undefined,
+      attrs,
+      macro: name,
+    });
   }
 
-  for (const node of liveMacros) {
-    if (macroNameOf(node) !== "obmarker") continue;
-    const args = mandatoryArgs(node);
-    const kindRaw = nodesToPlainText(args[0] ?? []).trim().toLowerCase();
-    if (kindRaw !== "todo") continue;
-    todos.push(asPaperTodo(
-      {},
-      nodesToSource(source, args[1] ?? []).trim(),
-      lineOf(node),
-      "obmarker",
-      offsetOf(node, "start") ?? 0,
-      offsetOf(node, "end") ?? 0,
-    ));
-  }
+  attachCommentMatches(source, comments);
 
   const outline: PaperHeading[] = [];
   for (const node of liveMacros) {
@@ -547,67 +344,57 @@ export function analyzePaper(source: string): PaperAnalysis {
     citations.push({ command, keys, line: lineOf(node) });
   }
 
-  const curlyMarkers: MaturityMarker[] = [];
-  const lineTodos: MaturityMarker[] = [];
-  walkLive(ast, (node) => {
-    if (!isRecord(node) || node.type !== "string" || typeof node.content !== "string") return;
-    const line = lineOf(node);
-    const baseOffset = offsetOf(node, "start") ?? 0;
-    pushRegexMarkers(
-      node.content,
-      line,
-      baseOffset,
-      CURLY_MARKER,
-      (match) => ({
-        kind: KIND_ALIASES[match[1]!.toLowerCase()] ?? "notfinal",
-        content: match[2] ?? "",
-        note: match[3],
-      }),
-      curlyMarkers,
-    );
-    pushRegexMarkers(node.content, line, baseOffset, TODO_MARKER, (match) => ({ kind: "todo", content: match[1] ?? "" }), lineTodos);
-  });
-
-  const fromAnchors: MaturityMarker[] = [
-    ...claims
-      .filter((claim) => claim.macro !== "ob-directive")
-      .map((claim) => ({
-        kind: "hypothesized" as const,
-        content: claim.text,
-        start: 0,
-        end: claim.text.length,
-        line: claim.line,
-      })),
-    ...todos
-      .filter((todo) => todo.macro !== "ob-directive")
-      .map((todo) => ({
-        kind: "todo" as const,
-        content: todo.text,
-        start: todo.start,
-        end: todo.end,
-        line: todo.line,
-      })),
-  ];
-  const markers = [...fromAnchors, ...curlyMarkers, ...lineTodos].sort(
-    (a, b) => a.line - b.line || a.start - b.start,
-  );
-
   return {
     outline,
-    claims,
-    evidence,
     todos,
     citations,
-    markers,
-    maturity: maturityFrom(markers),
-    diagnostics: diagnosticsOf(claims, evidence),
     comments,
+    markers,
+    diagnostics: todoDiagnostics(todos),
     directives,
-    curlyMarkers,
-    lineTodos,
   };
 }
 
-export function analysisMaturityMarkers(analysis: PaperAnalysis): MaturityMarker[] {
-  return analysis.markers;
+export function paperTodoIsOpen(todo: PaperTodo): boolean {
+  return !todoIsComplete(todo.attrs) && !todo.completedAt;
+}
+
+export function generateCommentId(now = new Date()): string {
+  const random = globalThis.crypto?.randomUUID?.().slice(0, 8) || Math.random().toString(36).slice(2, 10);
+  return `c${now.getTime().toString(36)}${random}`;
+}
+
+/** Comments created in OpenBar get an id immediately. `kind` is free-form. */
+export function composeObcomment(spec: { text: string; kind?: string; id?: string; now?: Date }): string {
+  const attrs: Record<string, string> = {
+    id: spec.id?.trim() || generateCommentId(spec.now),
+  };
+  const kind = spec.kind?.trim();
+  if (kind) attrs.kind = kind;
+  return `\\obcomment[${serializeAnchorAttrs(attrs)}]{${escapeTexText(spec.text)}}`;
+}
+
+/**
+ * Assign an id the first time a comment is linked. Existing ids are left alone.
+ * `at` is any offset inside the `\\obcomment` span (or the span start).
+ */
+export function ensureCommentId(
+  source: string,
+  at: number,
+  now = new Date(),
+): { source: string; id: string } | undefined {
+  const match = findMacroMatches(source, ["obcomment"]).find(
+    (item) => at >= item.index && at <= item.index + item.length,
+  );
+  if (!match) return undefined;
+  const attrs = parseAnchorAttrs(match.attrs);
+  const existing = attrs.id?.trim();
+  if (existing) return { source, id: existing };
+  const id = generateCommentId(now);
+  attrs.id = id;
+  const next = `\\obcomment[${serializeAnchorAttrs(attrs)}]{${match.body}}`;
+  return {
+    source: `${source.slice(0, match.index)}${next}${source.slice(match.index + match.length)}`,
+    id,
+  };
 }

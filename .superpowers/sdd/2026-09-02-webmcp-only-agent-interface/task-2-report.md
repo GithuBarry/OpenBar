@@ -14,7 +14,7 @@ unchanged for Task 5.
 
 ## Commit
 
-The initial Task 2 commit was `abeef0b`. This report update is amended into the same commit.
+The initial Task 2 commit was `0343257`. This report update is amended into the same commit.
 
 ## Changed files
 
@@ -26,6 +26,8 @@ The initial Task 2 commit was `abeef0b`. This report update is amended into the 
 - `app/actions.ts`
 - `app/page.tsx`
 - `features/instructions/use-instructions-webmcp.ts`
+- `features/use-shared-webmcp.ts`
+- `components/shell/project-agent-shell.tsx`
 
 Existing user edits across the worktree were preserved. Files outside the
 Task 2 path set remain unstaged.
@@ -50,3 +52,31 @@ invocation passed.
   HTTP removal. That failure is intentionally retained.
 - The five HTTP-removal targets remain present by request.
 - No native lifecycle reduction was attempted.
+
+## Task 2 fix round
+
+Status: The focused fix round is committed.
+
+Commit: `9719b3b`
+
+The `update_project` executor now tracks metadata fields separately from the
+required `expectedHash`. An expected-hash-only request returns
+`invalid_arguments` before `updateProject` runs.
+
+The shared project hook keeps the independent registration signal set to
+`"shared"`. The project shell integration mounts the project-scoped WebMCP
+registration for each project layout and derives the current paper, mindmap,
+wiki, or instructions location from the active route and hash.
+
+Focused verification already run:
+
+- `pnpm typecheck`: PASS, `tsc --noEmit` exited 0.
+- `pnpm exec tsx --test test/.tmp-webmcp-only.test.ts`: the workspace,
+  project-catalog, and empty-metadata guard assertions passed. The HTTP
+  removal assertion failed at `app/api/mcp/route.ts` with `true !== false`,
+  which remains the deferred Task 3 result.
+
+Concerns:
+
+- HTTP MCP removal remains deferred to Task 3.
+- Native lifecycle reduction remains deferred to its later task.

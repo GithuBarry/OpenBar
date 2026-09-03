@@ -14,8 +14,12 @@ import {
   okResult,
   WEBMCP_ERROR_CODES,
 } from "./operation-result";
+import { PAPER_MUTATION_SCHEMAS } from "./mcp-tool-schemas";
+import { analyzePaper } from "./paper-analysis";
 import { findMacroMatches, parseAnchorAttrs } from "@/lib/marker-codec";
-import { todoMetaFromAttrs } from "@/lib/todo-meta";
+import { patchSectionTableCell } from "@/lib/tex-project/table-fragments";
+import { summarizeTabulars } from "@/lib/tex-project/table-ast";
+import { todoIsComplete, todoMetaFromAttrs, todoTitleFromAttrs } from "@/lib/todo-meta";
 import type { OperationDiagnostic as WebMcpDiagnostic, OperationResult } from "./operation-result";
 
 export {
@@ -42,7 +46,8 @@ export const PAPER_WEBMCP_TOOL_NAMES = [
   "navigate_paper_section",
   "set_paper_reader_mode",
   "replace_paper_section",
-  "resolve_paper_todo",
+  "patch_paper_table",
+  "remove_paper_todo",
   "lint_paper",
   "compile_paper",
   "get_bibliography",
@@ -55,13 +60,17 @@ export const MINDMAP_WEBMCP_TOOL_NAMES = [
   "get_mindmap",
   "focus_mindmap_node",
   "add_mindmap_node",
-  "rename_mindmap_node",
   "move_mindmap_node",
   "delete_mindmap_node",
   "set_mindmap_collapsed",
-  "set_mindmap_node_presentation",
-  "link_mindmap_artifact",
+  "patch_mindmap_node",
   "highlight_mindmap_activity",
+  "place_todo_card",
+  "convert_card_to_todo",
+  "complete_todo",
+  "reopen_todo",
+  "focus_todo_in_paper",
+  "rename_mindmap",
 ] as const;
 
 export type MindmapWebMcpToolName = (typeof MINDMAP_WEBMCP_TOOL_NAMES)[number];
@@ -86,12 +95,24 @@ export type LivePaperSection = {
 
 export type LivePaperTodo = {
   id: string;
+  title?: string;
   text: string;
   sectionId?: string;
-  priority?: string;
-  due?: string;
-  owner?: string;
   createdAt?: string;
+  completed: boolean;
+};
+
+export type LivePaperComment = {
+  id?: string;
+  kind?: string;
+  text: string;
+  sectionId?: string;
+};
+
+export type LivePaperMarker = {
+  kind: string;
+  text: string;
+  sectionId?: string;
 };
 
 export type LivePaperSnapshot = {
@@ -111,6 +132,8 @@ export type LivePaperSnapshot = {
   bibliographyKeys: string[];
   bibliographyRaw?: string;
   todos?: LivePaperTodo[];
+  comments?: LivePaperComment[];
+  markers?: LivePaperMarker[];
 };
 
 export type PaperWebMcpHost = {
@@ -118,7 +141,7 @@ export type PaperWebMcpHost = {
   navigateSection: (sectionId: string) => void;
   setReaderMode: (mode: WebMcpReaderMode) => void;
   replaceSection: (sectionId: string, tex: string, signal?: AbortSignal) => void | Promise<void>;
-  resolveTodo: (todoId: string, signal?: AbortSignal) => void | Promise<void>;
+  removeTodo: (todoId: string, signal?: AbortSignal) => void | Promise<void>;
   compile: (signal?: AbortSignal) =>
     | { status: string; sourceHash?: string }
     | Promise<{ status: string; sourceHash?: string }>;
@@ -190,7 +213,8 @@ export const PAPER_WEBMCP_TOOL_SCHEMAS: Record<PaperWebMcpToolName, JsonSchemaOb
     },
     ["sectionId", "expectedRevision", "tex"],
   ),
-  resolve_paper_todo: objectSchema(
+  patch_paper_table: PAPER_MUTATION_SCHEMAS.patch_paper_table,
+  remove_paper_todo: objectSchema(
     {
       todoId: sectionIdSchema,
       expectedRevision: expectedRevisionSchema,
@@ -209,12 +233,12 @@ const TOOL_META: Record<PaperWebMcpToolName, { title: string; description: strin
   get_paper_state: {
     title: "Read live paper state",
     description:
-      "Return the live paper snapshot: revision, dirty flag, active section, outline, open TODO count, and compile state. Call this after navigate_project lands on the paper page. Project is fixed by the open page.",
+      "Return the live paper snapshot: revision, dirty flag, active section, outline, open TODO count, comments, markers, and compile state. Call this after navigate_project lands on the paper page. Project is fixed by the open page. \\obmarker is a paper-local hole, not a mindmap TODO.",
     readOnly: true,
   },
   get_paper_outline: {
     title: "Read paper outline",
-    description: "Return stable section ids, titles, levels, and TODO counts for the live paper.",
+    description: "Return stable section ids, titles, levels, TODO counts, and marker counts for the live paper.",
     readOnly: true,
   },
   read_paper_section: {
@@ -235,11 +259,17 @@ const TOOL_META: Record<PaperWebMcpToolName, { title: string; description: strin
   replace_paper_section: {
     title: "Replace a paper section",
     description:
-      "Replace one manuscript section using the current live editor revision. Use read_paper_section first. The change appears immediately in the human editor and persists through the same revision-checked save path.",
+      "Replace one manuscript section using the current live editor revision. Use read_paper_section first. Preserve tables, axes, captions, labels, TODOs, comments, markers, and intentionally incomplete cells. Make the smallest paper change that satisfies the request. For a single table cell, prefer patch_paper_table.",
     readOnly: false,
   },
-  resolve_paper_todo: {
-    title: "Resolve a paper TODO",
+  patch_paper_table: {
+    title: "Patch one table cell",
+    description:
+      "Replace exactly one cell in a simple tabular. Pass tableIndex and a single {row, column, tex} update. Surrounding cells, markers, and axes stay as-is. Complex tables (multicolumn, multirow, tabularx, longtable) return capability_unavailable — use replace_paper_section carefully instead. \\obmarker cells are paper-local holes, not mindmap TODOs.",
+    readOnly: false,
+  },
+  remove_paper_todo: {
+    title: "Remove a paper TODO",
     description: "Remove one \\obtodo by stable id through the live editor. Pass expectedRevision from the last read. Prefer complete_todo when the TODO should remain as completed metadata.",
     readOnly: false,
   },
@@ -343,12 +373,24 @@ export function boundWebMcpText(value: string, maxChars: number): {
   return { text: value.slice(0, end), truncated: end < value.length, totalCharacters: value.length };
 }
 
-function countClaims(tex: string): number {
-  return (tex.match(/\\obclaim\b/g) || []).length;
+function countTodos(tex: string): number {
+  return findMacroMatches(tex, ["obtodo"])
+    .filter((match) => !todoIsComplete(parseAnchorAttrs(match.attrs)))
+    .length;
 }
 
-function countTodos(tex: string): number {
-  return (tex.match(/\\obtodo\b/g) || []).length + (tex.match(/\{\?\s*todo\b/gi) || []).length;
+function countMarkers(tex: string): number {
+  return (tex.match(/\\obmarker\b/g) || []).length;
+}
+
+function outlineOf(snapshot: LivePaperSnapshot) {
+  return snapshot.sections.map((section) => ({
+    id: section.id,
+    title: section.title,
+    level: section.level,
+    todoCount: countTodos(section.tex),
+    markerCount: countMarkers(section.tex),
+  }));
 }
 
 export function liveTodos(snapshot: LivePaperSnapshot): LivePaperTodo[] {
@@ -359,10 +401,46 @@ export function liveTodos(snapshot: LivePaperSnapshot): LivePaperTodo[] {
       const attrs = parseAnchorAttrs(match.attrs);
       const id = attrs.id;
       if (!id) continue;
-      todos.push({ id, text: match.body.trim(), sectionId: section.id, ...todoMetaFromAttrs(attrs) });
+      todos.push({
+        id,
+        ...(todoTitleFromAttrs(attrs) ? { title: todoTitleFromAttrs(attrs) } : {}),
+        text: match.body.trim(),
+        sectionId: section.id,
+        completed: todoIsComplete(attrs),
+        ...todoMetaFromAttrs(attrs),
+      });
     }
   }
   return todos;
+}
+
+export function liveComments(snapshot: LivePaperSnapshot): LivePaperComment[] {
+  if (snapshot.comments) return snapshot.comments;
+  const comments: LivePaperComment[] = [];
+  for (const section of snapshot.sections) {
+    for (const note of analyzePaper(section.tex).comments) {
+      if (note.macro !== "obcomment") continue;
+      const kind = note.attrs.kind?.trim();
+      comments.push({
+        ...(note.id ? { id: note.id } : {}),
+        ...(kind ? { kind } : {}),
+        text: note.text,
+        sectionId: section.id,
+      });
+    }
+  }
+  return comments;
+}
+
+export function liveMarkers(snapshot: LivePaperSnapshot): LivePaperMarker[] {
+  if (snapshot.markers) return snapshot.markers;
+  const markers: LivePaperMarker[] = [];
+  for (const section of snapshot.sections) {
+    for (const marker of analyzePaper(section.tex).markers) {
+      markers.push({ kind: marker.kind, text: marker.text, sectionId: section.id });
+    }
+  }
+  return markers;
 }
 
 export function findLiveSection(snapshot: LivePaperSnapshot, sectionId: string): OperationResult<LivePaperSection> {
@@ -417,19 +495,9 @@ export function requireKnownCitations(keys: readonly string[], knownKeys: readon
   return okResult({ keys: [...keys] });
 }
 
-function outlineOf(snapshot: LivePaperSnapshot) {
-  return snapshot.sections.map((section) => ({
-    id: section.id,
-    title: section.title,
-    level: section.level,
-    claimCount: countClaims(section.tex),
-    todoCount: countTodos(section.tex),
-  }));
-}
-
 function defaultLint(snapshot: LivePaperSnapshot): { readiness?: string; diagnostics: WebMcpDiagnostic[] } {
   const diagnostics: WebMcpDiagnostic[] = [];
-  for (const todo of liveTodos(snapshot)) {
+  for (const todo of liveTodos(snapshot).filter((item) => !item.completed)) {
     diagnostics.push({
       severity: "warning",
       code: "open-todo",
@@ -437,17 +505,7 @@ function defaultLint(snapshot: LivePaperSnapshot): { readiness?: string; diagnos
       sectionId: todo.sectionId,
     });
   }
-  for (const section of snapshot.sections) {
-    if (countClaims(section.tex) > 0 && !/\\obevidence\b/.test(section.tex) && !/evidence=/i.test(section.tex)) {
-      diagnostics.push({
-        severity: "warning",
-        code: "claim-without-linked-evidence",
-        message: `Section "${section.title}" has a claim without linked evidence.`,
-        sectionId: section.id,
-      });
-    }
-  }
-  return { readiness: diagnostics.length ? "needs-work" : "clear", diagnostics };
+  return { diagnostics };
 }
 
 async function executeNamed(
@@ -467,6 +525,8 @@ async function executeNamed(
     case "get_paper_state": {
       const outline = outlineOf(snapshot);
       const todos = liveTodos(snapshot);
+      const comments = liveComments(snapshot);
+      const markers = liveMarkers(snapshot);
       return okResult(
         {
           project: snapshot.project,
@@ -477,8 +537,10 @@ async function executeNamed(
           pendingSave: snapshot.pendingSave ?? snapshot.dirty,
           activeSection: snapshot.activeSectionId || snapshot.sections[0]?.id,
           outline,
-          openTodoCount: todos.length,
-          claimCounts: { total: outline.reduce((sum, section) => sum + section.claimCount, 0) },
+          openTodoCount: todos.filter((todo) => !todo.completed).length,
+          openMarkerCount: markers.length,
+          comments,
+          markers,
           compileState: snapshot.compileState || { state: "idle" },
         },
         { revision: snapshot.revision },
@@ -505,7 +567,9 @@ async function executeNamed(
           revision: snapshot.revision,
           persistedHash: section.persistedHash,
           todos: liveTodos(snapshot).filter((todo) => todo.sectionId === section.id),
-          claims: countClaims(section.tex),
+          comments: liveComments(snapshot).filter((comment) => comment.sectionId === section.id),
+          markers: liveMarkers(snapshot).filter((marker) => marker.sectionId === section.id),
+          tables: summarizeTabulars(section.tex),
         },
         { revision: snapshot.revision },
       );
@@ -569,7 +633,106 @@ async function executeNamed(
         { revision: next.revision },
       );
     }
-    case "resolve_paper_todo": {
+    case "patch_paper_table": {
+      if (typeof args.sectionId !== "string") {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "sectionId must be a string.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      const found = findLiveSection(snapshot, args.sectionId);
+      if (!found.ok) return found;
+      const revision = assertLiveRevision(args.expectedRevision, snapshot.revision);
+      if (!revision.ok) return revision;
+      if (!Number.isInteger(args.tableIndex) || (args.tableIndex as number) < 0) {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "tableIndex must be a non-negative integer.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      const updates = args.updates;
+      if (!Array.isArray(updates) || updates.length !== 1) {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "patch_paper_table updates must contain exactly one cell.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      const update = updates[0];
+      if (!update || typeof update !== "object" || Array.isArray(update)) {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "Each update needs row, column, and tex.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      const cell = update as Record<string, unknown>;
+      if (!Number.isInteger(cell.row) || (cell.row as number) < 0 || !Number.isInteger(cell.column) || (cell.column as number) < 0) {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "row and column must be non-negative integers.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      if (typeof cell.tex !== "string") {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "tex must be a string.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      const patched = patchSectionTableCell(
+        found.value.tex,
+        args.tableIndex as number,
+        cell.row as number,
+        cell.column as number,
+        cell.tex,
+      );
+      if (!patched.ok) {
+        if (patched.reason === "complex") {
+          return failResult(
+            WEBMCP_ERROR_CODES.capability_unavailable,
+            "This table is too complex for patch_paper_table. Use replace_paper_section and keep unrelated cells.",
+            { retryable: false, currentRevision: snapshot.revision },
+          );
+        }
+        return failResult(
+          WEBMCP_ERROR_CODES.invalid_arguments,
+          patched.reason === "missing_table" ? `No table ${args.tableIndex} in this section.` : "Unknown table cell.",
+          { retryable: false, currentRevision: snapshot.revision },
+        );
+      }
+      try {
+        await host.replaceSection(found.value.id, patched.tex, options?.signal);
+      } catch (error) {
+        const code = error && typeof error === "object" && "code" in error ? String((error as { code: string }).code) : "";
+        const message = error instanceof Error ? error.message : "";
+        const staleDisk = code === "stale_disk_state" || message.includes("stale_disk_state");
+        const staleSelection = code === "stale_selection" || message.includes("stale_selection");
+        const cancelled = code === "cancelled" || message.toLowerCase().includes("cancelled");
+        if (cancelled) {
+          return failResult(WEBMCP_ERROR_CODES.cancelled, "Operation cancelled.", {
+            retryable: false,
+            currentRevision: snapshot.revision,
+          });
+        }
+        if (staleSelection || staleDisk) {
+          return failResult(staleDisk ? "stale_disk_state" : "stale_selection", error instanceof Error ? error.message : "Source selection is stale.", {
+            retryable: true,
+            currentRevision: snapshot.revision,
+            currentHash: error && typeof error === "object" && "currentHash" in error ? String((error as { currentHash?: unknown }).currentHash || "") : undefined,
+          });
+        }
+        throw error;
+      }
+      const next = host.getSnapshot();
+      return okResult(
+        {
+          sectionId: found.value.id,
+          tableIndex: args.tableIndex,
+          row: cell.row,
+          column: cell.column,
+        },
+        { revision: next.revision },
+      );
+    }
+    case "remove_paper_todo": {
       const revision = assertLiveRevision(args.expectedRevision, snapshot.revision);
       if (!revision.ok) return revision;
       if (typeof args.todoId !== "string") {
@@ -593,7 +756,7 @@ async function executeNamed(
         });
       }
       try {
-        await host.resolveTodo(todo.id, options?.signal);
+        await host.removeTodo(todo.id, options?.signal);
       } catch (error) {
         const code = error && typeof error === "object" && "code" in error ? String((error as { code: string }).code) : "";
         const message = error instanceof Error ? error.message : "";
@@ -695,6 +858,7 @@ export type PaperWebMcpHarness = PaperWebMcpHost & {
   snapshot: LivePaperSnapshot;
   navigatedTo?: string;
   readerMode: WebMcpReaderMode;
+  replaceRange: (from: number, to: number, text: string, signal?: AbortSignal) => void | Promise<void>;
 };
 
 export function createPaperWebMcpHarness(init: {
@@ -750,7 +914,7 @@ export function createPaperWebMcpHarness(init: {
       section.tex = tex;
       bump();
     },
-    resolveTodo: (todoId) => {
+    removeTodo: (todoId) => {
       const pattern = new RegExp(`\\\\obtodo\\[[^\\]]*id=${todoId}[^\\]]*\\]\\{[^}]*\\}\\s*`, "g");
       for (const section of snapshot.sections) {
         section.tex = section.tex.replace(pattern, "");
@@ -760,6 +924,11 @@ export function createPaperWebMcpHarness(init: {
     compile: () => {
       snapshot.compileState = { state: "running", sourceHash: `rev-${snapshot.revision}` };
       return { status: "started", sourceHash: snapshot.compileState.sourceHash };
+    },
+    replaceRange: (from, to, text) => {
+      snapshot.source = `${snapshot.source.slice(0, from)}${text}${snapshot.source.slice(to)}`;
+      snapshot.revision += 1;
+      snapshot.dirty = true;
     },
   };
   return harness;

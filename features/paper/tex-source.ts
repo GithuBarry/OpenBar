@@ -1,15 +1,16 @@
 import { findMacroMatches, parseAnchorAttrs } from "@/lib/marker-codec";
-import { analyzePaper, CURLY_MARKER } from "@/lib/research/paper-analysis";
+import { analyzePaper } from "@/lib/research/paper-analysis";
 import {
   patchObtodoInSource,
-  parseTodoStatus,
+  todoIsComplete,
+  todoTitleFromAttrs,
   type TodoAttrPatch,
-  type TodoPriority,
-  type TodoStatus,
 } from "@/lib/todo-meta";
 import {
   composePaperTex,
   isPaperChromeLine,
+  normalizeHeadingTitle,
+  plainHeadingTitle,
   readTexDocumentTitle,
   sectionCommandForLevel,
   TEX_HEADING_LINE,
@@ -31,15 +32,50 @@ export interface PaperEditorSection extends PaperBodySection {
   hash: string;
 }
 
-export const TEX_TABLE_TPL = [
-  "\\begin{tabular}{l|l|l|l}",
+export const TEX_RESULT_GRID_TPL = [
+  "\\begin{tabular}{l|ccc}",
   "\\hline",
-  "Condition & Metric 1 & Metric 2 & Notes \\\\",
+  " & Condition A & Condition B & Condition C \\\\",
   "\\hline",
-  "Reference & 0.00 & \\obmarker{todo}{metric} & Add note \\\\",
-  "Candidate & 0.00 & \\obmarker{todo}{metric} & Add note \\\\",
+  "Setting A",
+  "  & \\obmarker{todo}{result}",
+  "  & \\obmarker{todo}{result}",
+  "  & \\obmarker{todo}{result} \\\\",
+  "Setting B",
+  "  & \\obmarker{todo}{result}",
+  "  & \\obmarker{todo}{result}",
+  "  & \\obmarker{todo}{result} \\\\",
   "\\hline",
   "\\end{tabular}",
+].join("\n");
+
+export const TEX_BLANK_TABLE_TPL = [
+  "\\begin{tabular}{l|ll}",
+  "\\hline",
+  " &  &  \\\\",
+  "\\hline",
+  " &  &  \\\\",
+  "\\hline",
+  "\\end{tabular}",
+].join("\n");
+
+/** Default table insert: an incomplete result matrix, not a finished-looking table. */
+export const TEX_TABLE_TPL = TEX_RESULT_GRID_TPL;
+
+export const TEX_PLANNED_FIGURE_TPL = [
+  "\\begin{figure}",
+  "\\centering",
+  "\\obmarker{figure}{Describe the intended figure}",
+  "\\caption{Describe what this figure will show.}",
+  "\\end{figure}",
+].join("\n");
+
+export const TEX_PLANNED_PLOT_TPL = [
+  "\\begin{figure}",
+  "\\centering",
+  "\\obmarker{plot}{Describe the intended plot}",
+  "\\caption{Describe the axes and the comparison.}",
+  "\\end{figure}",
 ].join("\n");
 
 export function composeInitialTex(title: string, sections: PaperEditorSection[]): string {
@@ -81,7 +117,7 @@ function collectHeadings(lines: string[]): HeadingHit[] {
       index,
       command: match[1]!,
       level: texHeadingLevel(match[1]!),
-      title: match[2]!.replace(/\s+\{#[^}]+\}\s*$/, "").trim().toLocaleLowerCase(),
+      title: normalizeHeadingTitle(match[2]!),
       ...(appendix ? { appendix: true } : {}),
     }];
   });
@@ -106,7 +142,7 @@ export function parseEditorSections(source: string, expected: PaperEditorSection
     const heading = headings.find((candidate) =>
       candidate.index >= cursor
       && candidate.command !== "title"
-      && candidate.title === original.title.trim().toLocaleLowerCase(),
+      && candidate.title === normalizeHeadingTitle(original.title),
     );
     if (!heading) {
       return { sections: [], error: "Save blocked: section headings or order changed. Use a structural section action." };
@@ -134,7 +170,7 @@ export function accumulateHeadingCounts(source: string, counts: Map<string, numb
   for (const line of source.split("\n")) {
     const match = TEX_HEADING_LINE.exec(line);
     if (!match || match[1] === "title") continue;
-    headingOccurrenceKey(texHeadingLevel(match[1]!), match[2]!.trim(), counts);
+    headingOccurrenceKey(texHeadingLevel(match[1]!), plainHeadingTitle(match[2]!), counts);
   }
 }
 
@@ -145,27 +181,34 @@ export function listBookmarks(source: string): { title: string; slug: string; li
   for (let i = 0; i < lines.length; i++) {
     const match = TEX_HEADING_LINE.exec(lines[i] || "");
     if (!match || match[1] === "title") continue;
-    const title = match[2]!.trim();
+    const title = plainHeadingTitle(match[2]!);
     const level = texHeadingLevel(match[1]!);
     list.push({ level, title, slug: headingOccurrenceKey(level, title, headingCounts), line: i });
   }
   return list;
 }
 
-export type EditorTodoKind = "obtodo" | "marker";
+export type EditorTodoKind = "obtodo";
 
 export interface EditorTodo {
   kind: EditorTodoKind;
+  title?: string;
   text: string;
   from: number;
   to: number;
   section: string;
   id?: string;
-  priority?: TodoPriority;
-  due?: string;
-  owner?: string;
   createdAt?: string;
-  status?: TodoStatus;
+  completed: boolean;
+}
+
+export interface EditorComment {
+  id?: string;
+  kind?: string;
+  text: string;
+  from: number;
+  to: number;
+  section: string;
 }
 
 function sectionAt(source: string, index: number): string {
@@ -179,37 +222,35 @@ export function collectEditorTodos(source: string): EditorTodo[] {
   const analysis = analyzePaper(source);
   const todos: EditorTodo[] = [];
   for (const todo of analysis.todos) {
-    if (todo.macro === "ob-directive") continue;
-    const span = spanOfTodo(source, todo);
+    const span = spanOfTodo(source, { ...todo, id: todo.id || undefined });
+    const title = todoTitleFromAttrs(todo.attrs);
     todos.push({
-      kind: todo.macro === "obmarker" ? "marker" : "obtodo",
+      kind: "obtodo",
+      ...(title ? { title } : {}),
       text: todo.text.trim(),
       from: span.from,
       to: span.to,
       section: todo.section || sectionAt(source, todo.start),
-      id: todo.id,
-      priority: todo.priority,
-      due: todo.due,
-      owner: todo.owner,
+      id: todo.id || undefined,
       createdAt: todo.createdAt,
-      status: parseTodoStatus(todo.attrs.status),
-    });
-  }
-  CURLY_MARKER.lastIndex = 0;
-  let brace: RegExpExecArray | null;
-  while ((brace = CURLY_MARKER.exec(source))) {
-    const already = todos.some((todo) => todo.from === brace!.index);
-    if (already) continue;
-    todos.push({
-      kind: "marker",
-      text: (brace[3] || brace[2] || brace[1] || "").trim(),
-      from: brace.index,
-      to: brace.index + brace[0].length,
-      section: sectionAt(source, brace.index),
-      id: `brace-${brace.index}`,
+      completed: todoIsComplete(todo.attrs) || Boolean(todo.completedAt),
     });
   }
   return todos.sort((a, b) => a.from - b.from);
+}
+
+export function collectEditorComments(source: string): EditorComment[] {
+  return analyzePaper(source).comments
+    .filter((note) => note.macro === "obcomment")
+    .map((note) => ({
+      id: note.id,
+      kind: note.attrs.kind?.trim() || undefined,
+      text: note.text,
+      from: note.start,
+      to: note.end,
+      section: note.section || sectionAt(source, note.start),
+    }))
+    .sort((a, b) => a.from - b.from);
 }
 
 function spanOfTodo(source: string, todo: { id?: string; text: string; start: number; end: number; macro?: string }): { from: number; to: number } {
@@ -221,7 +262,7 @@ function spanOfTodo(source: string, todo: { id?: string; text: string; start: nu
     }
   }
   if (todo.end > todo.start) return { from: todo.start, to: todo.end };
-  return spanOf(source, todo.macro === "obmarker" ? "obmarker" : "obtodo", todo.text);
+  return spanOf(source, "obtodo", todo.text);
 }
 
 function spanOf(source: string, command: string, body: string): { from: number; to: number } {
@@ -236,8 +277,7 @@ function spanOf(source: string, command: string, body: string): { from: number; 
 }
 
 export function resolveEditorTodo(source: string, todo: EditorTodo): string {
-  const replacement = todo.kind === "marker" ? todo.text : "";
-  return `${source.slice(0, todo.from)}${replacement}${source.slice(todo.to)}`;
+  return `${source.slice(0, todo.from)}${source.slice(todo.to)}`;
 }
 
 export function locatePreviewSnippet(source: string, snippet: string, hintFrom = 0): { from: number; to: number } | null {

@@ -1,0 +1,10 @@
+# Copy this file to the cloudflared host and replace the placeholders.
+# Protect the hostname with a Cloudflare Access application.
+
+tunnel: <tunnel-uuid>
+credentials-file: /etc/cloudflared/<tunnel-uuid>.json
+
+ingress:
+  - hostname: openbar-dev.<your-domain>
+    service: http://127.0.0.1:3000
+  - service: http_status:404

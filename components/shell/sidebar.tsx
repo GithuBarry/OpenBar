@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { GitBranch, PanelLeft, PanelLeftClose } from "lucide-react";
+import { PanelLeft, PanelLeftClose } from "lucide-react";
 
 import { Project } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { WorkspaceMark } from "@/components/workspace-mark";
 import { ProjectSwitcher } from "./project-switcher";
 import { ThemeToggle } from "./theme-toggle";
 import { SidebarNav } from "./sidebar-nav";
+import { ResetDemoButton } from "@/components/demo/reset-demo-button";
 
 const STORAGE_KEY = "ob-sidebar";
 
@@ -19,11 +21,15 @@ const STORAGE_KEY = "ob-sidebar";
 export function Sidebar({
   projects,
   activeSlug,
-  workspaceName = "OpenBarry",
+  workspaceName = "OpenBar",
+  workspaceTagline = "Pouring the perfect draft.",
+  publicDemo = false,
 }: {
   projects: Project[];
   activeSlug?: string;
   workspaceName?: string;
+  workspaceTagline?: string;
+  publicDemo?: boolean;
 }) {
   const active = projects.find((p) => p.slug === activeSlug);
   const base = active ? `/p/${active.slug}` : "";
@@ -48,6 +54,7 @@ export function Sidebar({
         { href: `${base}/paper`, label: "Paper", icon: "drafts" as const },
         { href: `${base}/mindmap`, label: "Mindmap", icon: "mindmap" as const },
         { href: `${base}/wiki`, label: "Wiki", icon: "notes" as const, group: "more" as const },
+        ...(!publicDemo ? [{ href: `${base}/instructions`, label: "Instructions", icon: "overview" as const, group: "more" as const }] : []),
       ]
     : [
         { href: "/", label: "All projects", icon: "overview" as const, exact: true },
@@ -72,13 +79,14 @@ export function Sidebar({
           ready ? (open ? "flex" : "hidden") : "hidden md:flex",
         )}
       >
-        <div className="flex h-14 items-center gap-2 px-3">
-          <Link href="/" className="flex min-w-0 flex-1 items-center gap-2 font-semibold tracking-tight">
-            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-accent text-accent-ink">
-              <GitBranch size={16} />
-            </span>
-            <span className="truncate">{workspaceName}</span>
-          </Link>
+        <div className="flex min-h-16 items-center gap-2 px-3 py-3">
+          <WorkspaceMark
+            name={workspaceName}
+            tagline={workspaceTagline}
+            compactTagline="Serving Draft"
+            compact
+            className="min-w-0 flex-1"
+          />
           <button
             type="button"
             className="ob-press grid h-7 w-7 shrink-0 place-items-center rounded-md text-muted hover:bg-surface-3 hover:text-ink"
@@ -91,7 +99,7 @@ export function Sidebar({
         </div>
 
         <div className="px-3 pb-2">
-          <ProjectSwitcher projects={projects} activeSlug={activeSlug} />
+          <ProjectSwitcher projects={projects} activeSlug={activeSlug} allowCreate={!publicDemo} />
         </div>
 
         <SidebarNav items={nav} />
@@ -104,6 +112,7 @@ export function Sidebar({
             </div>
             <ThemeToggle />
           </div>
+          {publicDemo && activeSlug && <div className="mt-3"><ResetDemoButton slug={activeSlug} /></div>}
         </div>
       </aside>
     </>

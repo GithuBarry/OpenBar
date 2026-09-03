@@ -5,17 +5,23 @@
 
 import { printRaw } from "@unified-latex/unified-latex-util-print-raw";
 
+import { patchTabularCell } from "./table-ast";
 import { isEnvironment, parseTex } from "./tex-ast";
+import { isComplexTableSource } from "./table-complexity";
+
+export { isComplexTableSource } from "./table-complexity";
 
 const TABLE_ENVS = new Set(["tabular", "tabular*", "tabularx", "longtable"]);
-const COMPLEX_HINT = /\\(?:multicolumn|multirow|cline|cmidrule)\b/;
 
 export type TableFragment = {
   key: string;
   source: string;
   from: number;
   to: number;
+  env: string;
 };
+
+export type TablePatchError = "complex" | "missing_table" | "missing_cell";
 
 /** FNV-1a, portable across Node and the browser. */
 export function tableFragmentKey(source: string): string {
@@ -43,12 +49,7 @@ function envName(node: { env?: string }): string {
   return String(node.env || "").replace(/\*$/, "");
 }
 
-export function isComplexTableSource(source: string, env = "tabular"): boolean {
-  if (env === "tabularx" || env === "longtable" || env === "tabular*") return true;
-  return COMPLEX_HINT.test(source);
-}
-
-export function extractComplexTableFragments(source: string): TableFragment[] {
+export function extractTableFragments(source: string): TableFragment[] {
   const fragments: TableFragment[] = [];
   const seen = new Set<string>();
   const visit = (nodes: unknown[]) => {
@@ -57,13 +58,14 @@ export function extractComplexTableFragments(source: string): TableFragment[] {
         const env = envName(node);
         if (TABLE_ENVS.has(env) || TABLE_ENVS.has(node.env || "")) {
           const slice = nodeSlice(source, node);
-          if (isComplexTableSource(slice.text, env) && !seen.has(`${slice.from}:${slice.to}`)) {
+          if (!seen.has(`${slice.from}:${slice.to}`)) {
             seen.add(`${slice.from}:${slice.to}`);
             fragments.push({
               key: tableFragmentKey(slice.text),
               source: slice.text,
               from: slice.from,
               to: slice.to,
+              env,
             });
           }
         }
@@ -79,6 +81,31 @@ export function extractComplexTableFragments(source: string): TableFragment[] {
     return [];
   }
   return fragments.sort((a, b) => a.from - b.from);
+}
+
+export function extractComplexTableFragments(source: string): TableFragment[] {
+  return extractTableFragments(source).filter((item) => isComplexTableSource(item.source, item.env));
+}
+
+/** Replace exactly one simple tabular cell. Complex tables are not patched. */
+export function patchSectionTableCell(
+  sectionTex: string,
+  tableIndex: number,
+  row: number,
+  column: number,
+  tex: string,
+): { ok: true; tex: string } | { ok: false; reason: TablePatchError } {
+  if (!Number.isInteger(tableIndex) || tableIndex < 0) return { ok: false, reason: "missing_table" };
+  const tables = extractTableFragments(sectionTex);
+  const table = tables[tableIndex];
+  if (!table) return { ok: false, reason: "missing_table" };
+  if (isComplexTableSource(table.source, table.env)) return { ok: false, reason: "complex" };
+  const patched = patchTabularCell(table.source, row, column, tex);
+  if (!patched.ok) return { ok: false, reason: "missing_cell" };
+  return {
+    ok: true,
+    tex: `${sectionTex.slice(0, table.from)}${patched.source}${sectionTex.slice(table.to)}`,
+  };
 }
 
 export function wrapComplexTablesForPreview(

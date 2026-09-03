@@ -1,0 +1,30 @@
+% OB-SECTION {"id":"related-work","label":"sec-related","level":2,"order":2,"title":"Related Work"}
+
+\section{Related Work}
+\label{sec-related}
+% OB-EDIT-BEGIN openbarry/markdown@1 id=related-work
+Our work intersects with model distillation, model merging, activation engineering, and parameter-efficient finetuning.
+
+\paragraph{Knowledge distillation.}
+Distillation~\cite{hinton2015,bucilua2006} trains a student to mimic a teacher's output probabilities or internal representations~\cite{romero2014}.
+Standard distillation requires extensive teacher generation and significant student training.
+\cmdv{} instead transfers the functional effect of a specific pre-existing adapter using activation mappings.
+
+\paragraph{Model merging and editing.}
+Merging typically assumes the same architecture and parameter count~\cite{wortsman2022,matena2022,yadav2023}.
+Task arithmetic~\cite{ilharco2022} operates on finetuned weights.
+ROME~\cite{meng2022rome} and MEMIT~\cite{meng2022memit} edit facts in weights.
+\cmdv{} operates in activation space and transfers between distinct architectures.
+
+\paragraph{Activation interpretability and engineering.}
+Steering vectors added to residual outputs can adjust model behaviors~\cite{turner2023,zou2023repre,rimsky2024}.
+Sparse linear features yield steering methods~\cite{gao2024,luo2024}.
+Most of this work edits a single target model; \cmdv{} uses a donor's activations to steer a distinct recipient.
+
+\paragraph{Parameter-efficient finetuning.}
+Adapters~\cite{houlsby2019}, LoRA~\cite{hu2022lora}, and prefix-tuning~\cite{li2021prefix} add a small number of parameters.
+Representation finetuning (ReFT)~\cite{wu2024reft} intervenes directly on hidden representations with low-rank projections.
+\cmdv{} transfers DiReFT adapters from a donor without the PEFT training data.
+
+\obtodo[id=cv-related, created=2025-02-03T10:00:00.000Z, updated=2025-06-02T09:33:41.000Z, completed=2025-06-02T09:33:41.000Z]{Separate distillation, merging, steering, and ReFT so the converter claim has a clean contrast.}
+% OB-EDIT-END id=related-work

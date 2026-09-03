@@ -46,7 +46,7 @@ export function persistVirtualRange(input: {
     }
     if (!mapped.segment) return failResult("invalid_path", "Range is outside the source bundle.", false);
     if (!mapped.segment.editable) {
-      return failResult("invalid_path", `File "${mapped.segment.filePath}" is not an editable OpenBarry region.`, false);
+      return failResult("invalid_path", `File "${mapped.segment.filePath}" is not an editable OpenBar region.`, false);
     }
     const abs = path.join(input.manuscriptDir, mapped.segment.filePath);
     const current = fs.readFileSync(abs, "utf8");
@@ -79,7 +79,7 @@ export function persistVirtualRange(input: {
 export function persistSourceBundle(input: {
   manuscriptDir: string;
   nextSource: string;
-  expectedBundleHash: string;
+  expectedBundleHash?: string;
   dryRun?: boolean;
 }): OperationResult<{ bundleHash: string; written: string[]; dryRun?: boolean; patches?: SourcePatch[] }> {
   const parts = splitBundleSource(input.nextSource);
@@ -87,7 +87,7 @@ export function persistSourceBundle(input: {
   const lockTarget = path.resolve(input.manuscriptDir, initial.rootFile || "paper.tex");
   return withWriteLock(lockTarget, () => {
     const bundle = buildSourceBundle(input.manuscriptDir);
-    if (bundle.bundleHash !== input.expectedBundleHash) {
+    if (input.expectedBundleHash && bundle.bundleHash !== input.expectedBundleHash) {
       return failResult("stale_disk_state", "Source bundle hash does not match.", {
         retryable: true,
         currentHash: bundle.bundleHash,

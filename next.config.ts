@@ -16,6 +16,7 @@ function distDirFromEnvironment(): string {
 }
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   distDir: distDirFromEnvironment(),
   outputFileTracingRoot: configDir,
   // Content is a runtime data tree, not application code. Keep it out of NFT
@@ -29,7 +30,7 @@ const nextConfig: NextConfig = {
   },
   // Next 16 treats 127.0.0.1 as a different origin from localhost and blocks
   // /_next chunks + HMR unless listed here.
-  allowedDevOrigins: ["127.0.0.1", "localhost"],
+  allowedDevOrigins: ["127.0.0.1", "127.0.2.2", "localhost"],
   serverExternalPackages: [
     "file-type",
     "proper-lockfile",

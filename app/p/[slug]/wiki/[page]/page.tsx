@@ -2,10 +2,10 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 
-import { getProject, getWikiPage, getWikiTex } from "@/lib/store";
-import { inferDocumentFormat } from "@/lib/document-format";
+import { getProject, getWikiPage, listWiki } from "@/lib/store";
 import { PageHeader } from "@/components/shell/page-header";
 import { WikiPageClient } from "@/features/wiki/wiki-page-client";
+import { isPublicDemoMode } from "@/lib/server/demo-mode";
 
 export default async function WikiDetail({
   params,
@@ -16,14 +16,15 @@ export default async function WikiDetail({
   const project = getProject(slug);
   const wiki = getWikiPage(slug, page);
   if (!project || !wiki) notFound();
-  const format = inferDocumentFormat(wiki.body, wiki.format);
-  const source = format === "tex" ? (getWikiTex(slug, page) ?? wiki.body) : wiki.body;
+  const pages = listWiki(slug);
 
   return (
     <>
       <PageHeader
         title={wiki.title}
         subtitle={project.title}
+        project={project}
+        readOnlyProject={isPublicDemoMode()}
         actions={
           <Link href={`/p/${slug}/wiki`} className="btn-ghost text-sm">
             <ArrowLeft size={15} /> Wiki
@@ -31,7 +32,7 @@ export default async function WikiDetail({
         }
       />
       <div className="mx-auto max-w-3xl p-6">
-        <WikiPageClient page={wiki} tex={source} />
+        <WikiPageClient page={wiki} pages={pages} />
       </div>
     </>
   );

@@ -1,14 +1,18 @@
 import Link from "next/link";
 
-import { getEditableTexPaper, listProjects } from "@/lib/store";
+import { getEditableTexPaper, listVisibleProjects } from "@/lib/store";
 import { analyzePaper, paperTodoIsOpen } from "@/lib/research/paper-analysis";
 import { requireWorkbenchPage } from "@/lib/server/project-access";
+import { isPublicDemoMode } from "@/lib/server/demo-mode";
 import { AboutFeatureGrid } from "@/components/about-features";
+import { PublicDemoNotice } from "@/components/demo/public-demo-notice";
+import { ResetDemoButton } from "@/components/demo/reset-demo-button";
 import { ProjectCard } from "@/components/project-card";
 import { CreateProjectButton } from "@/components/project/create-project";
 import { ThemeToggle } from "@/components/shell/theme-toggle";
 import { WorkspaceIdentity } from "@/components/workspace-identity";
 import { WorkspaceMark } from "@/components/workspace-mark";
+import { AgentReadyIndicator } from "@/components/shell/agent-ready";
 import { WorkspaceWebMcp } from "@/features/use-workspace-webmcp";
 import { getWorkspaceSettings } from "@/lib/workspace";
 
@@ -17,7 +21,8 @@ export const dynamic = "force-dynamic";
 export default async function Home() {
   await requireWorkbenchPage();
   const workspace = getWorkspaceSettings();
-  const projects = listProjects();
+  const projects = listVisibleProjects();
+  const publicDemo = isPublicDemoMode();
   const rows = projects.map((project) => {
     const paper = getEditableTexPaper(project.slug);
     const todos = paper ? analyzePaper(paper.source).todos.filter(paperTodoIsOpen).length : 0;
@@ -32,7 +37,7 @@ export default async function Home() {
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-5">
           <div className="flex min-w-0 items-center gap-4">
             <WorkspaceMark />
-            <WorkspaceIdentity workspace={workspace} />
+            <WorkspaceIdentity workspace={workspace} readOnly={publicDemo} />
           </div>
           <div className="flex items-center gap-4">
             <div className="hidden gap-4 text-xs text-muted sm:flex">
@@ -40,10 +45,12 @@ export default async function Home() {
               <Stat n={openTodos} label="open todos" />
             </div>
             <ThemeToggle />
-            <CreateProjectButton />
+            <AgentReadyIndicator />
+            {publicDemo ? <ResetDemoButton slug={projects[0]?.slug || "command-v"} /> : <CreateProjectButton />}
           </div>
         </div>
       </header>
+      {publicDemo && <PublicDemoNotice />}
 
       <section className="mx-auto grid max-w-6xl gap-4 px-6 py-6 md:grid-cols-2">
         {rows.map(({ project, todos }) => (

@@ -6,6 +6,7 @@ import { Check, Edit3, LoaderCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { saveProjectAction } from "@/app/actions";
 import type { Project } from "@/lib/types";
+import { AgentReadyIndicator } from "@/components/shell/agent-ready";
 
 export function PageHeader({
   title,
@@ -15,6 +16,7 @@ export function PageHeader({
   className,
   sticky = true,
   project,
+  readOnlyProject = false,
 }: {
   title: React.ReactNode;
   subtitle?: React.ReactNode;
@@ -23,6 +25,7 @@ export function PageHeader({
   className?: string;
   sticky?: boolean;
   project?: Project;
+  readOnlyProject?: boolean;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
@@ -154,7 +157,7 @@ export function PageHeader({
               <h1 className="truncate text-base font-semibold tracking-tight text-ink">
                 {project ? projectTitle || project.title : title}
               </h1>
-              {project && (
+              {project && !readOnlyProject && (
                 <button
                   type="button"
                   onClick={() => {
@@ -168,7 +171,7 @@ export function PageHeader({
                 </button>
               )}
               {saved && (
-                <span className="flex items-center gap-1 text-[11px] font-medium text-m-final">
+                <span className="flex items-center gap-1 text-[11px] font-medium text-ok">
                   <Check size={12} /> Saved
                 </span>
               )}
@@ -178,15 +181,15 @@ export function PageHeader({
             {(project ? projectTagline : subtitle) && (
               <p
                 onClick={() => {
-                  if (!project) return;
+                  if (!project || readOnlyProject) return;
                   setSaveError(null);
                   setEditing(true);
                 }}
                 className={cn(
                   "truncate text-xs text-muted",
-                  project && "cursor-pointer transition-colors hover:text-ink",
+                  project && !readOnlyProject && "cursor-pointer transition-colors hover:text-ink",
                 )}
-                title={project ? "Click to edit description" : undefined}
+                title={project && !readOnlyProject ? "Click to edit description" : undefined}
               >
                 {project ? projectTagline : subtitle}
               </p>
@@ -195,7 +198,10 @@ export function PageHeader({
         )}
       </div>
 
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+      <div className="flex shrink-0 items-center gap-2">
+        <AgentReadyIndicator />
+        {actions}
+      </div>
     </header>
   );
 }

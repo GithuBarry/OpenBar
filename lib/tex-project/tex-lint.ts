@@ -1,3 +1,5 @@
+import { suspiciousTexSequences } from "./tex-repair";
+
 /**
  * TeX-mode character lint: likely prose percentages and strict `%` comments.
  *
@@ -62,4 +64,74 @@ export function lintProsePercentages(source: string): TexLintFix[] {
 
 export function applyTexLintFix(source: string, fix: TexLintFix): string {
   return `${source.slice(0, fix.from)}${fix.replacement}${source.slice(fix.to)}`;
+}
+
+export type PaperLintDiagnostic = {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+  from?: number;
+};
+
+function stripLineComment(line: string): string {
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === "%" && !isEscaped(line, i)) return line.slice(0, i);
+  }
+  return line;
+}
+
+/** ponytail: per-line brace depth; multi-line groups are a real TeX parse. */
+export function lintBrokenTex(source: string): PaperLintDiagnostic[] {
+  const diagnostics: PaperLintDiagnostic[] = [];
+  const lines = maskLiteralRegions(source).split("\n");
+  let offset = 0;
+  for (const line of lines) {
+    const code = stripLineComment(line);
+    const glued = code.match(/\\maketitle([A-Za-z]+)/);
+    if (glued) {
+      diagnostics.push({
+        severity: "error",
+        code: "glued-maketitle",
+        message: `\\maketitle is glued to "${glued[1]}". Restore the missing group on the previous command.`,
+        from: offset + code.indexOf("\\maketitle"),
+      });
+    }
+    let depth = 0;
+    for (let i = 0; i < code.length; i++) {
+      const ch = code[i];
+      if (ch === "\\" && (code[i + 1] === "{" || code[i + 1] === "}")) {
+        i += 1;
+        continue;
+      }
+      if (ch === "{") depth += 1;
+      else if (ch === "}") depth -= 1;
+    }
+    if (depth > 0) {
+      diagnostics.push({
+        severity: "error",
+        code: "unclosed-group",
+        message: `Unclosed { on this line: ${code.trim().slice(0, 88)}`,
+        from: offset,
+      });
+    }
+    offset += line.length + 1;
+  }
+  return diagnostics;
+}
+
+export function lintPaperSource(source: string): PaperLintDiagnostic[] {
+  return [
+    ...lintProsePercentages(source).map((fix) => ({
+      severity: "warning" as const,
+      code: "prose-percent",
+      message: fix.message,
+      from: fix.from,
+    })),
+    ...suspiciousTexSequences(source).map((code) => ({
+      severity: "warning" as const,
+      code,
+      message: `Suspicious TeX sequence: ${code}`,
+    })),
+    ...lintBrokenTex(source),
+  ];
 }

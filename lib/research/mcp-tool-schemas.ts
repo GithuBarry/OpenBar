@@ -76,7 +76,18 @@ export const updateProjectZod = z.object({
   title: z.string().optional(),
   venue: z.string().optional(),
   tagline: z.string().optional(),
+  overview: z.string().optional(),
+  researchKind: z.string().optional(),
+  color: z.string().optional(),
+  icon: z.string().optional(),
   label: z.string().optional(),
+  links: z.array(z.object({
+    label: z.string(),
+    url: z.string(),
+    kind: z.enum(["overleaf", "latex", "arxiv", "web", "repo"]),
+  })).optional(),
+  collaborators: z.array(z.string()).optional(),
+  archivedAt: z.string().datetime({ offset: true }).nullable().optional(),
 });
 
 export const SHARED_WEBMCP_SCHEMAS: Record<string, JsonSchemaObject> = {
@@ -111,7 +122,27 @@ export const SHARED_WEBMCP_SCHEMAS: Record<string, JsonSchemaObject> = {
     title: { type: "string" },
     venue: { type: "string" },
     tagline: { type: "string" },
+    overview: { type: "string" },
+    researchKind: { type: "string" },
+    color: { type: "string" },
+    icon: { type: "string" },
     label: { type: "string" },
+    links: {
+      type: "array",
+      maxItems: 50,
+      items: {
+        type: "object",
+        properties: {
+          label: { type: "string" },
+          url: { type: "string" },
+          kind: { type: "string", enum: ["overleaf", "latex", "arxiv", "web", "repo"] },
+        },
+        required: ["label", "url", "kind"],
+        additionalProperties: false,
+      },
+    },
+    collaborators: { type: "array", maxItems: 100, items: { type: "string" } },
+    archivedAt: { type: ["string", "null"] },
   }, ["expectedHash"]),
 };
 

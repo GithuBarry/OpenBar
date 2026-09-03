@@ -1,35 +1,30 @@
 "use client";
 
 import "katex/dist/katex.min.css";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import {
   Bold,
   Check,
   ChevronDown,
   Code2,
-  Columns,
   Eye,
   FileText,
   GripHorizontal,
   GripVertical,
   Heading2,
   Heading3,
-  Highlighter,
   ImagePlus,
   Italic,
   List,
   ListChecks,
   ListTodo,
   LoaderCircle,
-  Maximize2,
   MessageSquareText,
-  Minimize2,
   Quote,
   RefreshCw,
   Sigma,
   Table2,
-  Target,
   X,
 } from "lucide-react";
 
@@ -39,6 +34,8 @@ import {
   getPaperCompileStatusAction,
   previewTableFallbacksAction,
   persistSourceBundleAction,
+  placeTodoOnMindmapAction,
+  removePaperTodoAction,
   removePaperSectionAction,
   renamePaperSectionAction,
   requestPaperCompileAction,
@@ -64,20 +61,28 @@ import {
   usePaperWebMcp,
 } from "./use-paper-webmcp";
 import { AnchoredPop } from "@/components/pop";
-import { composeObtodo, rewriteObtodo, rewriteObtodoText, todayStamp, type TodoAttrPatch } from "@/lib/todo-meta";
+import { composeObcomment } from "@/lib/research/paper-analysis";
+import { assignMissingTodoIds, composeObtodo, rewriteObtodo, rewriteObtodoText, type TodoAttrPatch } from "@/lib/todo-meta";
 import { proposedTableRepair, suspiciousTexSequences } from "@/lib/tex-project/tex-repair";
 import { extractComplexTableFragments } from "@/lib/tex-project/table-fragments";
 import { applyTexLintFix, lintProsePercentages } from "@/lib/tex-project/tex-lint";
+import { PaperMetrics } from "./paper-metrics";
+import { PaperAppearance, type PaperEditorWidth, type PaperReaderFont } from "./paper-appearance";
+import { countPaperWords } from "./paper-stats";
 import { TodoPanel } from "./todo-panel";
 import { sharedWebMcpActions } from "@/features/webmcp-actions";
 import {
+  collectEditorComments,
   collectEditorTodos,
   listBookmarks,
   locatePreviewSnippet,
   offsetForBookmarkLine,
   offsetForHeadingKey,
   offsetForSourceFileLine,
-  TEX_TABLE_TPL,
+  TEX_BLANK_TABLE_TPL,
+  TEX_PLANNED_FIGURE_TPL,
+  TEX_PLANNED_PLOT_TPL,
+  TEX_RESULT_GRID_TPL,
   type EditorTodo,
   type PaperEditorSection,
 } from "./tex-source";
@@ -85,7 +90,6 @@ import {
 export type { PaperEditorSection };
 
 type LayoutMode = "document" | "pdf" | "pdf-only";
-type EditorWidth = "compact" | "wide" | "full";
 
 const AUTOSAVE_DELAY = 600;
 const COMPANION_RENDER_DELAY = 200;
@@ -93,12 +97,16 @@ const TABLE_FALLBACK_DELAY = 2_000;
 const COMPILE_POLL_MS = 400;
 const COMPILE_POLL_MAX_MS = 120_000;
 const PAGE_BUDGET_REFRESH_MS = 3 * 60_000;
-const EDITOR_WIDTHS: EditorWidth[] = ["compact", "wide", "full"];
 const TODO_PANEL_DEFAULT = 192;
 const TODO_PANEL_MIN = 96;
 const SPLIT_MIN = 22;
 const SPLIT_MAX = 78;
 const HEADING_ALIGN = 0.2;
+const TODO_CONTEXT_LINES = 3;
+const DEFAULT_PREVIEW_FONT_SCALE = 0.9;
+const DEFAULT_EDITOR_FONT_SCALE = 1;
+const DEFAULT_PREVIEW_LINE_HEIGHT = 1.75;
+const DEFAULT_PREVIEW_FONT: PaperReaderFont = "serif";
 
 const REPAIR_LABELS: Record<string, string> = {
   "escaped-backslash-braces": "escaped backslash braces",
@@ -116,11 +124,15 @@ type HydratedPaper = {
 
 type EditorPrefs = {
   layout?: LayoutMode;
-  editorWidth?: EditorWidth;
+  editorWidth?: PaperEditorWidth;
   splitLeftPct?: number;
   todoOpen?: boolean;
   todoPanelHeight?: number;
   lastSection?: string;
+  previewFontScale?: number;
+  editorFontScale?: number;
+  previewLineHeight?: number;
+  previewFont?: PaperReaderFont;
 };
 
 function prefsKey(project: string) {
@@ -135,6 +147,8 @@ export function PaperEditor({
   bibliography,
   bibliographyRaw,
   initialPandocTables,
+  placementTargets = [],
+  boundTodoIds = [],
 }: {
   project: string;
   title: string;
@@ -143,6 +157,8 @@ export function PaperEditor({
   bibliography?: BibEntry[];
   bibliographyRaw?: string;
   initialPandocTables?: Record<string, string>;
+  placementTargets?: { id: string; label: string }[];
+  boundTodoIds?: string[];
 }) {
   const router = useRouter();
   const initialSource = initialBundle.source;
@@ -164,16 +180,22 @@ export function PaperEditor({
   const [citeOpen, setCiteOpen] = useState(false);
   const [citeQuery, setCiteQuery] = useState("");
   const [citeHighlight, setCiteHighlight] = useState(0);
-  const [markerOpen, setMarkerOpen] = useState(false);
+  const [tableOpen, setTableOpen] = useState(false);
+  const [figureOpen, setFigureOpen] = useState(false);
   const [todoOpen, setTodoOpen] = useState(false);
   const [todoDragging, setTodoDragging] = useState(false);
-  const [editorWidth, setEditorWidth] = useState<EditorWidth>("wide");
+  const [editorWidth, setEditorWidth] = useState<PaperEditorWidth>("wide");
   const [todoPanelHeight, setTodoPanelHeight] = useState(TODO_PANEL_DEFAULT);
   const [splitLeftPct, setSplitLeftPct] = useState(50);
+  const [previewFontScale, setPreviewFontScale] = useState(DEFAULT_PREVIEW_FONT_SCALE);
+  const [editorFontScale, setEditorFontScale] = useState(DEFAULT_EDITOR_FONT_SCALE);
+  const [previewLineHeight, setPreviewLineHeight] = useState(DEFAULT_PREVIEW_LINE_HEIGHT);
+  const [previewFont, setPreviewFont] = useState<PaperReaderFont>(DEFAULT_PREVIEW_FONT);
   const [compile, setCompile] = useState<PaperCompileStatus>({ state: "idle" });
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [repairOpen, setRepairOpen] = useState(false);
+  const [focusedTodoId, setFocusedTodoId] = useState<string | null>(null);
   const [previewAnnotate, setPreviewAnnotate] = useState<{
     from: number;
     to: number;
@@ -181,18 +203,22 @@ export function PaperEditor({
     x: number;
     y: number;
   } | null>(null);
+  const [commentKindDraft, setCommentKindDraft] = useState("");
 
   const editorRef = useRef<TexCodeMirrorHandle>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const citeBtnRef = useRef<HTMLDivElement>(null);
-  const markerBtnRef = useRef<HTMLDivElement>(null);
+  const tableBtnRef = useRef<HTMLDivElement>(null);
+  const figureBtnRef = useRef<HTMLDivElement>(null);
   const splitRef = useRef<HTMLDivElement>(null);
   const activeScrollSourceRef = useRef<"editor" | "preview" | "jump" | null>(null);
   const scrollSettleTimerRef = useRef<number | null>(null);
   const headingRafRef = useRef<number | null>(null);
   const lastHeadingKeyRef = useRef("");
-  const syncPanesRef = useRef(false);
+  // Both panes remain linked when the responsive layout stacks them. This
+  // keeps the source and rendered views together on narrow browser windows.
+  const syncPanesRef = useRef(true);
   const saveTimerRef = useRef<number | null>(null);
   const tablePreviewRevisionRef = useRef(0);
   const sourceRef = useRef(source);
@@ -216,6 +242,22 @@ export function PaperEditor({
 
   const bookmarks = useMemo(() => listBookmarks(inlineBundleIncludes(renderSource)), [renderSource]);
   const todos = useMemo(() => collectEditorTodos(renderSource), [renderSource]);
+  const focusedTodo = useMemo(
+    () => (focusedTodoId ? collectEditorTodos(source).find((todo) => todo.id === focusedTodoId) || null : null),
+    [focusedTodoId, source],
+  );
+  const focusContext = useMemo(
+    () => focusedTodo
+      ? {
+          from: focusedTodo.from,
+          to: focusedTodo.to,
+          beforeLines: TODO_CONTEXT_LINES,
+          afterLines: TODO_CONTEXT_LINES,
+        }
+      : null,
+    [focusedTodo],
+  );
+  const wordCount = useMemo(() => countPaperWords(inlineBundleIncludes(renderSource)), [renderSource]);
   const repairHits = useMemo(() => suspiciousTexSequences(renderSource), [renderSource]);
   const repairSummary = useMemo(
     () => repairHits.map((hit) => REPAIR_LABELS[hit] || hit.replaceAll("-", " ")).join(", "),
@@ -229,6 +271,10 @@ export function PaperEditor({
   activeBookmarkRef.current = activeBookmark;
   const bibliographyRef = useRef(bibliography);
   bibliographyRef.current = bibliography;
+
+  useEffect(() => {
+    if (focusedTodoId && !focusedTodo) setFocusedTodoId(null);
+  }, [focusedTodo, focusedTodoId]);
 
   const getScrollAnchors = useCallback(() => {
     const scroller = editorRef.current?.getScroller();
@@ -294,16 +340,6 @@ export function PaperEditor({
   }, []);
 
   useEffect(() => {
-    const mq = window.matchMedia("(min-width: 768px)");
-    const update = () => {
-      syncPanesRef.current = mq.matches;
-    };
-    update();
-    mq.addEventListener("change", update);
-    return () => mq.removeEventListener("change", update);
-  }, []);
-
-  useEffect(() => {
     if (activeBookmark || !bookmarks[0]) return;
     lastHeadingKeyRef.current = bookmarks[0].slug;
     setActiveBookmark(bookmarks[0].slug);
@@ -314,6 +350,7 @@ export function PaperEditor({
   }, []);
 
   const jumpToSection = useCallback((b: { title: string; slug: string; line: number }) => {
+    setFocusedTodoId(null);
     lastHeadingKeyRef.current = b.slug;
     setActiveBookmark(b.slug);
     const from = offsetForHeadingKey(sourceRef.current, b.slug);
@@ -648,6 +685,16 @@ export function PaperEditor({
         if (typeof prefs.todoPanelHeight === "number") {
           setTodoPanelHeight(Math.max(TODO_PANEL_MIN, prefs.todoPanelHeight));
         }
+        if (typeof prefs.previewFontScale === "number" && Number.isFinite(prefs.previewFontScale)) {
+          setPreviewFontScale(Math.max(0.8, Math.min(1.2, prefs.previewFontScale)));
+        }
+        if (typeof prefs.editorFontScale === "number" && Number.isFinite(prefs.editorFontScale)) {
+          setEditorFontScale(Math.max(0.8, Math.min(1.2, prefs.editorFontScale)));
+        }
+        if (typeof prefs.previewLineHeight === "number" && Number.isFinite(prefs.previewLineHeight)) {
+          setPreviewLineHeight(Math.max(1.45, Math.min(1.85, prefs.previewLineHeight)));
+        }
+        if (prefs.previewFont === "serif" || prefs.previewFont === "sans") setPreviewFont(prefs.previewFont);
         if (typeof prefs.lastSection === "string") lastHeadingKeyRef.current = prefs.lastSection;
       }
     } catch {
@@ -664,9 +711,13 @@ export function PaperEditor({
       splitLeftPct,
       todoOpen,
       todoPanelHeight,
+      previewFontScale,
+      editorFontScale,
+      previewLineHeight,
+      previewFont,
       lastSection: activeBookmark || lastHeadingKeyRef.current,
     }));
-  }, [activeBookmark, editorWidth, layout, prefsReady, project, splitLeftPct, todoOpen, todoPanelHeight]);
+  }, [activeBookmark, editorFontScale, editorWidth, layout, prefsReady, previewFont, previewFontScale, previewLineHeight, project, splitLeftPct, todoOpen, todoPanelHeight]);
 
   const requestCompile = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -757,6 +808,11 @@ export function PaperEditor({
     insertBlock(fallback);
   }, [insertBlock]);
 
+  const composeHumanComment = useCallback(
+    (text: string) => composeObcomment({ text, kind: commentKindDraft }),
+    [commentKindDraft],
+  );
+
   const currentTodo = useCallback((todo: EditorTodo, current: string) => {
     const live = collectEditorTodos(current);
     return (todo.id ? live.find((candidate) => candidate.kind === todo.kind && candidate.id === todo.id) : undefined)
@@ -766,12 +822,16 @@ export function PaperEditor({
   const jumpToTodo = useCallback((todo: EditorTodo) => {
     const current = editorRef.current?.getLiveSource() ?? sourceRef.current;
     const live = currentTodo(todo, current);
-    if (live) editorRef.current?.setSelection(live.from, live.to);
+    if (live) {
+      setFocusedTodoId(live.id || null);
+      editorRef.current?.setSelection(live.from, live.to);
+    }
   }, [currentTodo]);
 
   const jumpToSourceLine = useCallback((file: string, line: number) => {
     const from = offsetForSourceFileLine(sourceRef.current, file, line);
     if (from == null) return;
+    setFocusedTodoId(null);
     editorRef.current?.setSelection(from, from);
   }, []);
 
@@ -785,6 +845,12 @@ export function PaperEditor({
     const todo = collectEditorTodos(sourceRef.current).find((item) => item.id === hash);
     if (todo) {
       jumpToTodo(todo);
+      return true;
+    }
+    const comment = collectEditorComments(sourceRef.current).find((item) => item.id === hash);
+    if (comment) {
+      setFocusedTodoId(null);
+      editorRef.current?.setSelection(comment.from, comment.to);
       return true;
     }
     const bookmark = bookmarksRef.current.find((item) => item.slug === hash);
@@ -809,13 +875,34 @@ export function PaperEditor({
     };
   }, [applyPaperHash, jumpToSection]);
 
+  const removeTodoEverywhere = useCallback(async (todoId: string, signal?: AbortSignal) => {
+    if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
+    let current = liveSource();
+    let live = collectEditorTodos(current).find((item) => item.id === todoId);
+    if (!live) {
+      throw Object.assign(new Error(`stale_selection: TODO "${todoId}" is not in the live source.`), { code: "stale_selection" });
+    }
+    if (current !== savedSourceRef.current) {
+      const saved = await saveNow(current, signal);
+      if (!saved) {
+        throw Object.assign(new Error(saveFailureRef.current?.message || "Could not save the live paper."), {
+          code: saveFailureRef.current?.code || "save_failed",
+        });
+      }
+      current = liveSource();
+      live = collectEditorTodos(current).find((item) => item.id === todoId);
+      if (!live) throw Object.assign(new Error(`stale_selection: TODO "${todoId}" moved during save.`), { code: "stale_selection" });
+    }
+    if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
+    const result = await removePaperTodoAction(project, todoId, bundleHashRef.current);
+    if (!result.ok) throw Object.assign(new Error(result.message), { code: result.code });
+    await reloadLatest();
+  }, [project, reloadLatest, saveNow]);
+
   const resolveTodo = useCallback((todo: EditorTodo) => {
-    const current = editorRef.current?.getLiveSource() ?? sourceRef.current;
-    const live = currentTodo(todo, current);
-    if (!live) return;
-    const replacement = live.kind === "marker" ? live.text : "";
-    editorRef.current?.applyVirtualChange(live.from, live.to, replacement);
-  }, [currentTodo]);
+    void removeTodoEverywhere(todo.id || "")
+      .catch((error) => setSaveError(error instanceof Error ? error.message : "Could not remove the paper TODO."));
+  }, [removeTodoEverywhere]);
 
   const patchTodo = useCallback((todo: EditorTodo, patch: TodoAttrPatch) => {
     const current = editorRef.current?.getLiveSource() ?? sourceRef.current;
@@ -917,16 +1004,8 @@ export function PaperEditor({
       const insert = tex.replace(/\n+$/, "");
       await applyAndSave(span.from, span.to, insert, signal);
     },
-    resolveTodo: async (todoId, signal) => {
-      const source = liveSource();
-      const todo = collectEditorTodos(source).find((item) => item.id === todoId);
-      if (!todo) {
-        throw Object.assign(new Error(`stale_selection: TODO "${todoId}" is not in the live source.`), {
-          code: "stale_selection",
-        });
-      }
-      const replacement = todo.kind === "marker" ? todo.text : "";
-      await applyAndSave(todo.from, todo.to, replacement, signal);
+    removeTodo: async (todoId, signal) => {
+      await removeTodoEverywhere(todoId, signal);
     },
     replaceRange: (from, to, text, signal) => applyAndSave(from, to, text, signal),
     compile: async (signal) => {
@@ -997,10 +1076,18 @@ export function PaperEditor({
       : editorWidth === "wide"
         ? "w-full max-w-[calc(100%_-_8rem)] mx-auto"
         : "w-full max-w-none px-0";
+  const previewStyle = {
+    "--paper-preview-font-scale": previewFontScale,
+    "--paper-preview-line-height": previewLineHeight,
+    "--font-serif": previewFont === "sans" ? "var(--font-sans)" : "var(--font-paper)",
+  } as CSSProperties;
+  const editorStyle = {
+    "--paper-editor-font-scale": editorFontScale,
+  } as CSSProperties;
 
   return (
     <div className={cn("flex h-[calc(100vh-85px)] w-full flex-col gap-2", widthClass)}>
-      <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-2 rounded-xl border border-line bg-surface px-3 py-2 shadow-xs [grid-template-areas:'switch_actions'_'title_title'] md:h-11 md:grid-cols-[auto_minmax(0,1fr)_auto] md:grid-rows-1 md:gap-3 md:overflow-visible md:py-0 md:[grid-template-areas:'switch_title_actions']">
+      <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-2 rounded-xl border border-line bg-surface px-3 py-2 shadow-xs [grid-template-areas:'switch_actions'_'title_title'] md:h-11 md:grid-cols-[auto_minmax(min-content,1fr)_minmax(0,max-content)_minmax(0,auto)] md:grid-rows-1 md:gap-3 md:overflow-visible md:py-0 md:[grid-template-areas:'switch_title_status_actions']">
         <div className="flex h-8 min-w-0 items-center overflow-x-auto rounded-lg border border-line bg-surface-2 p-0.5 [grid-area:switch]">
           <ToolbarSeg active={layout === "document"} onClick={() => setLayout("document")}>
             <Eye size={12} /> Document
@@ -1025,8 +1112,8 @@ export function PaperEditor({
           </ToolbarSeg>
         </div>
 
-        <div className="flex min-w-0 items-center gap-3 [grid-area:title]">
-          <PageBudgetBadge pageBudget={compile.pageBudget} />
+        <div className="flex min-w-0 items-center gap-3 overflow-hidden [grid-area:title]">
+          <PaperMetrics wordCount={wordCount} pageBudget={compile.pageBudget} />
           <SectionMenu
             sections={expectedSections}
             onJump={jumpToExpectedSection}
@@ -1049,26 +1136,52 @@ export function PaperEditor({
           />
         </div>
 
-        <div className="flex h-8 min-w-0 flex-nowrap items-center justify-end gap-1.5 overflow-x-auto [grid-area:actions]">
-          {compile.pdfAvailable && (
-            <span className={cn("hidden shrink-0 text-[11px] font-medium xl:inline", pdfCurrent ? "text-m-final" : "text-m-draft")}>
-              {pdfCurrent ? "PDF current" : "PDF stale"}
-            </span>
-          )}
-          <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-faint">
+        <div
+          className="hidden h-8 min-w-0 items-center overflow-hidden [grid-area:status] md:flex"
+          title={saving ? "Saving…" : uploading ? "Uploading…" : saveConflict ? "Conflict" : isSaved ? "Saved" : "Unsaved"}
+        >
+          <span className="inline-flex min-w-0 items-center gap-1 text-[11px] text-faint">
             {saving || uploading ? (
-              <LoaderCircle size={12} className="animate-spin text-accent" />
+              <LoaderCircle size={12} className="shrink-0 animate-spin text-accent" />
             ) : saveConflict ? (
-              <span className="h-1.5 w-1.5 rounded-full bg-danger" />
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" />
             ) : isSaved ? (
-              <Check size={12} className="text-m-final" />
+              <Check size={12} className="shrink-0 text-ok" />
             ) : (
-              <span className="h-1.5 w-1.5 rounded-full bg-m-draft" />
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
             )}
-            <span className="hidden font-medium sm:inline tabular-nums">
+            <span className="hidden min-w-0 truncate font-medium tabular-nums xl:inline">
               {saving ? "Saving…" : uploading ? "Uploading…" : saveConflict ? "Conflict" : isSaved ? "Saved" : "Unsaved"}
             </span>
           </span>
+        </div>
+
+        <div className="flex h-8 min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto [grid-area:actions]">
+          {compile.pdfAvailable && (
+            <span className={cn("hidden shrink-0 text-[11px] font-medium xl:inline", pdfCurrent ? "text-ok" : "text-warn")}>
+              {pdfCurrent ? "PDF current" : "PDF stale"}
+            </span>
+          )}
+
+          <PaperAppearance
+            readerFontScale={previewFontScale}
+            editorFontScale={editorFontScale}
+            lineHeight={previewLineHeight}
+            font={previewFont}
+            width={editorWidth}
+            onReaderFontScaleChange={setPreviewFontScale}
+            onEditorFontScaleChange={setEditorFontScale}
+            onLineHeightChange={setPreviewLineHeight}
+            onFontChange={setPreviewFont}
+            onWidthChange={setEditorWidth}
+            onReset={() => {
+              setPreviewFontScale(DEFAULT_PREVIEW_FONT_SCALE);
+              setEditorFontScale(DEFAULT_EDITOR_FONT_SCALE);
+              setPreviewLineHeight(DEFAULT_PREVIEW_LINE_HEIGHT);
+              setPreviewFont(DEFAULT_PREVIEW_FONT);
+              setEditorWidth("wide");
+            }}
+          />
 
           <button
             type="button"
@@ -1082,7 +1195,7 @@ export function PaperEditor({
           >
             <ListChecks size={11} />
             <span className="font-medium">Todos</span>
-            <span className="font-medium">{todos.filter((todo) => todo.status !== "done").length}</span>
+            <span className="font-medium">{todos.filter((todo) => !todo.completed).length}</span>
           </button>
 
           {compile.state === "error" && (
@@ -1111,17 +1224,6 @@ export function PaperEditor({
             Recompile
           </button>
 
-          <button
-            type="button"
-            onClick={() =>
-              setEditorWidth((width) => EDITOR_WIDTHS[(EDITOR_WIDTHS.indexOf(width) + 1) % EDITOR_WIDTHS.length])
-            }
-            className="btn-outline inline-flex h-7 shrink-0 items-center gap-1 px-2 text-[11px] capitalize"
-            title={`Width: ${editorWidth} (click to cycle compact → wide → full)`}
-          >
-            {editorWidth === "compact" ? <Minimize2 size={10} /> : editorWidth === "full" ? <Maximize2 size={10} /> : <Columns size={10} />}
-            {editorWidth}
-          </button>
         </div>
       </div>
 
@@ -1248,6 +1350,7 @@ export function PaperEditor({
                 });
               }}
               className={cn("ob-split-pane paper-view overflow-y-auto overflow-x-hidden p-8", layout !== "document" && "is-hide")}
+              style={previewStyle}
             >
               <div className="prose-ob max-w-full relative">
                 <TexHastDocument
@@ -1266,7 +1369,7 @@ export function PaperEditor({
                       type="button"
                       className="text-accent hover:underline"
                       onClick={() => {
-                        const insert = `\\obcomment{${previewAnnotate.text}}`;
+                        const insert = composeHumanComment(previewAnnotate.text);
                         editorRef.current?.applyVirtualChange(previewAnnotate.from, previewAnnotate.to, insert);
                         setPreviewAnnotate(null);
                         window.getSelection()?.removeAllRanges();
@@ -1278,7 +1381,7 @@ export function PaperEditor({
                       type="button"
                       className="text-accent hover:underline"
                       onClick={() => {
-                        const insert = composeObtodo({ text: previewAnnotate.text, createdAt: todayStamp() });
+                        const insert = composeObtodo({ text: previewAnnotate.text });
                         editorRef.current?.applyVirtualChange(previewAnnotate.from, previewAnnotate.to, insert);
                         setPreviewAnnotate(null);
                         window.getSelection()?.removeAllRanges();
@@ -1322,13 +1425,14 @@ export function PaperEditor({
 
           <div className="relative flex min-h-0 min-w-0 flex-col overflow-hidden">
             <div className="relative min-h-0 flex-1">
-            <div className="ob-editor-container overflow-hidden" style={{ position: "absolute", inset: 0 }}>
+            <div className="ob-editor-container overflow-hidden" style={{ position: "absolute", inset: 0, ...editorStyle }}>
             <NestedBundleEditor
               ref={editorRef}
               value={source}
               onChange={onChangeSource}
               onScroll={handleEditorScroll}
               placeholder="Write TeX…"
+              focusContext={focusContext}
               className="h-full"
             />
 
@@ -1340,46 +1444,39 @@ export function PaperEditor({
               <Tool title="Subsection" onClick={() => insertBlock("\\subsection{New Subsection}\n\n") }><Heading2 size={12} /></Tool>
               <Tool title="Subsubsection" onClick={() => insertBlock("\\subsubsection{New Subsubsection}\n\n")}><Heading3 size={12} /></Tool>
               <Tool title="Bullet List" onClick={() => insertBlock("\\begin{itemize}\n\\item \n\\item \n\\end{itemize}")}><List size={12} /></Tool>
-              <Tool title="Table" onClick={() => insertBlock(TEX_TABLE_TPL)}><Table2 size={12} /></Tool>
-              <Tool title="Math Formula" onClick={() => insertBlock("\\[\nE = mc^2\n\\]")}><Sigma size={12} /></Tool>
-              <Tool title="Upload Figure" onClick={() => fileRef.current?.click()}><ImagePlus size={12} /></Tool>
-              <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onUpload} />
-              <div className="h-3.5 w-px bg-line mx-0.5" />
-              <Tool title="Claim Macro" accent onClick={() => insertBlock("\\obclaim[id=c1, state=hypothesis, section=results]{Novel claim statement here}")}><Target size={12} /></Tool>
-              <Tool title="Comment" accent onClick={() => insertAtSelection((selected) => `\\obcomment{${selected}}`, "\\obcomment{Add a comment for collaborators}")}><MessageSquareText size={12} /></Tool>
-              <Tool title="Todo Macro" accent onClick={() => insertAtSelection((selected) => composeObtodo({ text: selected || "Next actionable experiment or writing item", createdAt: todayStamp() }), composeObtodo({ text: "Next actionable experiment or writing item", createdAt: todayStamp() }))}><ListTodo size={12} /></Tool>
-              <div ref={markerBtnRef} className="relative">
-                <Tool title="Maturity marker" accent onClick={() => setMarkerOpen((open) => !open)}>
-                  <Highlighter size={12} /><ChevronDown size={9} />
+              <div ref={tableBtnRef} className="relative">
+                <Tool title="Table" onClick={() => setTableOpen((open) => !open)}>
+                  <Table2 size={12} /><ChevronDown size={9} />
                 </Tool>
-                <AnchoredPop open={markerOpen} anchorRef={markerBtnRef} origin="br" onDismiss={() => setMarkerOpen(false)} className="ob-menu">
-                  {(["hypothesized", "todo", "verify", "cite"] as const).map((kind) => (
-                    <button
-                      key={kind}
-                      type="button"
-                      className="ob-menu-item text-xs"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        insertInline(`\\obmarker{${kind}}{${kind === "cite" ? "citation" : kind}}`);
-                        setMarkerOpen(false);
-                      }}
-                    >
-                      {kind}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    className="ob-menu-item text-xs text-muted"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => {
-                      insertInline("{?todo: }");
-                      setMarkerOpen(false);
-                    }}
-                  >
-                    {"{?todo:}"} brace
-                  </button>
+                <AnchoredPop open={tableOpen} anchorRef={tableBtnRef} origin="br" onDismiss={() => setTableOpen(false)} className="ob-menu">
+                  <button type="button" className="ob-menu-item" onClick={() => { insertBlock(TEX_RESULT_GRID_TPL); setTableOpen(false); }}>Result grid</button>
+                  <button type="button" className="ob-menu-item" onClick={() => { insertBlock(TEX_BLANK_TABLE_TPL); setTableOpen(false); }}>Blank table</button>
                 </AnchoredPop>
               </div>
+              <Tool title="Math Formula" onClick={() => insertBlock("\\[\nE = mc^2\n\\]")}><Sigma size={12} /></Tool>
+              <div ref={figureBtnRef} className="relative">
+                <Tool title="Figure" onClick={() => setFigureOpen((open) => !open)}>
+                  <ImagePlus size={12} /><ChevronDown size={9} />
+                </Tool>
+                <AnchoredPop open={figureOpen} anchorRef={figureBtnRef} origin="br" onDismiss={() => setFigureOpen(false)} className="ob-menu">
+                  <button type="button" className="ob-menu-item" onClick={() => { insertBlock(TEX_PLANNED_FIGURE_TPL); setFigureOpen(false); }}>Planned figure</button>
+                  <button type="button" className="ob-menu-item" onClick={() => { insertBlock(TEX_PLANNED_PLOT_TPL); setFigureOpen(false); }}>Planned plot</button>
+                  <button type="button" className="ob-menu-item" onClick={() => { fileRef.current?.click(); setFigureOpen(false); }}>Upload image…</button>
+                </AnchoredPop>
+              </div>
+              <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onUpload} />
+              <div className="h-3.5 w-px bg-line mx-0.5" />
+              <input
+                value={commentKindDraft}
+                onChange={(event) => setCommentKindDraft(event.target.value)}
+                maxLength={80}
+                aria-label="Comment kind"
+                placeholder="kind"
+                title="Optional comment kind"
+                className="h-6 w-16 rounded-full border border-line bg-surface px-2 text-[10px] text-ink outline-none placeholder:text-faint focus:border-accent"
+              />
+              <Tool title="Comment" accent onClick={() => insertAtSelection(composeHumanComment, composeHumanComment("Add a comment for collaborators"))}><MessageSquareText size={12} /></Tool>
+              <Tool title="Todo" accent onClick={() => insertAtSelection((selected) => composeObtodo({ text: selected || "Next actionable experiment or writing item" }), composeObtodo({ text: "Next actionable experiment or writing item" }))}><ListTodo size={12} /></Tool>
               <div ref={citeBtnRef} className="relative">
                 <Tool title="Insert Citation" accent onClick={() => setCiteOpen((o) => !o)}>
                   <Quote size={12} /><ChevronDown size={9} />
@@ -1477,12 +1574,33 @@ export function PaperEditor({
           </div>
           <TodoPanel
             todos={todos}
+            placementTargets={placementTargets}
+            boundTodoIds={boundTodoIds}
             onJump={jumpToTodo}
             onResolve={resolveTodo}
             onPatch={patchTodo}
             onEditText={editTodoText}
             onInsert={insertBlock}
+            onPlace={(todoId, parentId) => {
+              void placeTodoOnMindmapAction(project, todoId, parentId).catch((error) => {
+                setSaveError(error instanceof Error ? error.message : "Could not place the TODO on the primary mindmap.");
+              });
+            }}
           />
+          {todos.some((todo) => !todo.id) && (
+            <div className="border-t border-line px-3 py-2 text-xs">
+              <button
+                type="button"
+                className="text-accent hover:underline"
+                onClick={() => {
+                  const next = assignMissingTodoIds(sourceRef.current);
+                  onChangeSource(next.source);
+                }}
+              >
+                Assign stable IDs to {todos.filter((todo) => !todo.id).length} TODOs
+              </button>
+            </div>
+          )}
         </div>
         </div>
       </div>
@@ -1580,35 +1698,6 @@ function LastGoodPdf({ project }: { project: string }) {
       <p className="mb-2 text-[11px] font-medium text-muted">Last successful PDF</p>
       <iframe className="h-[calc(100vh-320px)] min-h-96 w-full border-0 rounded-xl" title="Last successful compiled paper PDF" src={`/api/p/${project}/paper/pdf?v=last-good`} />
     </div>
-  );
-}
-
-function PageBudgetBadge({ pageBudget }: { pageBudget?: PaperCompileStatus["pageBudget"] }) {
-  if (!pageBudget) {
-    return (
-      <span
-        className="hidden shrink-0 font-mono text-[11px] text-faint lg:inline"
-        title="Compile the paper to measure the numbered main-matter pages."
-      >
-        Pages pending
-      </span>
-    );
-  }
-  const { firstNumberedPage, lastNumberedSection, mainMatterPages, totalPages } = pageBudget;
-  const detail = [
-    `Main matter spans pp. ${firstNumberedPage}–${lastNumberedSection.startsOnPage} (${mainMatterPages} ${mainMatterPages === 1 ? "page" : "pages"}).`,
-    `Final numbered section: §${lastNumberedSection.number} ${lastNumberedSection.title}, starting on p. ${lastNumberedSection.startsOnPage}.`,
-    `Full compiled PDF: ${totalPages} ${totalPages === 1 ? "page" : "pages"}.`,
-    `Measured ${new Date(pageBudget.measuredAt).toLocaleString()}.`,
-  ].join(" ");
-  return (
-    <span
-      className="hidden shrink-0 cursor-help font-mono text-[11px] font-medium text-muted lg:inline"
-      title={detail}
-      aria-label={detail}
-    >
-      §{lastNumberedSection.number} · {mainMatterPages} pp
-    </span>
   );
 }
 

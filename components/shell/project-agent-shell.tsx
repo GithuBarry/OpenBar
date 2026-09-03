@@ -23,13 +23,16 @@ function locationFromPath(project: string, pathname: string): CurrentLocation {
 export function ProjectAgentShell({
   project,
   children,
+  publicDemo = false,
 }: {
   project: string;
   children: React.ReactNode;
+  publicDemo?: boolean;
 }) {
   const pathname = usePathname();
   useSharedProjectWebMcp({
     project,
+    profile: publicDemo ? "public-demo" : "full",
     current: () => {
       const loc = locationFromPath(project, pathname);
       if (typeof window === "undefined") return loc;

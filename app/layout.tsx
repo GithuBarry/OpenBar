@@ -1,15 +1,10 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono, Newsreader, Noto_Serif } from "next/font/google";
 
 import "./globals.css";
 import { ThemeScript } from "@/components/theme";
 import { Providers } from "./providers";
 import { getWorkspaceSettings } from "@/lib/workspace";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
-const newsreader = Newsreader({ subsets: ["latin"], variable: "--font-newsreader", display: "swap" });
-const noto = Noto_Serif({ subsets: ["latin"], variable: "--font-noto", display: "swap" });
-const jetbrains = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains", display: "swap" });
 const siteUrl = new URL(process.env.NEXT_PUBLIC_OPENBARRY_URL || "http://localhost:3000");
 
 export const dynamic = "force-dynamic";
@@ -46,7 +41,6 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${inter.variable} ${newsreader.variable} ${noto.variable} ${jetbrains.variable}`}
     >
       <head>
         <ThemeScript />

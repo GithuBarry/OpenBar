@@ -17,15 +17,16 @@ export type MindmapSession = {
 /** Semantic node fields that the inspector and agent tools may edit. */
 export type MindmapNodePatch = Pick<
   MindmapNode,
-  "shape" | "metadata" | "contentFormat" | "maturity" | "color" | "refs" | "tags" | "progress"
->;
+  "title" | "shape" | "metadata" | "contentFormat" | "color" | "refs" | "tags" | "progress"
+> & { text?: string };
 
 function semanticPatch(patch: MindmapNodePatch): MindmapNodePatch {
   const next: MindmapNodePatch = {};
+  if (Object.prototype.hasOwnProperty.call(patch, "title")) next.title = patch.title;
+  if (Object.prototype.hasOwnProperty.call(patch, "text")) next.text = patch.text;
   if (Object.prototype.hasOwnProperty.call(patch, "shape")) next.shape = patch.shape;
   if (Object.prototype.hasOwnProperty.call(patch, "metadata")) next.metadata = patch.metadata;
   if (Object.prototype.hasOwnProperty.call(patch, "contentFormat")) next.contentFormat = patch.contentFormat;
-  if (Object.prototype.hasOwnProperty.call(patch, "maturity")) next.maturity = patch.maturity;
   if (Object.prototype.hasOwnProperty.call(patch, "color")) next.color = patch.color;
   if (Object.prototype.hasOwnProperty.call(patch, "refs")) next.refs = patch.refs;
   if (Object.prototype.hasOwnProperty.call(patch, "tags")) next.tags = patch.tags;
@@ -33,14 +34,28 @@ function semanticPatch(patch: MindmapNodePatch): MindmapNodePatch {
   return next;
 }
 
+function patchTouchesActivity(patch: MindmapNodePatch): boolean {
+  return Object.prototype.hasOwnProperty.call(patch, "title")
+    || Object.prototype.hasOwnProperty.call(patch, "text")
+    || Object.prototype.hasOwnProperty.call(patch, "progress")
+    || Object.prototype.hasOwnProperty.call(patch, "tags")
+    || Object.prototype.hasOwnProperty.call(patch, "metadata")
+    || Object.prototype.hasOwnProperty.call(patch, "refs");
+}
+
 export type MindmapTreeAction =
-  | { type: "add-node"; parentId: string; id: string; text?: string }
+  | { type: "add-node"; parentId: string; id: string; title?: string; text?: string; todoId?: string }
   | { type: "move-sibling"; id: string; direction: -1 | 1 }
   | { type: "edit-text"; id: string; text: string }
+  | { type: "edit-card"; id: string; title: string; text: string }
   | { type: "collapse"; id: string }
   | { type: "delete-subtree"; id: string }
+  | { type: "delete-node-keep-children"; id: string }
   | { type: "patch-node"; id: string; patch: MindmapNodePatch }
+  | { type: "bind-todo"; id: string; todoId: string }
+  | { type: "unbind-todo"; id: string; title?: string; text: string }
   | { type: "reparent"; id: string; parentId: string; beforeId?: string; afterId?: string }
+  | { type: "rename-map"; title: string }
   | { type: "replace"; mindmap: Mindmap; selectedId?: string };
 
 export type MindmapSessionAction =
@@ -53,7 +68,7 @@ export type MindmapSessionAction =
   | { type: "record-history"; before: Mindmap }
   | { type: "revert"; mindmap: Mindmap };
 
-const TRANSIENT_TYPES = new Set<MindmapTreeAction["type"]>(["edit-text"]);
+const TRANSIENT_TYPES = new Set<MindmapTreeAction["type"]>(["edit-text", "edit-card"]);
 
 export function cloneMindmap<T>(value: T): T {
   return structuredClone(value);
@@ -63,8 +78,14 @@ export function newNodeId(): string {
   return crypto.randomUUID();
 }
 
+function splitCardText(value: string): { title: string; text: string } {
+  const newline = value.indexOf("\n");
+  if (newline < 0) return { title: value, text: "" };
+  return { title: value.slice(0, newline), text: value.slice(newline + 1) };
+}
+
 export function mapSignature(mindmap: Mindmap): string {
-  return JSON.stringify({ projectId: mindmap.projectId, rootId: mindmap.rootId, nodes: mindmap.nodes });
+  return JSON.stringify({ projectId: mindmap.projectId, title: mindmap.title, rootId: mindmap.rootId, nodes: mindmap.nodes });
 }
 
 export function descendantsOf(mindmap: Mindmap, id: string, index = indexMindmap(mindmap)): Set<string> {
@@ -80,7 +101,7 @@ export function descendantsOf(mindmap: Mindmap, id: string, index = indexMindmap
   return found;
 }
 
-/** LTR outline used by tests and as the Map-indexed walk the editor relies on. */
+/** Outline used by the Map-indexed walk the editor relies on. */
 export function mindmapOutline(mindmap: Mindmap | null): string {
   if (!mindmap) return "";
   const { nodeById, childrenByParent } = indexMindmap(mindmap);
@@ -88,9 +109,9 @@ export function mindmapOutline(mindmap: Mindmap | null): string {
   const walk = (id: string, depth: number) => {
     const node = nodeById.get(id);
     if (!node) return;
-    const title = node.text.split("\n")[0].trim();
-    const mat = node.maturity ? ` [${node.maturity}]` : "";
-    lines.push(`${"  ".repeat(depth)}- ${title}${mat}`);
+    const fallbackTitle = node.title !== undefined ? node.title.trim() : node.text.split("\n")[0].trim();
+    const title = fallbackTitle || (node.todoId ? `TODO ${node.todoId}` : node.id);
+    lines.push(`${"  ".repeat(depth)}- ${node.todoId ? "☐ " : ""}${title}`);
     for (const child of childrenByParent.get(id) || []) walk(child.id, depth + 1);
   };
   walk(mindmap.rootId, 0);
@@ -125,6 +146,9 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
     case "add-node": {
       if (!index.nodeById.has(action.parentId) || index.nodeById.has(action.id)) return { mindmap };
       const siblingOrders = (index.childrenByParent.get(action.parentId) || []).map((node) => node.order ?? 0);
+      const legacy = splitCardText(action.text ?? "");
+      const title = action.title ?? (action.text?.trim() ? legacy.title : "New topic");
+      const text = action.todoId ? "" : (action.title !== undefined ? (action.text ?? "") : legacy.text);
       return {
         selectedId: action.id,
         mindmap: {
@@ -133,7 +157,9 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
             ...mindmap.nodes,
             {
               id: action.id,
-              text: action.text ?? "New topic",
+              ...(action.todoId ? {} : { title }),
+              text,
+              ...(action.todoId ? { todoId: action.todoId } : {}),
               parentId: action.parentId,
               shape: "leaf",
               order: siblingOrders.length ? Math.max(...siblingOrders) + 1 : 0,
@@ -165,9 +191,25 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
       };
     }
     case "edit-text": {
+      const node = index.nodeById.get(action.id);
+      if (node?.todoId) return { mindmap };
+      const parts = splitCardText(action.text);
       return {
-        mindmap: updateNode(mindmap, index, action.id, (node) => (
-          node.text === action.text ? node : { ...node, text: action.text, updatedAt: new Date().toISOString() }
+        mindmap: updateNode(mindmap, index, action.id, (item) => (
+          item.title === parts.title && item.text === parts.text
+            ? item
+            : { ...item, title: parts.title, text: parts.text, updatedAt: new Date().toISOString() }
+        )),
+      };
+    }
+    case "edit-card": {
+      const node = index.nodeById.get(action.id);
+      if (node?.todoId) return { mindmap };
+      return {
+        mindmap: updateNode(mindmap, index, action.id, (item) => (
+          item.title === action.title && item.text === action.text
+            ? item
+            : { ...item, title: action.title, text: action.text, updatedAt: new Date().toISOString() }
         )),
       };
     }
@@ -186,11 +228,66 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
         mindmap: { ...mindmap, nodes: mindmap.nodes.filter((item) => !toRemove.has(item.id)) },
       };
     }
+    case "delete-node-keep-children": {
+      const node = index.nodeById.get(action.id);
+      if (!node || node.id === mindmap.rootId || !node.parentId) return { mindmap };
+      const children = index.childrenByParent.get(node.id) || [];
+      const parentId = node.parentId;
+      const siblingOrders = (index.childrenByParent.get(parentId) || []).filter((item) => item.id !== node.id).map((item) => item.order ?? 0);
+      let order = siblingOrders.length ? Math.max(...siblingOrders) + 1 : 0;
+      return {
+        selectedId: parentId,
+        mindmap: {
+          ...mindmap,
+          nodes: mindmap.nodes
+            .filter((item) => item.id !== node.id)
+            .map((item) => {
+              if (!children.some((child) => child.id === item.id)) return item;
+              return { ...item, parentId, order: order++ };
+            }),
+        },
+      };
+    }
+    case "bind-todo": {
+      return {
+        mindmap: updateNode(mindmap, index, action.id, (node) => {
+          const { title: _title, ...rest } = node;
+          return {
+            ...rest,
+            todoId: action.todoId,
+            text: "",
+            updatedAt: new Date().toISOString(),
+          };
+        }),
+      };
+    }
+    case "unbind-todo": {
+      return {
+        mindmap: updateNode(mindmap, index, action.id, (node) => {
+          const { todoId: _todoId, ...rest } = node;
+          return {
+            ...rest,
+            ...(action.title !== undefined ? { title: action.title } : {}),
+            text: action.text,
+            updatedAt: new Date().toISOString(),
+          };
+        }),
+      };
+    }
     case "patch-node": {
+      const node = index.nodeById.get(action.id);
       const patch = semanticPatch(action.patch);
+      if (node?.todoId) {
+        delete patch.title;
+        delete patch.text;
+      }
       if (Object.keys(patch).length === 0) return { mindmap };
       return {
-        mindmap: updateNode(mindmap, index, action.id, (node) => ({ ...node, ...patch, updatedAt: new Date().toISOString() })),
+        mindmap: updateNode(mindmap, index, action.id, (node) => ({
+          ...node,
+          ...patch,
+          ...(patchTouchesActivity(patch) ? { updatedAt: new Date().toISOString() } : {}),
+        })),
       };
     }
     case "reparent": {
@@ -208,7 +305,7 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
         order = target ? (target.order ?? 0) + 0.5 : order;
       }
       const nextNodes = mindmap.nodes.map((item) => (
-        item.id === node.id ? { ...item, parentId: action.parentId, order, updatedAt: new Date().toISOString() } : item
+        item.id === node.id ? { ...item, parentId: action.parentId, order } : item
       ));
       const resorted = [...nextNodes].filter((item) => item.parentId === action.parentId).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
       const orderById = new Map(resorted.map((item, index) => [item.id, index]));
@@ -222,6 +319,11 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
           )),
         },
       };
+    }
+    case "rename-map": {
+      const title = action.title.trim();
+      if (!title || title === (mindmap.title || "")) return { mindmap };
+      return { mindmap: { ...mindmap, title, updatedAt: new Date().toISOString() } };
     }
   }
 }

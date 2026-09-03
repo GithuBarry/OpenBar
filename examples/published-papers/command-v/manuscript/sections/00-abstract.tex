@@ -1,0 +1,12 @@
+% OB-SECTION {"id":"abstract","label":"sec-abstract","level":2,"order":0,"title":"Abstract"}
+
+\section{Abstract}
+\label{sec-abstract}
+% OB-EDIT-BEGIN openbarry/markdown@1 id=abstract
+Retrofitting large language models (LLMs) with new behaviors typically requires full finetuning or distillation---costly steps that must be repeated for every architecture.
+In this work, we introduce \cmdv{}, a backpropagation-free behavior transfer method that copies an existing residual activation adapter from a donor model and pastes its effect into a recipient model.
+\cmdv{} profiles layer activations on a small prompt set, derives linear converters between corresponding layers, and applies the donor intervention in the recipient's activation space.
+This process does not require access to the original training data and needs minimal compute.
+In three case studies---safety-refusal enhancement, jailbreak facilitation, and automatic chain-of-thought reasoning---\cmdv{} matches or exceeds the performance of direct finetuning while using orders of magnitude less compute.
+Our code and data are accessible at \url{https://github.com/GithuBarry/Command-V/}.
+% OB-EDIT-END id=abstract

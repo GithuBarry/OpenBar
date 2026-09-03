@@ -23,7 +23,7 @@ import {
   projectContentDir,
   saveProject,
   getProject,
-  listProjects,
+  listVisibleProjects,
   createProject,
   getMindmap,
   saveMindmap,
@@ -65,9 +65,11 @@ import { analyzePaper } from "@/lib/research/paper-analysis";
 import type { SourceOperation } from "@/lib/research/operations";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import { requireProjectAccess, requireWorkbenchAccess } from "@/lib/server/project-access";
+import { assertAdministrativeWriteAllowed, isPublicDemoMode } from "@/lib/server/demo-mode";
 import { wikiMetadataPatchSchema } from "@/lib/schemas";
 import { normalizeMindmap, mindmapDiskHash } from "@/lib/mindmap/mindmap";
 import { assertUniqueMindmapTodoIds } from "@/lib/mindmap-index";
+import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import {
   saveWorkspaceSettings,
   type WorkspaceSettings,
@@ -130,7 +132,7 @@ function normalizeMindmapForSave(slug: string, mindmap: Mindmap): Mindmap {
     nodes: mindmap.nodes.map((node) => {
       const createdAt = isIsoDateTime(node.createdAt) ? node.createdAt : mapCreatedAt;
       const updatedAt = isIsoDateTime(node.updatedAt) ? node.updatedAt : createdAt;
-      const tags = normalizeMindmapTags(node.tags);
+      const tags = normalizeMindmapLabels(node.tags);
       const progress = normalizeMindmapProgress(node.progress);
       return {
         ...node,
@@ -150,15 +152,6 @@ function isIsoDateTime(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
 }
 
-function normalizeMindmapTags(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return Array.from(new Set(value
-    .filter((tag): tag is string => typeof tag === "string")
-    .map((tag) => tag.trim())
-    .filter((tag) => tag.length > 0 && tag.length <= 80)))
-    .slice(0, 50);
-}
-
 function normalizeMindmapProgress(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return Math.round(Math.min(100, Math.max(0, value)) * 10) / 10;
@@ -166,6 +159,7 @@ function normalizeMindmapProgress(value: unknown): number | undefined {
 
 export async function saveProjectAction(project: Project, expectedHash = project.diskHash): Promise<void> {
   await requireProjectAccess(project.slug);
+  assertAdministrativeWriteAllowed("Project metadata changes");
   saveProject(project, expectedHash);
   bust(project.slug);
 }
@@ -175,6 +169,7 @@ export async function saveWorkspaceSettingsAction(
   input: WorkspaceSettingsInput,
 ): Promise<WorkspaceSettings> {
   await requireWorkbenchAccess();
+  assertAdministrativeWriteAllowed("Workspace identity changes");
   const saved = saveWorkspaceSettings(input);
   revalidatePath("/", "layout");
   return saved;
@@ -186,6 +181,7 @@ export async function createProjectAction(input: {
   tagline?: string;
 }): Promise<{ slug: string }> {
   await requireWorkbenchAccess();
+  assertAdministrativeWriteAllowed("Project creation");
   const project = createProject(input);
   bust(project.slug);
   return { slug: project.slug };
@@ -199,6 +195,9 @@ export async function saveMindmapAction(
   await requireProjectAccess(slug);
   const saved = normalizeMindmapForSave(slug, mindmap);
   const current = getMindmap(slug, saved.id);
+  if (isPublicDemoMode() && !current) {
+    throw new Error("Mindmap creation is disabled in the public demo.");
+  }
   if (expectedDiskHash && current) {
     const currentHash = mindmapDiskHash(current);
     if (currentHash !== expectedDiskHash) {
@@ -224,6 +223,7 @@ export async function getMindmapAction(slug: string, id: string): Promise<Mindma
 
 export async function createMindmapAction(slug: string, title: string): Promise<{ id: string; title: string }> {
   await requireProjectAccess(slug);
+  assertAdministrativeWriteAllowed("Mindmap creation");
   const map = createMindmap(slug, title);
   bust(slug);
   return { id: map.id || title, title: map.title || title };
@@ -231,6 +231,7 @@ export async function createMindmapAction(slug: string, title: string): Promise<
 
 export async function deleteMindmapAction(slug: string, id: string): Promise<void> {
   await requireProjectAccess(slug);
+  assertAdministrativeWriteAllowed("Mindmap deletion");
   if (isPrimaryMindmap(id)) throw new Error("The primary mindmap cannot be deleted.");
   const existing = getMindmap(slug, id);
   if (isPrimaryMindmap(existing)) throw new Error("The primary mindmap cannot be deleted.");
@@ -264,6 +265,7 @@ export async function persistSourceBundleAction(
   dryRun = false,
 ) {
   await requireProjectAccess(slug);
+  assertAdministrativeWriteAllowed("Conversion preview");
   const result = persistSourceBundle({
     manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
     nextSource,
@@ -327,6 +329,7 @@ export async function uploadPaperFigureAction(slug: string, formData: FormData):
   path: string;
 }> {
   await requireProjectAccess(slug);
+  assertAdministrativeWriteAllowed("Figure uploads");
   if (!getEditableTexPaper(slug)) throw new Error("This project has not been migrated to a complete TeX manuscript.");
   const candidate = formData.get("file");
   if (!candidate || typeof candidate === "string" || typeof candidate.arrayBuffer !== "function") {
@@ -359,27 +362,28 @@ function workspaceProjectSummary(project: Project): WorkspaceProjectResult {
 
 export async function listWorkspaceProjectsAction(): Promise<WorkspaceProjectResult[]> {
   await requireWorkbenchAccess();
-  return listProjects().map(workspaceProjectSummary);
+  return listVisibleProjects().map(workspaceProjectSummary);
 }
 
 export async function searchWorkspaceProjectsAction(query: string): Promise<WorkspaceProjectResult[]> {
   await requireWorkbenchAccess();
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
-  return listProjects()
+  return listVisibleProjects()
     .filter((project) => [project.slug, project.title, project.tagline, project.label]
       .some((value) => value?.toLowerCase().includes(needle)))
     .map(workspaceProjectSummary);
 }
 
 export async function openWorkspaceProjectAction(slug: string): Promise<WorkspaceProjectResult | null> {
-  await requireWorkbenchAccess();
+  await requireProjectAccess(slug);
   const project = getProject(slug);
   return project ? workspaceProjectSummary(project) : null;
 }
 
 export async function inspectRepositoryAction(slug: string) {
   await requireProjectAccess(slug);
+  assertAdministrativeWriteAllowed("Repository inspection");
   return inspectRepository(texPaths(projectContentDir(slug)).manuscriptDir);
 }
 
@@ -442,7 +446,14 @@ export async function updateProjectAction(
     ...(patch.title !== undefined ? { title: patch.title } : {}),
     ...(patch.venue !== undefined ? { venue: patch.venue } : {}),
     ...(patch.tagline !== undefined ? { tagline: patch.tagline } : {}),
+    ...(patch.overview !== undefined ? { overview: patch.overview } : {}),
+    ...(patch.researchKind !== undefined ? { researchKind: patch.researchKind } : {}),
+    ...(patch.color !== undefined ? { color: patch.color } : {}),
+    ...(patch.icon !== undefined ? { icon: patch.icon } : {}),
     ...(patch.label !== undefined ? { label: patch.label } : {}),
+    ...(patch.links !== undefined ? { links: patch.links } : {}),
+    ...(patch.collaborators !== undefined ? { collaborators: patch.collaborators } : {}),
+    ...(patch.archivedAt !== undefined ? { archivedAt: patch.archivedAt || undefined } : {}),
     updatedAt: new Date().toISOString(),
   }, patch.expectedHash);
   bust(slug);
@@ -503,6 +514,7 @@ export async function previewConversionAction(
 
 export async function applyConversionAction(slug: string, planId: string, expectedHash: string, acknowledgeLoss: boolean, dryRun = false) {
   await requireProjectAccess(slug);
+  assertAdministrativeWriteAllowed("Conversion");
   const manuscriptDir = texPaths(projectContentDir(slug)).manuscriptDir;
   const plan = getConversionPlan(planId, manuscriptDir);
   if (!plan || plan.projectId !== slug) {
@@ -655,12 +667,15 @@ export async function removePaperTodoAction(slug: string, todoId: string, expect
   const bundle = buildSourceBundle(manuscriptDir);
   const todo = analyzePaper(bundle.source).todos.find((item) => item.id === todoId);
   if (!todo) throw new Error(`Unknown TODO "${todoId}".`);
+  // TeX owns the TODO lifecycle. Referencing cards remain in their maps so
+  // their hierarchy and descendants stay available for repair or conversion.
   const result = persistPaperTodoOperation({
     manuscriptDir,
     operation: { type: "replace_range", from: todo.start, to: todo.end, text: "" },
     expectedBundleHash: expectedBundleHash ?? bundle.bundleHash,
   });
-  if (result.ok) bust(slug);
+  if (!result.ok) return result;
+  bust(slug);
   return result;
 }
 
@@ -685,6 +700,7 @@ export async function renameWikiPageAction(slug: string, fromSlug: string, toSlu
 
 export async function writeAgentsMdAction(slug: string, body: string, expectedHash?: string) {
   await requireProjectAccess(slug);
+  assertAdministrativeWriteAllowed("Project instructions");
   const result = writeAgentsMd(projectContentDir(slug), body, expectedHash);
   bust(slug);
   return result;
@@ -696,6 +712,7 @@ export async function writeProjectSkillAction(
   expectedHash?: string,
 ) {
   await requireProjectAccess(slug);
+  assertAdministrativeWriteAllowed("Project skills");
   const skill = writeProjectSkill(projectContentDir(slug), spec, expectedHash);
   bust(slug);
   return skill;
@@ -703,12 +720,14 @@ export async function writeProjectSkillAction(
 
 export async function deleteProjectSkillAction(slug: string, id: string, expectedHash: string) {
   await requireProjectAccess(slug);
+  assertAdministrativeWriteAllowed("Project skills");
   deleteProjectSkill(projectContentDir(slug), id, "project", expectedHash);
   bust(slug);
 }
 
 export async function writeWorkspaceAgentsMdAction(body: string, expectedHash?: string) {
   await requireWorkbenchAccess();
+  assertAdministrativeWriteAllowed("Workspace instructions");
   return writeAgentsMd(workspaceRoot(), body, expectedHash);
 }
 
@@ -717,10 +736,12 @@ export async function writeWorkspaceSkillAction(
   expectedHash?: string,
 ) {
   await requireWorkbenchAccess();
+  assertAdministrativeWriteAllowed("Workspace skills");
   return writeWorkspaceSkill(spec, expectedHash);
 }
 
 export async function deleteWorkspaceSkillAction(id: string, expectedHash: string) {
   await requireWorkbenchAccess();
+  assertAdministrativeWriteAllowed("Workspace skills");
   deleteWorkspaceSkill(id, expectedHash);
 }

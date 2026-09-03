@@ -12,7 +12,8 @@
  * Section bodies are TeX. Do not run markdownToTex on this document.
  */
 
-import { findMacros, isMacro, macroName, mandatoryArgs, nodesToTex, parseTex, type TexMacro } from "./tex-ast";
+import { findMacros, isMacro, macroName, mandatoryArgs, nodesToPlainText, nodesToTex, parseTex, type TexMacro } from "./tex-ast";
+import { escapeTexText } from "./tex-encode";
 
 const HEADING_COMMANDS = new Set([
   "title",
@@ -36,14 +37,14 @@ export const PAPER_REFERENCES_INPUT = "\\input{openbarry/references}";
  */
 export function readTexDocumentTitle(source: string): string | undefined {
   const title = findMacros(parseTex(source), "title")
-    .map((node) => nodesToTex(mandatoryArgs(node)[0]).trim())
+    .map((node) => plainTexText(nodesToTex(mandatoryArgs(node)[0])))
     .find(Boolean);
   if (title) return title;
 
   // The parser already handles normal and nested TeX. This narrow recovery
   // path keeps a one-line title available while a source file is incomplete.
   const fallback = /^[ \t]*\\title(?:\[[^\r\n]*\])?\{(.*)\}[ \t]*(?:%.*)?$/m.exec(source)?.[1]?.trim();
-  return fallback || undefined;
+  return fallback ? plainTexText(fallback) : undefined;
 }
 
 export function isPaperChromeLine(line: string): boolean {
@@ -69,7 +70,11 @@ export function sectionCommandForLevel(level: number): string {
 }
 
 export function normalizeHeadingTitle(value: string): string {
-  return value.replace(/\s+\{#[^}]+\}\s*$/, "").trim().toLocaleLowerCase();
+  return plainHeadingTitle(value).toLocaleLowerCase();
+}
+
+export function plainHeadingTitle(value: string): string {
+  return plainTexText(value.replace(/\s+\{#[^}]+\}\s*$/, ""));
 }
 
 export interface PaperBodySection {
@@ -81,12 +86,12 @@ export interface PaperBodySection {
 }
 
 export function composePaperTex(title: string, sections: PaperBodySection[]): string {
-  const main: string[] = [`\\title{${title}}`];
+  const main: string[] = [`\\title{${escapeTexText(plainTexText(title))}}`];
   const appendix: string[] = [];
   let appendixOpen = false;
   for (const section of sections) {
     const star = section.starred ? "*" : "";
-    const chunk = ["", `\\${sectionCommandForLevel(section.level)}${star}{${section.title}}`, "", section.tex.trim()];
+    const chunk = ["", `\\${sectionCommandForLevel(section.level)}${star}{${escapeTexText(plainTexText(section.title))}}`, "", section.tex.trim()];
     if (section.appendix) {
       if (!appendixOpen) {
         appendix.push("", "\\appendix");
@@ -180,7 +185,7 @@ function splitPaperTexFromLines(source: string): PaperBodySection[] {
       if (current) sections.push(current);
       const command = heading[1]!;
       current = {
-        title: heading[2]!.replace(/\s+\{[^}]*\}\s*$/, "").trim(),
+        title: plainHeadingTitle(heading[2]!),
         level: texHeadingLevel(command),
         tex: "",
         body: [],
@@ -274,8 +279,12 @@ function headingExtent(source: string, node: TexMacro): { start: number; end: nu
   if (source[i] !== "{") return undefined;
   const end = matchDelimited(source, i);
   if (end == null) return undefined;
-  const title = source.slice(i + 1, end - 1).replace(/\s+/g, " ").trim().replace(/\s+\{[^}]*\}\s*$/, "");
+  const title = plainHeadingTitle(source.slice(i + 1, end - 1));
   return { start, end, title };
+}
+
+function plainTexText(value: string): string {
+  return nodesToPlainText(parseTex(value).content).replace(/\s+/g, " ").trim();
 }
 
 function macroStartOffset(node: unknown): number | undefined {

@@ -9,12 +9,6 @@ export function byOrder(a: MindmapNode, b: MindmapNode): number {
   return (a.order ?? 0) - (b.order ?? 0) || a.id.localeCompare(b.id);
 }
 
-/** Evidence overlays are derived from project records and stay out of saved planning maps. */
-export function isDerivedEvidenceNode(node: MindmapNode): boolean {
-  return node.derivedKind === "evidence" || node.derivedKind === "receipt";
-}
-
-/** Map id → node, plus children grouped by parentId (sibling order preserved). */
 export function indexMindmap(mindmap: Mindmap | null | undefined): MindmapIndex {
   const nodes = Array.isArray(mindmap?.nodes) ? mindmap.nodes : [];
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
@@ -29,18 +23,45 @@ export function indexMindmap(mindmap: Mindmap | null | undefined): MindmapIndex 
   return { nodeById, childrenByParent };
 }
 
-/** Drop derived evidence/receipt cards from a saved planning map. */
-export function pruneEvidenceNodes(mindmap: Mindmap): Mindmap {
-  const drop = new Set(
-    mindmap.nodes
-      .filter(isDerivedEvidenceNode)
-      .map((node) => node.id),
-  );
-  if (drop.size === 0) return mindmap;
+export function persistableMindmapNode(node: MindmapNode): MindmapNode {
+  const next: MindmapNode = {
+    id: node.id,
+    text: node.todoId?.trim() ? "" : node.text,
+    parentId: node.parentId,
+  };
+  if (!node.todoId?.trim() && node.title !== undefined) next.title = node.title;
+  if (node.todoId?.trim()) next.todoId = node.todoId.trim();
+  if (node.shape) next.shape = node.shape;
+  if (node.collapsed) next.collapsed = node.collapsed;
+  if (node.metadata) next.metadata = node.metadata;
+  if (node.contentFormat) next.contentFormat = node.contentFormat;
+  if (node.color) next.color = node.color;
+  if (node.tags?.length) next.tags = node.tags;
+  if (node.progress !== undefined) next.progress = node.progress;
+  if (node.refs?.length) next.refs = node.refs;
+  if (node.order !== undefined) next.order = node.order;
+  if (node.createdAt) next.createdAt = node.createdAt;
+  if (node.updatedAt) next.updatedAt = node.updatedAt;
+  return next;
+}
+
+export function persistableMindmap(mindmap: Mindmap): Mindmap {
   return {
     ...mindmap,
-    nodes: mindmap.nodes.filter((node) => !drop.has(node.id) && (!node.parentId || !drop.has(node.parentId))),
+    nodes: mindmap.nodes.map(persistableMindmapNode),
   };
+}
+
+/** Each paper TODO can have one card in a given map. Other maps may reuse it. */
+export function assertUniqueMindmapTodoIds(mindmap: Mindmap): void {
+  const nodeByTodo = new Map<string, string>();
+  for (const node of mindmap.nodes) {
+    const todoId = node.todoId?.trim();
+    if (!todoId) continue;
+    const previous = nodeByTodo.get(todoId);
+    if (previous) throw new Error(`Mindmap binds TODO "${todoId}" to both "${previous}" and "${node.id}".`);
+    nodeByTodo.set(todoId, node.id);
+  }
 }
 
 export function emptyMindmap(

@@ -1,195 +1,202 @@
 /**
- * Optional metadata on `\obtodo[…]{…}` anchors.
+ * `\obtodo[id=…, title=…, created=…, updated=…, completed=…]{text}`
  *
- * Stored as ordinary key=value attrs next to `id` / `claim`. Unknown keys pass
- * through. Brace `{?todo:}` markers stay lightweight and have no structured fields.
+ * TeX owns id, title, text, and completion. Unknown attributes round-trip.
+ * Completion is the only workflow state: absent = open, present = complete.
  */
 
 import { findMacroMatches, parseAnchorAttrs, serializeAnchorAttrs } from "@/lib/marker-codec";
 import { escapeTexText } from "@/lib/tex-project/tex-encode";
 
-export const TODO_PRIORITIES = ["p0", "p1", "p2", "p3"] as const;
-export type TodoPriority = (typeof TODO_PRIORITIES)[number];
-
-const PRIORITY_ALIASES: Record<string, TodoPriority> = {
-  p0: "p0",
-  p1: "p1",
-  p2: "p2",
-  p3: "p3",
-  high: "p0",
-  urgent: "p0",
-  medium: "p1",
-  med: "p1",
-  low: "p2",
-};
-
-export const TODO_STATUSES = ["open", "in_progress", "blocked", "done"] as const;
-export type TodoStatus = (typeof TODO_STATUSES)[number];
-
 export type TodoAttrPatch = {
-  priority?: TodoPriority | null;
-  due?: string | null;
-  owner?: string | null;
+  id?: string;
+  title?: string | null;
+  text?: string;
+  completed?: boolean | null;
   createdAt?: string | null;
-  status?: TodoStatus | null;
+  updatedAt?: string | null;
   completedAt?: string | null;
+  /** Free-form attribute writes. `null` deletes the key. */
+  attrs?: Record<string, string | null>;
 };
 
-export function parseTodoStatus(raw?: string): TodoStatus {
-  const value = (raw || "").trim().toLowerCase().replace(/-/g, "_");
-  if (value === "done" || value === "complete" || value === "completed") return "done";
-  if (value === "in_progress" || value === "wip") return "in_progress";
-  if (value === "blocked") return "blocked";
-  return "open";
+export function generateTodoId(now = new Date()): string {
+  const random = globalThis.crypto?.randomUUID?.().slice(0, 8) || Math.random().toString(36).slice(2, 10);
+  return `t${now.getTime().toString(36)}${random}`;
 }
 
-export function parseTodoPriority(raw?: string): TodoPriority | undefined {
-  if (!raw) return undefined;
-  return PRIORITY_ALIASES[raw.trim().toLowerCase()];
+export function nowStamp(now = new Date()): string {
+  return now.toISOString();
 }
 
-/** Accept YYYY-MM-DD or an ISO datetime; store YYYY-MM-DD. */
-export function parseTodoDate(raw?: string): string | undefined {
+/** Accept ISO datetime or YYYY-MM-DD. */
+export function parseTodoTimestamp(raw?: string): string | undefined {
   if (!raw) return undefined;
-  const day = raw.trim().match(/^(\d{4}-\d{2}-\d{2})/);
-  if (!day) return undefined;
-  const parsed = new Date(`${day[1]}T00:00:00Z`);
+  const value = raw.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const parsed = new Date(`${value}T00:00:00Z`);
+    if (Number.isNaN(parsed.getTime())) return undefined;
+    const [year, month, date] = value.split("-").map(Number);
+    if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() + 1 !== month || parsed.getUTCDate() !== date) {
+      return undefined;
+    }
+    return parsed.toISOString();
+  }
+  const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return undefined;
-  const [year, month, date] = day[1]!.split("-").map(Number);
-  if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() + 1 !== month || parsed.getUTCDate() !== date) return undefined;
-  return day[1];
+  return parsed.toISOString();
 }
 
-export function todayStamp(now = new Date()): string {
-  return now.toISOString().slice(0, 10);
-}
-
-export function todoPriorityRank(priority?: TodoPriority): number {
-  if (priority === "p0") return 0;
-  if (priority === "p1") return 1;
-  if (priority === "p2") return 2;
-  if (priority === "p3") return 3;
-  return 4;
+export function todoIsComplete(attrs: Record<string, string> | { completedAt?: string; completed?: string }): boolean {
+  const record = attrs as Record<string, string>;
+  const completed = record.completed || record.completedAt;
+  return Boolean(completed && parseTodoTimestamp(completed));
 }
 
 export function todoMetaFromAttrs(attrs: Record<string, string>): {
-  priority?: TodoPriority;
-  due?: string;
-  owner?: string;
   createdAt?: string;
-  status?: TodoStatus;
+  updatedAt?: string;
   completedAt?: string;
 } {
-  const status = parseTodoStatus(attrs.status);
   return {
-    priority: parseTodoPriority(attrs.priority),
-    due: parseTodoDate(attrs.due || attrs.target || attrs.targetDate),
-    owner: attrs.owner?.trim() || undefined,
-    createdAt: parseTodoDate(attrs.created || attrs.createdAt),
-    status: status === "open" ? undefined : status,
-    completedAt: parseTodoDate(attrs.completed || attrs.completedAt),
+    createdAt: parseTodoTimestamp(attrs.created || attrs.createdAt),
+    updatedAt: parseTodoTimestamp(attrs.updated || attrs.updatedAt),
+    completedAt: parseTodoTimestamp(attrs.completed || attrs.completedAt),
   };
+}
+
+export function todoTitleFromAttrs(attrs: Record<string, string>): string | undefined {
+  const title = attrs.title?.trim();
+  return title || undefined;
 }
 
 export function composeObtodo(spec: {
   id?: string;
+  title?: string;
   text: string;
-  claim?: string;
-  owner?: string;
-  priority?: TodoPriority;
-  due?: string;
   createdAt?: string;
+  updatedAt?: string;
+  completedAt?: string;
+  now?: Date;
 }): string {
-  const generatedId = () => {
-    const random = globalThis.crypto?.randomUUID?.().slice(0, 8) || Math.random().toString(36).slice(2, 10);
-    return `t${Date.now().toString(36)}-${random}`;
-  };
+  const now = spec.now ?? new Date();
+  const created = parseTodoTimestamp(spec.createdAt) || nowStamp(now);
   const attrs: Record<string, string> = {
-    id: spec.id?.trim() || generatedId(),
+    id: spec.id?.trim() || generateTodoId(now),
+    created,
   };
-  if (spec.claim?.trim()) attrs.claim = spec.claim.trim();
-  if (spec.owner?.trim()) attrs.owner = spec.owner.trim();
-  if (spec.priority) attrs.priority = spec.priority;
-  const due = parseTodoDate(spec.due);
-  if (due) attrs.due = due;
-  const created = parseTodoDate(spec.createdAt);
-  if (created) attrs.created = created;
+  const title = spec.title?.trim();
+  if (title) attrs.title = title;
+  const updated = parseTodoTimestamp(spec.updatedAt);
+  if (updated) attrs.updated = updated;
+  const completed = parseTodoTimestamp(spec.completedAt);
+  if (completed) attrs.completed = completed;
   return `\\obtodo[${serializeAnchorAttrs(attrs)}]{${escapeTexText(spec.text)}}`;
 }
 
-function applyPatch(attrs: Record<string, string>, patch: TodoAttrPatch): void {
-  if (patch.status === null || patch.status === "open") {
-    delete attrs.status;
-    delete attrs.completed;
-    delete attrs.completedAt;
-  } else if (patch.status) {
-    attrs.status = patch.status;
-    if (patch.status === "done") {
-      const completed = parseTodoDate(patch.completedAt ?? undefined) || attrs.completed || todayStamp();
-      attrs.completed = completed;
-    } else {
-      delete attrs.completed;
-      delete attrs.completedAt;
-    }
-  }
-  if (patch.completedAt === null) {
-    delete attrs.completed;
-    delete attrs.completedAt;
-  } else if (patch.completedAt !== undefined && patch.status !== "open" && patch.status !== null) {
-    const completed = parseTodoDate(patch.completedAt);
-    if (completed) attrs.completed = completed;
-  }
-
-  if (patch.priority === null) delete attrs.priority;
-  else if (patch.priority) attrs.priority = patch.priority;
-
-  if (patch.due === null) {
-    delete attrs.due;
-    delete attrs.target;
-    delete attrs.targetDate;
-  } else if (patch.due !== undefined) {
-    const due = parseTodoDate(patch.due);
-    delete attrs.target;
-    delete attrs.targetDate;
-    if (due) attrs.due = due;
-    else delete attrs.due;
-  }
-
-  if (patch.owner === null) delete attrs.owner;
-  else if (patch.owner !== undefined) {
-    if (patch.owner.trim()) attrs.owner = patch.owner.trim();
-    else delete attrs.owner;
-  }
-
+function applyPatch(attrs: Record<string, string>, patch: TodoAttrPatch, now: Date): void {
+  if (patch.id?.trim() && !attrs.id?.trim()) attrs.id = patch.id.trim();
   if (patch.createdAt === null) {
     delete attrs.created;
     delete attrs.createdAt;
   } else if (patch.createdAt !== undefined) {
-    const created = parseTodoDate(patch.createdAt);
+    const created = parseTodoTimestamp(patch.createdAt);
     delete attrs.createdAt;
     if (created) attrs.created = created;
     else delete attrs.created;
   }
+
+  let touched = patch.title !== undefined || patch.text !== undefined;
+  if (patch.completed === false || patch.completed === null || patch.completedAt === null) {
+    delete attrs.completed;
+    delete attrs.completedAt;
+    delete attrs.status;
+    touched = true;
+  } else if (patch.completed === true || patch.completedAt !== undefined) {
+    const completed = parseTodoTimestamp(patch.completedAt ?? undefined) || attrs.completed || nowStamp(now);
+    attrs.completed = completed;
+    delete attrs.completedAt;
+    delete attrs.status;
+    touched = true;
+  }
+
+  if (patch.attrs) {
+    for (const [key, value] of Object.entries(patch.attrs)) {
+      if (key === "id" && attrs.id?.trim()) continue;
+      if (value === null || value === "") {
+        delete attrs[key];
+        touched = true;
+      } else {
+        attrs[key] = value;
+        touched = true;
+      }
+    }
+  }
+
+  if (patch.title !== undefined) {
+    const title = patch.title?.trim();
+    if (title) attrs.title = title;
+    else delete attrs.title;
+    touched = true;
+  }
+
+  if (patch.updatedAt === null) {
+    delete attrs.updated;
+    delete attrs.updatedAt;
+  } else if (patch.updatedAt !== undefined) {
+    const updated = parseTodoTimestamp(patch.updatedAt);
+    delete attrs.updatedAt;
+    if (updated) attrs.updated = updated;
+    else delete attrs.updated;
+  } else if (touched) {
+    attrs.updated = nowStamp(now);
+  }
 }
 
-export function rewriteObtodo(tex: string, patch: TodoAttrPatch): string {
+export function rewriteObtodo(tex: string, patch: TodoAttrPatch, now = new Date()): string {
   const match = findMacroMatches(tex, ["obtodo"])[0];
   if (!match) return tex;
   const attrs = parseAnchorAttrs(match.attrs);
-  applyPatch(attrs, patch);
+  applyPatch(attrs, patch, now);
+  const body = patch.text !== undefined ? escapeTexText(patch.text) : match.body;
   const serialized = serializeAnchorAttrs(attrs);
-  return `\\obtodo${serialized ? `[${serialized}]` : ""}{${match.body}}`;
+  return `\\obtodo${serialized ? `[${serialized}]` : ""}{${body}}`;
 }
 
-/** Rewrite only the visible TODO text while preserving its attributes. */
-export function rewriteObtodoText(tex: string, text: string): string {
-  const match = findMacroMatches(tex, ["obtodo"])[0];
-  if (!match) return tex;
-  const attrs = parseAnchorAttrs(match.attrs);
-  const serialized = serializeAnchorAttrs(attrs);
-  return `\\obtodo${serialized ? `[${serialized}]` : ""}{${escapeTexText(text)}}`;
+export function rewriteObtodoText(tex: string, text: string, now = new Date()): string {
+  return rewriteObtodo(tex, { text }, now);
 }
 
-export function patchObtodoInSource(source: string, from: number, to: number, patch: TodoAttrPatch): string {
-  return `${source.slice(0, from)}${rewriteObtodo(source.slice(from, to), patch)}${source.slice(to)}`;
+export function patchObtodoInSource(source: string, from: number, to: number, patch: TodoAttrPatch, now = new Date()): string {
+  return `${source.slice(0, from)}${rewriteObtodo(source.slice(from, to), patch, now)}${source.slice(to)}`;
+}
+
+export function assignMissingTodoIds(source: string, now = new Date()): { source: string; assigned: string[] } {
+  const matches = findMacroMatches(source, ["obtodo"]);
+  if (!matches.length) return { source, assigned: [] };
+  const used = new Set<string>();
+  for (const match of matches) {
+    const id = parseAnchorAttrs(match.attrs).id?.trim();
+    if (id) used.add(id);
+  }
+  const assigned: string[] = [];
+  let next = source;
+  let shift = 0;
+  for (const match of matches) {
+    const attrs = parseAnchorAttrs(match.attrs);
+    if (attrs.id?.trim()) continue;
+    let id = generateTodoId(now);
+    while (used.has(id)) id = generateTodoId(now);
+    used.add(id);
+    assigned.push(id);
+    const created = parseTodoTimestamp(attrs.created || attrs.createdAt) || nowStamp(now);
+    const rewritten = rewriteObtodo(
+      next.slice(match.index + shift, match.index + shift + match.length),
+      { id, createdAt: created },
+      now,
+    );
+    next = `${next.slice(0, match.index + shift)}${rewritten}${next.slice(match.index + shift + match.length)}`;
+    shift += rewritten.length - match.length;
+  }
+  return { source: next, assigned };
 }

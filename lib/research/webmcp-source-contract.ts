@@ -9,7 +9,6 @@ import { bannerRanges, splitBundleSource } from "@/lib/tex-project/source-bundle
 import {
   assertLiveRevision,
   boundWebMcpText,
-  liveTodos,
   MAX_WEBMCP_TEXT_CHARS,
   parseWebMcpArgs,
   parseWebMcpMaxChars,
@@ -18,7 +17,6 @@ import {
   type PaperWebMcpHost,
   type PaperWebMcpTool,
 } from "./webmcp-paper-contract";
-import { artifactHref } from "./artifact-link";
 import type { SharedWebMcpActions, CurrentLocation } from "./webmcp-shared-contract";
 
 export const PAPER_SOURCE_WEBMCP_TOOL_NAMES = [
@@ -29,10 +27,7 @@ export const PAPER_SOURCE_WEBMCP_TOOL_NAMES = [
   "add_todo",
   "update_todo",
   "complete_todo",
-  "lint_document",
-  "compile_document",
-  "navigate_artifact",
-  "get_agenda",
+  "reopen_todo",
 ] as const;
 
 export type PaperSourceWebMcpToolName = (typeof PAPER_SOURCE_WEBMCP_TOOL_NAMES)[number];
@@ -118,6 +113,8 @@ export const PAPER_SOURCE_WEBMCP_SCHEMAS: Record<PaperSourceWebMcpToolName, Json
       from: { type: "integer", minimum: 0 },
       to: { type: "integer", minimum: 0 },
       text: { type: "string" },
+      kind: { type: "string", description: "Optional free project vocabulary for the comment." },
+      id: { type: "string", description: "Optional stable comment id. OpenBar generates one when omitted." },
       expectedRevision: expectedRevisionSchema,
       dryRun: { type: "boolean", description: "Return patches without mutating the live buffer." },
     },
@@ -127,10 +124,8 @@ export const PAPER_SOURCE_WEBMCP_SCHEMAS: Record<PaperSourceWebMcpToolName, Json
     {
       from: { type: "integer", minimum: 0 },
       to: { type: "integer", minimum: 0 },
+      title: { type: "string", description: "Optional TeX-owned TODO title." },
       text: { type: "string" },
-      owner: { type: "string" },
-      due: { type: "string" },
-      priority: { type: "string", enum: ["p0", "p1", "p2", "p3"] },
       expectedRevision: expectedRevisionSchema,
       dryRun: { type: "boolean", description: "Return patches without mutating the live buffer." },
     },
@@ -139,11 +134,9 @@ export const PAPER_SOURCE_WEBMCP_SCHEMAS: Record<PaperSourceWebMcpToolName, Json
   update_todo: objectSchema(
     {
       id: { type: "string" },
+      title: { type: "string", description: "Optional TeX-owned TODO title. Use an empty string to clear it." },
       text: { type: "string" },
-      owner: { type: ["string", "null"] },
-      due: { type: ["string", "null"] },
-      priority: { type: ["string", "null"], enum: ["p0", "p1", "p2", "p3", null] },
-      status: { type: "string", enum: ["open", "in_progress", "blocked", "done"] },
+      completed: { type: "boolean" },
       expectedRevision: expectedRevisionSchema,
       dryRun: { type: "boolean", description: "Return patches without mutating the live buffer." },
     },
@@ -153,13 +146,10 @@ export const PAPER_SOURCE_WEBMCP_SCHEMAS: Record<PaperSourceWebMcpToolName, Json
     { id: { type: "string" }, expectedRevision: expectedRevisionSchema, dryRun: { type: "boolean" } },
     ["id", "expectedRevision"],
   ),
-  lint_document: objectSchema(),
-  compile_document: objectSchema(),
-  navigate_artifact: objectSchema(
-    { kind: { type: "string" }, id: { type: "string" } },
-    ["kind", "id"],
+  reopen_todo: objectSchema(
+    { id: { type: "string" }, expectedRevision: expectedRevisionSchema, dryRun: { type: "boolean" } },
+    ["id", "expectedRevision"],
   ),
-  get_agenda: objectSchema(),
 };
 
 export async function executePaperSourceTool(
@@ -236,6 +226,9 @@ export async function executePaperSourceTool(
       const rev = requireRev();
       if (!rev.ok) return rev;
       if (typeof args.text !== "string") return failResult("invalid_arguments", "text must be a string.", false);
+      if (args.kind !== undefined && (typeof args.kind !== "string" || args.kind.trim().length > 80)) {
+        return failResult("invalid_arguments", "kind must be a string of 80 characters or fewer.", false);
+      }
       if (args.dryRun !== undefined && typeof args.dryRun !== "boolean") return failResult("invalid_arguments", "dryRun must be a boolean.", false);
       const range = sourceRange(args, source);
       if ("ok" in range) return range;
@@ -269,6 +262,8 @@ export async function executePaperSourceTool(
         from: range.from,
         to: range.to,
         text: args.text,
+        kind: typeof args.kind === "string" ? args.kind.trim() || undefined : undefined,
+        id: typeof args.id === "string" ? args.id : undefined,
       });
       if (!result.ok) return result;
       if (dryRun) return okResult({ dryRun: true, patches: result.value.patches }, { revision: snapshot.revision });
@@ -279,10 +274,8 @@ export async function executePaperSourceTool(
     case "add_todo": {
       const rev = requireRev();
       if (!rev.ok) return rev;
+      if (args.title !== undefined && typeof args.title !== "string") return failResult("invalid_arguments", "title must be a string.", false);
       if (typeof args.text !== "string") return failResult("invalid_arguments", "text must be a string.", false);
-      if (args.owner !== undefined && typeof args.owner !== "string") return failResult("invalid_arguments", "owner must be a string.", false);
-      if (args.due !== undefined && typeof args.due !== "string") return failResult("invalid_arguments", "due must be a string.", false);
-      if (args.priority !== undefined && (typeof args.priority !== "string" || !["p0", "p1", "p2", "p3"].includes(args.priority))) return failResult("invalid_arguments", "priority must be p0, p1, p2, or p3.", false);
       if (args.dryRun !== undefined && typeof args.dryRun !== "boolean") return failResult("invalid_arguments", "dryRun must be a boolean.", false);
       const range = sourceRange(args, source);
       if ("ok" in range) return range;
@@ -293,10 +286,8 @@ export async function executePaperSourceTool(
         type: "add_todo",
         from: range.from,
         to: range.to,
+        title: typeof args.title === "string" ? args.title : undefined,
         text: args.text,
-        owner: typeof args.owner === "string" ? args.owner : undefined,
-        due: typeof args.due === "string" ? args.due : undefined,
-        priority: typeof args.priority === "string" ? (args.priority as "p0") : undefined,
       });
       if (!result.ok) return result;
       const insert = result.value.patches[0]!.next;
@@ -309,20 +300,16 @@ export async function executePaperSourceTool(
       const rev = requireRev();
       if (!rev.ok) return rev;
       if (typeof args.id !== "string") return failResult("invalid_arguments", "id must be a string.", false);
+      if (args.title !== undefined && typeof args.title !== "string") return failResult("invalid_arguments", "title must be a string.", false);
       if (args.text !== undefined && typeof args.text !== "string") return failResult("invalid_arguments", "text must be a string.", false);
-      if (args.owner !== undefined && args.owner !== null && typeof args.owner !== "string") return failResult("invalid_arguments", "owner must be a string or null.", false);
-      if (args.due !== undefined && args.due !== null && typeof args.due !== "string") return failResult("invalid_arguments", "due must be a string or null.", false);
-      if (args.priority !== undefined && args.priority !== null && (typeof args.priority !== "string" || !["p0", "p1", "p2", "p3"].includes(args.priority))) return failResult("invalid_arguments", "priority must be p0, p1, p2, or null.", false);
-      if (args.status !== undefined && (typeof args.status !== "string" || !["open", "in_progress", "blocked", "done"].includes(args.status))) return failResult("invalid_arguments", "status is invalid.", false);
+      if (args.completed !== undefined && typeof args.completed !== "boolean") return failResult("invalid_arguments", "completed must be a boolean.", false);
       if (args.dryRun !== undefined && typeof args.dryRun !== "boolean") return failResult("invalid_arguments", "dryRun must be a boolean.", false);
       const result = applySourceOperation(source, {
         type: "update_todo",
         id: args.id,
+        title: typeof args.title === "string" ? args.title : undefined,
         text: typeof args.text === "string" ? args.text : undefined,
-        owner: args.owner === null ? null : typeof args.owner === "string" ? args.owner : undefined,
-        due: args.due === null ? null : typeof args.due === "string" ? args.due : undefined,
-        priority: args.priority === null ? null : typeof args.priority === "string" ? (args.priority as "p0") : undefined,
-        status: typeof args.status === "string" ? (args.status as "open") : undefined,
+        completed: typeof args.completed === "boolean" ? args.completed : undefined,
       });
       if (!result.ok) return result;
       const patch = result.value.patches[0]!;
@@ -339,50 +326,23 @@ export async function executePaperSourceTool(
       const result = applySourceOperation(source, { type: "complete_todo", id: args.id });
       if (!result.ok) return result;
       const patch = result.value.patches[0]!;
-      if (dryRun) return okResult({ dryRun: true, patches: result.value.patches, id: args.id, status: "done" }, { revision: snapshot.revision });
+      if (dryRun) return okResult({ dryRun: true, patches: result.value.patches, id: args.id, completed: true }, { revision: snapshot.revision });
       const mutationError = await runRangeMutation(host, patch.from, patch.to, patch.next, options?.signal);
       if (mutationError) return mutationError;
-      return okResult({ id: args.id, status: "done" }, { revision: host.getSnapshot().revision });
+      return okResult({ id: args.id, completed: true }, { revision: host.getSnapshot().revision });
     }
-    case "lint_document": {
-      const report = host.lint ? host.lint() : { diagnostics: [] };
-      return okResult(report, { revision: snapshot.revision, warnings: report.diagnostics });
-    }
-    case "compile_document": {
-      try {
-        const started = await host.compile(options?.signal);
-        return okResult(started, { revision: host.getSnapshot().revision });
-      } catch (error) {
-        const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code || "") : "";
-        if (code === "cancelled" || (error instanceof Error && error.message.toLowerCase().includes("cancelled"))) {
-          return failResult("cancelled", "Operation cancelled.", { retryable: false, currentRevision: host.getSnapshot().revision });
-        }
-        return failResult("compile_failed", error instanceof Error ? error.message : "Compilation failed.", {
-          retryable: true,
-          currentRevision: host.getSnapshot().revision,
-        });
-      }
-    }
-    case "navigate_artifact": {
-      if (typeof args.kind !== "string" || typeof args.id !== "string" || !args.kind.trim() || !args.id.trim()) {
-        return failResult("invalid_arguments", "kind and id must be non-empty strings.", false);
-      }
-      const href = artifactHref(snapshot.project, { kind: args.kind as never, id: args.id });
-      if (args.kind === "draft-section" || args.kind === "draft-todo") {
-        host.navigateSection(args.id);
-      }
-      return okResult({ href }, { revision: snapshot.revision });
-    }
-    case "get_agenda": {
-      const todos = liveTodos(snapshot).map((todo) => ({
-        id: todo.id,
-        kind: todo.due ? "deadline" : "todo",
-        title: todo.text,
-        due: todo.due,
-        priority: todo.priority,
-        owner: todo.owner,
-      }));
-      return okResult(todos, { revision: snapshot.revision });
+    case "reopen_todo": {
+      const rev = requireRev();
+      if (!rev.ok) return rev;
+      if (typeof args.id !== "string") return failResult("invalid_arguments", "id must be a string.", false);
+      if (args.dryRun !== undefined && typeof args.dryRun !== "boolean") return failResult("invalid_arguments", "dryRun must be a boolean.", false);
+      const result = applySourceOperation(source, { type: "reopen_todo", id: args.id });
+      if (!result.ok) return result;
+      const patch = result.value.patches[0]!;
+      if (dryRun) return okResult({ dryRun: true, patches: result.value.patches, id: args.id, completed: false }, { revision: snapshot.revision });
+      const mutationError = await runRangeMutation(host, patch.from, patch.to, patch.next, options?.signal);
+      if (mutationError) return mutationError;
+      return okResult({ id: args.id, completed: false }, { revision: host.getSnapshot().revision });
     }
   }
 }
@@ -406,31 +366,19 @@ const SOURCE_TOOL_META: Record<PaperSourceWebMcpToolName, { title: string; descr
   },
   add_todo: {
     title: "Add a paper TODO",
-    description: "Insert an \\obtodo at a live source range. Basic creation needs only text; a stable id is generated. Optional owner, due, and priority are allowed.",
+    description: "Insert a stable \\obtodo at a live source range. The mindmap shows it Unplaced until it is placed.",
   },
   update_todo: {
     title: "Update a paper TODO",
-    description: "Change TODO text or optional metadata by id through the live editor. Unknown attributes are preserved.",
+    description: "Change a TODO title, details, or completion by id. TeX is authoritative; the mindmap card reflects it.",
   },
   complete_todo: {
     title: "Complete a paper TODO",
-    description: "Mark an \\obtodo done in the live manuscript. Completing it removes it from the mindmap's active overlay.",
+    description: "Set the TeX completed timestamp. Completing does not require new manuscript prose.",
   },
-  lint_document: {
-    title: "Lint the live paper (alias)",
-    description: "Alias of lint_paper. Prefer lint_paper.",
-  },
-  compile_document: {
-    title: "Compile the paper (alias)",
-    description: "Alias of compile_paper. Prefer compile_paper.",
-  },
-  navigate_artifact: {
-    title: "Navigate to a paper artifact",
-    description: "Jump to a paper section or TODO on the open paper page. Prefer navigate_project when the target may be on another page.",
-  },
-  get_agenda: {
-    title: "Read live paper TODOs",
-    description: "Return open TODOs from the live paper buffer. Prefer get_project_state for project-wide orientation.",
+  reopen_todo: {
+    title: "Reopen a paper TODO",
+    description: "Clear the TeX completed timestamp.",
   },
 };
 
@@ -441,7 +389,7 @@ export function buildPaperSourceWebMcpTools(host: PaperSourceHost): PaperWebMcpT
     description: SOURCE_TOOL_META[name].description,
     inputSchema: PAPER_SOURCE_WEBMCP_SCHEMAS[name],
     annotations: {
-      readOnlyHint: name === "get_source_bundle" || name === "read_source_range" || name === "lint_document" || name === "get_agenda" || name === "navigate_artifact",
+      readOnlyHint: name === "get_source_bundle" || name === "read_source_range",
       untrustedContentHint: true,
     },
     execute: (args, options) => executePaperSourceTool(host, name, args, options),

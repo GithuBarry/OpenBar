@@ -1,9 +1,10 @@
 import "server-only";
 
 import { headers } from "next/headers";
-import { unauthorized } from "next/navigation";
+import { notFound, unauthorized } from "next/navigation";
 
 import { callerMayAccess } from "@/lib/server/access-policy";
+import { assertPublicDemoProject, isPublicDemoMode } from "@/lib/server/demo-mode";
 import {
   cloudflareAccessConfigured,
   cloudflareAccessJwtFromHeaders,
@@ -43,6 +44,7 @@ export async function requireWorkbenchAccess(): Promise<void> {
     token: accessToken(),
     cloudflareIdentity: identity,
     cloudflareRequired: cfRequired,
+    publicDemo: isPublicDemoMode(),
   });
   if (!allowed) throw new ProjectAccessError("Unauthorized project access.", 401);
 }
@@ -62,8 +64,24 @@ export async function requireProjectAccess(slug: string): Promise<void> {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(slug)) {
     throw new ProjectAccessError("Invalid project slug.", 400);
   }
+  try {
+    assertPublicDemoProject(slug);
+  } catch {
+    throw new ProjectAccessError(`Unknown project: ${slug}`, 404);
+  }
   if (!getProject(slug)) {
     throw new ProjectAccessError(`Unknown project: ${slug}`, 404);
   }
   await requireWorkbenchAccess();
+}
+
+/** RSC project pages return the right status UI for both access and existence errors. */
+export async function requireProjectPage(slug: string): Promise<void> {
+  try {
+    await requireProjectAccess(slug);
+  } catch (error) {
+    if (error instanceof ProjectAccessError && error.status === 401) unauthorized();
+    if (error instanceof ProjectAccessError && (error.status === 403 || error.status === 404)) notFound();
+    throw error;
+  }
 }

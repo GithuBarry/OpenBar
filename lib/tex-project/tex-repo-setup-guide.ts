@@ -8,7 +8,7 @@ export type TexRepoSetupKind = (typeof TEX_REPO_SETUP_KINDS)[number];
 
 const COMMON = {
   durableState:
-    "Paper text and OpenBarry records live in .tex bodies or % OB-DATA comment envelopes. Git carries those files between OpenBarry and the remote.",
+    "Paper text and OpenBar records live in .tex bodies or % OB-DATA comment envelopes. Git carries those files between OpenBar and the remote.",
   credentials:
     "Use SSH or the operating-system Git credential helper. Supply a credential-free remote URL. Keep tokens, passwords, private keys, and embedded URL credentials outside .tex, Git, tool arguments, tool output, logs, and browser storage.",
 };

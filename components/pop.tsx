@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
@@ -55,6 +55,7 @@ export function AnchoredPop({
 }) {
   const present = useOpen(open);
   const [box, setBox] = useState<CSSProperties | null>(null);
+  const popRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!present) {
@@ -68,8 +69,9 @@ export function AnchoredPop({
       if (origin === "br") {
         setBox({
           position: "fixed",
-          bottom: window.innerHeight - rect.top + 6,
-          right: window.innerWidth - rect.right,
+          top: rect.bottom + 6,
+          right: Math.max(8, window.innerWidth - rect.right),
+          visibility: "hidden",
         });
         return;
       }
@@ -78,8 +80,61 @@ export function AnchoredPop({
         top: rect.bottom + 6,
         left: Math.max(8, Math.min(rect.left, window.innerWidth - 300)),
         width: Math.max(rect.width, 260),
+        visibility: "hidden",
       });
     };
+    place();
+  }, [anchorRef, origin, present]);
+
+  const hasBox = box !== null;
+  useLayoutEffect(() => {
+    if (!present || !hasBox) return;
+    const place = () => {
+      const el = anchorRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const gap = 6;
+      const padding = 8;
+      const popRect = popRef.current?.getBoundingClientRect();
+      const popWidth = popRect?.width ?? 0;
+      const popHeight = popRect?.height ?? 0;
+
+      if (origin === "br") {
+        const right = Math.max(padding, window.innerWidth - rect.right);
+        const aboveTop = rect.top - gap - popHeight;
+        const belowTop = rect.bottom + gap;
+        const fitsAbove = popHeight > 0 && aboveTop >= padding;
+        const fitsBelow = popHeight > 0 && belowTop + popHeight <= window.innerHeight - padding;
+        const top = fitsAbove
+          ? aboveTop
+          : fitsBelow
+            ? belowTop
+            : Math.max(padding, Math.min(belowTop, window.innerHeight - Math.max(popHeight, 1) - padding));
+        setBox({
+          position: "fixed",
+          top,
+          right,
+          visibility: "visible",
+        });
+        return;
+      }
+
+      const width = Math.max(rect.width, 260);
+      const left = Math.max(padding, Math.min(rect.left, window.innerWidth - Math.max(popWidth, width) - padding));
+      const belowTop = rect.bottom + gap;
+      const aboveTop = rect.top - gap - popHeight;
+      const top = popHeight > 0 && belowTop + popHeight > window.innerHeight - padding && aboveTop >= padding
+        ? aboveTop
+        : belowTop;
+      setBox({
+        position: "fixed",
+        top,
+        left,
+        width,
+        visibility: "visible",
+      });
+    };
+
     place();
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
@@ -87,7 +142,7 @@ export function AnchoredPop({
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
-  }, [anchorRef, origin, present]);
+  }, [anchorRef, hasBox, origin, present]);
 
   useEffect(() => {
     if (!open || !onDismiss) return;
@@ -110,7 +165,7 @@ export function AnchoredPop({
 
   if (!present || !box || typeof document === "undefined") return null;
   return createPortal(
-    <div className={cn("ob-pop", origin === "br" && "ob-pop-br", !open && "is-leave", className)} style={box}>
+    <div ref={popRef} className={cn("ob-pop", origin === "br" && "ob-pop-br", !open && "is-leave", className)} style={box}>
       {children}
     </div>,
     document.body,

@@ -5,6 +5,7 @@ import { useState } from "react";
 import { LoaderCircle, Plus, Trash2 } from "lucide-react";
 
 import { createMindmapAction, deleteMindmapAction } from "@/app/actions";
+import { isPrimaryMindmap } from "@/lib/research/todo-map";
 import { cn } from "@/lib/utils";
 
 export type MindmapListItem = {
@@ -30,7 +31,7 @@ export function MindmapSwitcher({
   const [saving, setSaving] = useState(false);
 
   const active = maps.find((map) => map.id === activeId) || maps[0];
-  const hrefFor = (id: string) => (id === "draft" ? `/p/${project}/mindmap` : `/p/${project}/mindmap/${id}`);
+  const hrefFor = (id: string) => (isPrimaryMindmap(id) ? `/p/${project}/mindmap` : `/p/${project}/mindmap/${id}`);
 
   async function onCreate(event: React.FormEvent) {
     event.preventDefault();
@@ -50,7 +51,7 @@ export function MindmapSwitcher({
   }
 
   async function onDelete() {
-    if (!active || active.role === "draft") return;
+    if (!active || isPrimaryMindmap(active)) return;
     setSaving(true);
     setError(null);
     try {
@@ -79,7 +80,7 @@ export function MindmapSwitcher({
             title={map.createdAt ? `Created ${map.createdAt.slice(0, 10)}` : undefined}
           >
             {map.title}
-            {map.role === "draft" ? " · paper" : ""}
+            {isPrimaryMindmap(map) ? " · Primary" : ""}
           </button>
         ))}
       </div>
@@ -104,7 +105,7 @@ export function MindmapSwitcher({
           <Plus size={11} /> New map
         </button>
       )}
-      {active && active.role !== "draft" && (
+      {active && !isPrimaryMindmap(active) && (
         <button type="button" className="btn-outline px-2 py-0.5 text-[11px] text-danger" onClick={() => void onDelete()} disabled={saving}>
           <Trash2 size={11} /> Delete map
         </button>

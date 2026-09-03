@@ -260,7 +260,7 @@ export async function initializeMinimalTexRepo(
       id: slug,
       slug,
       title,
-      tagline: "Starter OpenBarry TeX manuscript.",
+      tagline: "Starter OpenBar TeX manuscript.",
       overview: "This manuscript was initialized as a source-backed TeX project. Replace starter markers with verified work.",
       status: "active",
       createdAt: now,
@@ -284,7 +284,7 @@ export async function initializeMinimalTexRepo(
     if (!fs.existsSync(path.join(repositoryPath, ".git"))) {
       await runGit(repositoryPath, ["init"]);
     }
-    return { ok: true, message: "Initialized a minimal OpenBarry TeX repository. Add evidence and paper sections before calling it complete.", repositoryPath };
+    return { ok: true, message: "Initialized a minimal OpenBar TeX repository.", repositoryPath };
   } catch (error) {
     return {
       ok: false,
@@ -378,7 +378,7 @@ export async function pullOverleafGit(projectDir: string): Promise<{ ok: boolean
 
 export async function pushOverleafGit(
   projectDir: string,
-  message = "OpenBarry: update manuscript and structured records",
+  message = "OpenBar: update manuscript and structured records",
 ): Promise<{ ok: boolean; message: string; commitHash?: string }> {
   const cwd = resolveGitDir(projectDir);
   if (!fs.existsSync(path.join(cwd, ".git"))) {

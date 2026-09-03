@@ -4,12 +4,13 @@ import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 import { sharedWebMcpActions } from "@/features/webmcp-actions";
-import { buildSharedWebMcpTools, type CurrentLocation } from "@/lib/research/webmcp-shared-contract";
+import { buildSharedWebMcpTools, type CurrentLocation, type SharedWebMcpProfile } from "@/lib/research/webmcp-shared-contract";
 import { registerWebMcpToolsIndependent, waitForModelContext } from "@/lib/research/webmcp-register";
 
 export function useSharedProjectWebMcp(input: {
   project: string;
   current: CurrentLocation | (() => CurrentLocation | undefined);
+  profile?: SharedWebMcpProfile;
 }): void {
   const router = useRouter();
   const inputRef = useRef(input);
@@ -30,7 +31,7 @@ export function useSharedProjectWebMcp(input: {
           const value = inputRef.current.current;
           return typeof value === "function" ? value() : value;
         },
-      });
+      }, inputRef.current.profile || "full");
       const registration = await registerWebMcpToolsIndependent(
         modelContext,
         tools,
@@ -45,5 +46,5 @@ export function useSharedProjectWebMcp(input: {
       controller.abort();
       release?.();
     };
-  }, [input.project, router]);
+  }, [input.profile, input.project, router]);
 }
