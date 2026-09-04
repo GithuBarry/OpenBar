@@ -7,6 +7,7 @@ export function hostnameOf(host: string): string {
     const end = value.indexOf("]");
     return end >= 0 ? value.slice(1, end).toLowerCase() : value.toLowerCase();
   }
+  if (value.split(":").length > 2) return value.toLowerCase();
   return (value.split(":")[0] || "").toLowerCase();
 }
 
@@ -36,8 +37,9 @@ function originMatchesHost(origin: string | null | undefined, host: string): boo
 }
 
 /**
- * Local-dev loopback is enough when Cloudflare Access is not configured.
- * Production with Cloudflare requires a verified Access JWT or bearer token.
+ * Development permits loopback access. Production local beta permits loopback
+ * access with OPENBAR_LOCAL_ACCESS=1 while Cloudflare Access is disabled.
+ * Bearer tokens and verified Cloudflare identities retain production access.
  * Origin/host remain request-context CSRF checks, not the sole trust signal.
  */
 export function callerMayAccess(input: {
@@ -50,6 +52,7 @@ export function callerMayAccess(input: {
   cloudflareIdentity?: { email?: string } | null;
   cloudflareRequired?: boolean;
   publicDemo?: boolean;
+  localAccess?: boolean;
 }): boolean {
   if (input.token && bearerMatches(input.authorization, input.token)) return true;
 
@@ -59,10 +62,12 @@ export function callerMayAccess(input: {
 
   if (input.publicDemo) return true;
 
-  // Browser request headers are caller-controlled. Production access stays
-  // closed until a bearer token or verified Access identity is configured.
-  if (input.nodeEnv === "production") return false;
+  if (input.nodeEnv === "production") {
+    return input.localAccess === true && isLoopbackHost(input.host);
+  }
 
+  // Browser request headers are caller-controlled. Production access uses a
+  // bearer token, verified Access identity, or explicit loopback local access.
   const sameOrigin =
     input.fetchSite === "same-origin" || originMatchesHost(input.origin, input.host);
   if (sameOrigin) return true;

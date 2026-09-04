@@ -45,6 +45,7 @@ export async function requireWorkbenchAccess(): Promise<void> {
     cloudflareIdentity: identity,
     cloudflareRequired: cfRequired,
     publicDemo: isPublicDemoMode(),
+    localAccess: process.env.OPENBAR_LOCAL_ACCESS === "1",
   });
   if (!allowed) throw new ProjectAccessError("Unauthorized project access.", 401);
 }
