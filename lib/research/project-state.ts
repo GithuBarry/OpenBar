@@ -760,13 +760,13 @@ export function resolveProjectNavigation(slug: string, input: { id?: string; hre
   }
   if (id.startsWith("mindmap:")) {
     const parts = id.slice("mindmap:".length).split(":");
-    if (parts.length !== 1 && (parts.length !== 4 || parts[1] !== "node")) return null;
+    if (parts.length !== 1 && (parts.length !== 3 || parts[1] !== "node")) return null;
     const mapId = parts[0]?.trim();
     if (!mapId) return null;
     const map = getMindmap(slug, mapId);
     if (!map) return null;
     if (parts.length === 1) return { href: mindmapHref(slug, map.id) };
-    const nodeId = parts[3]?.trim();
+    const nodeId = parts[2]?.trim();
     if (!nodeId || !map.nodes.some((node) => node.id === nodeId)) return null;
     return { href: mindmapHref(slug, map.id, nodeId) };
   }

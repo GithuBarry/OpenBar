@@ -1,5 +1,5 @@
 /**
- * Drop above/below reorders siblings. Drop on center reparents.
+ * Drop above/below reorders siblings. Drop near the lower edge reparents.
  * Moves into descendants are rejected.
  */
 
@@ -27,9 +27,9 @@ export function resolveMindmapDrop(
   const index = indexMindmap(mindmap);
   if (!index.nodeById.has(draggedId) || !index.nodeById.has(targetId)) return null;
   const ratio = targetHeight <= 0 ? 0.5 : localY / targetHeight;
-  let kind: DropKind = "child";
+  let kind: DropKind = "after";
   if (ratio < 0.28) kind = "before";
-  else if (ratio > 0.72) kind = "after";
+  else if (ratio > 0.72) kind = "child";
   return { id: draggedId, targetId, kind };
 }
 
@@ -38,6 +38,8 @@ export function applyMindmapDrop(mindmap: Mindmap, drop: MindmapDrop): { parentI
   const target = index.nodeById.get(drop.targetId);
   const dragged = index.nodeById.get(drop.id);
   if (!target || !dragged) return null;
+  if (dragged.id === mindmap.rootId || dragged.id === target.id) return null;
+  if (descendantsOf(mindmap, dragged.id, index).has(target.id)) return null;
   if (drop.kind === "child") return { parentId: target.id };
   const parentId = target.parentId || mindmap.rootId;
   if (drop.kind === "before") return { parentId, beforeId: target.id };
