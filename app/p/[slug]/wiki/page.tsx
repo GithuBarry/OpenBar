@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/shell/page-header";
 import { WikiIndex } from "@/features/wiki/wiki-index";
 import { getProject, listWiki } from "@/lib/store";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
+import { requireProjectPage } from "@/lib/server/project-access";
 
 export default async function WikiPage({
   params,
@@ -12,6 +13,7 @@ export default async function WikiPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
+  await requireProjectPage(slug);
   const project = getProject(slug);
   if (!project) notFound();
 

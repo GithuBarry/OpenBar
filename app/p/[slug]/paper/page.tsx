@@ -7,6 +7,7 @@ import { DRAFT_MINDMAP_ID, getBibliography, getBibliographyRaw, getMindmap, getP
 import { convertComplexTables } from "@/lib/tex-project/pandoc-tables";
 import { texPaths } from "@/lib/tex-project/project";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
+import { requireProjectPage } from "@/lib/server/project-access";
 
 /**
  * The Draft is the live TeX manuscript. TODOs and comments live inline as
@@ -19,6 +20,7 @@ export default async function PaperPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
+  await requireProjectPage(slug);
   const project = getProject(slug);
   if (!project) notFound();
 

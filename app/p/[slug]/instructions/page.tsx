@@ -12,6 +12,7 @@ import {
 } from "@/lib/research/project-skills";
 import { getProject, projectContentDir } from "@/lib/store";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
+import { requireProjectPage } from "@/lib/server/project-access";
 
 export default async function InstructionsPage({
   params,
@@ -19,6 +20,7 @@ export default async function InstructionsPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
+  await requireProjectPage(slug);
   if (isPublicDemoMode()) notFound();
   const project = getProject(slug);
   if (!project) notFound();
