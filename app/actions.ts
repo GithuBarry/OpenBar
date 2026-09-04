@@ -265,7 +265,6 @@ export async function persistSourceBundleAction(
   dryRun = false,
 ) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Conversion preview");
   const result = persistSourceBundle({
     manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
     nextSource,
