@@ -37,10 +37,10 @@ function originMatchesHost(origin: string | null | undefined, host: string): boo
 }
 
 /**
- * Development permits loopback access. Production local beta permits loopback
- * access with OPENBAR_LOCAL_ACCESS=1 while Cloudflare Access is disabled.
+ * Local runtime access uses the machine's trusted network path, including
+ * Tailscale. Cloudflare Access remains authoritative whenever configured.
  * Bearer tokens and verified Cloudflare identities retain production access.
- * Origin/host remain request-context CSRF checks, not the sole trust signal.
+ * Origin and host remain request-context CSRF checks when local access is off.
  */
 export function callerMayAccess(input: {
   host: string;
@@ -62,12 +62,14 @@ export function callerMayAccess(input: {
 
   if (input.publicDemo) return true;
 
+  if (input.localAccess) return true;
+
   if (input.nodeEnv === "production") {
-    return input.localAccess === true && isLoopbackHost(input.host);
+    return false;
   }
 
-  // Browser request headers are caller-controlled. Production access uses a
-  // bearer token, verified Access identity, or explicit loopback local access.
+  // Browser request headers are caller-controlled. Local development keeps
+  // same-origin and loopback access available when the local switch is off.
   const sameOrigin =
     input.fetchSite === "same-origin" || originMatchesHost(input.origin, input.host);
   if (sameOrigin) return true;

@@ -56,4 +56,18 @@ describe("private published-paper demo policy", () => {
       publicDemo: false,
     }), false);
   });
+
+  it("allows local runtime requests from the Tailscale host", () => {
+    assert.equal(callerMayAccess({
+      host: "100.65.27.125:3000",
+      origin: null,
+      fetchSite: null,
+      authorization: null,
+      nodeEnv: "production",
+      token: undefined,
+      publicDemo: false,
+      cloudflareRequired: false,
+      localAccess: true,
+    }), true);
+  });
 });
