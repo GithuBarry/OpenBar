@@ -61,6 +61,7 @@ export type MindmapTreeAction =
 export type MindmapSessionAction =
   | MindmapTreeAction
   | { type: "hydrate"; mindmap: Mindmap }
+  | { type: "ack-save"; diskHash?: string; persistedRevision?: number; updatedAt?: string }
   | { type: "rebase-disk-hash"; diskHash?: string }
   | { type: "select"; id: string }
   | { type: "undo" }
@@ -75,7 +76,23 @@ export function cloneMindmap<T>(value: T): T {
 }
 
 export function newNodeId(): string {
-  return crypto.randomUUID();
+  const runtimeCrypto = globalThis.crypto;
+  if (typeof runtimeCrypto?.randomUUID === "function") {
+    return runtimeCrypto.randomUUID();
+  }
+
+  const bytes = new Uint8Array(16);
+  if (typeof runtimeCrypto?.getRandomValues === "function") {
+    runtimeCrypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function splitCardText(value: string): { title: string; text: string } {
@@ -337,13 +354,30 @@ export function mindmapReducer(state: MindmapSession, action: MindmapSessionActi
     }
     case "hydrate":
       return { ...createMindmapSession(action.mindmap, retainSelection(action.mindmap, state.selectedId)) };
+    case "ack-save": {
+      const mindmap = {
+        ...state.mindmap,
+        ...(action.diskHash !== undefined ? { diskHash: action.diskHash } : {}),
+        ...(action.persistedRevision !== undefined ? { revision: action.persistedRevision } : {}),
+        ...(action.updatedAt !== undefined ? { updatedAt: action.updatedAt } : {}),
+      };
+      return { ...state, mindmap };
+    }
     case "rebase-disk-hash":
       return {
         ...state,
         mindmap: { ...state.mindmap, diskHash: action.diskHash },
       };
-    case "revert":
-      return { ...createMindmapSession(action.mindmap, retainSelection(action.mindmap, state.selectedId)) };
+    case "revert": {
+      const restored = cloneMindmap(action.mindmap);
+      if (mapSignature(restored) === mapSignature(state.mindmap)) return state;
+      return {
+        ...state,
+        mindmap: restored,
+        selectedId: retainSelection(restored, state.selectedId),
+        revision: state.revision + 1,
+      };
+    }
     case "record-history": {
       if (mapSignature(action.before) === mapSignature(state.mindmap)) return state;
       return {

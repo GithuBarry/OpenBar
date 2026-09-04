@@ -204,15 +204,27 @@ export function MindmapEditor({
       if (nextSession.mindmap === current.mindmap) return current.mindmap;
 
       const snapshot = cloneMindmap(nextSession.mindmap);
+      sessionRef.current = nextSession;
+      dispatch(nextAction);
       const saved = await saveMindmapAction(project, snapshot, persistedDiskHashRef.current);
       persistedDiskHashRef.current = saved.diskHash ?? mindmapDiskHash(saved);
       setSavedSignature(mapSignature(saved));
 
       const latest = sessionRef.current;
-      if (mapSignature(latest.mindmap) === mapSignature(current.mindmap)) {
-        const hydrated = mindmapReducer(latest, { type: "hydrate", mindmap: saved });
-        sessionRef.current = hydrated;
-        dispatch({ type: "hydrate", mindmap: saved });
+      if (mapSignature(latest.mindmap) === mapSignature(snapshot)) {
+        const acknowledged = mindmapReducer(latest, {
+          type: "ack-save",
+          diskHash: saved.diskHash,
+          persistedRevision: saved.revision,
+          updatedAt: saved.updatedAt,
+        });
+        sessionRef.current = acknowledged;
+        dispatch({
+          type: "ack-save",
+          diskHash: saved.diskHash,
+          persistedRevision: saved.revision,
+          updatedAt: saved.updatedAt,
+        });
       } else {
         const rebased = mindmapReducer(latest, { type: "rebase-disk-hash", diskHash: persistedDiskHashRef.current });
         sessionRef.current = rebased;
@@ -896,9 +908,19 @@ export function MindmapEditor({
         setSavedSignature(mapSignature(saved));
         const current = sessionRef.current;
         if (mapSignature(current.mindmap) === signature) {
-          const hydrated = mindmapReducer(current, { type: "hydrate", mindmap: saved });
-          sessionRef.current = hydrated;
-          dispatch({ type: "hydrate", mindmap: saved });
+          const acknowledged = mindmapReducer(current, {
+            type: "ack-save",
+            diskHash: saved.diskHash,
+            persistedRevision: saved.revision,
+            updatedAt: saved.updatedAt,
+          });
+          sessionRef.current = acknowledged;
+          dispatch({
+            type: "ack-save",
+            diskHash: saved.diskHash,
+            persistedRevision: saved.revision,
+            updatedAt: saved.updatedAt,
+          });
         } else {
           // Keep edits made while the request was in flight and carry forward
           // the server's fresh CAS hash for the next save.
@@ -1157,7 +1179,6 @@ export function MindmapEditor({
           if (mapped) dispatch({ type: "reparent", id: drop.id, parentId: mapped.parentId, beforeId: mapped.beforeId, afterId: mapped.afterId });
         }
       }
-      dispatch({ type: "record-history", before: interaction.before });
     }
     if (interaction.kind === "node" && interaction.doubleClick && !interaction.moved) {
       onNodeDoubleClick(interaction.id);
@@ -2139,7 +2160,7 @@ function CanvasNode({
           type="button"
           className="mindmap-collapse-toggle"
           aria-label={collapsed ? `Expand ${collapsedDescendantCount} child cards` : `Collapse ${collapsedDescendantCount} child cards`}
-          aria-pressed={collapsed}
+          aria-expanded={!collapsed}
           title={collapsed ? "Expand child cards" : "Collapse all child cards"}
           onPointerDown={(event) => {
             event.preventDefault();
@@ -2152,7 +2173,14 @@ function CanvasNode({
           }}
           onDoubleClick={(event) => event.stopPropagation()}
         >
-          {collapsed ? `(${collapsedDescendantCount})` : "(-)"}
+          {collapsed ? (
+            <>
+              <Plus size={11} strokeWidth={2.75} aria-hidden="true" />
+              <span className="ml-0.5 tabular-nums">{collapsedDescendantCount}</span>
+            </>
+          ) : (
+            <Minus size={12} strokeWidth={2.75} aria-hidden="true" />
+          )}
         </button>
       )}
       {dropPreviewKind && (
