@@ -3,7 +3,6 @@ import { notFound } from "next/navigation";
 import { getProject, listVisibleProjects } from "@/lib/store";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
 import { requireProjectPage } from "@/lib/server/project-access";
-import { PublicDemoNotice } from "@/components/demo/public-demo-notice";
 import { Sidebar } from "@/components/shell/sidebar";
 import { ProjectAgentShell } from "@/components/shell/project-agent-shell";
 import { getWorkspaceSettings } from "@/lib/workspace";
@@ -36,7 +35,6 @@ export default async function ProjectLayout({
           publicDemo={publicDemo}
         />
         <main className="flex-1 overflow-y-auto bg-canvas">
-          {publicDemo && <PublicDemoNotice />}
           {children}
         </main>
       </div>
