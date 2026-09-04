@@ -24,7 +24,7 @@ project/
     local build data
 ```
 
-TeX-owned TODO identity, TODO text, comments, markers, and lifecycle timestamps remain in TeX comments. OpenBar-owned hierarchy, map placement, labels, wiki pages, and application documents live in `.OpenBar/`. The project record may name a nonstandard root entry file. The root entry remains directly accessible to the editor and compiler.
+TeX-owned TODO identity, TODO text, comments, markers, and lifecycle timestamps remain in TeX comments. OpenBar-owned hierarchy, map placement, labels, wiki pages, and application documents live in `.OpenBar/`. The project record may name a nonstandard root entry file. The root entry remains directly accessible to the editor and compiler. Bibliography and citation source files remain manuscript files at the root. OpenBar may keep a derived bibliography rendering in `.OpenBar/`.
 
 New repositories use the canonical root layout. A one-time migration moves existing `manuscript/` paper assets to the project root and moves OpenBar records from the old `openbarry/` location into `.OpenBar/`. The migration uses ordinary filesystem moves followed by one Git commit so the resulting repository has a clear history.
 
@@ -40,9 +40,13 @@ A root-only TeX repository can be opened before it has OpenBar metadata. The fir
 
 Overleaf Git uses a credential-free remote URL. Credential resolution accepts a token supplied with the current browser operation, then the host environment, then the configured operating-system Git helper. A browser-entered token is held in memory for the operation and is excluded from URLs, Git remotes, logs, tool output, and browser storage. The UI asks for the token when the host has no usable credential and retries the same Git operation after submission.
 
+## Remote durability
+
+After a successful existing write operation, OpenBar attempts the project's Git commit and push. The operation exposes `pushed`, `pending`, `failed`, or `unconfigured` so the UI and WebMCP can report the durable result. A local change with a failed push remains visible as `Push required` and can be retried with a browser-supplied token. Git status remains the source for reloadable ahead and behind state. Read-only operations do not create commits.
+
 ## Local access
 
-The local host provides direct project access for beta work. Deployment access policy remains the responsibility of the later Cloudflare Zero Trust setup. Local mode does not require a personal identity or a shared account.
+The local host provides direct project access for beta work. After the real Git projects are migrated, a local production server runs against those checked-out repositories and exposes the existing browser WebMCP catalog to the open browser tab. Deployment access policy remains the responsibility of the later Cloudflare Zero Trust setup. Local mode does not require a personal identity or a shared account.
 
 ## Compatibility and removal
 
@@ -56,7 +60,8 @@ Temporary checks cover:
 2. `.OpenBar/` is selected for OpenBar records and mindmaps
 3. nested projects migrate without losing root source files
 4. Git status and push include root manuscript assets and `.OpenBar/` data while excluding credentials
-5. the browser credential prompt retries an Overleaf operation without storing the token
-6. local paper, mindmap, wiki, compile, and WebMCP smoke flows work for more than one project
+5. a successful write reports a pushed result and a failed push reports a retryable pending result
+6. the browser credential prompt retries an Overleaf operation without storing the token
+7. the local production instance serves paper, mindmap, wiki, compile, and WebMCP smoke flows for more than one project
 
 Temporary checks live under `/private/tmp` and are deleted after verification.
