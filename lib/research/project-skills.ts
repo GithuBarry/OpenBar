@@ -18,7 +18,7 @@ export type ProjectSkill = {
 };
 
 const SKILL_FILE = "SKILL.md";
-const SKILL_ROOTS = ["skills", ".openbar/skills", "manuscript/skills"];
+const SKILL_ROOTS = ["skills", ".OpenBar/skills", "manuscript/skills"];
 
 function listSkillDirs(root: string): string[] {
   const dirs: string[] = [];
@@ -155,7 +155,7 @@ export function writeProjectSkill(
   if (!id || id === "." || id === "..") throw new Error("Skill id is required and must be a safe file name.");
   safeFileSegment(id, "skill id");
   const existing = discoverSkillsInDir(root, source).find((item) => item.id === id);
-  const relative = existing?.path || path.posix.join(source === "workspace" ? "skills" : ".openbar/skills", id, SKILL_FILE);
+  const relative = existing?.path || path.posix.join(source === "workspace" ? "skills" : ".OpenBar/skills", id, SKILL_FILE);
   const file = path.join(/* turbopackIgnore: true */ root, relative);
   const front = [
     "---",

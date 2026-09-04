@@ -61,7 +61,7 @@ export interface TexPaths {
   paperFile: string;
   styleFile: string;
   sectionsDir: string;
-  openbarryDir: string;
+  openBarDir: string;
   projectFile: string;
   mindmapFile: string;
   bibliographyFile: string;
@@ -103,9 +103,25 @@ export interface BibliographyRecord {
   updatedAt: string;
 }
 
+function hasSupportedTexDocument(manuscriptDir: string): boolean {
+  const paperFile = locateTexRoot(manuscriptDir);
+  try {
+    const source = fs.readFileSync(paperFile, "utf8");
+    return /\\documentclass\b/.test(source) || /\\begin\s*\{document\}/.test(source);
+  } catch {
+    return false;
+  }
+}
+
+function useCanonicalLayout(projectDir: string): boolean {
+  return hasSupportedTexDocument(projectDir)
+    || !hasSupportedTexDocument(path.join(projectDir, "manuscript"));
+}
+
 export function texPaths(projectDir: string): TexPaths {
-  const manuscriptDir = path.join(projectDir, "manuscript");
-  const openbarryDir = path.join(manuscriptDir, "openbarry");
+  const canonical = useCanonicalLayout(projectDir);
+  const manuscriptDir = canonical ? projectDir : path.join(projectDir, "manuscript");
+  const openBarDir = canonical ? path.join(projectDir, ".OpenBar") : path.join(manuscriptDir, "openbarry");
   // `paper.tex` remains the initialization default. Existing projects may
   // declare `main.tex`, `ms.tex`, or another document root discovered by the
   // source graph.
@@ -116,14 +132,16 @@ export function texPaths(projectDir: string): TexPaths {
     paperFile,
     styleFile: path.join(manuscriptDir, "openbarry.sty"),
     sectionsDir: path.join(manuscriptDir, "sections"),
-    openbarryDir,
-    projectFile: path.join(openbarryDir, "project.tex"),
-    mindmapFile: path.join(openbarryDir, "mindmap.tex"),
-    bibliographyFile: path.join(openbarryDir, "references.tex"),
+    openBarDir,
+    projectFile: path.join(openBarDir, "project.tex"),
+    mindmapFile: path.join(openBarDir, "mindmap.tex"),
+    bibliographyFile: path.join(openBarDir, "references.tex"),
     figuresDir: path.join(manuscriptDir, "figures"),
-    wikiDir: path.join(manuscriptDir, "wiki"),
-    mindmapsDir: path.join(openbarryDir, "mindmaps"),
-    buildDir: path.join(projectDir, ".openbarry", "build"),
+    wikiDir: canonical ? path.join(projectDir, ".OpenBar", "wiki") : path.join(manuscriptDir, "wiki"),
+    mindmapsDir: path.join(openBarDir, "mindmaps"),
+    buildDir: canonical
+      ? path.join(projectDir, ".OpenBar", "build")
+      : path.join(projectDir, ".openbarry", "build"),
   };
 }
 
@@ -134,6 +152,7 @@ export function texPaths(projectDir: string): TexPaths {
  */
 export function hasTexProject(projectDir: string): boolean {
   const paths = texPaths(projectDir);
+  if (paths.manuscriptDir === projectDir) return hasSupportedTexDocument(paths.manuscriptDir);
   try {
     return fs.existsSync(paths.projectFile)
       && fs.existsSync(paths.paperFile)
@@ -146,7 +165,7 @@ export function hasTexProject(projectDir: string): boolean {
 
 export function ensureTexProjectDirectories(projectDir: string): TexPaths {
   const paths = texPaths(projectDir);
-  for (const dir of [paths.manuscriptDir, paths.sectionsDir, paths.openbarryDir, paths.figuresDir, paths.wikiDir, paths.mindmapsDir]) {
+  for (const dir of [paths.manuscriptDir, paths.sectionsDir, paths.openBarDir, paths.figuresDir, paths.wikiDir, paths.mindmapsDir]) {
     fs.mkdirSync(dir, { recursive: true });
   }
   return paths;
@@ -259,11 +278,11 @@ export function deleteMindmapRecord(projectDir: string, id: string): void {
 }
 
 export function recordFile(projectDir: string, collection: string, id: string): string {
-  return path.join(texPaths(projectDir).openbarryDir, safeFileSegment(collection, "record collection"), `${safeFileSegment(id, "record id")}.tex`);
+  return path.join(texPaths(projectDir).openBarDir, safeFileSegment(collection, "record collection"), `${safeFileSegment(id, "record id")}.tex`);
 }
 
 export function listRecordIds(projectDir: string, collection: string): string[] {
-  const dir = path.join(texPaths(projectDir).openbarryDir, safeFileSegment(collection, "record collection"));
+  const dir = path.join(texPaths(projectDir).openBarDir, safeFileSegment(collection, "record collection"));
   try {
     return fs.readdirSync(dir)
       .filter((file) => file.endsWith(".tex"))
@@ -607,7 +626,7 @@ export function removePaperSection(projectDir: string, title: string, id: string
         for (const lineIndex of [...lineIndexes].sort((a, b) => b - a)) lines.splice(lineIndex, 1);
         writeTextAtomic(owner, lines.join(newline));
       }
-      detachedFile = detachSectionFile(section.file, path.join(paths.projectDir, ".openbarry", "detached"));
+      detachedFile = detachSectionFile(section.file, path.join(path.dirname(paths.buildDir), "detached"));
       if (hashFile(paths.styleFile) !== styBefore) throw new Error("Remove-section must not rewrite openbarry.sty.");
       return requirePaper(projectDir, title);
     } catch (error) {
@@ -683,19 +702,12 @@ export { composePaperTex, splitPaperTex };
 
 export function readBibliographyRaw(projectDir: string): string {
   const paths = texPaths(projectDir);
-  const openbarryBib = path.join(paths.openbarryDir, "references.bib");
-  if (fs.existsSync(openbarryBib)) {
-    const content = fs.readFileSync(openbarryBib, "utf8");
-    if (content.trim()) return content;
-  }
-  const manuscriptBib = path.join(paths.manuscriptDir, "references.bib");
-  if (fs.existsSync(manuscriptBib)) {
-    const content = fs.readFileSync(manuscriptBib, "utf8");
-    if (content.trim()) return content;
-  }
-  const rootBib = path.join(paths.projectDir, "references.bib");
-  if (fs.existsSync(rootBib)) {
-    const content = fs.readFileSync(rootBib, "utf8");
+  const bibliographySources = paths.manuscriptDir === paths.projectDir
+    ? [path.join(paths.projectDir, "references.bib"), path.join(paths.openBarDir, "references.bib")]
+    : [path.join(paths.openBarDir, "references.bib"), path.join(paths.manuscriptDir, "references.bib"), path.join(paths.projectDir, "references.bib")];
+  for (const file of bibliographySources) {
+    if (!fs.existsSync(file)) continue;
+    const content = fs.readFileSync(file, "utf8");
     if (content.trim()) return content;
   }
   const record = readDataFile<BibliographyRecord>(paths.bibliographyFile, TEX_SCHEMAS.bibliography, "references");
@@ -711,7 +723,10 @@ export function writeBibliographyRaw(projectDir: string, raw: string): void {
     paths.bibliographyFile,
     `${serializeDataFile(TEX_SCHEMAS.bibliography, "references", record, "Bibliography source. The rendered bibliography below is derived from this comment block.")}\n${referenceBody}`,
   );
-  writeTextAtomic(path.join(paths.openbarryDir, "references.bib"), normalized);
+  const sourceFile = paths.manuscriptDir === paths.projectDir
+    ? path.join(paths.projectDir, "references.bib")
+    : path.join(paths.openBarDir, "references.bib");
+  writeTextAtomic(sourceFile, normalized);
 }
 
 export function readBibliography(projectDir: string): BibEntry[] {

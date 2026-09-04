@@ -35,8 +35,8 @@ yarn-error.log*
 .scratch/
 /scratch/
 
-# OpenBar generated indexes, previews, and TeX build cache
-**/.openbarry/
+# OpenBar local TeX build cache
+**/.OpenBar/build/
 **/*.aux
 **/*.dvi
 **/*.fdb_latexmk

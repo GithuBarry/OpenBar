@@ -1,8 +1,8 @@
 /**
  * OpenBar — TeX-backed content store.
  *
- * All research content lives as human-readable, primary TeX documents and
- * comment-envelope records under `content/projects/<slug>/manuscript/`.
+ * All research content lives as human-readable, primary TeX documents at
+ * `content/projects/<slug>/` with OpenBar records under `.OpenBar/`.
  *
  * This module is server-only (uses node:fs). It is imported by server
  * components, route handlers, and the MCP server — never by client code.

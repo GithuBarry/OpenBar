@@ -58,12 +58,14 @@ function pathHasExtension(value: string): boolean {
 }
 
 export function isPassthroughInclude(raw: string): boolean {
-  const path = normalizeTeXInputPath(raw).toLowerCase();
+  const normalized = normalizeTeXInputPath(raw);
+  const path = normalized.toLowerCase();
   return (
     path.endsWith(".sty")
     || path.endsWith(".cls")
     || path.endsWith(".bib")
     || /(^|\/)references\.tex$/.test(path)
+    || normalized === ".OpenBar/references.tex"
     || path.includes("openbarry/references")
   );
 }
