@@ -10,16 +10,10 @@ export function PaperMetrics({ wordCount, pageBudget }: { wordCount: number; pag
   return (
     <div className="flex min-w-0 items-center gap-2">
       <HoverMetric
-        id="paper-word-count"
-        label="Words"
-        value={formatPaperCount(wordCount)}
-        detail={`${formatPaperCount(wordCount)} words in the manuscript body. OpenBar annotations are excluded.`}
-      />
-      <HoverMetric
         id="paper-page-count"
         label="Pages"
         value={pageBudget ? `${formatPaperCount(pageBudget.mainMatterPages)} pp` : "Pending"}
-        detail={pageBudget ? pageBudgetDetail(pageBudget) : "Compile the paper to measure numbered manuscript pages."}
+        detail={pageBudget ? pageBudgetDetail(pageBudget, wordCount) : `Words: ${formatPaperCount(wordCount)} in the manuscript body. OpenBar annotations are excluded. Compile the paper to measure numbered manuscript pages.`}
       />
     </div>
   );
@@ -56,9 +50,10 @@ function HoverMetric({ id, label, value, detail }: { id: string; label: string; 
   );
 }
 
-function pageBudgetDetail(pageBudget: PaperPageBudget): string {
+function pageBudgetDetail(pageBudget: PaperPageBudget, wordCount: number): string {
   const last = pageBudget.lastNumberedSection;
   return [
+    `Words: ${formatPaperCount(wordCount)} in the manuscript body. OpenBar annotations are excluded.`,
     `Main matter: pages ${pageBudget.firstNumberedPage}–${last.startsOnPage} (${formatPaperCount(pageBudget.mainMatterPages)} pages).`,
     `Last numbered section: §${last.number} ${last.title}, starting on page ${last.startsOnPage}.`,
     `Full compiled PDF: ${formatPaperCount(pageBudget.totalPages)} pages.`,

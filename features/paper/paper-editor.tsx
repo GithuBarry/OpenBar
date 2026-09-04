@@ -102,7 +102,6 @@ const TODO_PANEL_MIN = 96;
 const SPLIT_MIN = 22;
 const SPLIT_MAX = 78;
 const HEADING_ALIGN = 0.2;
-const TODO_CONTEXT_LINES = 3;
 const DEFAULT_PREVIEW_FONT_SCALE = 0.9;
 const DEFAULT_EDITOR_FONT_SCALE = 1;
 const DEFAULT_PREVIEW_LINE_HEIGHT = 1.75;
@@ -195,7 +194,6 @@ export function PaperEditor({
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [repairOpen, setRepairOpen] = useState(false);
-  const [focusedTodoId, setFocusedTodoId] = useState<string | null>(null);
   const [previewAnnotate, setPreviewAnnotate] = useState<{
     from: number;
     to: number;
@@ -242,21 +240,6 @@ export function PaperEditor({
 
   const bookmarks = useMemo(() => listBookmarks(inlineBundleIncludes(renderSource)), [renderSource]);
   const todos = useMemo(() => collectEditorTodos(renderSource), [renderSource]);
-  const focusedTodo = useMemo(
-    () => (focusedTodoId ? collectEditorTodos(source).find((todo) => todo.id === focusedTodoId) || null : null),
-    [focusedTodoId, source],
-  );
-  const focusContext = useMemo(
-    () => focusedTodo
-      ? {
-          from: focusedTodo.from,
-          to: focusedTodo.to,
-          beforeLines: TODO_CONTEXT_LINES,
-          afterLines: TODO_CONTEXT_LINES,
-        }
-      : null,
-    [focusedTodo],
-  );
   const wordCount = useMemo(() => countPaperWords(inlineBundleIncludes(renderSource)), [renderSource]);
   const repairHits = useMemo(() => suspiciousTexSequences(renderSource), [renderSource]);
   const repairSummary = useMemo(
@@ -271,10 +254,6 @@ export function PaperEditor({
   activeBookmarkRef.current = activeBookmark;
   const bibliographyRef = useRef(bibliography);
   bibliographyRef.current = bibliography;
-
-  useEffect(() => {
-    if (focusedTodoId && !focusedTodo) setFocusedTodoId(null);
-  }, [focusedTodo, focusedTodoId]);
 
   const getScrollAnchors = useCallback(() => {
     const scroller = editorRef.current?.getScroller();
@@ -350,7 +329,6 @@ export function PaperEditor({
   }, []);
 
   const jumpToSection = useCallback((b: { title: string; slug: string; line: number }) => {
-    setFocusedTodoId(null);
     lastHeadingKeyRef.current = b.slug;
     setActiveBookmark(b.slug);
     const from = offsetForHeadingKey(sourceRef.current, b.slug);
@@ -822,16 +800,12 @@ export function PaperEditor({
   const jumpToTodo = useCallback((todo: EditorTodo) => {
     const current = editorRef.current?.getLiveSource() ?? sourceRef.current;
     const live = currentTodo(todo, current);
-    if (live) {
-      setFocusedTodoId(live.id || null);
-      editorRef.current?.setSelection(live.from, live.to);
-    }
+    if (live) editorRef.current?.setSelection(live.from, live.to);
   }, [currentTodo]);
 
   const jumpToSourceLine = useCallback((file: string, line: number) => {
     const from = offsetForSourceFileLine(sourceRef.current, file, line);
     if (from == null) return;
-    setFocusedTodoId(null);
     editorRef.current?.setSelection(from, from);
   }, []);
 
@@ -849,7 +823,6 @@ export function PaperEditor({
     }
     const comment = collectEditorComments(sourceRef.current).find((item) => item.id === hash);
     if (comment) {
-      setFocusedTodoId(null);
       editorRef.current?.setSelection(comment.from, comment.to);
       return true;
     }
@@ -1070,6 +1043,7 @@ export function PaperEditor({
   }, [bibliography, citeQuery]);
   const isSaved = source === savedSource && !saving;
   const pdfCurrent = isSaved && compile.state === "success";
+  const pdfVisible = layout === "pdf" || layout === "pdf-only";
   const widthClass =
     editorWidth === "compact"
       ? "max-w-5xl mx-auto"
@@ -1157,7 +1131,7 @@ export function PaperEditor({
         </div>
 
         <div className="flex h-8 min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto [grid-area:actions]">
-          {compile.pdfAvailable && (
+          {pdfVisible && compile.pdfAvailable && (
             <span className={cn("hidden shrink-0 text-[11px] font-medium xl:inline", pdfCurrent ? "text-ok" : "text-warn")}>
               {pdfCurrent ? "PDF current" : "PDF stale"}
             </span>
@@ -1432,7 +1406,6 @@ export function PaperEditor({
               onChange={onChangeSource}
               onScroll={handleEditorScroll}
               placeholder="Write TeX…"
-              focusContext={focusContext}
               className="h-full"
             />
 
