@@ -325,7 +325,11 @@ export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: s
     if (expectedDiskHash) {
       const current = readMindmapRecord(dir, id);
       const currentHash = current ? mindmapDiskHash(current) : undefined;
-      if (!current || currentHash !== expectedDiskHash) {
+      // A primary map can be loaded as an in-memory fallback before its first
+      // durable save. The write lock makes that first creation race-safe. Once
+      // a record exists, the normal compare-and-save guard remains strict.
+      const firstPrimarySave = !current && isPrimaryMindmap(id);
+      if (!firstPrimarySave && currentHash !== expectedDiskHash) {
         throw new TexEnvelopeError(`Mindmap changed on disk${currentHash ? ` (hash ${currentHash})` : ""}. Reload before saving.`);
       }
     }

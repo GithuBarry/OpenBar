@@ -290,7 +290,9 @@ function buildReplacements(
       return htmlLike({
         tag: "object",
         attributes: {
-          className: "w-full max-w-2xl h-80 rounded-lg border border-line/60 bg-white",
+          // Let the surrounding paper reader receive wheel events over the
+          // embedded figure. The PDF remains available through the asset URL.
+          className: "pointer-events-none h-80 w-full max-w-2xl rounded-lg border border-line/60 bg-white",
           data: href,
           type: "application/pdf",
         },

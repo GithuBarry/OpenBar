@@ -41,6 +41,7 @@ import {
 import { getPaperCompileStatus, requestPaperCompile } from "@/lib/tex-project/compile";
 import { FIGURE_MAX_BYTES, uploadFigureAsset, texPaths, patchDocument, patchDocumentState, readDocument, DRAFT_MINDMAP_ID } from "@/lib/tex-project/project";
 import { persistSourceBundle, applyConversionWrite } from "@/lib/tex-project/source-persist";
+import { getOverleafGitStatus, pushOverleafGit, refreshOverleafGitStatus } from "@/lib/tex-project/overleaf-git";
 import { inspectRepository } from "@/lib/tex-project/source-graph";
 import { getConversionPlan, previewManuscriptConversion } from "@/lib/tex-project/pandoc";
 import { convertComplexTables } from "@/lib/tex-project/pandoc-tables";
@@ -219,6 +220,23 @@ export async function saveMindmapAction(
 export async function getMindmapAction(slug: string, id: string): Promise<Mindmap | null> {
   await requireProjectAccess(slug);
   return getMindmap(slug, id);
+}
+
+export async function getProjectGitStatusAction(slug: string, refreshRemote = false) {
+  await requireProjectAccess(slug);
+  const projectDir = projectContentDir(slug);
+  return refreshRemote ? refreshOverleafGitStatus(projectDir) : getOverleafGitStatus(projectDir);
+}
+
+export async function commitAndPushProjectAction(slug: string, message?: string) {
+  await requireProjectAccess(slug);
+  assertAdministrativeWriteAllowed("Git commit and push");
+  const result = await pushOverleafGit(
+    projectContentDir(slug),
+    message?.trim() || `OpenBar: save ${slug}`,
+  );
+  if (result.ok) bust(slug);
+  return result;
 }
 
 export async function createMindmapAction(slug: string, title: string): Promise<{ id: string; title: string }> {

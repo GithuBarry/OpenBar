@@ -49,11 +49,14 @@ export function PaperActivityRail({
       {idless && (
         <p className="mindmap-activity-warn text-warn">Assign stable IDs to {idless.count} TODOs in the paper.</p>
       )}
-      {missing.map((warning) => (
-        <p key={warning.nodeId} className="mindmap-activity-warn text-warn">
-          Card still points at {warning.todoId}
+      {missing.length > 0 && (
+        <p
+          className="mindmap-activity-warn text-warn truncate"
+          title={missing.map((warning) => `Card still points at ${warning.todoId}`).join("\n")}
+        >
+          {missing.length} card link{missing.length === 1 ? "" : "s"} need review
         </p>
-      ))}
+      )}
       {(items.length > 0) && (
         <div className="mindmap-activity-row">
           <p className="mindmap-activity-label">

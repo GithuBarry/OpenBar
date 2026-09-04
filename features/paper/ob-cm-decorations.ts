@@ -41,6 +41,8 @@ const MACRO_MARKS: Record<string, Decoration> = Object.fromEntries(
 
 const TODO_BODY_MARK = Decoration.mark({ class: "ob-cm-todo-body" });
 
+const ANNOTATION_BRACE_MARK = Decoration.mark({ class: "ob-cm-annotation-brace" });
+
 const BRACE_MARK = Decoration.mark({ class: "ob-cm-brace-marker" });
 
 const TEX_HEADING_CMD =
@@ -175,7 +177,7 @@ function splitChromeAndBody(
   index: number,
   length: number,
   body: string,
-): { chromeTo: number; bodyFrom: number; bodyTo: number } | null {
+): { chromeTo: number; bodyFrom: number; bodyTo: number; openBrace: number; closeBrace: number } | null {
   const matchEnd = index + length;
   if (matchEnd <= index) return null;
   const closeBrace = matchEnd - 1;
@@ -183,7 +185,7 @@ function splitChromeAndBody(
   const bodyFrom = closeBrace - body.length;
   const openBrace = bodyFrom - 1;
   if (openBrace < index || text[openBrace] !== "{") return null;
-  return { chromeTo: openBrace, bodyFrom, bodyTo: closeBrace };
+  return { chromeTo: openBrace, bodyFrom, bodyTo: closeBrace, openBrace, closeBrace };
 }
 
 function collectMacros(text: string, ranges: MarkRange[]): void {
@@ -192,7 +194,7 @@ function collectMacros(text: string, ranges: MarkRange[]): void {
     const cls = MACRO_CLASS[match.name];
     const decoration = cls ? MACRO_MARKS[cls] : undefined;
     if (!decoration) continue;
-    if (match.name === "obtodo") {
+    if (match.name === "obtodo" || match.name === "obcomment") {
       const split = splitChromeAndBody(text, match.index, match.length, match.body);
       if (split) {
         if (split.chromeTo > match.index) {
@@ -204,15 +206,29 @@ function collectMacros(text: string, ranges: MarkRange[]): void {
             kind: match.name,
           });
         }
+        ranges.push({
+          from: split.openBrace,
+          to: split.openBrace + 1,
+          decoration: ANNOTATION_BRACE_MARK,
+          rank: 1,
+          kind: `${match.name}-brace`,
+        });
         if (split.bodyTo > split.bodyFrom) {
           ranges.push({
             from: split.bodyFrom,
             to: split.bodyTo,
-            decoration: TODO_BODY_MARK,
+            decoration: match.name === "obtodo" ? TODO_BODY_MARK : decoration,
             rank: 0,
             kind: `${match.name}-body`,
           });
         }
+        ranges.push({
+          from: split.closeBrace,
+          to: split.closeBrace + 1,
+          decoration: ANNOTATION_BRACE_MARK,
+          rank: 1,
+          kind: `${match.name}-brace`,
+        });
         continue;
       }
     }

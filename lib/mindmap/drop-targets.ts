@@ -1,5 +1,6 @@
 /**
- * Drop above/below reorders siblings. Drop near the lower edge reparents.
+ * Drop near the right or lower edge reparents. Drop near the upper edge
+ * reorders before a sibling, with the remaining card area reordering after it.
  * Moves into descendants are rejected.
  */
 
@@ -20,16 +21,19 @@ export function resolveMindmapDrop(
   targetId: string,
   localY: number,
   targetHeight: number,
+  localX = 0,
+  targetWidth = 0,
 ): MindmapDrop | null {
   if (draggedId === targetId) return null;
   if (draggedId === mindmap.rootId) return null;
   if (descendantsOf(mindmap, draggedId).has(targetId)) return null;
   const index = indexMindmap(mindmap);
   if (!index.nodeById.has(draggedId) || !index.nodeById.has(targetId)) return null;
-  const ratio = targetHeight <= 0 ? 0.5 : localY / targetHeight;
+  const ratioY = targetHeight <= 0 ? 0.5 : localY / targetHeight;
+  const ratioX = targetWidth <= 0 ? 0.5 : localX / targetWidth;
   let kind: DropKind = "after";
-  if (ratio < 0.28) kind = "before";
-  else if (ratio > 0.72) kind = "child";
+  if (ratioX > 0.72 || ratioY > 0.72) kind = "child";
+  else if (ratioY < 0.28) kind = "before";
   return { id: draggedId, targetId, kind };
 }
 

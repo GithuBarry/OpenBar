@@ -6,6 +6,7 @@
 import { applySourceOperation } from "./operation-service";
 import { failResult, okResult, type OperationResult } from "./operation-result";
 import { bannerRanges, splitBundleSource } from "@/lib/tex-project/source-bundle-format";
+import { findMacroMatches, parseAnchorAttrs } from "@/lib/marker-codec";
 import {
   assertLiveRevision,
   boundWebMcpText,
@@ -294,7 +295,10 @@ export async function executePaperSourceTool(
       if (dryRun) return okResult({ dryRun: true, patches: result.value.patches, inserted: insert }, { revision: snapshot.revision });
       const mutationError = await runRangeMutation(host, range.from, range.to, insert, options?.signal);
       if (mutationError) return mutationError;
-      return okResult({ inserted: insert }, { revision: host.getSnapshot().revision });
+      const insertedMatch = findMacroMatches(insert, ["obtodo"])[0];
+      const insertedAttrs = insertedMatch ? parseAnchorAttrs(insertedMatch.attrs) : {};
+      const todoId = insertedAttrs.id?.trim();
+      return okResult({ inserted: insert, ...(todoId ? { todoId } : {}) }, { revision: host.getSnapshot().revision });
     }
     case "update_todo": {
       const rev = requireRev();
@@ -366,7 +370,7 @@ const SOURCE_TOOL_META: Record<PaperSourceWebMcpToolName, { title: string; descr
   },
   add_todo: {
     title: "Add a paper TODO",
-    description: "Insert a stable \\obtodo at a live source range. The mindmap shows it Unplaced until it is placed.",
+    description: "Insert a stable \\obtodo at a live source range. The result includes todoId. After it succeeds, use get_project_state or navigate_project to open the Primary mindmap, then call place_todo_card with that todoId and a parentId so the paper TODO and its map card stay together. The mindmap convert_card_to_todo tool performs the reverse flow.",
   },
   update_todo: {
     title: "Update a paper TODO",

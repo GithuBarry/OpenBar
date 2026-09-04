@@ -489,13 +489,19 @@ function renderIncludeGraphics(node: unknown, ctx: WalkContext): ReactNode {
   if (!href) return <UnknownTex key={ctx.nextKey()} k={ctx.nextKey()} spelling={nodesToTex(node)} />;
   if (isPdf) {
     return (
-      <object key={ctx.nextKey()} className="w-full max-w-2xl h-80 rounded-lg border border-line/60 bg-white" data={href} type="application/pdf">
-        <p className="p-4 text-xs text-muted">
-          <a href={href} target="_blank" rel="noreferrer" className="text-accent underline">
-            Open PDF figure
-          </a>
-        </p>
-      </object>
+      <div key={ctx.nextKey()} className="flex w-full max-w-2xl flex-col items-center gap-1">
+        <object
+          aria-label="Embedded PDF figure"
+          className="pointer-events-none h-80 w-full rounded-lg border border-line/60 bg-white"
+          data={href}
+          type="application/pdf"
+        >
+          <p className="p-4 text-xs text-muted">Embedded PDF figure</p>
+        </object>
+        <a href={href} target="_blank" rel="noreferrer" className="text-xs text-accent underline">
+          Open PDF figure in a new tab
+        </a>
+      </div>
     );
   }
   return <img key={ctx.nextKey()} src={href} alt="" className="max-h-[500px] w-auto max-w-full rounded-lg object-contain" />;

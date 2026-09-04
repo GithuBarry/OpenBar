@@ -23,7 +23,7 @@ import {
   ZoomIn,
 } from "lucide-react";
 
-import { ensurePaperCommentAction, getMindmapAction, insertPaperTodoAtSectionAction, persistPaperTodoAction, removePaperTodoAction, saveMindmapAction } from "@/app/actions";
+import { commitAndPushProjectAction, ensurePaperCommentAction, getMindmapAction, getProjectGitStatusAction, insertPaperTodoAtSectionAction, persistPaperTodoAction, removePaperTodoAction, saveMindmapAction } from "@/app/actions";
 import { sharedWebMcpActions } from "@/features/webmcp-actions";
 import { PaperActivityRail } from "@/features/mindmap/paper-activity-rail";
 import {
@@ -78,6 +78,8 @@ const LAST_WEEK_DAYS = 7;
 const GRID_SIZE = 32;
 const STATUS_META_HEIGHT = 18;
 const COLLAPSE_STORAGE_PREFIX = "openbar:mindmap-collapse:v1";
+
+type RemoteSaveState = "checking" | "local" | "saving" | "saved" | "changed" | "error";
 
 type Point = { x: number; y: number };
 type Dimensions = { width: number; height: number };
@@ -185,11 +187,67 @@ export function MindmapEditor({
     setCollapsedIds(next);
   }, [collapseContext, collapseNodeSignature, collapseRevision, collapseStorageKey]);
 
+  const [remoteSaveState, setRemoteSaveState] = useState<RemoteSaveState>("checking");
+  const [remoteSaveError, setRemoteSaveError] = useState<string | null>(null);
+
+  const pushRemote = useCallback(async (message: string) => {
+    setRemoteSaveState("saving");
+    setRemoteSaveError(null);
+    try {
+      const result = await commitAndPushProjectAction(project, message);
+      if (!result.ok) {
+        setRemoteSaveState(result.code === "remote_ahead" || result.code === "remote_conflict" ? "changed" : "error");
+        setRemoteSaveError(result.message);
+      } else {
+        setRemoteSaveState("saved");
+      }
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not save to the remote.";
+      setRemoteSaveState("error");
+      setRemoteSaveError(message);
+      return { ok: false as const, code: "remote_save_failed", message };
+    }
+  }, [project]);
+
+  const refreshRemoteStatus = useCallback(async () => {
+    setRemoteSaveState("checking");
+    setRemoteSaveError(null);
+    try {
+      const status = await getProjectGitStatusAction(project, true);
+      if (!status.isGitRepo) {
+        setRemoteSaveState("local");
+        setRemoteSaveError("This project has no Git repository.");
+        return;
+      }
+      if (status.error) {
+        setRemoteSaveState("error");
+        setRemoteSaveError(status.error);
+        return;
+      }
+      if ((status.behind || 0) > 0) {
+        setRemoteSaveState("changed");
+        setRemoteSaveError("The remote has newer commits. Pull before saving remotely.");
+        return;
+      }
+      setRemoteSaveState((status.ahead || 0) > 0 || !status.isClean ? "local" : "saved");
+    } catch (error) {
+      setRemoteSaveState("error");
+      setRemoteSaveError(error instanceof Error ? error.message : "Could not check the remote.");
+    }
+  }, [project]);
+
+  useEffect(() => {
+    void refreshRemoteStatus();
+  }, [refreshRemoteStatus]);
+
   const webMcpSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const webMcpSaveCountRef = useRef(0);
   const persistWebMcpMutation = useCallback(async (
     action: MindmapTreeAction | ((current: MindmapSession) => MindmapTreeAction | null),
     expectedRevision?: number,
   ): Promise<Mindmap> => {
+    webMcpSaveCountRef.current += 1;
     const job = webMcpSaveQueueRef.current.then(async () => {
       const current = sessionRef.current;
       if (expectedRevision !== undefined && current.revision !== expectedRevision) {
@@ -230,16 +288,20 @@ export function MindmapEditor({
         sessionRef.current = rebased;
         dispatch({ type: "rebase-disk-hash", diskHash: persistedDiskHashRef.current });
       }
+      const remote = await pushRemote("OpenBar: save mindmap");
+      if (!remote.ok) throw new Error(`Saved locally. ${remote.message}`);
       return saved;
     });
-    webMcpSaveQueueRef.current = job.then(() => undefined, () => undefined);
+    webMcpSaveQueueRef.current = job.then(() => undefined, () => undefined).finally(() => {
+      webMcpSaveCountRef.current = Math.max(0, webMcpSaveCountRef.current - 1);
+    });
     try {
       return await job;
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not save the mindmap.");
       throw error;
     }
-  }, [project]);
+  }, [project, pushRemote]);
 
   useMindmapWebMcp({
     sharedActions: sharedWebMcpActions,
@@ -378,11 +440,15 @@ export function MindmapEditor({
     completeTodo: async (todoId) => {
       const result = await persistPaperTodoAction(project, { type: "complete_todo", id: todoId }, paperState?.paper?.sourceHash);
       if (!result.ok) throw new Error(result.message);
+      const remote = await pushRemote("OpenBar: complete paper TODO");
+      if (!remote.ok) throw new Error(`Saved locally. ${remote.message}`);
       router.refresh();
     },
     reopenTodo: async (todoId) => {
       const result = await persistPaperTodoAction(project, { type: "reopen_todo", id: todoId }, paperState?.paper?.sourceHash);
       if (!result.ok) throw new Error(result.message);
+      const remote = await pushRemote("OpenBar: reopen paper TODO");
+      if (!remote.ok) throw new Error(`Saved locally. ${remote.message}`);
       router.refresh();
     },
     focusTodoInPaper: (todoId) => router.push(`/p/${project}/paper#${encodeURIComponent(todoId)}`),
@@ -497,6 +563,9 @@ export function MindmapEditor({
   }, [mindmap, dragPreview, coverageById, collapsedIds, paperState?.paper?.todos]);
   const selected = layout.nodeById.get(selectedId) || layout.nodeById.get(mindmap.rootId);
   const dirty = mapSignature(mindmap) !== savedSignature;
+  useEffect(() => {
+    if (dirty && remoteSaveState === "saved") setRemoteSaveState("local");
+  }, [dirty, remoteSaveState]);
   const descendantCounts = useMemo(() => countDescendantsByNode(mindmap), [mindmap]);
   const activityNodeIds = useMemo(() => {
     if (!activitySince) return new Set<string>();
@@ -897,7 +966,7 @@ export function MindmapEditor({
   const redo = useCallback(() => dispatch({ type: "redo" }), []);
 
   const save = useCallback(() => {
-    if (isPending) return;
+    if (isPending || webMcpSaveCountRef.current > 0) return;
     const snapshot = cloneMindmap(sessionRef.current.mindmap);
     const signature = mapSignature(snapshot);
     setSaveError(null);
@@ -928,11 +997,13 @@ export function MindmapEditor({
           sessionRef.current = rebased;
           dispatch({ type: "rebase-disk-hash", diskHash: persistedDiskHashRef.current });
         }
+        const remote = await pushRemote("OpenBar: save mindmap");
+        if (!remote.ok) return;
       } catch (error) {
         setSaveError(error instanceof Error ? error.message : "Could not save the mindmap.");
       }
     });
-  }, [isPending, project]);
+  }, [isPending, project, pushRemote]);
 
   // Persist edits shortly after the user pauses.
   useEffect(() => {
@@ -1139,7 +1210,7 @@ export function MindmapEditor({
     };
     setDragPreview(pendingMoveRef.current);
 
-    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-mind-node]");
+    const target = mindmapNodeAtPoint(event.clientX, event.clientY);
     const targetId = target?.getAttribute("data-mind-node");
     if (!target || !targetId) {
       updateDropPreview(null);
@@ -1152,6 +1223,8 @@ export function MindmapEditor({
       targetId,
       event.clientY - bounds.top,
       bounds.height,
+      event.clientX - bounds.left,
+      bounds.width,
     ));
   }
 
@@ -1163,7 +1236,7 @@ export function MindmapEditor({
     setDragPreview(null);
     updateDropPreview(null);
     if (interaction.kind === "node" && interaction.moved) {
-      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-mind-node]");
+      const target = mindmapNodeAtPoint(event.clientX, event.clientY);
       const targetId = target?.getAttribute("data-mind-node");
       if (pending && target && targetId) {
         const bounds = target.getBoundingClientRect();
@@ -1173,6 +1246,8 @@ export function MindmapEditor({
           targetId,
           event.clientY - bounds.top,
           bounds.height,
+          event.clientX - bounds.left,
+          bounds.width,
         );
         if (drop && drop.id === interaction.id) {
           const mapped = applyMindmapDrop(sessionRef.current.mindmap, drop);
@@ -1386,10 +1461,34 @@ export function MindmapEditor({
               >
                 <AlertCircle size={13} /> {saveConflict ? "Reload saved map" : "Retry save"}
               </button>
+            ) : remoteSaveError ? (
+              <button
+                type="button"
+                className="mindmap-save-status mindmap-save-status-error"
+                title={remoteSaveError}
+                onClick={() => {
+                  if (remoteSaveState === "changed") void refreshRemoteStatus();
+                  else void pushRemote("OpenBar: save mindmap");
+                }}
+              >
+                <AlertCircle size={13} /> {remoteSaveState === "changed" ? "Remote changed" : "Remote save failed"}
+              </button>
             ) : (
               <span className={cn("mindmap-save-status", dirty && !isPending && "mindmap-save-status-pending")}>
-                {isPending ? <LoaderCircle size={13} className="animate-spin" /> : <Check size={13} />}
-                {isPending ? "Saving…" : dirty ? "Autosaving…" : "Autosaved"}
+                {isPending || remoteSaveState === "checking" || remoteSaveState === "saving"
+                  ? <LoaderCircle size={13} className="animate-spin" />
+                  : <Check size={13} />}
+                {isPending
+                  ? "Saving…"
+                  : remoteSaveState === "checking"
+                    ? "Checking remote…"
+                    : remoteSaveState === "saving"
+                      ? "Saving remotely…"
+                      : dirty
+                        ? "Unsaved edits"
+                        : remoteSaveState === "saved"
+                          ? "Remote saved"
+                          : "Local changes"}
               </span>
             )}
           </div>
@@ -1519,6 +1618,7 @@ export function MindmapEditor({
         </div>
 
         {saveError && <p className="mindmap-save-error" role="alert">{saveError}</p>}
+        {remoteSaveError && !saveError && <p className="mindmap-save-error" role="alert">Remote: {remoteSaveError}</p>}
         <footer className="mindmap-footer">
           <span>{layout.nodes.length === mindmap.nodes.length ? mindmap.nodes.length : `${layout.nodes.length} of ${mindmap.nodes.length}`} topic{mindmap.nodes.length === 1 ? "" : "s"}</span>
           {activitySince && <span>{activityNodeIds.size} active since {formatMindmapDate(activitySince)}</span>}
@@ -1540,10 +1640,13 @@ export function MindmapEditor({
               <div className="mindmap-field">
                 <span>Paper TODO</span>
                 {selectedMissing ? (
-                  <p className="text-xs text-warn">Missing paper TODO: {selected.todoId}</p>
+                  <div className="mindmap-inspector-todo-text">
+                    {selectedCardContent?.body.trim() && (
+                      <p className="mindmap-node-detail"><NodeRichText text={selectedCardContent.body} /></p>
+                    )}
+                  </div>
                 ) : (
                   <div className={cn("mindmap-inspector-todo-text", selectedTodo?.completed && "is-done")}>
-                    {selectedCardContent?.title && <div className="mindmap-node-title">{selectedCardContent.title}</div>}
                     {selectedCardContent?.body.trim() && (
                       <p className="mindmap-node-detail"><NodeRichText text={selectedCardContent.body} /></p>
                     )}
@@ -1561,9 +1664,12 @@ export function MindmapEditor({
                         project,
                         { type: selectedTodo?.completed ? "reopen_todo" : "complete_todo", id: selected.todoId! },
                         paperState?.paper?.sourceHash,
-                      ).then((result) => {
+                      ).then(async (result) => {
                         if (!result.ok) setSaveError(result.message);
-                        else router.refresh();
+                        else {
+                          const remote = await pushRemote("OpenBar: update paper TODO");
+                          if (remote.ok) router.refresh();
+                        }
                       });
                     }}
                   >
@@ -1577,12 +1683,13 @@ export function MindmapEditor({
                 onClick={() => {
                       if (!window.confirm("Delete this TODO from the paper? Its mindmap card and child topics will stay in place so you can repair or convert the card.")) return;
                       void removePaperTodoAction(project, selected.todoId!, paperSourceHash)
-                        .then((result) => {
+                        .then(async (result) => {
                           if (!result.ok) {
                             setSaveError(result.message);
                             return;
                           }
-                          router.refresh();
+                          const remote = await pushRemote("OpenBar: remove paper TODO");
+                          if (remote.ok) router.refresh();
                         })
                         .catch((error) => setSaveError(error instanceof Error ? error.message : "Could not delete the paper TODO."));
                     }}
@@ -2148,7 +2255,6 @@ function CanvasNode({
           <div className="mindmap-node-meta">
             {!(coverage && coverage.total > 0) && node.progress !== undefined && !completed && <span className="mindmap-node-progress">{formatProgress(node.progress)}%</span>}
             {completed && <span>complete</span>}
-            {missing && <span>missing paper TODO</span>}
             {activityLabel && <span>{activityLabel}</span>}
             {tags.slice(0, 2).map((tag) => <span className="mindmap-node-tag" key={tag}>{tag}</span>)}
             {tags.length > 2 && <span className="mindmap-node-tag">+{tags.length - 2}</span>}
@@ -2158,7 +2264,7 @@ function CanvasNode({
       {collapsedDescendantCount > 0 && (
         <button
           type="button"
-          className="mindmap-collapse-toggle"
+          className={cn("mindmap-collapse-toggle", collapsed && "mindmap-collapse-toggle-visible")}
           aria-label={collapsed ? `Expand ${collapsedDescendantCount} child cards` : `Collapse ${collapsedDescendantCount} child cards`}
           aria-expanded={!collapsed}
           title={collapsed ? "Expand child cards" : "Collapse all child cards"}
@@ -2200,6 +2306,14 @@ function daysAgoDate(days: number): string {
 
 function calendarDate(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function mindmapNodeAtPoint(clientX: number, clientY: number): HTMLElement | null {
+  for (const element of document.elementsFromPoint(clientX, clientY)) {
+    const node = element.closest<HTMLElement>("[data-mind-node]");
+    if (node) return node;
+  }
+  return null;
 }
 
 function formatProgress(progress: number | undefined): string {

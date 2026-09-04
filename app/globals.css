@@ -444,7 +444,8 @@ button, input, textarea, select { font: inherit; }
    Nested slices live in an auto-height host, so that percentage resolves to 0
    and only the \input labels remain visible. Size to content instead.
    Do not set flex-shrink: 0 on .cm-content — line wrapping needs shrink.
-   overflow-x: hidden on the scroller keeps the flex item bounded so wrap wins. */
+   overflow-x: clip on the scroller keeps the flex item bounded so wrap wins
+   without turning each nested slice into a competing vertical scroller. */
 .ob-nested-bundle .ob-cm-root-nested,
 .ob-nested-bundle .ob-cm-root-nested .cm-editor {
   height: auto !important;
@@ -454,7 +455,7 @@ button, input, textarea, select { font: inherit; }
 }
 .ob-nested-bundle .ob-cm-root-nested .cm-scroller {
   height: auto !important;
-  overflow-x: hidden !important;
+  overflow-x: clip !important;
   overflow-y: visible !important;
   min-width: 0;
   max-width: 100%;
@@ -1198,6 +1199,7 @@ button, input, textarea, select { font: inherit; }
   opacity: 1;
   transform: translateY(-50%);
 }
+.mindmap-collapse-toggle-visible { opacity: 1; }
 .mindmap-collapse-toggle::before {
   position: absolute;
   inset: -0.45rem -0.4rem;
@@ -1207,9 +1209,9 @@ button, input, textarea, select { font: inherit; }
   color: rgb(var(--ink));
   display: block;
   min-width: 0;
-  font-size: 0.78rem;
+  font-size: 0.84rem;
   font-weight: 600;
-  line-height: 1.28;
+  line-height: 1.27;
   overflow-wrap: anywhere;
   word-break: break-word;
   white-space: pre-wrap;
@@ -1219,20 +1221,20 @@ button, input, textarea, select { font: inherit; }
   min-width: 0;
   margin: 0;
   color: rgb(var(--ink));
-  font-size: 0.7rem;
+  font-size: 0.76rem;
   font-weight: 400;
   line-height: 1.4;
   overflow-wrap: anywhere;
   word-break: break-word;
   white-space: pre-wrap;
 }
-.mindmap-node-root .mindmap-node-title { font-family: var(--font-serif); font-size: 0.92rem; font-weight: 650; }
+.mindmap-node-root .mindmap-node-title { font-family: var(--font-serif); font-size: 0.98rem; font-weight: 650; }
 .mindmap-node-detail {
   display: block;
   min-width: 0;
   margin: 0.2rem 0 0;
   color: rgb(var(--muted));
-  font-size: 0.66rem;
+  font-size: 0.72rem;
   line-height: 1.32;
   overflow-wrap: anywhere;
   word-break: break-word;

@@ -1,5 +1,6 @@
 "use client";
 
+import { Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import type { EditorTodo } from "@/features/paper/tex-source";
@@ -24,13 +25,12 @@ export function TodoPanel({
   onJump: (todo: EditorTodo) => void;
   onResolve: (todo: EditorTodo) => void;
   onPatch: (todo: EditorTodo, patch: TodoAttrPatch) => void;
-  onEditText: (todo: EditorTodo, text: string) => void;
   onInsert: (tex: string) => void;
   onPlace?: (todoId: string, parentId: string) => void;
 }) {
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
-  const [placeUnder, setPlaceUnder] = useState("");
+  const [newTodoOpen, setNewTodoOpen] = useState(false);
   const [showDone, setShowDone] = useState(false);
   const bound = useMemo(() => new Set(boundTodoIds), [boundTodoIds]);
   const sorted = useMemo(
@@ -47,61 +47,70 @@ export function TodoPanel({
           <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">Open items</p>
           <span className="text-[10px] text-faint">{openCount} open · {todos.length} total</span>
         </div>
-        <button
-          type="button"
-          className="text-[10px] text-accent hover:underline"
-          onClick={() => setShowDone((value) => !value)}
-        >
-          {showDone ? "Hide complete" : "Show complete"}
-        </button>
-      </div>
-      <form
-        className="mb-2 shrink-0 rounded-lg border border-line/70 bg-canvas/35 p-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!title.trim() && !text.trim()) return;
-          const id = generateTodoId();
-          onInsert(composeObtodo({ id, title: title.trim() || undefined, text: text.trim() }));
-          if (placeUnder) onPlace?.(id, placeUnder);
-          setTitle("");
-          setText("");
-        }}
-      >
-        <div className="grid min-w-0 gap-1.5 sm:grid-cols-[minmax(0,0.42fr)_minmax(0,1fr)_auto]">
-          <input
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="Title (optional)"
-            aria-label="New TODO title"
-            className="input h-7 min-w-0 px-2 py-0 text-xs"
-          />
-          <input
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            placeholder="Details (optional) — appears Unplaced on the Primary map until you place it"
-            aria-label="New TODO details"
-            className="input h-7 min-w-0 flex-1 px-2 py-0 text-xs"
-          />
-          <button type="submit" className="btn-outline px-2 py-0.5 text-[11px]" disabled={!title.trim() && !text.trim()}>
-            Add
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            className="ob-press inline-flex h-5 w-5 items-center justify-center rounded border border-line text-accent hover:border-accent/50 hover:bg-accent/10"
+            title={newTodoOpen ? "Hide new TODO" : "New TODO"}
+            aria-label="New TODO"
+            aria-expanded={newTodoOpen}
+            onClick={() => setNewTodoOpen((value) => !value)}
+          >
+            <Plus size={11} />
+          </button>
+          <button
+            type="button"
+            className="text-[10px] text-accent hover:underline"
+            onClick={() => setShowDone((value) => !value)}
+          >
+            {showDone ? "Hide complete" : "Show complete"}
           </button>
         </div>
-        {placementTargets.length > 0 && (
-          <label className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[10px] text-faint">
-            <span className="shrink-0">Add to Primary map under</span>
-            <select
-              value={placeUnder}
-              onChange={(event) => setPlaceUnder(event.target.value)}
-              className="input h-6 min-w-0 flex-1 px-1.5 py-0 text-[11px]"
-            >
-              <option value="">Unplaced (later)</option>
-              {placementTargets.map((target) => (
-                <option key={target.id} value={target.id}>{target.label}</option>
-              ))}
-            </select>
-          </label>
-        )}
-      </form>
+      </div>
+      {newTodoOpen && (
+        <form
+          className="mb-2 shrink-0 rounded-lg border border-line/70 bg-canvas/35 p-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!title.trim() && !text.trim()) return;
+            const id = generateTodoId();
+            onInsert(composeObtodo({ id, title: title.trim() || undefined, text: text.trim() }));
+            setTitle("");
+            setText("");
+          }}
+        >
+          <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-ink">New TODO</p>
+            <span className="text-[10px] text-faint">Saved to TeX · Unplaced on Primary</span>
+          </div>
+          <div className="grid min-w-0 items-end gap-1.5 sm:grid-cols-[minmax(0,0.42fr)_minmax(0,1fr)_auto]">
+            <label className="block min-w-0 text-[10px] font-medium uppercase tracking-wide text-faint">
+              Title <span className="normal-case font-normal tracking-normal">(optional)</span>
+              <input
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="Short TODO title"
+                aria-label="New TODO title"
+                className="input mt-1 h-7 min-w-0 !w-full px-2 py-1 text-xs font-normal normal-case tracking-normal"
+              />
+            </label>
+            <label className="block min-w-0 text-[10px] font-medium uppercase tracking-wide text-faint">
+              Content
+              <textarea
+                rows={2}
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+                placeholder="TODO content"
+                aria-label="New TODO content"
+                className="input mt-1 min-h-14 min-w-0 !w-full resize-y px-2 py-1 text-xs font-normal normal-case tracking-normal leading-snug"
+              />
+            </label>
+            <button type="submit" className="btn-outline px-2 py-0.5 text-[11px]" disabled={!title.trim() && !text.trim()}>
+              Add
+            </button>
+          </div>
+        </form>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {visible.length === 0 ? (
           <p className="text-xs text-faint">No \\obtodo anchors in this paper.</p>
@@ -144,6 +153,7 @@ function TodoRow({
   onPlace?: (todoId: string, parentId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [placing, setPlacing] = useState(false);
   const [draftTitle, setDraftTitle] = useState(todo.title || "");
   const [draftText, setDraftText] = useState(todo.text);
   useEffect(() => {
@@ -196,13 +206,14 @@ function TodoRow({
                 />
               </label>
               <label className="block text-[10px] font-medium uppercase tracking-wide text-faint">
-                Details
+                Content
                 <textarea
                   rows={3}
                   value={draftText}
                   onChange={(event) => setDraftText(event.target.value)}
                   className="input mt-1 min-h-16 !w-full resize-y px-2 py-1 text-xs font-normal normal-case tracking-normal leading-snug"
-                  aria-label="TODO details"
+                  placeholder="TODO content"
+                  aria-label="TODO content"
                 />
               </label>
               <div className="flex gap-1">
@@ -226,33 +237,63 @@ function TodoRow({
               title={[title, todo.text].filter(Boolean).join("\n\n")}
             >
               <span className="block max-h-20 overflow-y-auto whitespace-pre-wrap break-words leading-snug">
-                {title && <span className={`block text-xs font-semibold ${done ? "text-faint line-through" : "text-ink"}`}>{title}</span>}
-                <span className={`block text-xs ${title ? "mt-0.5" : ""} ${done ? "text-faint line-through" : "text-ink"}`}>
+                {title ? (
+                  <span className="block">
+                    <span className="mr-1 text-[9px] font-medium uppercase tracking-wide text-faint">Title</span>
+                    <span className={`text-xs font-semibold ${done ? "text-faint line-through" : "text-ink"}`}>{title}</span>
+                  </span>
+                ) : (
+                  <span className="block text-[9px] font-medium uppercase tracking-wide text-faint">Untitled TODO</span>
+                )}
+                <span className={`block text-xs ${title ? "mt-0.5" : "mt-1"} ${done ? "text-faint line-through" : "text-ink"}`}>
+                  <span className="mr-1 text-[9px] font-medium uppercase tracking-wide text-faint">Content</span>
                   {todo.text || "(empty)"}
                 </span>
               </span>
             </button>
           )}
-          {unplaced && todo.id && placementTargets.length > 0 && onPlace && (
-            <label className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[10px] text-faint">
-              <span className="shrink-0">Place on Primary map under</span>
-              <select
-                defaultValue=""
-                className="input h-6 min-w-0 flex-1 px-1.5 py-0 text-[11px]"
-                onChange={(event) => {
-                  const parentId = event.target.value;
-                  if (parentId) onPlace(todo.id!, parentId);
-                }}
-              >
-                <option value="">Choose a card…</option>
-                {placementTargets.map((target) => (
-                  <option key={target.id} value={target.id}>{target.label}</option>
-                ))}
-              </select>
-            </label>
-          )}
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-0.5">
+          {unplaced && todo.id && placementTargets.length > 0 && onPlace && (
+            <div className="relative">
+              <button
+                type="button"
+                className="text-[11px] text-accent hover:underline"
+                aria-expanded={placing}
+                onClick={() => setPlacing((value) => !value)}
+              >
+                Place
+              </button>
+              {placing && (
+                <div className="absolute right-0 top-full z-20 mt-1 w-56 rounded-md border border-line bg-canvas p-2 shadow-lg">
+                  <label className="block text-[10px] font-medium uppercase tracking-wide text-faint">
+                    Place under
+                    <select
+                      autoFocus
+                      defaultValue=""
+                      aria-label="Primary map parent"
+                      className="input mt-1 h-7 w-full px-1.5 py-0 text-[11px] normal-case tracking-normal"
+                      onChange={(event) => {
+                        const parentId = event.target.value;
+                        if (parentId) {
+                          onPlace(todo.id!, parentId);
+                          setPlacing(false);
+                        }
+                      }}
+                    >
+                      <option value="">Choose a card…</option>
+                      {placementTargets.map((target) => (
+                        <option key={target.id} value={target.id}>{target.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <button type="button" className="mt-1 text-[10px] text-faint hover:underline" onClick={() => setPlacing(false)}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           <button
             type="button"
             className="text-[11px] text-accent hover:underline"

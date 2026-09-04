@@ -128,7 +128,7 @@ export type LivePaperSnapshot = {
   /** True while dirty content is waiting for or undergoing a save. */
   pendingSave?: boolean;
   sourceSegments?: Array<{ filePath: string; editable: boolean }>;
-  compileState?: { state: string; sourceHash?: string };
+  compileState?: { state: string; sourceHash?: string; message?: string; diagnostics?: string[]; completedAt?: string };
   bibliographyKeys: string[];
   bibliographyRaw?: string;
   todos?: LivePaperTodo[];
@@ -796,10 +796,22 @@ async function executeNamed(
             currentRevision: host.getSnapshot().revision,
           });
         }
+        const message = error instanceof Error ? error.message : "Compilation failed.";
+        const rawDiagnostics = error && typeof error === "object" && Array.isArray((error as { diagnostics?: unknown }).diagnostics)
+          ? (error as { diagnostics: unknown[] }).diagnostics.filter((item): item is string => typeof item === "string")
+          : [];
         return failResult(
           WEBMCP_ERROR_CODES.compile_failed,
-          error instanceof Error ? error.message : "Compilation failed.",
-          { retryable: true, currentRevision: host.getSnapshot().revision },
+          message,
+          {
+            retryable: true,
+            currentRevision: host.getSnapshot().revision,
+            diagnostics: (rawDiagnostics.length ? rawDiagnostics : [message]).map((diagnostic) => ({
+              severity: "error" as const,
+              code: "compile",
+              message: diagnostic,
+            })),
+          },
         );
       }
     }

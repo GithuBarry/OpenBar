@@ -4,6 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { hasTexProject, texPaths, writePaperProject, writeProjectRecord } from "./project";
+import { withWriteLockAsync } from "./codec";
 import { gitProcessEnv } from "@/lib/server/git-credential-store";
 import { redactGitRemote, redactSensitiveText } from "@/lib/server/git-url";
 
@@ -38,6 +39,13 @@ export interface PorcelainEntry {
   path: string;
   origPath?: string;
 }
+
+export type OverleafGitPushResult = {
+  ok: boolean;
+  message: string;
+  commitHash?: string;
+  code?: string;
+};
 
 interface GitIndexSnapshot {
   path: string;
@@ -359,6 +367,25 @@ export async function getOverleafGitStatus(projectDir: string): Promise<Overleaf
   }
 }
 
+/**
+ * Refresh remote-tracking refs before presenting status so another checkout's
+ * latest push is visible before the next edit is saved.
+ */
+export async function refreshOverleafGitStatus(projectDir: string): Promise<OverleafGitStatus> {
+  const current = await getOverleafGitStatus(projectDir);
+  if (!current.isGitRepo || !current.remoteUrl) return current;
+  const cwd = resolveGitDir(projectDir);
+  try {
+    await runGit(cwd, ["fetch", "--prune", "origin"]);
+  } catch (error) {
+    return {
+      ...current,
+      error: "Remote status unavailable: " + gitErrorMessage(error),
+    };
+  }
+  return getOverleafGitStatus(projectDir);
+}
+
 export async function pullOverleafGit(projectDir: string): Promise<{ ok: boolean; message: string }> {
   const cwd = resolveGitDir(projectDir);
   if (!fs.existsSync(path.join(cwd, ".git"))) {
@@ -379,72 +406,127 @@ export async function pullOverleafGit(projectDir: string): Promise<{ ok: boolean
 export async function pushOverleafGit(
   projectDir: string,
   message = "OpenBar: update manuscript and structured records",
-): Promise<{ ok: boolean; message: string; commitHash?: string }> {
+): Promise<OverleafGitPushResult> {
   const cwd = resolveGitDir(projectDir);
   if (!fs.existsSync(path.join(cwd, ".git"))) {
-    return { ok: false, message: "Directory is not a git repository." };
+    return { ok: false, code: "not_git_repo", message: "Directory is not a git repository." };
   }
 
-  let indexSnapshot: GitIndexSnapshot | undefined;
-  let committed = false;
-  try {
-    const pathspec = texGitPathspec(projectDir, cwd);
-    const existingChanges = await runGit(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...pathspec]);
-    const existingSensitive = sensitiveAmong(porcelainPaths(parsePorcelainZ(existingChanges)));
-    if (existingSensitive.length) {
-      return {
-        ok: false,
-        message: `Refusing to push while sensitive paths are present: ${existingSensitive.join(", ")}. Store credentials in the OS credential helper and remove these files from the repository first.`,
-      };
-    }
-
-    indexSnapshot = await snapshotGitIndex(cwd);
-    await runGit(cwd, ["add", "-A", "--", ...pathspec]);
-    const stagedStatus = await runGit(cwd, ["diff", "--cached", "--name-status", "-z", "--", ...pathspec]);
-    const stagedNameOnly = await runGit(cwd, ["diff", "--cached", "--name-only", "-z", "--", ...pathspec]);
-    const stagedPaths = [...new Set([
-      ...parseNameStatusZ(stagedStatus),
-      ...parseNulTerminatedPaths(stagedNameOnly),
-    ])];
-    if (!stagedPaths.length) {
-      return { ok: true, message: "No local changes to commit." };
-    }
-
-    const stagedSensitive = sensitiveAmong(stagedPaths);
-    if (stagedSensitive.length) {
-      restoreGitIndex(indexSnapshot);
-      return {
-        ok: false,
-        message: `Refusing to push sensitive paths: ${stagedSensitive.join(", ")}. Store credentials in the OS credential helper and keep secrets out of git.`,
-      };
-    }
-
-    // --only commits the TeX paths while preserving unrelated work
-    // that was already staged by the user.
-    await runGit(cwd, ["commit", "--only", "-m", message, "--", ...pathspec]);
-    committed = true;
-    const commitHash = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
+  // Serialize Git index and remote operations for simultaneous paper/map tabs.
+  // The lock lives inside .git and leaves the working tree unchanged.
+  return withWriteLockAsync(path.join(cwd, ".git", "openbar-sync"), async () => {
+    let indexSnapshot: GitIndexSnapshot | undefined;
+    let committed = false;
     try {
-      const pushOutput = (await runGit(cwd, ["push"])).trim();
-      return {
-        ok: true,
-        commitHash,
-        message: pushOutput || `Committed ${commitHash.slice(0, 8)} and pushed to Overleaf.`,
-      };
+      const branch = (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+      const remoteUrl = await runGit(cwd, ["config", "--get", "remote.origin.url"]).then((value) => value.trim()).catch(() => "");
+      if (!remoteUrl) {
+        return {
+          ok: false,
+          code: "remote_unconfigured",
+          message: "No origin remote is configured. The edit remains local until a Git remote is configured.",
+        };
+      }
+
+      let remoteCheck: { configured: boolean; ahead: number; behind: number; error?: string };
+      try {
+        await runGit(cwd, ["fetch", "--prune", "origin"]);
+        let ahead = 0;
+        let behind = 0;
+        if (branch && branch !== "HEAD") {
+          try {
+            const counts = (await runGit(cwd, ["rev-list", "--left-right", "--count", "HEAD...origin/" + branch])).trim();
+            const [localAhead, remoteAhead] = counts.split(/\s+/).map(Number);
+            if (Number.isFinite(localAhead)) ahead = localAhead;
+            if (Number.isFinite(remoteAhead)) behind = remoteAhead;
+          } catch {
+            // A remote branch may not exist yet on a newly connected repository.
+          }
+        }
+        remoteCheck = { configured: true, ahead, behind };
+      } catch (error) {
+        remoteCheck = { configured: true, ahead: 0, behind: 0, error: gitErrorMessage(error) };
+      }
+      if (remoteCheck.error) {
+        return {
+          ok: false,
+          code: "remote_check_failed",
+          message: "Could not check the remote before saving: " + remoteCheck.error,
+        };
+      }
+      if (remoteCheck.behind > 0) {
+        const diverged = remoteCheck.ahead > 0;
+        return {
+          ok: false,
+          code: diverged ? "remote_conflict" : "remote_ahead",
+          message: diverged
+            ? "The remote and this checkout both have new commits. Pull and resolve the Git conflict before saving remotely."
+            : "The remote has newer commits. Pull the latest paper, resolve any conflict, then retry the remote save.",
+        };
+      }
+
+      const pathspec = texGitPathspec(projectDir, cwd);
+      const existingChanges = await runGit(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...pathspec]);
+      const existingSensitive = sensitiveAmong(porcelainPaths(parsePorcelainZ(existingChanges)));
+      if (existingSensitive.length) {
+        return {
+          ok: false,
+          code: "sensitive_path",
+          message: "Refusing to push while sensitive paths are present: " + existingSensitive.join(", ") + ". Store credentials in the OS credential helper and remove these files from the repository first.",
+        };
+      }
+
+      indexSnapshot = await snapshotGitIndex(cwd);
+      await runGit(cwd, ["add", "-A", "--", ...pathspec]);
+      const stagedStatus = await runGit(cwd, ["diff", "--cached", "--name-status", "-z", "--", ...pathspec]);
+      const stagedNameOnly = await runGit(cwd, ["diff", "--cached", "--name-only", "-z", "--", ...pathspec]);
+      const stagedPaths = [...new Set([
+        ...parseNameStatusZ(stagedStatus),
+        ...parseNulTerminatedPaths(stagedNameOnly),
+      ])];
+      if (!stagedPaths.length) {
+        return { ok: true, message: "No local changes to commit." };
+      }
+
+      const stagedSensitive = sensitiveAmong(stagedPaths);
+      if (stagedSensitive.length) {
+        restoreGitIndex(indexSnapshot);
+        return {
+          ok: false,
+          code: "sensitive_path",
+          message: "Refusing to push sensitive paths: " + stagedSensitive.join(", ") + ". Store credentials in the OS credential helper and keep secrets out of git.",
+        };
+      }
+
+      // --only commits the TeX paths while preserving unrelated work
+      // that was already staged by the user.
+      await runGit(cwd, ["commit", "--only", "-m", message, "--", ...pathspec]);
+      committed = true;
+      const commitHash = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
+      try {
+        const pushOutput = (await runGit(cwd, ["push"])).trim();
+        return {
+          ok: true,
+          commitHash,
+          message: pushOutput || "Committed " + commitHash.slice(0, 8) + " and pushed to the remote.",
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          code: "push_failed",
+          commitHash,
+          message: "Committed " + commitHash + " locally. Remote push failed: " + gitErrorMessage(error) + ". The local commit exists.",
+        };
+      }
     } catch (error) {
+      if (!committed) restoreGitIndex(indexSnapshot);
       return {
         ok: false,
-        commitHash,
-        message: `Committed ${commitHash} locally, but push failed: ${gitErrorMessage(error)}. The local commit exists.`,
+        code: "commit_failed",
+        message: "Failed to save to the remote: " + gitErrorMessage(error),
       };
     }
-  } catch (error) {
-    if (!committed) restoreGitIndex(indexSnapshot);
-    return {
-      ok: false,
-      message: `Failed to push to Overleaf: ${gitErrorMessage(error)}`,
-    };
-  }
+  });
 }
 
 export async function initOverleafGit(

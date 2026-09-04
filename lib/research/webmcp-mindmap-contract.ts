@@ -144,8 +144,8 @@ export const MINDMAP_WEBMCP_TOOL_SCHEMAS: Record<MindmapWebMcpToolName, JsonSche
   }),
   place_todo_card: objectSchema(
     {
-      todoId: { type: "string" },
-      parentId: { type: "string" },
+      todoId: { type: "string", description: "The todoId returned by the paper page add_todo tool." },
+      parentId: { type: "string", description: "The existing card that should own this TODO card." },
       expectedRevision: { type: "integer", minimum: 0 },
     },
     ["todoId", "parentId", "expectedRevision"],
@@ -563,7 +563,7 @@ function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Collapse or expand a branch in the live map. Collapse is not Recent activity.";
   }
   if (name === "place_todo_card") {
-    return "Add a card for an existing TeX TODO to the currently open map. Each map may contain one card for a TODO. The same TODO may appear on Primary and multiple secondary maps. All cards share TeX-owned text and completion. This is a shared card, not a move from another map. If the TODO is already on this map, the existing card is returned unchanged.";
+    return "Add a card for an existing TeX TODO to the currently open map. Use this after the paper page add_todo tool returns todoId, choose the intended parentId, and place the card in the Primary or selected secondary map. Each map may contain one card for a TODO. The same TODO may appear on Primary and multiple secondary maps. All cards share TeX-owned text and completion. This is a shared card, not a move from another map. If the TODO is already on this map, the existing card is returned unchanged.";
   }
   if (name === "convert_card_to_todo") {
     return "Insert a pending TeX \\obtodo in a paper section using this card's title and main text, then bind the card to that id. Hierarchy is preserved. Completion is left unset.";

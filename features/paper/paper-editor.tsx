@@ -30,8 +30,10 @@ import {
 
 import {
   addPaperSectionAction,
+  commitAndPushProjectAction,
   getEditablePaperAction,
   getPaperCompileStatusAction,
+  getProjectGitStatusAction,
   previewTableFallbacksAction,
   persistSourceBundleAction,
   placeTodoOnMindmapAction,
@@ -62,7 +64,7 @@ import {
 } from "./use-paper-webmcp";
 import { AnchoredPop } from "@/components/pop";
 import { composeObcomment } from "@/lib/research/paper-analysis";
-import { assignMissingTodoIds, composeObtodo, rewriteObtodo, rewriteObtodoText, type TodoAttrPatch } from "@/lib/todo-meta";
+import { assignMissingTodoIds, composeObtodo, rewriteObtodo, type TodoAttrPatch } from "@/lib/todo-meta";
 import { proposedTableRepair, suspiciousTexSequences } from "@/lib/tex-project/tex-repair";
 import { extractComplexTableFragments } from "@/lib/tex-project/table-fragments";
 import { applyTexLintFix, lintProsePercentages } from "@/lib/tex-project/tex-lint";
@@ -90,6 +92,7 @@ import {
 export type { PaperEditorSection };
 
 type LayoutMode = "document" | "pdf" | "pdf-only";
+type RemoteSaveState = "checking" | "local" | "saving" | "saved" | "changed" | "error";
 
 const AUTOSAVE_DELAY = 600;
 const COMPANION_RENDER_DELAY = 200;
@@ -170,6 +173,8 @@ export function PaperEditor({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveConflict, setSaveConflict] = useState(false);
+  const [remoteSaveState, setRemoteSaveState] = useState<RemoteSaveState>("checking");
+  const [remoteSaveError, setRemoteSaveError] = useState<string | null>(null);
   const [agentNotice, setAgentNotice] = useState<string | null>(null);
   const [expectedSections, setExpectedSections] = useState(initialSections);
   const [prefsReady, setPrefsReady] = useState(false);
@@ -217,6 +222,13 @@ export function PaperEditor({
   // Both panes remain linked when the responsive layout stacks them. This
   // keeps the source and rendered views together on narrow browser windows.
   const syncPanesRef = useRef(true);
+  const claimScrollSource = (source: "editor" | "preview") => {
+    activeScrollSourceRef.current = source;
+    if (scrollSettleTimerRef.current) {
+      window.clearTimeout(scrollSettleTimerRef.current);
+      scrollSettleTimerRef.current = null;
+    }
+  };
   const saveTimerRef = useRef<number | null>(null);
   const tablePreviewRevisionRef = useRef(0);
   const sourceRef = useRef(source);
@@ -237,6 +249,59 @@ export function PaperEditor({
   bundleHashRef.current = bundleHash;
   const sourceSegmentsRef = useRef(initialBundle.segments.map(({ filePath, editable }) => ({ filePath, editable })));
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const remoteSavePendingRef = useRef(false);
+
+  const pushRemote = useCallback(async (message: string) => {
+    setRemoteSaveState("saving");
+    setRemoteSaveError(null);
+    try {
+      const result = await commitAndPushProjectAction(project, message);
+      if (!result.ok) {
+        setRemoteSaveState(result.code === "remote_ahead" || result.code === "remote_conflict" ? "changed" : "error");
+        setRemoteSaveError(result.message);
+      } else {
+        remoteSavePendingRef.current = false;
+        setRemoteSaveState("saved");
+      }
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not save to the remote.";
+      setRemoteSaveState("error");
+      setRemoteSaveError(message);
+      return { ok: false as const, code: "remote_save_failed", message };
+    }
+  }, [project]);
+
+  const refreshRemoteStatus = useCallback(async () => {
+    setRemoteSaveState("checking");
+    setRemoteSaveError(null);
+    try {
+      const status = await getProjectGitStatusAction(project, true);
+      if (!status.isGitRepo) {
+        setRemoteSaveState("local");
+        setRemoteSaveError("This project has no Git repository.");
+        return;
+      }
+      if (status.error) {
+        setRemoteSaveState("error");
+        setRemoteSaveError(status.error);
+        return;
+      }
+      if ((status.behind || 0) > 0) {
+        setRemoteSaveState("changed");
+        setRemoteSaveError("The remote has newer commits. Pull before saving remotely.");
+        return;
+      }
+      setRemoteSaveState((status.ahead || 0) > 0 || !status.isClean ? "local" : "saved");
+    } catch (error) {
+      setRemoteSaveState("error");
+      setRemoteSaveError(error instanceof Error ? error.message : "Could not check the remote.");
+    }
+  }, [project]);
+
+  useEffect(() => {
+    void refreshRemoteStatus();
+  }, [refreshRemoteStatus]);
 
   const bookmarks = useMemo(() => listBookmarks(inlineBundleIncludes(renderSource)), [renderSource]);
   const todos = useMemo(() => collectEditorTodos(renderSource), [renderSource]);
@@ -475,7 +540,15 @@ export function PaperEditor({
       saveFailureRef.current = null;
       if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
       const baseline = savedSourceRef.current;
-      if (text === baseline) return;
+      if (text === baseline && !remoteSavePendingRef.current) return;
+      if (text === baseline && remoteSavePendingRef.current) {
+        const remote = await pushRemote("OpenBar: save paper");
+        if (!remote.ok) {
+          throw Object.assign(new Error(`Saved locally. ${remote.message}`), { code: "remote_save_failed" });
+        }
+        remoteSavePendingRef.current = false;
+        return;
+      }
       setSaving(true);
       if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
       const result = await persistSourceBundleAction(project, text, bundleHashRef.current);
@@ -501,6 +574,12 @@ export function PaperEditor({
       }));
       setSaveError(null);
       setSaveConflict(false);
+      remoteSavePendingRef.current = true;
+      const remote = await pushRemote("OpenBar: save paper");
+      if (!remote.ok) {
+        throw Object.assign(new Error(`Saved locally. ${remote.message}`), { code: "remote_save_failed" });
+      }
+      remoteSavePendingRef.current = false;
       setSaving(false);
     });
     saveQueueRef.current = job.then(() => undefined, () => undefined);
@@ -519,10 +598,11 @@ export function PaperEditor({
         ...(saveFailureRef.current?.currentHash ? { currentHash: saveFailureRef.current.currentHash } : {}),
       };
       setSaving(false);
-      if (failureCode !== "cancelled") setSaveError(failureMessage);
+      if (failureCode === "remote_save_failed") setSaveError(null);
+      else if (failureCode !== "cancelled") setSaveError(failureMessage);
       return false;
     }
-  }, [project]);
+  }, [project, pushRemote]);
 
   const reloadLatest = useCallback(async () => {
     const paper = await getEditablePaperAction(project);
@@ -542,10 +622,13 @@ export function PaperEditor({
       const next = await op();
       if (!next) throw new Error("Could not update section structure.");
       applyHydrated(next);
+      remoteSavePendingRef.current = true;
+      const remote = await pushRemote("OpenBar: update paper structure");
+      if (remote.ok) remoteSavePendingRef.current = false;
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not update section structure.");
     }
-  }, [applyHydrated, doSave]);
+  }, [applyHydrated, doSave, pushRemote]);
 
   const scheduleSave = useCallback((nextSource: string, immediate = false) => {
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
@@ -869,8 +952,12 @@ export function PaperEditor({
     if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
     const result = await removePaperTodoAction(project, todoId, bundleHashRef.current);
     if (!result.ok) throw Object.assign(new Error(result.message), { code: result.code });
+    remoteSavePendingRef.current = true;
+    const remote = await pushRemote("OpenBar: remove paper TODO");
+    if (!remote.ok) throw Object.assign(new Error(`Saved locally. ${remote.message}`), { code: "remote_save_failed" });
+    remoteSavePendingRef.current = false;
     await reloadLatest();
-  }, [project, reloadLatest, saveNow]);
+  }, [project, pushRemote, reloadLatest, saveNow]);
 
   const resolveTodo = useCallback((todo: EditorTodo) => {
     void removeTodoEverywhere(todo.id || "")
@@ -883,15 +970,6 @@ export function PaperEditor({
     const live = currentTodo(todo, current);
     if (!live) return;
     const nextMacro = rewriteObtodo(current.slice(live.from, live.to), patch);
-    editorRef.current?.applyVirtualChange(live.from, live.to, nextMacro);
-  }, [currentTodo]);
-
-  const editTodoText = useCallback((todo: EditorTodo, text: string) => {
-    const current = editorRef.current?.getLiveSource() ?? sourceRef.current;
-    if (todo.kind !== "obtodo" || !text.trim()) return;
-    const live = currentTodo(todo, current);
-    if (!live) return;
-    const nextMacro = rewriteObtodoText(current.slice(live.from, live.to), text);
     editorRef.current?.applyVirtualChange(live.from, live.to, nextMacro);
   }, [currentTodo]);
 
@@ -940,7 +1018,13 @@ export function PaperEditor({
       pendingSave: saving || liveSource() !== savedSourceRef.current,
       sourceSegments: sourceSegmentsRef.current,
       activeHeadingKey: activeBookmarkRef.current || lastHeadingKeyRef.current,
-      compileState: { state: compileRef.current.state, sourceHash: compileRef.current.sourceHash },
+      compileState: {
+        state: compileRef.current.state,
+        sourceHash: compileRef.current.sourceHash,
+        message: compileRef.current.message,
+        diagnostics: compileRef.current.diagnostics,
+        completedAt: compileRef.current.completedAt,
+      },
       bibliographyKeys: (bibliographyRef.current || []).map((entry) => entry.key),
       bibliographyRaw,
       expected: expectedSectionsRef.current.map((section) => ({
@@ -987,7 +1071,10 @@ export function PaperEditor({
         throw new Error(saveErrorRef.current || "Save failed before compile.");
       }
       if (status.state === "error") {
-        throw new Error(status.message || "Compilation failed.");
+        throw Object.assign(new Error(status.message || "Compilation failed."), {
+          code: "compile_failed",
+          diagnostics: status.diagnostics || [],
+        });
       }
       return { status: status.state, sourceHash: status.sourceHash };
     },
@@ -1042,6 +1129,28 @@ export function PaperEditor({
     });
   }, [bibliography, citeQuery]);
   const isSaved = source === savedSource && !saving;
+  useEffect(() => {
+    if (source !== savedSource && remoteSaveState === "saved") setRemoteSaveState("local");
+  }, [remoteSaveState, savedSource, source]);
+  const remoteStatusLabel = saving
+    ? "Saving…"
+    : uploading
+      ? "Uploading…"
+      : saveConflict
+        ? "Conflict"
+        : remoteSaveState === "checking"
+          ? "Checking remote…"
+          : remoteSaveState === "saving"
+            ? "Saving remotely…"
+            : remoteSaveState === "changed"
+              ? "Remote changed"
+              : remoteSaveState === "error"
+                ? "Remote save failed"
+                : isSaved && remoteSaveState === "saved"
+                  ? "Remote saved"
+                  : isSaved
+                    ? "Local saved"
+                    : "Unsaved";
   const pdfCurrent = isSaved && compile.state === "success";
   const pdfVisible = layout === "pdf" || layout === "pdf-only";
   const widthClass =
@@ -1112,12 +1221,12 @@ export function PaperEditor({
 
         <div
           className="hidden h-8 min-w-0 items-center overflow-hidden [grid-area:status] md:flex"
-          title={saving ? "Saving…" : uploading ? "Uploading…" : saveConflict ? "Conflict" : isSaved ? "Saved" : "Unsaved"}
+          title={remoteSaveError || remoteStatusLabel}
         >
           <span className="inline-flex min-w-0 items-center gap-1 text-[11px] text-faint">
             {saving || uploading ? (
               <LoaderCircle size={12} className="shrink-0 animate-spin text-accent" />
-            ) : saveConflict ? (
+            ) : saveConflict || remoteSaveState === "changed" || remoteSaveState === "error" ? (
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" />
             ) : isSaved ? (
               <Check size={12} className="shrink-0 text-ok" />
@@ -1125,7 +1234,7 @@ export function PaperEditor({
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
             )}
             <span className="hidden min-w-0 truncate font-medium tabular-nums xl:inline">
-              {saving ? "Saving…" : uploading ? "Uploading…" : saveConflict ? "Conflict" : isSaved ? "Saved" : "Unsaved"}
+              {remoteStatusLabel}
             </span>
           </span>
         </div>
@@ -1220,6 +1329,20 @@ export function PaperEditor({
         <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-1.5 text-xs text-danger">
           <p>{saveError}</p>
         </div>
+      ) : remoteSaveError ? (
+        <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-1.5 text-xs text-danger" role="alert">
+          <p>Remote save: {remoteSaveError}</p>
+          <button
+            type="button"
+            className="btn-outline shrink-0 px-2 py-0.5 text-[11px]"
+            onClick={() => {
+              if (remoteSaveState === "changed") void refreshRemoteStatus();
+              else void pushRemote("OpenBar: save paper");
+            }}
+          >
+            {remoteSaveState === "changed" ? "Check again" : "Retry remote save"}
+          </button>
+        </div>
       ) : null}
       {bundleDiagnostics.length > 0 && (
         <div className="shrink-0 rounded-lg border border-warn/30 bg-warn/10 px-3 py-1.5 text-xs text-ink">
@@ -1279,100 +1402,105 @@ export function PaperEditor({
           style={{ ["--split-left" as string]: `${splitLeftPct}%` }}
         >
           <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-surface">
-            <div
-              ref={previewRef}
-              data-ob-scroll="paper-preview"
-              onScroll={handlePreviewScroll}
-              onClick={(event) => {
-                if (window.getSelection()?.toString()) return;
-                const target = event.target as HTMLElement;
-                const heading = target.closest(".ob-pv-heading");
-                if (heading && previewRef.current?.contains(heading)) {
-                  const key = heading.getAttribute("data-ob-heading-key");
-                  const bookmark = bookmarksRef.current.find((item) => item.slug === key);
-                  if (bookmark) jumpToSection(bookmark);
-                  return;
-                }
-                const paragraph = target.closest("p");
-                if (!paragraph || !previewRef.current?.contains(paragraph) || !paragraph.textContent) return;
-                const located = locatePreviewSnippet(renderSource, paragraph.textContent.slice(0, 160));
-                if (located) editorRef.current?.setSelection(located.from, located.from);
-              }}
-              onMouseUp={() => {
-                const pane = previewRef.current;
-                const sel = window.getSelection();
-                if (!pane || !sel || sel.isCollapsed || !sel.rangeCount) {
-                  setPreviewAnnotate(null);
-                  return;
-                }
-                if (!pane.contains(sel.anchorNode)) return;
-                const snippet = sel.toString();
-                const hintBookmark = listBookmarks(renderSource).find((item) => item.slug === activeBookmark);
-                const hint = hintBookmark ? offsetForBookmarkLine(renderSource, hintBookmark.line) : 0;
-                const located = locatePreviewSnippet(renderSource, snippet, hint);
-                if (!located) {
-                  setPreviewAnnotate(null);
-                  return;
-                }
-                const rect = sel.getRangeAt(0).getBoundingClientRect();
-                const paneRect = pane.getBoundingClientRect();
-                setPreviewAnnotate({
-                  ...located,
-                  text: snippet.trim(),
-                  x: rect.left - paneRect.left + pane.scrollLeft,
-                  y: rect.bottom - paneRect.top + pane.scrollTop + 8,
-                });
-              }}
-              className={cn("ob-split-pane paper-view overflow-y-auto overflow-x-hidden p-8", layout !== "document" && "is-hide")}
-              style={previewStyle}
-            >
-              <div className="prose-ob max-w-full relative">
-                <TexHastDocument
-                  assetBaseUrl={`/api/p/${project}/asset`}
-                  bibliography={bibliography}
-                  source={renderSource}
-                  pandocTables={pandocTables}
-                  requireHeadingKeys
-                />
-                {previewAnnotate && (
-                  <div
-                    className="absolute z-20 flex gap-1 rounded-md border border-line bg-surface px-1.5 py-1 text-[11px] shadow-lg"
-                    style={{ left: previewAnnotate.x, top: previewAnnotate.y }}
-                  >
-                    <button
-                      type="button"
-                      className="text-accent hover:underline"
-                      onClick={() => {
-                        const insert = composeHumanComment(previewAnnotate.text);
-                        editorRef.current?.applyVirtualChange(previewAnnotate.from, previewAnnotate.to, insert);
-                        setPreviewAnnotate(null);
-                        window.getSelection()?.removeAllRanges();
-                      }}
+            {layout === "document" && (
+              <div
+                ref={previewRef}
+                data-ob-scroll="paper-preview"
+                onWheelCapture={() => claimScrollSource("preview")}
+                onScroll={handlePreviewScroll}
+                onClick={(event) => {
+                  if (window.getSelection()?.toString()) return;
+                  const target = event.target as HTMLElement;
+                  const heading = target.closest(".ob-pv-heading");
+                  if (heading && previewRef.current?.contains(heading)) {
+                    const key = heading.getAttribute("data-ob-heading-key");
+                    const bookmark = bookmarksRef.current.find((item) => item.slug === key);
+                    if (bookmark) jumpToSection(bookmark);
+                    return;
+                  }
+                  const paragraph = target.closest("p");
+                  if (!paragraph || !previewRef.current?.contains(paragraph) || !paragraph.textContent) return;
+                  const located = locatePreviewSnippet(renderSource, paragraph.textContent.slice(0, 160));
+                  if (located) editorRef.current?.setSelection(located.from, located.from);
+                }}
+                onMouseUp={() => {
+                  const pane = previewRef.current;
+                  const sel = window.getSelection();
+                  if (!pane || !sel || sel.isCollapsed || !sel.rangeCount) {
+                    setPreviewAnnotate(null);
+                    return;
+                  }
+                  if (!pane.contains(sel.anchorNode)) return;
+                  const snippet = sel.toString();
+                  const hintBookmark = listBookmarks(renderSource).find((item) => item.slug === activeBookmark);
+                  const hint = hintBookmark ? offsetForBookmarkLine(renderSource, hintBookmark.line) : 0;
+                  const located = locatePreviewSnippet(renderSource, snippet, hint);
+                  if (!located) {
+                    setPreviewAnnotate(null);
+                    return;
+                  }
+                  const rect = sel.getRangeAt(0).getBoundingClientRect();
+                  const paneRect = pane.getBoundingClientRect();
+                  setPreviewAnnotate({
+                    ...located,
+                    text: snippet.trim(),
+                    x: rect.left - paneRect.left + pane.scrollLeft,
+                    y: rect.bottom - paneRect.top + pane.scrollTop + 8,
+                  });
+                }}
+                className="ob-split-pane paper-view overflow-y-auto overflow-x-hidden p-8"
+                style={previewStyle}
+              >
+                <div className="prose-ob max-w-full relative">
+                  <TexHastDocument
+                    assetBaseUrl={`/api/p/${project}/asset`}
+                    bibliography={bibliography}
+                    source={renderSource}
+                    pandocTables={pandocTables}
+                    requireHeadingKeys
+                  />
+                  {previewAnnotate && (
+                    <div
+                      className="absolute z-20 flex gap-1 rounded-md border border-line bg-surface px-1.5 py-1 text-[11px] shadow-lg"
+                      style={{ left: previewAnnotate.x, top: previewAnnotate.y }}
                     >
-                      Comment
-                    </button>
-                    <button
-                      type="button"
-                      className="text-accent hover:underline"
-                      onClick={() => {
-                        const insert = composeObtodo({ text: previewAnnotate.text });
-                        editorRef.current?.applyVirtualChange(previewAnnotate.from, previewAnnotate.to, insert);
-                        setPreviewAnnotate(null);
-                        window.getSelection()?.removeAllRanges();
-                      }}
-                    >
-                      TODO
-                    </button>
-                    <button type="button" className="text-faint hover:underline" onClick={() => setPreviewAnnotate(null)}>
-                      Dismiss
-                    </button>
-                  </div>
-                )}
+                      <button
+                        type="button"
+                        className="text-accent hover:underline"
+                        onClick={() => {
+                          const insert = composeHumanComment(previewAnnotate.text);
+                          editorRef.current?.applyVirtualChange(previewAnnotate.from, previewAnnotate.to, insert);
+                          setPreviewAnnotate(null);
+                          window.getSelection()?.removeAllRanges();
+                        }}
+                      >
+                        Comment
+                      </button>
+                      <button
+                        type="button"
+                        className="text-accent hover:underline"
+                        onClick={() => {
+                          const insert = composeObtodo({ text: previewAnnotate.text });
+                          editorRef.current?.applyVirtualChange(previewAnnotate.from, previewAnnotate.to, insert);
+                          setPreviewAnnotate(null);
+                          window.getSelection()?.removeAllRanges();
+                        }}
+                      >
+                        TODO
+                      </button>
+                      <button type="button" className="text-faint hover:underline" onClick={() => setPreviewAnnotate(null)}>
+                        Dismiss
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-            <div className={cn("ob-split-pane overflow-hidden", layout !== "pdf" && "is-hide")}>
-              <PdfPreview project={project} compile={compile} onJumpToSource={jumpToSourceLine} />
-            </div>
+            )}
+            {layout === "pdf" && (
+              <div className="ob-split-pane overflow-hidden">
+                <PdfPreview project={project} compile={compile} onJumpToSource={jumpToSourceLine} />
+              </div>
+            )}
           </div>
 
           <div
@@ -1399,7 +1527,11 @@ export function PaperEditor({
 
           <div className="relative flex min-h-0 min-w-0 flex-col overflow-hidden">
             <div className="relative min-h-0 flex-1">
-            <div className="ob-editor-container overflow-hidden" style={{ position: "absolute", inset: 0, ...editorStyle }}>
+            <div
+              className="ob-editor-container overflow-hidden"
+              style={{ position: "absolute", inset: 0, ...editorStyle }}
+              onWheelCapture={() => claimScrollSource("editor")}
+            >
             <NestedBundleEditor
               ref={editorRef}
               value={source}
@@ -1449,7 +1581,14 @@ export function PaperEditor({
                 className="h-6 w-16 rounded-full border border-line bg-surface px-2 text-[10px] text-ink outline-none placeholder:text-faint focus:border-accent"
               />
               <Tool title="Comment" accent onClick={() => insertAtSelection(composeHumanComment, composeHumanComment("Add a comment for collaborators"))}><MessageSquareText size={12} /></Tool>
-              <Tool title="Todo" accent onClick={() => insertAtSelection((selected) => composeObtodo({ text: selected || "Next actionable experiment or writing item" }), composeObtodo({ text: "Next actionable experiment or writing item" }))}><ListTodo size={12} /></Tool>
+              <Tool
+                title="New TODO"
+                accent
+                className="ob-new-todo-tool"
+                onClick={() => insertAtSelection((selected) => composeObtodo({ text: selected || "Next actionable experiment or writing item" }), composeObtodo({ text: "Next actionable experiment or writing item" }))}
+              >
+                <ListTodo size={11} />
+              </Tool>
               <div ref={citeBtnRef} className="relative">
                 <Tool title="Insert Citation" accent onClick={() => setCiteOpen((o) => !o)}>
                   <Quote size={12} /><ChevronDown size={9} />
@@ -1539,10 +1678,16 @@ export function PaperEditor({
               type="button"
               title="Hide"
               aria-label="Hide open items"
-              className="ob-press absolute right-1 top-1/2 flex h-3.5 w-3.5 -translate-y-1/2 items-center justify-center rounded-[3px] text-faint hover:bg-surface-2 hover:text-ink"
-              onClick={() => setTodoOpen(false)}
+              className="ob-press absolute right-1 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted hover:bg-surface-2 hover:text-ink"
+              onPointerDown={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setTodoOpen(false);
+              }}
             >
-              <X size={9} strokeWidth={2.5} />
+              <X size={14} strokeWidth={2.5} />
             </button>
           </div>
           <TodoPanel
@@ -1552,12 +1697,13 @@ export function PaperEditor({
             onJump={jumpToTodo}
             onResolve={resolveTodo}
             onPatch={patchTodo}
-            onEditText={editTodoText}
             onInsert={insertBlock}
             onPlace={(todoId, parentId) => {
-              void placeTodoOnMindmapAction(project, todoId, parentId).catch((error) => {
-                setSaveError(error instanceof Error ? error.message : "Could not place the TODO on the primary mindmap.");
-              });
+              void placeTodoOnMindmapAction(project, todoId, parentId)
+                .then(() => pushRemote("OpenBar: place paper TODO on mindmap"))
+                .catch((error) => {
+                  setSaveError(error instanceof Error ? error.message : "Could not place the TODO on the primary mindmap.");
+                });
             }}
           />
           {todos.some((todo) => !todo.id) && (
@@ -1717,16 +1863,30 @@ function bindPointerDrag(onMove: (move: MouseEvent) => void, cursor: string, onD
   window.addEventListener("mouseup", onUp);
 }
 
-function Tool({ title, onClick, children, accent }: { title: string; onClick: () => void; children: React.ReactNode; accent?: boolean }) {
+function Tool({
+  title,
+  onClick,
+  children,
+  accent,
+  className,
+}: {
+  title: string;
+  onClick: () => void;
+  children: React.ReactNode;
+  accent?: boolean;
+  className?: string;
+}) {
   return (
     <button
       type="button"
       title={title}
+      aria-label={title}
       onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
       className={cn(
         "ob-press inline-flex h-7 items-center justify-center gap-1 rounded px-2 text-xs",
         accent ? "text-accent hover:bg-accent/10 font-medium" : "text-muted hover:bg-surface-2 hover:text-ink",
+        className,
       )}
     >
       {children}

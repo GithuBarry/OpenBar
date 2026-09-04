@@ -241,6 +241,9 @@ const obEditorTheme = EditorView.theme({
   ".ob-cm-todo, .ob-cm-todo *": { color: "rgb(var(--warn))" },
   ".cm-line .ob-cm-todo-body, .cm-line .ob-cm-todo-body *": { color: "rgb(var(--ink))" },
   ".ob-cm-comment, .ob-cm-comment *": { color: "rgb(var(--muted))" },
+  ".ob-cm-annotation-brace": {
+    color: "rgb(var(--warn)) !important",
+  },
   ".ob-cm-marker, .ob-cm-marker *": { color: "rgb(var(--accent))" },
   ".ob-cm-cite, .ob-cm-cite *, .ob-cm-ref, .ob-cm-ref *": { color: "rgb(var(--accent) / 0.9)" },
   ".ob-cm-brace-marker": {
@@ -282,7 +285,7 @@ const obNestedTheme = EditorView.theme({
     fontFamily: "var(--font-mono)",
     fontSize: "calc(0.78rem * var(--paper-editor-font-scale, 1))",
     lineHeight: "calc(1.3rem * var(--paper-editor-font-scale, 1))",
-    overflowX: "hidden",
+    overflowX: "clip",
     overflowY: "visible",
     height: "auto !important",
     minWidth: 0,
@@ -319,6 +322,9 @@ const obNestedTheme = EditorView.theme({
   ".ob-cm-todo, .ob-cm-todo *": { color: "rgb(var(--warn))" },
   ".cm-line .ob-cm-todo-body, .cm-line .ob-cm-todo-body *": { color: "rgb(var(--ink))" },
   ".ob-cm-comment, .ob-cm-comment *": { color: "rgb(var(--muted))" },
+  ".ob-cm-annotation-brace": {
+    color: "rgb(var(--warn)) !important",
+  },
   ".ob-cm-marker, .ob-cm-marker *": { color: "rgb(var(--accent))" },
   ".ob-cm-cite, .ob-cm-cite *, .ob-cm-ref, .ob-cm-ref *": { color: "rgb(var(--accent) / 0.9)" },
   ".ob-cm-brace-marker": {
