@@ -20,8 +20,8 @@ export const metadata: Metadata = {
 const DAILY_FLOW = [
   ["Start from the workspace", "A browser agent opens / and uses list_projects, search_projects, or open_project to choose a paper."],
   ["Orient to the project", "After the paper opens, get_project_state returns the manuscript, TODO coverage, maps, skills, and repository instructions."],
-  ["Navigate to the work", "search_project finds paper, TODO, comment, map, or wiki locations. navigate_project opens the matching page or focus."],
-  ["Use the active page", "Paper, mindmap, wiki, and instructions tools act on live editor state, selected cards, page navigation, focus, and visible actions."],
+  ["Navigate to the work", "search_project finds paper, TODO, comment, or map locations. navigate_project opens the matching page or focus."],
+  ["Use the active page", "Paper, mindmap, and instructions tools act on live editor state, selected cards, page navigation, focus, and visible actions."],
   ["Compile for a handoff", "Use the PDF when checking layout, page budget, and the exact paper artifact shared with collaborators."],
 ] as const;
 
@@ -94,7 +94,7 @@ export default async function AboutPage() {
           <div className="rounded-xl border border-line bg-canvas p-6">
             <div className="flex items-center gap-2 text-accent"><LockKeyhole size={17} /><span className="text-sm font-semibold">Agent Ready</span></div>
             <p className="mt-3 text-sm leading-6 text-muted">
-              Agent Ready reports browser WebMCP registration on the active project page. The home page registers workspace tools. Project pages add the four project context tools, including complete project metadata editing. Paper, mindmap, wiki, and instructions pages add tools for the page currently open.
+              Agent Ready reports browser WebMCP registration on the active project page. The home page registers workspace tools. Project pages add the four project context tools, including complete project metadata editing. Paper, mindmap, and instructions pages add tools for the page currently open.
             </p>
             <p className="mt-4 text-sm leading-6 text-muted">
               A compatible browser agent follows the workspace journey through this active catalog. WebMCP handles live editor state, selected cards, navigation, focus, and visible page actions. Page-local tools leave the catalog as the page changes. Set <code className="rounded bg-surface-2 px-1 py-0.5 text-[12px]">OPENBARRY_CONTENT</code> when the content folder is mounted elsewhere.
@@ -108,7 +108,7 @@ export default async function AboutPage() {
           <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-accent">How state stays durable</p>
           <h2 className="mt-3 font-serif text-3xl font-semibold tracking-tight">Research work stays in files you can inspect and edit.</h2>
           <p className="mt-4 max-w-2xl text-sm leading-6 text-muted">
-            Manuscripts, project metadata, mindmaps, wiki pages, and source records are represented in the project directory. TeX owns TODO identity, text, and completion, while each map owns card placement, labels, refs, progress, and appearance. Device preferences such as theme, sidebar visibility, and the local planning-map viewpoint remain personal browser settings.
+            Manuscripts, project metadata, mindmaps, and source records are represented in the project directory. TeX owns TODO identity, text, and completion, while each map owns card placement, labels, refs, progress, and appearance. Device preferences such as theme, sidebar visibility, and the local planning-map viewpoint remain personal browser settings.
           </p>
         </div>
         <aside className="rounded-xl border border-line bg-surface p-6">

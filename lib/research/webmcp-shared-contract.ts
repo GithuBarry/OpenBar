@@ -112,7 +112,7 @@ const TOOL_META: Record<SharedToolName, { title: string; description: string }> 
   search_project: {
     title: "Search the project",
     description:
-      "Search paper headings, TeX source, TODO titles and details, comment text, mindmap titles, labels, refs, shared TODO text, and wiki pages. Returns ids and hrefs that navigate_project can open. Does not modify project files.",
+      "Search paper headings, TeX source, TODO titles and details, comment text, mindmap titles, labels, and refs. Returns ids and hrefs that navigate_project can open. Does not modify project files.",
   },
   navigate_project: {
     title: "Navigate the project UI",

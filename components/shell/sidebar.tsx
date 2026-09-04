@@ -53,7 +53,6 @@ export function Sidebar({
     ? [
         { href: `${base}/paper`, label: "Paper", icon: "drafts" as const },
         { href: `${base}/mindmap`, label: "Mindmap", icon: "mindmap" as const },
-        { href: `${base}/wiki`, label: "Wiki", icon: "notes" as const, group: "more" as const },
         ...(!publicDemo ? [{ href: `${base}/instructions`, label: "Instructions", icon: "overview" as const, group: "more" as const }] : []),
       ]
     : [

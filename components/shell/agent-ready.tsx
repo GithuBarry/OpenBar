@@ -11,17 +11,16 @@ import {
 } from "@/lib/research/webmcp-register";
 import { cn } from "@/lib/utils";
 
-const SURFACE_LABEL: Record<WebMcpSurface, string> = {
+const SURFACE_LABEL: Partial<Record<WebMcpSurface, string>> = {
   workspace: "Workspace",
   shared: "Read project",
   paper: "Paper",
   mindmap: "Mindmap",
-  wiki: "Wiki",
   instructions: "Instructions",
   setup: "Setup",
 };
 
-const SURFACE_ORDER: WebMcpSurface[] = ["workspace", "shared", "paper", "mindmap", "wiki", "instructions", "setup"];
+const SURFACE_ORDER: WebMcpSurface[] = ["workspace", "shared", "paper", "mindmap", "instructions", "setup"];
 
 export function AgentReadyIndicator() {
   const [catalog, setCatalog] = useState<WebMcpCatalogEntry[]>([]);
@@ -103,7 +102,7 @@ export function AgentReadyIndicator() {
           {ready ? (
             grouped.map(({ surface, tools }) => (
               <div key={surface} className="ob-agent-ready-group">
-                <p>{SURFACE_LABEL[surface]}</p>
+                <p>{SURFACE_LABEL[surface] || surface}</p>
                 <ul>
                   {tools.map((tool) => (
                     <li key={tool.name} title={tool.description}>{tool.title}</li>

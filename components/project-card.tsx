@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
-import { BookOpenText, Edit3, FileText, Network, Plus, X } from "lucide-react";
+import { BookOpenText, Edit3, Network, Plus, X } from "lucide-react";
 
 import { saveProjectAction } from "@/app/actions";
 import { safeUrl } from "@/lib/safe-url";
@@ -424,7 +424,6 @@ export function ProjectCard({
           <nav className="mt-2.5 flex flex-wrap gap-1.5 text-xs">
             <Quick href={`/p/${project.slug}/paper`} icon={<BookOpenText size={13} />} label="Paper" />
             <Quick href={`/p/${project.slug}/mindmap`} icon={<Network size={13} />} label="Mindmap" />
-            <Quick href={`/p/${project.slug}/wiki`} icon={<FileText size={13} />} label="Wiki" />
           </nav>
       </div>
       </div>
