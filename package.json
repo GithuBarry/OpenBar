@@ -11,6 +11,8 @@
     "build": "next build --webpack",
     "start": "node .next/standalone/server.js",
     "typecheck": "tsc --noEmit",
+    "doctor": "tsx scripts/openbar.ts doctor --all",
+    "openbar": "tsx scripts/openbar.ts",
     "test": "tsx --test test/*.test.ts",
     "smoke": "tsx scripts/smoke-frontend.ts",
     "smoke:http": "tsx scripts/smoke-http.ts",
