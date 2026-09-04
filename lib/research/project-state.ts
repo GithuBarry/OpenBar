@@ -13,7 +13,7 @@ import {
   type ProjectSkill,
 } from "@/lib/research/project-skills";
 import type { CurrentLocation, ProjectStateQuery } from "@/lib/research/webmcp-shared-contract";
-import { getEditableTexPaper, getMindmap, getProject, listMindmaps, listWiki, projectContentDir } from "@/lib/store";
+import { getEditableTexPaper, getMindmap, getProject, listMindmaps, projectContentDir } from "@/lib/store";
 import { DRAFT_MINDMAP_ID, texPaths, type PaperSection, type TexPaper } from "@/lib/tex-project/project";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import type { Mindmap, Project, WikiPage } from "@/lib/types";
@@ -413,12 +413,7 @@ export function buildProjectState(input: {
         nodeCount: map.nodes.length,
       };
     }),
-    wiki: (input.wiki || []).map((page) => ({
-      slug: page.slug,
-      title: page.title,
-      href: `/p/${encodeURIComponent(slug)}/wiki/${encodeURIComponent(page.slug)}`,
-      updatedAt: page.updatedAt,
-    })),
+    wiki: [],
     recent: deriveRecentActivity({
       slug,
       outline: paper?.outline || [],
@@ -475,7 +470,7 @@ export function getProjectState(slug: string, current?: CurrentLocation): Projec
     bundle: bundle ? { rootFile: bundle.rootFile, revision: bundle.revision, bundleHash: bundle.bundleHash } : undefined,
     manuscriptDir: paths.manuscriptDir,
     mindmaps: listMindmaps(slug),
-    wiki: listWiki(slug),
+    wiki: [],
     skills,
     agentsMd: findAgentsMd(dir),
     workspaceAgentsMd: findAgentsMd(workspaceRoot()),
@@ -524,7 +519,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
       todos: todoRows(paper?.todos || []),
       recent: state.recent,
       mindmaps: maps,
-      wiki: state.wiki,
+      wiki: [],
       skills: state.skills,
       agentsMd: state.agentsMd,
       workspaceAgentsMd: state.workspaceAgentsMd,
@@ -557,7 +552,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
       mapId: item.mapId,
     })),
     mindmaps: maps,
-    wiki: state.wiki.map((page) => ({ slug: page.slug, title: page.title, href: page.href })),
+    wiki: [],
     skills: state.skills.map((skill) => ({ id: skill.id, name: skill.name, source: skill.source })),
     agentsMd: state.agentsMd && { path: state.agentsMd.path, hash: state.agentsMd.hash },
     workspaceAgentsMd: state.workspaceAgentsMd && { path: state.workspaceAgentsMd.path, hash: state.workspaceAgentsMd.hash },
@@ -671,18 +666,6 @@ export function searchProjectContent(input: {
     }
   }
 
-  for (const page of input.wiki || []) {
-    const blob = `${page.title}\n${page.body}`;
-    if (!blob.toLowerCase().includes(needle)) continue;
-    hits.push({
-      id: `wiki:${page.slug}`,
-      kind: "wiki",
-      title: page.title,
-      snippet: snippetAround(blob, query),
-      href: `/p/${encodeURIComponent(slug)}/wiki/${encodeURIComponent(page.slug)}`,
-    });
-  }
-
   const seen = new Set<string>();
   return hits.filter((hit) => {
     if (seen.has(hit.id)) return false;
@@ -707,7 +690,7 @@ export function searchProject(slug: string, query: string): SearchHit[] {
     paper: summary,
     paperSource: paper?.source,
     mindmaps: listMindmaps(slug),
-    wiki: listWiki(slug),
+    wiki: [],
   });
 }
 
@@ -744,12 +727,11 @@ export function resolveProjectNavigation(slug: string, input: { id?: string; hre
     const parsed = parseProjectHref(href);
     if (!parsed || parsed.slug !== slug) return null;
     if (parsed.kind === "mindmap" && parsed.mapId && !getMindmap(slug, parsed.mapId)) return null;
-    if (parsed.kind === "wiki" && parsed.wikiPage && !listWiki(slug).some((page) => page.slug === parsed.wikiPage)) return null;
+    if (parsed.kind === "wiki") return null;
     return { href };
   }
   const id = input.id?.trim();
   if (!id) return null;
-  const base = `/p/${encodeURIComponent(slug)}`;
   const state = getProjectState(slug);
   if (!state) return null;
   if (id.startsWith("paper:todo:")) {
@@ -788,12 +770,7 @@ export function resolveProjectNavigation(slug: string, input: { id?: string; hre
     if (!nodeId || !map.nodes.some((node) => node.id === nodeId)) return null;
     return { href: mindmapHref(slug, map.id, nodeId) };
   }
-  if (id.startsWith("wiki:")) {
-    const page = id.slice(5);
-    return listWiki(slug).some((item) => item.slug === page)
-      ? { href: `${base}/wiki/${encodeURIComponent(page)}` }
-      : null;
-  }
+  if (id.startsWith("wiki:")) return null;
 
   if (state.paper?.todos.some((todo) => todo.id === id)) return { href: paperHref(slug, id) };
   const comment = state.paper?.comments.find((item) => item.id === id);
