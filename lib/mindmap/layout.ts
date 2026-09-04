@@ -30,7 +30,7 @@ export const VERTICAL_GAP = 12;
 
 const PAD_X = 20;
 const PAD_Y = 14;
-const MIN_WIDTH = 72;
+const MIN_WIDTH = 96;
 const MIN_ROOT_WIDTH = 96;
 const TITLE_PX = 12.5;
 const TITLE_LH = 16;
@@ -58,7 +58,7 @@ function wrappedSize(text: string, maxInner: number, fontPx: number, linePx: num
   return { width, height };
 }
 
-export function nodeDimensions(node: MindmapNode, displayText?: string): Dimensions {
+export function nodeDimensions(node: MindmapNode, displayText?: string, forcedWidth?: number): Dimensions {
   const isRoot = node.parentId === null;
   const maxW = isRoot ? ROOT_WIDTH : NODE_WIDTH;
   const maxInner = maxW - PAD_X;
@@ -76,15 +76,23 @@ export function nodeDimensions(node: MindmapNode, displayText?: string): Dimensi
   const [titleLine, ...detailLines] = source.split("\n");
   const title = wrappedSize(titleLine || "Untitled topic", maxInner, titlePx, titleLh);
   const detailText = detailLines.join("\n").trim();
-  const detail = detailText
+  const naturalDetail = detailText
     ? wrappedSize(detailText, maxInner, node.todoId ? TODO_TITLE_PX : DETAIL_PX, node.todoId ? TODO_TITLE_LH : DETAIL_LH)
     : { width: 0, height: 0 };
+  const naturalInnerW = Math.max(title.width, naturalDetail.width);
+  const minimumWidth = isRoot ? MIN_ROOT_WIDTH : MIN_WIDTH;
+  const width = forcedWidth === undefined
+    ? Math.min(maxW, Math.max(minimumWidth, Math.ceil(naturalInnerW + PAD_X)))
+    : Math.min(maxW, Math.max(minimumWidth, Math.ceil(forcedWidth)));
+  const actualInner = Math.max(titlePx * CHAR, width - PAD_X);
+  const actualTitle = wrappedSize(titleLine || "Untitled topic", actualInner, titlePx, titleLh);
+  const detail = detailText
+    ? wrappedSize(detailText, actualInner, node.todoId ? TODO_TITLE_PX : DETAIL_PX, node.todoId ? TODO_TITLE_LH : DETAIL_LH)
+    : { width: 0, height: 0 };
   const meta = node.tags?.length || node.progress !== undefined ? META_H : 0;
-  const innerW = Math.max(title.width, detail.width);
-  const width = Math.min(maxW, Math.max(isRoot ? MIN_ROOT_WIDTH : MIN_WIDTH, Math.ceil(innerW + PAD_X)));
   const height = Math.max(
     isRoot ? ROOT_HEIGHT : NODE_HEIGHT,
-    Math.ceil(PAD_Y + title.height + (detail.height ? 4 + detail.height : 0) + meta),
+    Math.ceil(PAD_Y + actualTitle.height + (detail.height ? 4 + detail.height : 0) + meta),
   );
   return { width, height };
 }

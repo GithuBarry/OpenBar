@@ -856,6 +856,27 @@ button, input, textarea, select { font: inherit; }
 .ob-format-bar {
   transition: background-color var(--duration-ui) ease, border-color var(--duration-ui) ease, opacity var(--duration-ui) ease;
 }
+.ob-new-todo-tool {
+  width: 0;
+  max-width: 0;
+  height: 1.5rem;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: width 140ms ease, max-width 140ms ease, opacity 140ms ease, padding 140ms ease;
+}
+.ob-format-bar:hover .ob-new-todo-tool,
+.ob-format-bar:focus-within .ob-new-todo-tool,
+.ob-new-todo-tool:focus-visible {
+  width: 1.75rem;
+  max-width: 1.75rem;
+  padding-left: 0.35rem !important;
+  padding-right: 0.35rem !important;
+  opacity: 1;
+  pointer-events: auto;
+}
 .ob-home-card {
   opacity: 1;
   transform: translateY(0);
@@ -1093,14 +1114,14 @@ button, input, textarea, select { font: inherit; }
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid rgb(var(--line));
   border-left: 2px solid var(--mind-node-accent);
   border-radius: 8px;
   background: rgb(var(--surface));
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 3px 8px rgb(0 0 0 / 0.04);
   cursor: pointer;
-  padding: 0.4rem 2.15rem 0.35rem 0.55rem;
+  padding: 0.4rem 0.55rem 0.35rem;
   user-select: none;
   transition: border-color 120ms ease, box-shadow 120ms var(--ease-out);
 }
@@ -1123,7 +1144,7 @@ button, input, textarea, select { font: inherit; }
 .mindmap-node-orphan { border-style: dashed; border-color: rgb(var(--warn) / 0.65); }
 .mindmap-node-note { border-style: dashed; background: rgb(var(--surface-2)); }
 .mindmap-node-callout { border-color: var(--mind-node-accent); background: color-mix(in srgb, var(--mind-node-accent) 9%, rgb(var(--surface))); }
-.mindmap-node-editing { cursor: text; padding: 0.3rem 2.15rem 0.3rem 0.35rem; user-select: text; }
+.mindmap-node-editing { cursor: text; padding: 0.3rem 0.35rem; user-select: text; }
 .mindmap-node-drop-target {
   border-color: var(--mind-node-accent);
   box-shadow: 0 0 0 2px rgb(var(--accent) / 0.35), 0 5px 14px rgb(0 0 0 / 0.09);
@@ -1147,8 +1168,8 @@ button, input, textarea, select { font: inherit; }
 }
 .mindmap-collapse-toggle {
   position: absolute;
-  top: 0.3rem;
-  right: 0.3rem;
+  top: 50%;
+  right: -1.9rem;
   display: inline-flex;
   min-width: 1.55rem;
   height: 1.35rem;
@@ -1163,6 +1184,10 @@ button, input, textarea, select { font: inherit; }
   font-family: var(--font-mono);
   font-size: 0.58rem;
   line-height: 1;
+  opacity: 0;
+  pointer-events: auto;
+  transform: translateY(-50%);
+  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease, background-color 120ms ease;
 }
 .mindmap-collapse-toggle:hover,
 .mindmap-collapse-toggle:focus-visible {
@@ -1170,40 +1195,48 @@ button, input, textarea, select { font: inherit; }
   background: rgb(var(--surface));
   color: rgb(var(--accent));
   outline: none;
+  opacity: 1;
+  transform: translateY(-50%);
+}
+.mindmap-collapse-toggle::before {
+  position: absolute;
+  inset: -0.45rem -0.4rem;
+  content: "";
 }
 .mindmap-node-title {
   color: rgb(var(--ink));
   display: block;
-  overflow: visible;
+  min-width: 0;
   font-size: 0.78rem;
   font-weight: 600;
   line-height: 1.28;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
+  white-space: pre-wrap;
 }
 .mindmap-node-todo-text {
   display: block;
+  min-width: 0;
   margin: 0;
   color: rgb(var(--ink));
   font-size: 0.7rem;
   font-weight: 400;
   line-height: 1.4;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
+  white-space: pre-wrap;
 }
 .mindmap-node-root .mindmap-node-title { font-family: var(--font-serif); font-size: 0.92rem; font-weight: 650; }
 .mindmap-node-detail {
   display: block;
+  min-width: 0;
   margin: 0.2rem 0 0;
-  overflow: visible;
   color: rgb(var(--muted));
   font-size: 0.66rem;
   line-height: 1.32;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
+  white-space: pre-wrap;
 }
 .mindmap-node-section {
   margin: 0.25rem 0 0;

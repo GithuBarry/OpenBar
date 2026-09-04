@@ -1251,7 +1251,7 @@ export function MindmapEditor({
   const selectedRefs = selected?.refs || [];
   const paperSourceHash = paperState?.paper?.sourceHash;
   const selectedParts = selected && !selected.todoId
-    ? ordinaryMindmapCardContent(selected)
+    ? editableCardContent(selected)
     : { title: "", body: "" };
   const selectedCardContent = selected ? cardContentForNodeWithPaperState(selected, paperState) : undefined;
   const projectLabels = useMemo(() => {
@@ -2263,9 +2263,22 @@ function createCanvasLayout(
     nodes: visibleNodes.map((node) => ({ ...node, collapsed: collapsedIds.has(node.id) })),
   };
   const { nodeById, childrenByParent: children } = indexMindmap(visibleMindmap);
+  const displayTextById = new Map(visibleNodes.map((node) => [node.id, paperTodoText(node, paperState)]));
+  const columnWidths = new Map<number, number>();
+  for (const node of visibleNodes) {
+    const natural = nodeDimensions(node, displayTextById.get(node.id));
+    const depth = mindmapNodeDepth(node.id, nodeById, visibleMindmap.rootId);
+    if (depth === null) continue;
+    columnWidths.set(depth, Math.max(columnWidths.get(depth) || 0, natural.width));
+  }
   const dimensions = new Map<string, Dimensions>();
   for (const node of visibleNodes) {
-    const size = nodeDimensions(node, paperTodoText(node, paperState));
+    const depth = mindmapNodeDepth(node.id, nodeById, visibleMindmap.rootId);
+    const size = nodeDimensions(
+      node,
+      displayTextById.get(node.id),
+      depth === null ? undefined : columnWidths.get(depth),
+    );
     const extra = extraHeight?.get(node.id) || 0;
     dimensions.set(node.id, extra ? { ...size, height: size.height + extra } : size);
   }
@@ -2297,6 +2310,24 @@ function createCanvasLayout(
       y: rowTop,
     });
   }
+  const widthsByPosition = new Map<number, number>();
+  for (const node of visibleNodes) {
+    const point = positions.get(node.id);
+    const size = dimensions.get(node.id);
+    if (!point || !size) continue;
+    widthsByPosition.set(point.x, Math.max(widthsByPosition.get(point.x) || 0, size.width));
+  }
+  for (const node of visibleNodes) {
+    const point = positions.get(node.id);
+    const size = dimensions.get(node.id);
+    const width = point ? widthsByPosition.get(point.x) : undefined;
+    if (!point || !size || width === undefined || width === size.width) continue;
+    const resized = nodeDimensions(node, displayTextById.get(node.id), width);
+    dimensions.set(node.id, {
+      ...resized,
+      height: resized.height + Math.max(0, (extraHeight?.get(node.id) || 0)),
+    });
+  }
   // Collapsed descendants remain connected to their parent and stay hidden.
   // Disconnected nodes remain visible in the recovery row so malformed maps
   // stay recoverable from the editor.
@@ -2312,6 +2343,25 @@ function createCanvasLayout(
     return point.y + size.height + 120;
   }) : [640]));
   return { nodes, nodeById, children, reachable, recoveryAnchorId, positions, dimensions, width, height };
+}
+
+function mindmapNodeDepth(
+  id: string,
+  nodeById: Map<string, MindmapNode>,
+  rootId: string,
+): number | null {
+  let current = nodeById.get(id);
+  let depth = 0;
+  const seen = new Set<string>();
+  while (current) {
+    if (seen.has(current.id)) return null;
+    seen.add(current.id);
+    if (current.id === rootId) return depth;
+    if (!current.parentId) return null;
+    current = nodeById.get(current.parentId);
+    depth += 1;
+  }
+  return null;
 }
 
 function countDescendantsByNode(mindmap: Mindmap): Map<string, number> {
@@ -2373,10 +2423,6 @@ function paperTodoFor(node: MindmapNode, paperState?: ProjectState | null) {
   return paperState?.paper?.todos.find((todo) => todo.id === node.todoId);
 }
 
-function paperTodoText(node: MindmapNode, paperState?: ProjectState | null): string {
-  return joinMindmapCardContent(cardContentForNodeWithPaperState(node, paperState));
-}
-
 function firstLine(text: string) {
   return splitCardText(text).title.trim();
 }
@@ -2419,6 +2465,10 @@ function cardContentForNodeWithPaperState(node: MindmapNode, paperState?: Projec
     title: fallback.title || `Missing paper TODO: ${node.todoId}`,
     body: fallback.body,
   };
+}
+
+function paperTodoText(node: MindmapNode, paperState?: ProjectState | null): string {
+  return joinMindmapCardContent(cardContentForNodeWithPaperState(node, paperState));
 }
 
 function commentRefId(comment: ProjectStateComment): string | undefined {
