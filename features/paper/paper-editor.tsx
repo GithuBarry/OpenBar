@@ -92,7 +92,7 @@ import {
 export type { PaperEditorSection };
 
 type LayoutMode = "document" | "pdf" | "pdf-only";
-type RemoteSaveState = "checking" | "local" | "saving" | "saved" | "changed" | "error";
+type RemoteSaveState = "checking" | "local" | "saving" | "saved" | "changed" | "unavailable" | "error";
 
 const AUTOSAVE_DELAY = 600;
 const COMPANION_RENDER_DELAY = 200;
@@ -173,7 +173,7 @@ export function PaperEditor({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveConflict, setSaveConflict] = useState(false);
-  const [remoteSaveState, setRemoteSaveState] = useState<RemoteSaveState>("checking");
+  const [remoteSaveState, setRemoteSaveState] = useState<RemoteSaveState>("local");
   const [remoteSaveError, setRemoteSaveError] = useState<string | null>(null);
   const [agentNotice, setAgentNotice] = useState<string | null>(null);
   const [expectedSections, setExpectedSections] = useState(initialSections);
@@ -250,6 +250,7 @@ export function PaperEditor({
   const sourceSegmentsRef = useRef(initialBundle.segments.map(({ filePath, editable }) => ({ filePath, editable })));
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const remoteSavePendingRef = useRef(false);
+  const remoteStatusRequestRef = useRef(0);
 
   const pushRemote = useCallback(async (message: string) => {
     setRemoteSaveState("saving");
@@ -272,19 +273,28 @@ export function PaperEditor({
     }
   }, [project]);
 
-  const refreshRemoteStatus = useCallback(async () => {
+  const refreshRemoteStatus = useCallback(async (refreshRemote = true) => {
+    const requestId = ++remoteStatusRequestRef.current;
     setRemoteSaveState("checking");
     setRemoteSaveError(null);
+    let timeoutId: number | undefined;
     try {
-      const status = await getProjectGitStatusAction(project, true);
+      const timeout = new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(() => reject(new Error("Remote status check timed out; local editing is still available.")), 5_000);
+      });
+      const status = await Promise.race([
+        getProjectGitStatusAction(project, refreshRemote),
+        timeout,
+      ]);
+      if (requestId !== remoteStatusRequestRef.current) return;
       if (!status.isGitRepo) {
-        setRemoteSaveState("local");
-        setRemoteSaveError("This project has no Git repository.");
+        setRemoteSaveState("unavailable");
+        setRemoteSaveError("Remote status unavailable: this project has no Git repository.");
         return;
       }
       if (status.error) {
-        setRemoteSaveState("error");
-        setRemoteSaveError(status.error);
+        setRemoteSaveState("unavailable");
+        setRemoteSaveError(`Remote status unavailable: ${status.error}`);
         return;
       }
       if ((status.behind || 0) > 0) {
@@ -294,13 +304,18 @@ export function PaperEditor({
       }
       setRemoteSaveState((status.ahead || 0) > 0 || !status.isClean ? "local" : "saved");
     } catch (error) {
-      setRemoteSaveState("error");
-      setRemoteSaveError(error instanceof Error ? error.message : "Could not check the remote.");
+      if (requestId !== remoteStatusRequestRef.current) return;
+      setRemoteSaveState("unavailable");
+      setRemoteSaveError(`Remote status unavailable: ${error instanceof Error ? error.message : "Could not check the remote."}`);
+    } finally {
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
     }
   }, [project]);
 
   useEffect(() => {
-    void refreshRemoteStatus();
+    // Opening the editor only needs local Git state. A remote fetch is an
+    // explicit retry operation and must never delay the manuscript view.
+    void refreshRemoteStatus(false);
   }, [refreshRemoteStatus]);
 
   const bookmarks = useMemo(() => listBookmarks(inlineBundleIncludes(renderSource)), [renderSource]);
@@ -1020,9 +1035,13 @@ export function PaperEditor({
       activeHeadingKey: activeBookmarkRef.current || lastHeadingKeyRef.current,
       compileState: {
         state: compileRef.current.state,
+        jobId: compileRef.current.jobId,
         sourceHash: compileRef.current.sourceHash,
+        stale: compileRef.current.stale,
         message: compileRef.current.message,
         diagnostics: compileRef.current.diagnostics,
+        parsedDiagnostics: compileRef.current.parsedDiagnostics,
+        rawLog: compileRef.current.rawLog,
         completedAt: compileRef.current.completedAt,
       },
       bibliographyKeys: (bibliographyRef.current || []).map((entry) => entry.key),
@@ -1076,7 +1095,7 @@ export function PaperEditor({
           diagnostics: status.diagnostics || [],
         });
       }
-      return { status: status.state, sourceHash: status.sourceHash };
+      return { status: status.state, jobId: status.jobId, sourceHash: status.sourceHash };
     },
     lint: () => lintLivePaper(liveSource()),
     navigate: (href) => {
@@ -1137,15 +1156,17 @@ export function PaperEditor({
     : uploading
       ? "Uploading…"
       : saveConflict
-        ? "Conflict"
-        : remoteSaveState === "checking"
-          ? "Checking remote…"
-          : remoteSaveState === "saving"
-            ? "Saving remotely…"
-            : remoteSaveState === "changed"
-              ? "Remote changed"
-              : remoteSaveState === "error"
-                ? "Remote save failed"
+          ? "Conflict"
+          : remoteSaveState === "checking"
+            ? "Checking remote…"
+            : remoteSaveState === "saving"
+              ? "Saving remotely…"
+              : remoteSaveState === "changed"
+                ? "Remote changed"
+                : remoteSaveState === "unavailable"
+                  ? "Remote unavailable"
+                : remoteSaveState === "error"
+                  ? "Remote save failed"
                 : isSaved && remoteSaveState === "saved"
                   ? "Remote saved"
                   : isSaved
@@ -1226,7 +1247,7 @@ export function PaperEditor({
           <span className="inline-flex min-w-0 items-center gap-1 text-[11px] text-faint">
             {saving || uploading ? (
               <LoaderCircle size={12} className="shrink-0 animate-spin text-accent" />
-            ) : saveConflict || remoteSaveState === "changed" || remoteSaveState === "error" ? (
+            ) : saveConflict || remoteSaveState === "changed" || remoteSaveState === "unavailable" || remoteSaveState === "error" ? (
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" />
             ) : isSaved ? (
               <Check size={12} className="shrink-0 text-ok" />
@@ -1296,6 +1317,15 @@ export function PaperEditor({
             </button>
           )}
 
+          {compile.stale && (
+            <span
+              className="inline-flex h-7 shrink-0 items-center rounded-md border border-warn/40 bg-warn/10 px-1.5 text-[11px] font-medium text-warn"
+              title="The PDF was built from an older manuscript source revision. Recompile to refresh it."
+            >
+              PDF stale
+            </span>
+          )}
+
           <button
             type="button"
             onClick={() => { void requestCompile(); }}
@@ -1336,11 +1366,11 @@ export function PaperEditor({
             type="button"
             className="btn-outline shrink-0 px-2 py-0.5 text-[11px]"
             onClick={() => {
-              if (remoteSaveState === "changed") void refreshRemoteStatus();
+              if (remoteSaveState === "changed" || remoteSaveState === "unavailable") void refreshRemoteStatus();
               else void pushRemote("OpenBar: save paper");
             }}
           >
-            {remoteSaveState === "changed" ? "Check again" : "Retry remote save"}
+            {remoteSaveState === "changed" || remoteSaveState === "unavailable" ? "Check again" : "Retry remote save"}
           </button>
         </div>
       ) : null}

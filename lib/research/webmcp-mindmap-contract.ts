@@ -7,7 +7,7 @@ import { MINDMAP_WEBMCP_TOOL_NAMES, parseWebMcpArgs, unknownWebMcpArgument, type
 import type { SharedWebMcpActions, CurrentLocation } from "./webmcp-shared-contract";
 import { ARTIFACT_KINDS, isArtifactKind } from "./artifact-link";
 import { safeUrl } from "@/lib/safe-url";
-import type { ArtifactRef, MindmapNode, MindmapNodeShape } from "@/lib/types";
+import type { ArtifactRef, Mindmap, MindmapNode, MindmapNodeShape } from "@/lib/types";
 import { MAX_MINDMAP_LABELS, MAX_MINDMAP_LABEL_CHARS, normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import { isPrimaryMindmap as isPrimaryMindmapRole } from "./todo-map";
 
@@ -23,7 +23,7 @@ export type LiveMindmapNode = Pick<
 > & { completed?: boolean };
 
 export type MindmapPresentationPatch = Pick<MindmapNode, "contentFormat" | "shape" | "color"> & {
-  progress?: number | null;
+  progress?: MindmapNode["progress"] | null;
 };
 
 export type MindmapNodeContentPatch = {
@@ -34,6 +34,40 @@ export type MindmapNodeContentPatch = {
   metadata?: Record<string, unknown> | null;
   presentation?: MindmapPresentationPatch;
 };
+
+export type MindmapTodoConversionLocal = {
+  paper: "saved" | "failed";
+  map: "saved" | "failed" | "not_attempted";
+  message?: string;
+};
+
+export type MindmapTodoConversionRemote = {
+  status: "pushed" | "pending" | "failed" | "unconfigured";
+  message: string;
+  code?: string;
+  commitHash?: string;
+  retryable: boolean;
+  credentialNeeded?: boolean;
+};
+
+export type MindmapTodoConversion = {
+  todoId: string;
+  mindmap: Mindmap;
+  local: MindmapTodoConversionLocal;
+  remote: MindmapTodoConversionRemote;
+};
+
+export type MindmapTodoConversionFailure = {
+  ok: false;
+  code: string;
+  message: string;
+  retryable: boolean;
+  todoId?: string;
+  local: MindmapTodoConversionLocal;
+  remote: MindmapTodoConversionRemote;
+};
+
+export type MindmapTodoConversionResult = OperationResult<MindmapTodoConversion> | MindmapTodoConversionFailure;
 
 export type LiveMindmapSnapshot = {
   project: string;
@@ -60,7 +94,7 @@ export type MindmapWebMcpHost = {
   setActivityHighlight: (since?: string) => void;
   placeTodoCard?: (todoId: string, parentId: string, expectedRevision?: number) => string | Promise<string>;
   hasTodo?: (todoId: string) => boolean;
-  convertCardToTodo?: (id: string, sectionTitle: string, expectedRevision?: number) => string | Promise<string>;
+  convertCardToTodo?: (id: string, sectionId: string, expectedRevision?: number, requestId?: string) => MindmapTodoConversionResult | Promise<MindmapTodoConversionResult>;
   completeTodo?: (todoId: string) => void | Promise<void>;
   reopenTodo?: (todoId: string) => void | Promise<void>;
   focusTodoInPaper?: (todoId: string) => void;
@@ -131,7 +165,7 @@ export const MINDMAP_WEBMCP_TOOL_SCHEMAS: Record<MindmapWebMcpToolName, JsonSche
           contentFormat: { type: "string", enum: ["plain", "markdown", "tex"] },
           shape: { type: "string", enum: ["branch", "leaf", "note", "callout"] },
           color: { type: "string" },
-          progress: { type: ["number", "null"], minimum: 0, maximum: 100 },
+          progress: { type: ["integer", "null"], minimum: 0, maximum: 6 },
         },
         additionalProperties: false,
       },
@@ -153,10 +187,11 @@ export const MINDMAP_WEBMCP_TOOL_SCHEMAS: Record<MindmapWebMcpToolName, JsonSche
   convert_card_to_todo: objectSchema(
     {
       id: { type: "string" },
-      sectionTitle: { type: "string" },
+      sectionId: { type: "string", description: "Stable section id from the paper outline." },
       expectedRevision: { type: "integer", minimum: 0 },
+      requestId: { type: "string", description: "Stable retry key. Reusing it returns the original local result." },
     },
-    ["id", "sectionTitle", "expectedRevision"],
+    ["id", "sectionId", "expectedRevision"],
   ),
   complete_todo: objectSchema({ todoId: { type: "string" } }, ["todoId"]),
   reopen_todo: objectSchema({ todoId: { type: "string" } }, ["todoId"]),
@@ -295,10 +330,10 @@ function parsePresentationArg(
   if (rec.progress !== undefined) {
     if (rec.progress === null) {
       patch.progress = null;
-    } else if (typeof rec.progress !== "number" || !Number.isFinite(rec.progress) || rec.progress < 0 || rec.progress > 100) {
-      return failResult("invalid_arguments", "progress must be a number from 0 to 100, or null to hide.", false);
+    } else if (typeof rec.progress !== "number" || !Number.isInteger(rec.progress) || rec.progress < 0 || rec.progress > 6) {
+      return failResult("invalid_arguments", "progress must be an integer from 0 to 6, or null to hide.", false);
     } else {
-      patch.progress = Math.round(rec.progress * 10) / 10;
+      patch.progress = rec.progress as MindmapNode["progress"];
     }
   }
   if (Object.keys(patch).length === 0) return failResult("invalid_arguments", "presentation is empty.", false);
@@ -488,10 +523,22 @@ export async function executeMindmapWebMcpTool(
       const rev = assertRevision(args.expectedRevision, snapshot.revision);
       if (!rev.ok) return rev;
       if (!hasNode(args.id)) return failResult("invalid_arguments", `Unknown mindmap node "${String(args.id ?? "")}".`, false);
-      if (typeof args.sectionTitle !== "string" || !args.sectionTitle.trim()) return failResult("invalid_arguments", "sectionTitle is required.", false);
+      if (typeof args.sectionId !== "string" || !args.sectionId.trim()) return failResult("invalid_arguments", "sectionId is required.", false);
       if (!host.convertCardToTodo) return failResult("capability_unavailable", "This map cannot convert cards to TODOs.", false);
-      const result = await runPersistedMutation(host, () => host.convertCardToTodo!(String(args.id), String(args.sectionTitle), snapshot.revision));
-      return result.ok ? okResult({ id: args.id, todoId: result.value }, { revision: result.revision, diskHash: result.diskHash }) : result;
+      let result: MindmapTodoConversionResult;
+      try {
+        result = await host.convertCardToTodo!(String(args.id), String(args.sectionId), snapshot.revision, typeof args.requestId === "string" ? args.requestId : undefined);
+      } catch (error) {
+        return mutationFailure(host, error);
+      }
+      if (!result.ok) return result;
+      return okResult(
+        { id: args.id, todoId: result.value.todoId, local: result.value.local, remote: result.value.remote },
+        {
+          revision: result.value.mindmap.revision ?? result.revision ?? snapshot.revision,
+          diskHash: result.value.mindmap.diskHash ?? result.diskHash,
+        },
+      );
     }
     case "complete_todo": {
       if (typeof args.todoId !== "string" || !args.todoId.trim()) return failResult("invalid_arguments", "todoId is required.", false);
@@ -566,7 +613,7 @@ function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Add a card for an existing TeX TODO to the currently open map. Use this after the paper page add_todo tool returns todoId, choose the intended parentId, and place the card in the Primary or selected secondary map. Each map may contain one card for a TODO. The same TODO may appear on Primary and multiple secondary maps. All cards share TeX-owned text and completion. This is a shared card, not a move from another map. If the TODO is already on this map, the existing card is returned unchanged.";
   }
   if (name === "convert_card_to_todo") {
-    return "Insert a pending TeX \\obtodo in a paper section using this card's title and main text, then bind the card to that id. Hierarchy is preserved. Completion is left unset.";
+    return "Insert a pending TeX \\obtodo in the paper section identified by sectionId using this card's title and main text, then bind the card to that id. Hierarchy is preserved and completion is left unset. The result separates durable local saves from remote Git sync: remote status is pushed, pending, failed, or unconfigured. Reuse requestId to retry safely.";
   }
   if (name === "complete_todo") {
     return "Set the TeX completed timestamp. Completing does not require new manuscript prose.";

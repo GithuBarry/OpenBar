@@ -33,8 +33,26 @@ export function MindmapSwitcher({
   const active = maps.find((map) => map.id === activeId) || maps[0];
   const hrefFor = (id: string) => (isPrimaryMindmap(id) ? `/p/${project}/mindmap` : `/p/${project}/mindmap/${id}`);
 
+  async function flushBeforeNavigation(): Promise<boolean> {
+    const flush = (window as Window & { __openbarFlushMindmap?: () => Promise<void> }).__openbarFlushMindmap;
+    if (!flush) return true;
+    try {
+      await flush();
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save the current map before navigating.");
+      return false;
+    }
+  }
+
+  async function navigateTo(href: string) {
+    if (!(await flushBeforeNavigation())) return;
+    router.push(href);
+  }
+
   async function onCreate(event: React.FormEvent) {
     event.preventDefault();
+    if (!(await flushBeforeNavigation())) return;
     setSaving(true);
     setError(null);
     try {
@@ -52,6 +70,7 @@ export function MindmapSwitcher({
 
   async function onDelete() {
     if (!active || isPrimaryMindmap(active)) return;
+    if (!(await flushBeforeNavigation())) return;
     setSaving(true);
     setError(null);
     try {
@@ -76,7 +95,7 @@ export function MindmapSwitcher({
               "btn-outline px-2 py-0.5 text-[11px]",
               map.id === activeId && "border-accent/50 bg-accent/10 text-accent",
             )}
-            onClick={() => router.push(hrefFor(map.id))}
+            onClick={() => void navigateTo(hrefFor(map.id))}
             title={map.createdAt ? `Created ${map.createdAt.slice(0, 10)}` : undefined}
           >
             {map.title}

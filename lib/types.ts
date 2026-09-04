@@ -36,6 +36,10 @@ export interface Project {
 
 export type MindmapNodeShape = "root" | "branch" | "leaf" | "note" | "callout";
 
+import type { MindmapProgress } from "@/lib/mindmap/progress";
+
+export type { MindmapProgress } from "@/lib/mindmap/progress";
+
 export interface MindmapNode {
   id: string;
   /**
@@ -56,8 +60,8 @@ export interface MindmapNode {
   contentFormat?: "plain" | "markdown" | "tex";
   color?: string;
   tags?: string[];
-  /** Optional 0–100 planning bar. Absent means hidden. */
-  progress?: number;
+  /** Optional seven-state planning indicator. Zero is empty; absent is hidden. */
+  progress?: MindmapProgress;
   refs?: ArtifactRef[];
   order?: number;
   createdAt?: string;

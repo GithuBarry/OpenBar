@@ -128,7 +128,17 @@ export type LivePaperSnapshot = {
   /** True while dirty content is waiting for or undergoing a save. */
   pendingSave?: boolean;
   sourceSegments?: Array<{ filePath: string; editable: boolean }>;
-  compileState?: { state: string; sourceHash?: string; message?: string; diagnostics?: string[]; completedAt?: string };
+  compileState?: {
+    state: string;
+    jobId?: string;
+    sourceHash?: string;
+    stale?: boolean;
+    message?: string;
+    diagnostics?: string[];
+    parsedDiagnostics?: { file: string; line: number; message: string }[];
+    rawLog?: string;
+    completedAt?: string;
+  };
   bibliographyKeys: string[];
   bibliographyRaw?: string;
   todos?: LivePaperTodo[];
@@ -143,8 +153,8 @@ export type PaperWebMcpHost = {
   replaceSection: (sectionId: string, tex: string, signal?: AbortSignal) => void | Promise<void>;
   removeTodo: (todoId: string, signal?: AbortSignal) => void | Promise<void>;
   compile: (signal?: AbortSignal) =>
-    | { status: string; sourceHash?: string }
-    | Promise<{ status: string; sourceHash?: string }>;
+    | { status: string; jobId?: string; sourceHash?: string }
+    | Promise<{ status: string; jobId?: string; sourceHash?: string }>;
   lint?: () => { readiness?: string; diagnostics: WebMcpDiagnostic[] };
 };
 

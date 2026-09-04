@@ -39,16 +39,18 @@ import {
   WikiPage,
 } from "@/lib/types";
 import { getPaperCompileStatus, requestPaperCompile } from "@/lib/tex-project/compile";
-import { FIGURE_MAX_BYTES, uploadFigureAsset, texPaths, patchDocument, patchDocumentState, readDocument, DRAFT_MINDMAP_ID } from "@/lib/tex-project/project";
+import { FIGURE_MAX_BYTES, uploadFigureAsset, texPaths, patchDocument, patchDocumentState, readDocument, DRAFT_MINDMAP_ID, resolveMindmapStorageIdentity } from "@/lib/tex-project/project";
 import { persistSourceBundle, applyConversionWrite } from "@/lib/tex-project/source-persist";
 import { getOverleafGitStatus, pushOverleafGit, refreshOverleafGitStatus } from "@/lib/tex-project/overleaf-git";
 import { inspectRepository } from "@/lib/tex-project/source-graph";
 import { getConversionPlan, previewManuscriptConversion } from "@/lib/tex-project/pandoc";
 import { convertComplexTables } from "@/lib/tex-project/pandoc-tables";
 import { getRuntimeCapabilities } from "@/lib/research/capabilities";
+import { okResult, type OperationResult } from "@/lib/research/operation-result";
 import { getProjectState, projectStateForAgent, resolveProjectNavigation, searchProject } from "@/lib/research/project-state";
 import { ensureCommentId } from "@/lib/research/paper-analysis";
 import { isPrimaryMindmap } from "@/lib/research/todo-map";
+import type { MindmapTodoConversion, MindmapTodoConversionFailure, MindmapTodoConversionResult } from "@/lib/research/webmcp-mindmap-contract";
 import type { CurrentLocation, ProjectMetadataPatch, ProjectStateQuery } from "@/lib/research/webmcp-shared-contract";
 import type { WorkspaceProjectResult } from "@/lib/research/webmcp-workspace-contract";
 import {
@@ -61,6 +63,8 @@ import {
   workspaceRoot,
 } from "@/lib/research/project-skills";
 import { persistPaperTodoOperation, insertTodoAtSection } from "@/lib/research/paper-todo-persist";
+import { convertMindmapCardToTodo } from "@/lib/research/mindmap-todo-conversion";
+import { remoteSyncResult } from "@/lib/research/project-sync";
 import { applyMindmapAction, newNodeId } from "@/features/mindmap/mindmap-state";
 import { analyzePaper } from "@/lib/research/paper-analysis";
 import type { SourceOperation } from "@/lib/research/operations";
@@ -71,6 +75,7 @@ import { wikiMetadataPatchSchema } from "@/lib/schemas";
 import { normalizeMindmap, mindmapDiskHash } from "@/lib/mindmap/mindmap";
 import { assertUniqueMindmapTodoIds } from "@/lib/mindmap-index";
 import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
+import { normalizeMindmapProgress } from "@/lib/mindmap/progress";
 import {
   saveWorkspaceSettings,
   type WorkspaceSettings,
@@ -88,6 +93,10 @@ function normalizeMindmapForSave(slug: string, mindmap: Mindmap): Mindmap {
   if (mindmap.projectId !== slug) throw new Error("Mindmap project does not match the current project.");
   if (!Array.isArray(mindmap.nodes) || mindmap.nodes.length === 0) throw new Error("A mindmap needs a root topic.");
   if (mindmap.nodes.length > 2_000) throw new Error("Mindmaps are limited to 2,000 topics.");
+  const identity = resolveMindmapStorageIdentity(projectContentDir(slug), mindmap.id || DRAFT_MINDMAP_ID);
+  if (mindmap.role && mindmap.role !== identity.role) {
+    throw new Error(`Mindmap "${identity.id}" has role "${mindmap.role}" but its storage role is "${identity.role}".`);
+  }
 
   const nodeById = new Map<string, Mindmap["nodes"][number]>();
   for (const node of mindmap.nodes) {
@@ -128,6 +137,8 @@ function normalizeMindmapForSave(slug: string, mindmap: Mindmap): Mindmap {
   return {
     ...mindmap,
     projectId: slug,
+    id: identity.id,
+    role: identity.role,
     createdAt: mapCreatedAt,
     updatedAt: now,
     nodes: mindmap.nodes.map((node) => {
@@ -151,11 +162,6 @@ function normalizeMindmapForSave(slug: string, mindmap: Mindmap): Mindmap {
 
 function isIsoDateTime(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
-}
-
-function normalizeMindmapProgress(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  return Math.round(Math.min(100, Math.max(0, value)) * 10) / 10;
 }
 
 export async function saveProjectAction(project: Project, expectedHash = project.diskHash): Promise<void> {
@@ -358,6 +364,30 @@ export async function uploadPaperFigureAction(slug: string, formData: FormData):
   }
   const upload = uploadFigureAsset(projectContentDir(slug), file.name, Buffer.from(await file.arrayBuffer()));
   return { id: upload.id, markdown: upload.markdown, tex: upload.tex, path: upload.path };
+}
+
+export async function uploadMindmapImageAction(slug: string, formData: FormData): Promise<{
+  ref: { kind: "figure"; id: string; label: string };
+  path: string;
+  sha256: string;
+}> {
+  await requireProjectAccess(slug);
+  assertAdministrativeWriteAllowed("Mindmap image uploads");
+  if (!getEditableTexPaper(slug)) throw new Error("This project has not been migrated to a complete TeX manuscript.");
+  const candidate = formData.get("file");
+  if (!candidate || typeof candidate === "string" || typeof candidate.arrayBuffer !== "function") {
+    throw new Error("Choose an image file to upload.");
+  }
+  const file = candidate as File;
+  if (typeof file.size === "number" && file.size > FIGURE_MAX_BYTES) {
+    throw new Error("Images are limited to 8 MB.");
+  }
+  const upload = uploadFigureAsset(projectContentDir(slug), file.name, Buffer.from(await file.arrayBuffer()));
+  return {
+    ref: { kind: "figure", id: upload.path, label: file.name },
+    path: upload.path,
+    sha256: upload.sha256,
+  };
 }
 
 export async function getCapabilitiesAction() {
@@ -652,7 +682,7 @@ export async function persistPaperTodoAction(
 
 export async function insertPaperTodoAtSectionAction(
   slug: string,
-  sectionTitle: string,
+  sectionId: string,
   text: string,
   expectedBundleHash?: string,
   title?: string,
@@ -660,12 +690,12 @@ export async function insertPaperTodoAtSectionAction(
   await requireProjectAccess(slug);
   const manuscriptDir = texPaths(projectContentDir(slug)).manuscriptDir;
   const bundle = buildSourceBundle(manuscriptDir);
-  const inserted = insertTodoAtSection(bundle.source, sectionTitle, text, undefined, title);
+  const inserted = insertTodoAtSection(bundle.source, sectionId, text, undefined, title);
   if (!inserted.sectionFound) {
     return {
       ok: false as const,
       code: "unknown_section",
-      message: `Unknown paper section "${sectionTitle}".`,
+      message: `Unknown paper section id "${sectionId}".`,
       retryable: false,
     };
   }
@@ -676,6 +706,68 @@ export async function insertPaperTodoAtSectionAction(
   });
   if (result.ok) bust(slug);
   return { ...result, id: inserted.id };
+}
+
+export async function convertMindmapCardToTodoAction(
+  slug: string,
+  mindmap: Mindmap,
+  cardId: string,
+  sectionId: string,
+  expectedMapDiskHash?: string,
+  expectedBundleHash?: string,
+  requestId?: string,
+): Promise<MindmapTodoConversionResult> {
+  await requireProjectAccess(slug);
+  const current = normalizeMindmapForSave(slug, mindmap);
+  const local = await convertMindmapCardToTodo({
+    projectDir: projectContentDir(slug),
+    slug,
+    mindmap: current,
+    cardId,
+    sectionId,
+    expectedMapDiskHash,
+    expectedBundleHash,
+    requestId,
+  });
+  if (!local.ok) {
+    const failure: MindmapTodoConversionFailure = {
+      ...local,
+      local: {
+        paper: "failed",
+        map: "not_attempted",
+        message: local.message,
+      },
+      remote: {
+        status: "failed",
+        code: "not_attempted",
+        message: "Remote sync was not attempted because the local conversion did not complete.",
+        retryable: false,
+      },
+    };
+    return failure;
+  }
+
+  // Local durability is the user-visible success boundary. A remote failure
+  // leaves this result intact and can be retried independently.
+  bust(slug);
+  let remote: MindmapTodoConversion["remote"];
+  try {
+    const pushed = await commitAndPushProjectAction(slug, "OpenBar: convert mindmap card to paper TODO");
+    remote = remoteSyncResult(pushed);
+  } catch (error) {
+    remote = {
+      status: "failed",
+      code: "remote_sync_failed",
+      message: error instanceof Error ? error.message : String(error),
+      retryable: true,
+    };
+  }
+  return okResult({
+    todoId: local.value.todoId,
+    mindmap: local.value.mindmap,
+    local: local.value.local,
+    remote,
+  }, { revision: local.value.mindmap.revision, diskHash: local.value.mindmap.diskHash });
 }
 
 export async function removePaperTodoAction(slug: string, todoId: string, expectedBundleHash?: string) {

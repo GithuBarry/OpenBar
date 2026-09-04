@@ -24,13 +24,19 @@ declare module "d3-hierarchy" {
 }
 
 declare module "proper-lockfile" {
+  type LockOptions = {
+    stale?: number;
+    update?: number;
+    realpath?: boolean;
+    retries?: number | { retries: number; minTimeout?: number; maxTimeout?: number };
+    lockfilePath?: string;
+    onCompromised?: (error: Error) => void;
+  };
+
+  export function lock(file: string, options?: LockOptions): Promise<() => Promise<void>>;
   export function lockSync(
     file: string,
-    options?: {
-      stale?: number;
-      retries?: number | { retries: number; minTimeout?: number; maxTimeout?: number };
-      lockfilePath?: string;
-    },
+    options?: LockOptions,
   ): () => void;
 }
 

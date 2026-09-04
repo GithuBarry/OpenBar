@@ -15,6 +15,9 @@ import { composeObtodo } from "../lib/todo-meta";
 import { createMindmapWebMcpHarness, executeMindmapWebMcpTool } from "../lib/research/webmcp-mindmap-contract";
 import { createPaperWebMcpHarness, executePaperWebMcpTool } from "../lib/research/webmcp-paper-contract";
 import { executePaperSourceTool } from "../lib/research/webmcp-source-contract";
+import { okResult } from "../lib/research/operation-result";
+import { serializeSectionMeta } from "../lib/tex-project/codec";
+import { fileBanner } from "../lib/tex-project/source-bundle-format";
 import * as tableAst from "../lib/tex-project/table-ast";
 import * as tableFragments from "../lib/tex-project/table-fragments";
 import type { Mindmap, MindmapNode } from "../lib/types";
@@ -94,13 +97,13 @@ function todo(id: string, text: string, completedAt?: string): string {
 }
 
 const SECTION_TEX = {
-  introduction: `Learned retrievers report large gains.\n${todo("cv-transfer-check", "Run cv-transfer-check baseline.")}`,
-  robustness: `The robustness claim is that performance survives transfer behavior.\n${todo("sampling-sweep", "Run the 20n sampling sweep.", SWEEP_DONE)}\n${todo("second-model", "Rerun on a second model.")}`,
-  results: `Sample efficiency.\n${todo("scaling", "Run the scaling experiment.", SCALING_DONE)}\n${todo("ablation", "Ablate without retrieval.")}`,
+  introduction: `${serializeSectionMeta({ id: "introduction", title: "Introduction", level: 2, order: 0, label: "sec-introduction" })}Learned retrievers report large gains.\n${todo("cv-transfer-check", "Run cv-transfer-check baseline.")}`,
+  robustness: `${serializeSectionMeta({ id: "robustness", title: "Transfer Results", level: 2, order: 1, label: "sec-robustness" })}The robustness claim is that performance survives transfer behavior.\n${todo("sampling-sweep", "Run the 20n sampling sweep.", SWEEP_DONE)}\n${todo("second-model", "Rerun on a second model.")}`,
+  results: `${serializeSectionMeta({ id: "results", title: "Main Results", level: 2, order: 2, label: "sec-results" })}Sample efficiency.\n${todo("scaling", "Run the scaling experiment.", SCALING_DONE)}\n${todo("ablation", "Ablate without retrieval.")}`,
 };
 
 function makePaper() {
-  return createPaperWebMcpHarness({
+  const host = createPaperWebMcpHarness({
     project: "command-v",
     title: "Command-V",
     sections: [
@@ -109,6 +112,10 @@ function makePaper() {
       { id: "results", title: "Main Results", tex: SECTION_TEX.results },
     ],
   });
+  host.snapshot.source = host.snapshot.sections
+    .map((section) => `${fileBanner(`sections/${section.id}.tex`)}${section.tex}\n`)
+    .join("");
+  return host;
 }
 
 const sharedNodes: Array<Pick<MindmapNode, "id" | "parentId" | "text" | "todoId" | "refs"> & { completed?: boolean }> = [
@@ -143,16 +150,25 @@ function makeSecondary() {
 }
 
 function wireConvert(map: ReturnType<typeof createMindmapWebMcpHarness>, paper: ReturnType<typeof createPaperWebMcpHarness>) {
-  map.convertCardToTodo = async (id, sectionTitle) => {
+  map.convertCardToTodo = async (id, sectionId) => {
     const card = map.snapshot.nodes.find((item) => item.id === id);
     if (!card) throw new Error("Unknown card.");
-    const inserted = insertTodoAtSection(paper.snapshot.source, sectionTitle, card.text);
+    const inserted = insertTodoAtSection(paper.snapshot.source, sectionId, card.text);
     paper.snapshot.source = inserted.source;
     paper.snapshot.revision += 1;
     card.todoId = inserted.id;
     card.text = "";
     map.snapshot.revision += 1;
-    return inserted.id;
+    return okResult({
+      todoId: inserted.id,
+      mindmap: asMindmap(map, "planning"),
+      local: { paper: "saved" as const, map: "saved" as const },
+      remote: {
+        status: "unconfigured" as const,
+        message: "Harness remote sync is not configured.",
+        retryable: false,
+      },
+    }, { revision: map.snapshot.revision });
   };
 }
 
@@ -351,21 +367,26 @@ async function makeTodoPrimaryUnplaced() {
   wireConvert(secondary, paper);
   const converted = await executeMindmapWebMcpTool(secondary, "convert_card_to_todo", {
     id: "idea",
-    sectionTitle: "Introduction",
+    sectionId: "introduction",
     expectedRevision: secondary.snapshot.revision,
   });
   const convertedId = converted.ok && converted.value && typeof converted.value === "object" && "todoId" in converted.value
     ? String((converted.value as { todoId?: unknown }).todoId || "")
     : "";
   const recPrimary = reconcileTodos(asMindmap(primary, "draft"), paperTodosFromSource(paper.snapshot.source));
+  const secondaryBound = secondary.snapshot.nodes.some((item) => item.id === "idea" && item.todoId === convertedId);
+  const primaryUnplaced = recPrimary.unplaced.some((item) => item.todo.id === convertedId);
+  const sourceHasBody = paper.snapshot.source.includes("Need a different architecture");
   check(
     "Make TODO on secondary → Primary Unplaced",
     converted.ok
       && Boolean(convertedId)
-      && secondary.snapshot.nodes.some((item) => item.id === "idea" && item.todoId === convertedId)
-      && recPrimary.unplaced.some((item) => item.todo.id === convertedId)
-      && paper.snapshot.source.includes("Need a different architecture"),
-    converted.ok ? `todoId=${convertedId}` : "convert_card_to_todo failed",
+      && secondaryBound
+      && primaryUnplaced
+      && sourceHasBody,
+    converted.ok
+      ? `todoId=${convertedId} secondaryBound=${secondaryBound} primaryUnplaced=${primaryUnplaced} sourceHasBody=${sourceHasBody} texIds=${recPrimary.texIds.join(",")}`
+      : "convert_card_to_todo failed",
   );
 }
 

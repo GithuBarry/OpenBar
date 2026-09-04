@@ -250,8 +250,15 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
       if (!node || node.id === mindmap.rootId || !node.parentId) return { mindmap };
       const children = index.childrenByParent.get(node.id) || [];
       const parentId = node.parentId;
-      const siblingOrders = (index.childrenByParent.get(parentId) || []).filter((item) => item.id !== node.id).map((item) => item.order ?? 0);
-      let order = siblingOrders.length ? Math.max(...siblingOrders) + 1 : 0;
+      const siblings = index.childrenByParent.get(parentId) || [];
+      const removedPosition = siblings.findIndex((item) => item.id === node.id);
+      const remaining = siblings.filter((item) => item.id !== node.id);
+      const nextSiblings = [
+        ...remaining.slice(0, Math.max(0, removedPosition)),
+        ...children,
+        ...remaining.slice(Math.max(0, removedPosition)),
+      ];
+      const orderById = new Map(nextSiblings.map((item, index) => [item.id, index]));
       return {
         selectedId: parentId,
         mindmap: {
@@ -259,8 +266,9 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
           nodes: mindmap.nodes
             .filter((item) => item.id !== node.id)
             .map((item) => {
-              if (!children.some((child) => child.id === item.id)) return item;
-              return { ...item, parentId, order: order++ };
+              if (children.some((child) => child.id === item.id)) return { ...item, parentId, order: orderById.get(item.id) };
+              if (orderById.has(item.id)) return { ...item, order: orderById.get(item.id) };
+              return item;
             }),
         },
       };

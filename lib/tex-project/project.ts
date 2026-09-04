@@ -4,6 +4,7 @@ import path from "node:path";
 import { type BibEntry } from "@/lib/bibtex";
 import { parseBibtexCitationJs, formatBibliographyHtml } from "@/lib/citation";
 import type { Mindmap } from "@/lib/types";
+import { normalizeMindmapProgress } from "@/lib/mindmap/progress";
 
 import {
   getDataBlock,
@@ -190,51 +191,85 @@ function extraMindmapFile(projectDir: string, id: string): string {
   return path.join(texPaths(projectDir).mindmapsDir, `${safeFileSegment(id, "mindmap id")}.tex`);
 }
 
+export type MindmapStorageIdentity = {
+  id: string;
+  role: "draft" | "planning";
+  file: string;
+};
+
+/** Resolve the durable map record from its requested identity before any read or write. */
+export function resolveMindmapStorageIdentity(projectDir: string, requestedId?: string): MindmapStorageIdentity {
+  const paths = texPaths(projectDir);
+  if (isDraftMindmapId(requestedId)) {
+    return { id: DRAFT_MINDMAP_ID, role: "draft", file: paths.mindmapFile };
+  }
+  const id = safeFileSegment(requestedId!, "mindmap id");
+  return { id, role: "planning", file: path.join(paths.mindmapsDir, `${id}.tex`) };
+}
+
 export function normalizeStoredMindmap(mindmap: Mindmap, fileId: string): Mindmap {
-  const id = isDraftMindmapId(mindmap.id) && isDraftMindmapId(fileId)
-    ? DRAFT_MINDMAP_ID
-    : (mindmap.id && !isDraftMindmapId(mindmap.id) ? mindmap.id : fileId);
-  const role = mindmap.role || (id === DRAFT_MINDMAP_ID ? "draft" : "planning");
+  const id = isDraftMindmapId(fileId) ? DRAFT_MINDMAP_ID : safeFileSegment(fileId, "mindmap id");
+  const role = id === DRAFT_MINDMAP_ID ? "draft" : "planning";
   return {
     ...mindmap,
     id,
     role,
     title: mindmap.title?.trim() || (role === "draft" ? "Draft" : id),
     createdAt: mindmap.createdAt || mindmap.updatedAt,
+    nodes: mindmap.nodes.map((node) => ({
+      ...node,
+      ...(node.progress === undefined ? {} : { progress: normalizeMindmapProgress(node.progress) }),
+    })),
   };
 }
 
 export function readMindmapRecord(projectDir: string, id = DRAFT_MINDMAP_ID): Mindmap | null {
-  const paths = texPaths(projectDir);
-  if (isDraftMindmapId(id)) {
-    const draft = readDataFile<Mindmap>(paths.mindmapFile, TEX_SCHEMAS.mindmap, "mindmap");
-    return draft ? normalizeStoredMindmap(draft, DRAFT_MINDMAP_ID) : null;
-  }
-  const extra = readDataFile<Mindmap>(extraMindmapFile(projectDir, id), TEX_SCHEMAS.mindmap, id);
-  return extra ? normalizeStoredMindmap(extra, id) : null;
+  const identity = resolveMindmapStorageIdentity(projectDir, id);
+  const record = readDataFile<Mindmap>(
+    identity.file,
+    TEX_SCHEMAS.mindmap,
+    identity.id === DRAFT_MINDMAP_ID ? "mindmap" : identity.id,
+  );
+  return record ? normalizeStoredMindmap(record, identity.id) : null;
 }
 
 export function writeMindmapRecord(projectDir: string, mindmap: Mindmap): void {
-  const paths = ensureTexProjectDirectories(projectDir);
-  const normalized = normalizeStoredMindmap(mindmap, mindmap.id || DRAFT_MINDMAP_ID);
-  if (normalized.role === "draft" || isDraftMindmapId(normalized.id)) {
-    writeDataFile(
-      paths.mindmapFile,
-      TEX_SCHEMAS.mindmap,
-      "mindmap",
-      { ...normalized, id: DRAFT_MINDMAP_ID, role: "draft" },
-      "OpenBar draft-linked mindmap; TeX ignores this comment-only file.",
-    );
-    return;
-  }
-  const id = safeFileSegment(normalized.id || "map", "mindmap id");
+  ensureTexProjectDirectories(projectDir);
+  const encoded = serializeMindmapRecord(projectDir, mindmap);
   writeDataFile(
-    extraMindmapFile(projectDir, id),
+    encoded.identity.file,
     TEX_SCHEMAS.mindmap,
-    id,
-    { ...normalized, id, role: "planning" },
-    "OpenBar planning mindmap; TeX ignores this comment-only file.",
+    encoded.identity.id === DRAFT_MINDMAP_ID ? "mindmap" : encoded.identity.id,
+    encoded.normalized,
+    encoded.identity.role === "draft"
+      ? "OpenBar draft-linked mindmap; TeX ignores this comment-only file."
+      : "OpenBar planning mindmap; TeX ignores this comment-only file.",
   );
+}
+
+export function serializeMindmapRecord(projectDir: string, mindmap: Mindmap): {
+  identity: MindmapStorageIdentity;
+  normalized: Mindmap;
+  source: string;
+} {
+  const identity = resolveMindmapStorageIdentity(projectDir, mindmap.id || DRAFT_MINDMAP_ID);
+  if (mindmap.role && mindmap.role !== identity.role) {
+    throw new TexEnvelopeError(`Mindmap "${identity.id}" has role "${mindmap.role}" but its storage role is "${identity.role}".`);
+  }
+  const normalized = normalizeStoredMindmap({ ...mindmap, id: identity.id, role: identity.role }, identity.id);
+  const heading = identity.role === "draft"
+    ? "OpenBar draft-linked mindmap; TeX ignores this comment-only file."
+    : "OpenBar planning mindmap; TeX ignores this comment-only file.";
+  return {
+    identity,
+    normalized,
+    source: serializeDataFile(
+      TEX_SCHEMAS.mindmap,
+      identity.id === DRAFT_MINDMAP_ID ? "mindmap" : identity.id,
+      normalized,
+      heading,
+    ),
+  };
 }
 
 export function listMindmapRecords(

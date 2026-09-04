@@ -93,7 +93,17 @@ export function liveSnapshotFromSource(input: {
   pendingSave?: boolean;
   sourceSegments?: Array<{ filePath: string; editable: boolean }>;
   activeHeadingKey?: string;
-  compileState?: { state: string; sourceHash?: string; message?: string; diagnostics?: string[]; completedAt?: string };
+  compileState?: {
+    state: string;
+    jobId?: string;
+    sourceHash?: string;
+    stale?: boolean;
+    message?: string;
+    diagnostics?: string[];
+    parsedDiagnostics?: { file: string; line: number; message: string }[];
+    rawLog?: string;
+    completedAt?: string;
+  };
   bibliographyKeys: string[];
   bibliographyRaw?: string;
   expected: PaperEditorSection[];

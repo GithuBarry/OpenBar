@@ -5,6 +5,7 @@ import { analyzePaper, paperTodoIsOpen } from "@/lib/research/paper-analysis";
 import { requireWorkbenchPage } from "@/lib/server/project-access";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
 import { AboutFeatureGrid } from "@/components/about-features";
+import { PublicDemoNotice } from "@/components/demo/public-demo-notice";
 import { ResetDemoButton } from "@/components/demo/reset-demo-button";
 import { ProjectCard } from "@/components/project-card";
 import { CreateProjectButton } from "@/components/project/create-project";
@@ -49,6 +50,8 @@ export default async function Home() {
           </div>
         </div>
       </header>
+
+      {publicDemo && <PublicDemoNotice />}
 
       <section className="mx-auto grid max-w-6xl gap-4 px-6 py-6 md:grid-cols-2">
         {rows.map(({ project, todos }) => (

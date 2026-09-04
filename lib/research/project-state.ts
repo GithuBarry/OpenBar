@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 
-import { analyzePaper, paperTodoIsOpen, type PaperAnalysis, type PaperHeading, type PaperNote, type PaperTodo } from "@/lib/research/paper-analysis";
+import { analyzePaper, paperTodoIsOpen, type PaperAnalysis, type PaperHeading, type PaperMarker, type PaperNote, type PaperTodo } from "@/lib/research/paper-analysis";
 import {
   bundledSkills,
   discoverSkillsInDir,
@@ -17,6 +17,8 @@ import { getEditableTexPaper, getMindmap, getProject, listMindmaps, projectConte
 import { DRAFT_MINDMAP_ID, texPaths, type PaperSection, type TexPaper } from "@/lib/tex-project/project";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import type { Mindmap, Project, WikiPage } from "@/lib/types";
+import { buildSourceContextIndex, type LocatedPaperMarker, type LocatedPaperNote, type LocatedPaperTodo, type SourceContextIndex } from "./source-context";
+import type { SourceDiagnostic } from "@/lib/tex-project/source-graph";
 import {
   findPrimaryMindmap,
   isPrimaryMindmap,
@@ -26,6 +28,7 @@ import {
   todoActivityAt,
   type TodoReconciliation,
 } from "@/lib/research/todo-map";
+import { openBarExpectations, type OpenBarExpectations } from "@/lib/research/expectations";
 
 export type { CurrentLocation };
 
@@ -36,6 +39,12 @@ export type ProjectStateOutlineItem = {
   openTodos: number;
   file?: string;
   updatedAt?: string;
+  sourceHash?: string;
+  sourceRange?: { from: number; to: number };
+  headingPath?: string[];
+  excerpt?: string;
+  parseStatus?: "ok" | "error";
+  diagnostic?: SourceDiagnostic;
 };
 
 export type ProjectStateTodo = {
@@ -55,6 +64,12 @@ export type ProjectStateTodo = {
   mapNodeId?: string;
   href: string;
   mindmapHref?: string;
+  headingPath?: string[];
+  sourceStart?: number;
+  sourceEnd?: number;
+  fileRange?: { from: number; to: number };
+  sourceHash?: string;
+  excerpt?: string;
 };
 
 export type ProjectStateComment = {
@@ -65,6 +80,11 @@ export type ProjectStateComment = {
   sectionTitle?: string;
   /** Offset in the composed TeX source used when assigning an id on first link. */
   sourceStart?: number;
+  sourceEnd?: number;
+  fileRange?: { from: number; to: number };
+  file?: string;
+  sourceHash?: string;
+  headingPath?: string[];
   href: string;
 };
 
@@ -113,11 +133,24 @@ export type ProjectState = {
     outline: ProjectStateOutlineItem[];
     todos: ProjectStateTodo[];
     comments: ProjectStateComment[];
+    markers: Array<{
+      kind: string;
+      text: string;
+      file?: string;
+      sectionId?: string;
+      sectionTitle?: string;
+      sourceStart: number;
+      sourceEnd: number;
+      sourceHash?: string;
+      headingPath?: string[];
+    }>;
+    diagnostics: SourceDiagnostic[];
   } | null;
   mindmaps: Array<{ id: string; title: string; primary: boolean; href: string; nodeCount: number }>;
   wiki: Array<{ slug: string; title: string; href: string; updatedAt: string }>;
   recent: RecentActivityItem[];
   skills: ProjectSkill[];
+  expectations: OpenBarExpectations;
   agentsMd?: { path: string; body: string; hash: string };
   workspaceAgentsMd?: { path: string; body: string; hash: string };
   /** Open mindmap only. Bound ids on this map; not agent orientation. */
@@ -129,6 +162,53 @@ export type ProjectState = {
     warnings: TodoReconciliation["warnings"];
   };
 };
+
+type SummarySection = {
+  id: string;
+  title: string;
+  level: number;
+  order: number;
+  label: string;
+  file?: string;
+  tex?: string;
+  sourceHash?: string;
+  sourceRange: { from: number; to: number };
+  headingPath: string[];
+  excerpt: string;
+  parseStatus: "ok" | "error";
+  diagnostic?: SourceDiagnostic;
+};
+
+function legacySummarySection(section: PaperSection): SummarySection {
+  return {
+    ...section,
+    file: section.file,
+    sourceHash: section.hash,
+    sourceRange: { from: 0, to: section.tex.length },
+    headingPath: [],
+    excerpt: section.tex.slice(0, 320),
+    parseStatus: "ok",
+  };
+}
+
+function locatedFields(value: PaperTodo | PaperNote | PaperMarker): {
+  file?: string;
+  sectionId?: string;
+  sectionTitle?: string;
+  headingPath?: string[];
+  sourceHash?: string;
+  excerpt?: string;
+} {
+  const candidate = value as Partial<LocatedPaperTodo & LocatedPaperNote & LocatedPaperMarker>;
+  return {
+    ...(typeof candidate.file === "string" ? { file: candidate.file } : {}),
+    ...(typeof candidate.sectionId === "string" ? { sectionId: candidate.sectionId } : {}),
+    ...(typeof candidate.sectionTitle === "string" ? { sectionTitle: candidate.sectionTitle } : {}),
+    ...(Array.isArray(candidate.headingPath) ? { headingPath: candidate.headingPath } : {}),
+    ...(typeof candidate.sourceHash === "string" ? { sourceHash: candidate.sourceHash } : {}),
+    ...(typeof candidate.excerpt === "string" ? { excerpt: candidate.excerpt } : {}),
+  };
+}
 
 function paperHref(slug: string, hash?: string): string {
   const base = `/p/${encodeURIComponent(slug)}/paper`;
@@ -225,44 +305,63 @@ export function buildPaperSummary(
   analysis: PaperAnalysis,
   bundle: { rootFile: string; revision: number; bundleHash?: string },
   manuscriptDir: string,
+  context?: SourceContextIndex,
 ): NonNullable<ProjectState["paper"]> {
-  const outline = paper.sections.map((section) => {
-    const heading = analysis.outline.find((item) => item.title.trim().toLowerCase() === section.title.trim().toLowerCase());
-    const openTodos = analysis.todos.filter((todo) => {
-      if (!openTodoStatus(todo)) return false;
-      const matched = matchSection(paper.sections, headingBeforeLine(analysis.outline, todo.line), todo.section);
-      return (matched?.id || "") === section.id || (!matched && heading && heading.title === section.title);
-    }).length;
+  const contextSections: SummarySection[] = context ? context.sections : paper.sections.map(legacySummarySection);
+  const sourceTodos: Array<PaperTodo & Partial<LocatedPaperTodo>> = context?.todos || analysis.todos;
+  const outline = contextSections.map((section) => {
+    const openTodos = sourceTodos.filter((todo) => openTodoStatus(todo) && ("sectionId" in todo ? todo.sectionId : undefined) === section.id).length;
     return {
       id: section.id,
       title: section.title,
       level: section.level,
       openTodos,
-      file: relFile(section.file, manuscriptDir),
+      file: section.file || relFile(undefined, manuscriptDir),
       updatedAt: fileMtime(section.file),
+      sourceHash: section.sourceHash,
+      sourceRange: section.sourceRange,
+      headingPath: section.headingPath,
+      excerpt: section.excerpt,
+      parseStatus: section.parseStatus,
+      ...(section.diagnostic ? { diagnostic: section.diagnostic } : {}),
     };
   });
 
-  const todos = analysis.todos.filter((todo) => todo.id).map((todo) => {
-    const section = matchSection(paper.sections, headingBeforeLine(analysis.outline, todo.line), todo.section);
+  const todos = sourceTodos.filter((todo) => todo.id).map((todo) => {
+    const fields = locatedFields(todo);
+    const section = contextSections.find((candidate) => candidate.id === fields.sectionId)
+      || (matchSection(paper.sections, headingBeforeLine(analysis.outline, todo.line), todo.section)
+        ? legacySummarySection(matchSection(paper.sections, headingBeforeLine(analysis.outline, todo.line), todo.section)!)
+        : undefined);
     return {
       id: todo.id!,
       title: todo.title || "",
       text: todo.text,
       sectionId: section?.id,
       sectionTitle: section?.title || todo.section,
-      file: relFile(section?.file, manuscriptDir),
+      file: fields.file || section?.file || relFile(undefined, manuscriptDir),
       completed: !paperTodoIsOpen(todo),
       primaryUnplaced: true,
       unplaced: true,
       href: paperHref(slug, todo.id!),
+      ...(fields.headingPath ? { headingPath: fields.headingPath } : {}),
+      sourceStart: (todo as Partial<LocatedPaperTodo>).virtualStart ?? todo.start,
+      sourceEnd: (todo as Partial<LocatedPaperTodo>).virtualEnd ?? todo.end,
+      fileRange: { from: todo.start, to: todo.end },
+      sourceHash: fields.sourceHash || section?.sourceHash,
+      excerpt: fields.excerpt || (section ? excerptFromText(section.excerpt) : todo.text),
     };
   });
 
-  const comments = analysis.comments
+  const sourceComments: Array<PaperNote & Partial<LocatedPaperNote>> = context?.comments || analysis.comments;
+  const comments = sourceComments
     .filter((note) => note.macro === "obcomment")
     .map((note) => {
-      const section = matchSection(paper.sections, headingBeforeLine(analysis.outline, note.line), note.section);
+      const fields = locatedFields(note);
+      const section = contextSections.find((candidate) => candidate.id === fields.sectionId)
+        || (matchSection(paper.sections, headingBeforeLine(analysis.outline, note.line), note.section)
+          ? legacySummarySection(matchSection(paper.sections, headingBeforeLine(analysis.outline, note.line), note.section)!)
+          : undefined);
       const id = commentId(note);
       return {
         ...(id ? { id } : {}),
@@ -270,10 +369,32 @@ export function buildPaperSummary(
         kind: commentKind(note),
         sectionId: section?.id,
         sectionTitle: section?.title || note.section,
-        sourceStart: note.start,
+        sourceStart: note.virtualStart ?? note.start,
+        sourceEnd: note.virtualEnd ?? note.end,
+        fileRange: { from: note.start, to: note.end },
+        file: fields.file || section?.file || relFile(undefined, manuscriptDir),
+        sourceHash: fields.sourceHash || section?.sourceHash,
+        headingPath: fields.headingPath,
         href: paperHref(slug, id || section?.id),
       };
     });
+
+  const sourceMarkers: Array<PaperMarker & Partial<LocatedPaperMarker>> = context?.markers || analysis.markers;
+  const markers = sourceMarkers.map((marker) => {
+    const fields = locatedFields(marker);
+    return {
+    kind: marker.kind,
+    text: marker.text,
+    file: fields.file,
+    sectionId: fields.sectionId || marker.section,
+    sectionTitle: fields.sectionTitle,
+    sourceStart: marker.virtualStart ?? marker.start,
+    sourceEnd: marker.virtualEnd ?? marker.end,
+    fileRange: { from: marker.start, to: marker.end },
+    sourceHash: fields.sourceHash,
+    headingPath: fields.headingPath,
+    };
+  });
 
   return {
     rootFile: bundle.rootFile,
@@ -283,7 +404,18 @@ export function buildPaperSummary(
     outline,
     todos,
     comments,
+    markers,
+    diagnostics: context?.diagnostics || analysis.diagnostics.map((diagnostic) => ({
+      severity: "error" as const,
+      code: diagnostic.code,
+      message: diagnostic.message,
+      ...(diagnostic.line ? { filePath: `${bundle.rootFile}:${diagnostic.line}` } : {}),
+    })),
   };
+}
+
+function excerptFromText(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, 320);
 }
 
 export function deriveRecentActivity(input: {
@@ -348,6 +480,7 @@ export function buildProjectState(input: {
   analysis?: PaperAnalysis;
   bundle?: { rootFile: string; revision: number; bundleHash?: string };
   manuscriptDir?: string;
+  context?: SourceContextIndex;
   mindmaps: Mindmap[];
   wiki?: WikiPage[];
   skills: ProjectSkill[];
@@ -357,11 +490,12 @@ export function buildProjectState(input: {
 }): ProjectState {
   const slug = input.project.slug;
   const paper = input.paper && input.analysis && input.bundle && input.manuscriptDir
-    ? buildPaperSummary(slug, input.paper, input.analysis, input.bundle, input.manuscriptDir)
+    ? buildPaperSummary(slug, input.paper, input.analysis, input.bundle, input.manuscriptDir, input.context)
     : null;
   const primary = findPrimaryMindmap(input.mindmaps);
   const primaryMapId = primary?.id || DRAFT_MINDMAP_ID;
-  const reconciliation = reconcileTodos(primary || null, input.analysis?.todos || []);
+  const paperTodos = input.context?.todos || input.analysis?.todos || [];
+  const reconciliation = reconcileTodos(primary || null, paperTodos);
   if (paper) {
     const bound = new Map(reconciliation.bound.map((item) => [item.todo.id, item]));
     paper.todos = paper.todos.map((todo) => {
@@ -418,10 +552,11 @@ export function buildProjectState(input: {
       slug,
       outline: paper?.outline || [],
       mindmaps: input.mindmaps,
-      paperTodos: input.analysis?.todos || [],
+      paperTodos,
       primaryReconciliation: reconciliation,
     }),
     skills: input.skills,
+    expectations: openBarExpectations(),
     ...(agents ? { agentsMd: { path: agents.path, body: agents.body, hash: hashAgents(agents.body) } } : {}),
     ...(input.workspaceAgentsMd
       ? {
@@ -458,9 +593,10 @@ export function getProjectState(slug: string, current?: CurrentLocation): Projec
   const project = getProject(slug);
   if (!project) return null;
   const dir = projectContentDir(slug);
-  const paper = getEditableTexPaper(slug);
   const paths = texPaths(dir);
-  const bundle = paper ? buildSourceBundle(paths.manuscriptDir) : undefined;
+  const paper = getEditableTexPaper(slug);
+  const bundle = fs.existsSync(paths.paperFile) ? buildSourceBundle(paths.manuscriptDir) : undefined;
+  const context = bundle ? buildSourceContextIndex(paths.manuscriptDir, bundle.rootFile, bundle) : undefined;
   const analysis = paper ? analyzePaper(paper.source) : undefined;
   const skills = mergeSkills(discoverSkillsInDir(dir), discoverWorkspaceSkills(), bundledSkills());
   return buildProjectState({
@@ -469,6 +605,7 @@ export function getProjectState(slug: string, current?: CurrentLocation): Projec
     analysis,
     bundle: bundle ? { rootFile: bundle.rootFile, revision: bundle.revision, bundleHash: bundle.bundleHash } : undefined,
     manuscriptDir: paths.manuscriptDir,
+    context,
     mindmaps: listMindmaps(slug),
     wiki: [],
     skills,
@@ -489,9 +626,21 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
     id: todo.id,
     title: todo.title,
     text: todo.text,
+    sectionId: todo.sectionId,
+    sectionTitle: todo.sectionTitle,
+    file: todo.file,
     completed: todo.completed,
     primaryUnplaced: primaryUnplaced(todo),
     primaryMapNodeId: todo.primaryMapNodeId || todo.mapNodeId,
+    unplaced: todo.unplaced,
+    href: todo.href,
+    mindmapHref: todo.mindmapHref,
+    headingPath: todo.headingPath,
+    sourceStart: todo.sourceStart,
+    sourceEnd: todo.sourceEnd,
+    fileRange: todo.fileRange,
+    sourceHash: todo.sourceHash,
+    excerpt: todo.excerpt,
   }));
   const maps = state.mindmaps.map((map) => ({
     id: map.id,
@@ -523,6 +672,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
       skills: state.skills,
       agentsMd: state.agentsMd,
       workspaceAgentsMd: state.workspaceAgentsMd,
+      expectations: state.expectations,
       todoSync,
     };
   }
@@ -541,6 +691,13 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
         id: section.id,
         title: section.title,
         openTodos: section.openTodos,
+        file: section.file,
+        sourceHash: section.sourceHash,
+        sourceRange: section.sourceRange,
+        headingPath: section.headingPath,
+        excerpt: section.excerpt,
+        parseStatus: section.parseStatus,
+        diagnostic: section.diagnostic,
       })),
     },
     todos: todoLimit > 0 ? todoRows([...unplaced, ...openTodos.filter((todo) => !primaryUnplaced(todo))]) : undefined,
@@ -554,6 +711,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
     mindmaps: maps,
     wiki: [],
     skills: state.skills.map((skill) => ({ id: skill.id, name: skill.name, source: skill.source })),
+    expectations: state.expectations,
     agentsMd: state.agentsMd && { path: state.agentsMd.path, hash: state.agentsMd.hash },
     workspaceAgentsMd: state.workspaceAgentsMd && { path: state.workspaceAgentsMd.path, hash: state.workspaceAgentsMd.hash },
     todoSync,
@@ -682,7 +840,7 @@ export function searchProject(slug: string, query: string): SearchHit[] {
   const dir = projectContentDir(slug);
   const bundle = paper ? buildSourceBundle(texPaths(dir).manuscriptDir) : undefined;
   const summary = paper && analysis && bundle
-    ? buildPaperSummary(slug, paper, analysis, bundle, texPaths(dir).manuscriptDir)
+    ? buildPaperSummary(slug, paper, analysis, bundle, texPaths(dir).manuscriptDir, buildSourceContextIndex(texPaths(dir).manuscriptDir, bundle.rootFile, bundle))
     : null;
   return searchProjectContent({
     slug,

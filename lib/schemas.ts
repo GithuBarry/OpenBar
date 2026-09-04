@@ -88,7 +88,7 @@ export const mindmapNodeSchema = z
     contentFormat: z.enum(["plain", "markdown", "tex"]).optional(),
     color: z.string().optional(),
     tags: z.array(z.string()).optional(),
-    progress: z.number().min(0).max(100).optional(),
+    progress: z.number().int().min(0).max(6).optional(),
     refs: z.array(artifactRefSchema).optional(),
     order: z.number().optional(),
     createdAt: z.string().optional(),

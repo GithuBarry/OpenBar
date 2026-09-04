@@ -11,6 +11,7 @@ import { sha256, withWriteLock, withWriteLockAsync, writeTextAtomic } from "./co
 import { expandProjectForConversion } from "./latexpand";
 import { conversionSourceHash, manuscriptFilePath } from "./pandoc";
 import { buildSourceBundle, mapVirtualRange } from "./source-bundle";
+import { clearSourceTransactionJournal, recoverSourceTransaction, writeSourceTransactionJournal } from "./source-transaction";
 import { bannerRanges, fileBanner, fileBytesUnchanged, splitBundleSource } from "./source-bundle-format";
 
 export function persistVirtualRange(input: {
@@ -25,6 +26,14 @@ export function persistVirtualRange(input: {
   const lockTarget = path.resolve(input.manuscriptDir, initial.rootFile || "paper.tex");
   return withWriteLock(lockTarget, () => {
     const bundle = buildSourceBundle(input.manuscriptDir);
+    const recoveryFailure = bundle.diagnostics.find((diagnostic) => diagnostic.code.startsWith("source_transaction_") && diagnostic.severity === "error");
+    if (recoveryFailure) {
+      return failResult("source_transaction_recovery_failed", recoveryFailure.message, {
+        retryable: true,
+        currentHash: bundle.bundleHash,
+        diagnostics: bundle.diagnostics,
+      });
+    }
     if (input.expectedBundleHash && bundle.bundleHash !== input.expectedBundleHash) {
       return failResult("stale_disk_state", "Source bundle hash does not match.", {
         retryable: true,
@@ -81,12 +90,21 @@ export function persistSourceBundle(input: {
   nextSource: string;
   expectedBundleHash?: string;
   dryRun?: boolean;
+  requestId?: string;
 }): OperationResult<{ bundleHash: string; written: string[]; dryRun?: boolean; patches?: SourcePatch[] }> {
   const parts = splitBundleSource(input.nextSource);
   const initial = buildSourceBundle(input.manuscriptDir);
   const lockTarget = path.resolve(input.manuscriptDir, initial.rootFile || "paper.tex");
   return withWriteLock(lockTarget, () => {
     const bundle = buildSourceBundle(input.manuscriptDir);
+    const recoveryFailure = bundle.diagnostics.find((diagnostic) => diagnostic.code.startsWith("source_transaction_") && diagnostic.severity === "error");
+    if (recoveryFailure) {
+      return failResult("source_transaction_recovery_failed", recoveryFailure.message, {
+        retryable: true,
+        currentHash: bundle.bundleHash,
+        diagnostics: bundle.diagnostics,
+      });
+    }
     if (input.expectedBundleHash && bundle.bundleHash !== input.expectedBundleHash) {
       return failResult("stale_disk_state", "Source bundle hash does not match.", {
         retryable: true,
@@ -167,21 +185,23 @@ export function persistSourceBundle(input: {
     }
     const committed: typeof writes = [];
     try {
+      writeSourceTransactionJournal(input.manuscriptDir, {
+        requestId: input.requestId || `source-${process.pid}-${Date.now()}`,
+        writes: writes.map(({ filePath, previous, next }) => ({ filePath, previous, next })),
+      });
       for (const write of writes) {
         writeTextAtomic(write.abs, write.next);
         committed.push(write);
       }
     } catch (error) {
-      for (const write of committed.reverse()) {
-        try {
-          writeTextAtomic(write.abs, write.previous);
-        } catch {
-          // Keep the original failure visible. The operation remains under
-          // the same lock so a later recovery pass sees a stable file set.
-        }
+      const recovery = recoverSourceTransaction(input.manuscriptDir);
+      if (!recovery.ok) {
+        const affected = [...new Set([...committed.map((write) => write.filePath), ...recovery.affectedPaths])];
+        throw new Error(`Source batch write failed: ${error instanceof Error ? error.message : String(error)} Recovery failed for: ${affected.join(", ") || "the transaction journal"}.`);
       }
       throw error;
     }
+    clearSourceTransactionJournal(input.manuscriptDir);
     const after = buildSourceBundle(input.manuscriptDir);
     return okResult(
       { bundleHash: after.bundleHash, written: writes.map((item) => item.filePath) },

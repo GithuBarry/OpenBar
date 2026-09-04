@@ -107,7 +107,7 @@ const TOOL_META: Record<SharedToolName, { title: string; description: string }> 
   get_project_state: {
     title: "Read project state",
     description:
-      "Read this first when entering an OpenBar project or after losing context. Default detail=summary returns location, paper title, section TODO counts, Primary Unplaced count, recent activity, mindmaps (id, title, primary, nodeCount, href), skills, and AGENTS.md path/hash. TODOs are {id, title, text, completed, primaryUnplaced, primaryMapNodeId}. Pass detail=full for AGENTS bodies and every TODO. Then search_project or navigate_project for detail. Does not modify files.",
+      "Read this first when entering an OpenBar project or after losing context. Default detail=summary returns location, paper title, section TODO counts, Primary Unplaced count, recent activity, mindmaps (id, title, primary, nodeCount, href), shared expectations, skills, and AGENTS.md path/hash. TODOs include stable source location fields when available. Pass detail=full for the full expectations block, AGENTS bodies, and every TODO. Read relevant paper context before editing, preserve unfinished scientific structures and Primary coverage, use seven independent progress states, and distinguish local save, remote sync, compile success, and research completion. Then search_project or navigate_project for detail. Does not modify files.",
   },
   search_project: {
     title: "Search the project",

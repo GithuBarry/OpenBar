@@ -5,6 +5,7 @@
 import { createHash } from "node:crypto";
 
 import { fileBanner } from "./source-bundle-format";
+import { recoverSourceTransaction } from "./source-transaction";
 import { traverseInputGraph, type GraphNode, type SourceDiagnostic } from "./source-graph";
 
 export type { ClientSourceBundle, ClientSourceSegment } from "./source-bundle-format";
@@ -31,6 +32,7 @@ export type SourceBundle = {
 };
 
 export function buildSourceBundle(manuscriptDir: string, rootFile?: string, revision = 0): SourceBundle {
+  const recovery = recoverSourceTransaction(manuscriptDir);
   const graph = traverseInputGraph(manuscriptDir, rootFile);
   const parts: string[] = [];
   const segments: VirtualSourceSegment[] = [];
@@ -64,7 +66,7 @@ export function buildSourceBundle(manuscriptDir: string, rootFile?: string, revi
     revision,
     bundleHash: createHash("sha256").update(source).digest("hex"),
     segments,
-    diagnostics: graph.diagnostics,
+    diagnostics: [...recovery.diagnostics, ...graph.diagnostics],
   };
 }
 

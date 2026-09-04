@@ -59,6 +59,10 @@ export class TexEnvelopeError extends Error {
   }
 }
 
+const WRITE_LOCK_STALE_MS = 120_000;
+const WRITE_LOCK_UPDATE_MS = 60_000;
+const WRITE_LOCK_RETRIES = { retries: 40, minTimeout: 20, maxTimeout: 200 };
+
 export function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -296,17 +300,13 @@ export function serializeSectionMeta(meta: SectionMeta): string {
 
 export function withWriteLock<T>(file: string, operation: () => T): T {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const lockPath = `${file}.ob-lock`;
-  let release: (() => void) | undefined;
-  try {
-    release = lockfile.lockSync(file, {
-      lockfilePath: lockPath,
-      stale: 60_000,
-      retries: { retries: 40, minTimeout: 20, maxTimeout: 200 },
-    });
-  } catch {
-    return withMkdirLock(lockPath, file, operation);
-  }
+  const release = lockfile.lockSync(file, {
+    lockfilePath: `${file}.ob-lock`,
+    realpath: false,
+    stale: WRITE_LOCK_STALE_MS,
+    update: WRITE_LOCK_UPDATE_MS,
+    retries: 0,
+  });
   try {
     return operation();
   } finally {
@@ -317,75 +317,17 @@ export function withWriteLock<T>(file: string, operation: () => T): T {
 /** Async variant for conversions that must inspect the include graph while the lock is held. */
 export async function withWriteLockAsync<T>(file: string, operation: () => Promise<T> | T): Promise<T> {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const lockPath = `${file}.ob-lock`;
-  let release: (() => void) | undefined;
-  try {
-    release = lockfile.lockSync(file, {
-      lockfilePath: lockPath,
-      stale: 60_000,
-      retries: { retries: 40, minTimeout: 20, maxTimeout: 200 },
-    });
-  } catch {
-    return withMkdirLockAsync(lockPath, file, operation);
-  }
+  const release = await lockfile.lock(file, {
+    lockfilePath: `${file}.ob-lock`,
+    realpath: false,
+    stale: WRITE_LOCK_STALE_MS,
+    update: WRITE_LOCK_UPDATE_MS,
+    retries: WRITE_LOCK_RETRIES,
+  });
   try {
     return await operation();
   } finally {
-    release();
-  }
-}
-
-function withMkdirLock<T>(lock: string, file: string, operation: () => T): T {
-  const deadline = Date.now() + 8_000;
-  while (true) {
-    try {
-      fs.mkdirSync(lock);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      try {
-        const age = Date.now() - fs.statSync(lock).mtimeMs;
-        if (age > 60_000) fs.rmSync(lock, { recursive: true, force: true });
-      } catch {
-        // Another writer may have released the lock; retry below.
-      }
-      if (Date.now() >= deadline) throw new TexEnvelopeError(`Timed out waiting to write ${path.basename(file)}.`);
-      sleep(20);
-    }
-  }
-  try {
-    return operation();
-  } finally {
-    fs.rmSync(lock, { recursive: true, force: true });
-  }
-}
-
-function sleep(milliseconds: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
-}
-
-async function withMkdirLockAsync<T>(lock: string, file: string, operation: () => Promise<T> | T): Promise<T> {
-  const deadline = Date.now() + 8_000;
-  while (true) {
-    try {
-      fs.mkdirSync(lock);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      try {
-        const age = Date.now() - fs.statSync(lock).mtimeMs;
-        if (age > 60_000) fs.rmSync(lock, { recursive: true, force: true });
-      } catch {
-        // Another writer may have released the lock; retry below.
-      }
-      if (Date.now() >= deadline) throw new TexEnvelopeError(`Timed out waiting to write ${path.basename(file)}.`);
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-  }
-  try {
-    return await operation();
-  } finally {
-    fs.rmSync(lock, { recursive: true, force: true });
+    await release();
   }
 }
 

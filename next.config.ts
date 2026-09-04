@@ -28,9 +28,16 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/*": ["./lib/tex-project/pandoc-openbarry.lua"],
   },
-  // Next 16 treats 127.0.0.1 as a different origin from localhost and blocks
-  // /_next chunks + HMR unless listed here.
-  allowedDevOrigins: ["127.0.0.1", "127.0.2.2", "localhost"],
+  // Next 16 treats each browser host as a separate origin and blocks
+  // /_next chunks + HMR unless listed here. Keep the stable tailnet name and
+  // current tailnet address available for the long-lived private workbench.
+  allowedDevOrigins: [
+    "127.0.0.1",
+    "127.0.2.2",
+    "localhost",
+    "100.64.0.1",
+    "dev.example.ts.net",
+  ],
   serverExternalPackages: [
     "file-type",
     "proper-lockfile",

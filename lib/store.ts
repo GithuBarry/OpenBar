@@ -40,6 +40,7 @@ import {
   type PaperSection,
   type TexPaper,
   DRAFT_MINDMAP_ID,
+  resolveMindmapStorageIdentity,
 } from "./tex-project/project";
 import { TexEnvelopeError, sha256, withWriteLock } from "./tex-project/codec";
 import { mindmapDiskHash } from "./mindmap/mindmap";
@@ -316,24 +317,25 @@ export function listMindmaps(slug: string): Mindmap[] {
 
 export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: string): void {
   const dir = projectDir(slug);
-  const id = mindmap.id || DRAFT_MINDMAP_ID;
-  const paths = texPaths(dir);
-  const file = id === DRAFT_MINDMAP_ID || id === "mindmap"
-    ? paths.mindmapFile
-    : path.join(paths.mindmapsDir, `${safeSegment(id, "mindmap id")}.tex`);
-  withWriteLock(file, () => {
+  const requestedId = mindmap.id || DRAFT_MINDMAP_ID;
+  const requested = resolveMindmapStorageIdentity(dir, requestedId);
+  if (mindmap.role && mindmap.role !== requested.role) {
+    throw new TexEnvelopeError(`Mindmap "${requested.id}" has role "${mindmap.role}" but its storage role is "${requested.role}".`);
+  }
+  withWriteLock(requested.file, () => {
+    const identity = resolveMindmapStorageIdentity(dir, requestedId);
     if (expectedDiskHash) {
-      const current = readMindmapRecord(dir, id);
+      const current = readMindmapRecord(dir, identity.id);
       const currentHash = current ? mindmapDiskHash(current) : undefined;
       // A primary map can be loaded as an in-memory fallback before its first
       // durable save. The write lock makes that first creation race-safe. Once
       // a record exists, the normal compare-and-save guard remains strict.
-      const firstPrimarySave = !current && isPrimaryMindmap(id);
+      const firstPrimarySave = !current && identity.role === "draft";
       if (!firstPrimarySave && currentHash !== expectedDiskHash) {
         throw new TexEnvelopeError(`Mindmap changed on disk${currentHash ? ` (hash ${currentHash})` : ""}. Reload before saving.`);
       }
     }
-    const normalized = normalizeMindmap({ ...mindmap, projectId: slug });
+    const normalized = normalizeMindmap({ ...mindmap, projectId: slug, id: identity.id, role: identity.role });
     assertUniqueMindmapTodoIds(normalized);
     writeMindmapRecord(dir, persistableMindmap(normalized));
   });

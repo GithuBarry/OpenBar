@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-import { buildMindmapWebMcpTools, type MindmapWebMcpHost } from "@/lib/research/webmcp-mindmap-contract";
+import { buildMindmapWebMcpTools, type MindmapTodoConversionResult, type MindmapWebMcpHost } from "@/lib/research/webmcp-mindmap-contract";
 import { registerWebMcpToolsIndependent, waitForModelContext } from "@/lib/research/webmcp-register";
 
 export function useMindmapWebMcp(host: MindmapWebMcpHost): void {
@@ -27,7 +27,7 @@ export function useMindmapWebMcp(host: MindmapWebMcpHost): void {
         patchNode: (id, patch, expectedRevision) => hostRef.current.patchNode(id, patch, expectedRevision),
         setActivityHighlight: (since) => hostRef.current.setActivityHighlight(since),
         placeTodoCard: (todoId, parentId, expectedRevision) => hostRef.current.placeTodoCard?.(todoId, parentId, expectedRevision) as Promise<string>,
-        convertCardToTodo: (id, sectionTitle, expectedRevision) => hostRef.current.convertCardToTodo?.(id, sectionTitle, expectedRevision) as Promise<string>,
+        convertCardToTodo: (id, sectionId, expectedRevision, requestId) => hostRef.current.convertCardToTodo?.(id, sectionId, expectedRevision, requestId) as MindmapTodoConversionResult | Promise<MindmapTodoConversionResult>,
         completeTodo: (todoId) => hostRef.current.completeTodo?.(todoId),
         reopenTodo: (todoId) => hostRef.current.reopenTodo?.(todoId),
         focusTodoInPaper: (todoId) => hostRef.current.focusTodoInPaper?.(todoId),

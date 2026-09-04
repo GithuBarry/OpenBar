@@ -4,12 +4,13 @@
 
 import { applySourceOperation } from "@/lib/research/operation-service";
 import type { SourceOperation } from "@/lib/research/operations";
+import { failResult } from "@/lib/research/operation-result";
 import { persistSourceBundle, persistVirtualRange } from "@/lib/tex-project/source-persist";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import { splitBundleSource } from "@/lib/tex-project/source-bundle-format";
+import { parseSectionMeta } from "@/lib/tex-project/codec";
 import { analyzePaper } from "@/lib/research/paper-analysis";
 import { composeObtodo } from "@/lib/todo-meta";
-import { TEX_HEADING_LINE } from "@/lib/tex-project/paper-compose";
 
 export function persistPaperTodoOperation(input: {
   manuscriptDir: string;
@@ -18,6 +19,13 @@ export function persistPaperTodoOperation(input: {
   dryRun?: boolean;
 }) {
   const bundle = buildSourceBundle(input.manuscriptDir);
+  const expectedSourceHash = "expectedSourceHash" in input.operation ? input.operation.expectedSourceHash : undefined;
+  if (expectedSourceHash && expectedSourceHash !== bundle.bundleHash) {
+    return failResult("stale_disk_state", "The paper changed on disk. Reload the paper before saving this TODO.", {
+      retryable: true,
+      currentHash: bundle.bundleHash,
+    });
+  }
   const applied = applySourceOperation(bundle.source, input.operation);
   if (!applied.ok) return applied;
   if (applied.value.patches.length === 1 && applied.value.patches[0]!.filePath === "") {
@@ -47,7 +55,7 @@ export function persistPaperTodoOperation(input: {
   });
 }
 
-export function insertTodoAtSection(source: string, sectionTitle: string, text: string, id?: string, title?: string): {
+export function insertTodoAtSection(source: string, sectionId: string, text: string, id?: string, title?: string): {
   source: string;
   id: string;
   from: number;
@@ -57,52 +65,19 @@ export function insertTodoAtSection(source: string, sectionTitle: string, text: 
   const composed = composeObtodo({ id, title, text });
   const idMatch = composed.match(/id=([A-Za-z0-9._-]+)/);
   const todoId = id || idMatch?.[1] || "";
-  const lines = source.split("\n");
-  const lineStarts: number[] = [];
-  let lineCursor = 0;
-  for (const line of lines) {
-    lineStarts.push(lineCursor);
-    lineCursor += line.length + 1;
-  }
-  let insertAt = source.length;
-  let targetLine = -1;
-  let nextHeadingLine = -1;
-  let found = false;
-  for (let i = 0; i < lines.length; i++) {
-    const match = TEX_HEADING_LINE.exec(lines[i] || "");
-    if (!match || match[1] === "title") continue;
-    const title = match[2]!.trim();
-    if (!found && title.toLowerCase() === sectionTitle.trim().toLowerCase()) {
-      found = true;
-      targetLine = i;
-      continue;
+  const parts = splitBundleSource(source);
+  const targetPart = parts.find((part) => {
+    try {
+      return parseSectionMeta(part.body).id === sectionId.trim();
+    } catch {
+      return false;
     }
-    if (found && match) {
-      nextHeadingLine = i;
-      break;
-    }
-  }
-  if (!found) {
+  });
+  if (!targetPart) {
     return { source, id: todoId, from: source.length, to: source.length, sectionFound: false };
   }
-  const parts = splitBundleSource(source);
-  if (targetLine >= 0) {
-    const targetOffset = lineStarts[targetLine] ?? source.length;
-    const targetPart = parts.find((part) => targetOffset >= part.bodyFrom && targetOffset < part.bodyTo);
-    const editEnd = targetPart && /^%\s*OB-EDIT-END[^\n]*(?:\n|$)/m.exec(targetPart.body);
-    if (targetPart && editEnd) {
-      insertAt = targetPart.bodyFrom + editEnd.index;
-    } else if (nextHeadingLine >= 0) {
-      const nextOffset = lineStarts[nextHeadingLine] ?? source.length;
-      const nextPart = parts.find((part) => nextOffset >= part.bodyFrom && nextOffset < part.bodyTo);
-      if (targetPart && nextPart && targetPart !== nextPart) insertAt = nextPart.bannerFrom;
-      else insertAt = nextOffset;
-    } else if (targetPart) {
-      insertAt = targetPart.bodyTo;
-    } else {
-      insertAt = source.length;
-    }
-  }
+  const editEnd = /^%\s*OB-EDIT-END[^\n]*(?:\n|$)/m.exec(targetPart.body);
+  const insertAt = editEnd ? targetPart.bodyFrom + editEnd.index : targetPart.bodyTo;
   const prefix = source.slice(0, insertAt).replace(/\s*$/, "\n");
   const suffix = source.slice(insertAt).replace(/^\s*/, "\n");
   const next = `${prefix}${composed}${suffix}`;

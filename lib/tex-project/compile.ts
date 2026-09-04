@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -15,13 +16,20 @@ export type CompileState = "idle" | "running" | "success" | "error" | "unavailab
 
 export interface PaperCompileStatus {
   state: CompileState;
+  /** Stable identifier for this particular compile request. */
+  jobId?: string;
   /** True when the build directory still contains the last successful PDF. */
   pdfAvailable?: boolean;
   sourceHash?: string;
+  /** True when the result was built from a different source revision. */
+  stale?: boolean;
   completedAt?: string;
   startedAt?: string;
   message?: string;
   diagnostics?: string[];
+  parsedDiagnostics?: TexFileLine[];
+  /** Bounded raw latexmk output for precise follow-up without unbounded logs. */
+  rawLog?: string;
   lastLines?: string[];
   pageBudget?: PaperPageBudget;
 }
@@ -41,9 +49,18 @@ export function getPaperCompileStatus(projectDir: string): PaperCompileStatus {
   try {
     const status = JSON.parse(fs.readFileSync(compileStatusFile(projectDir), "utf8")) as PaperCompileStatus;
     const pdfAvailable = fs.existsSync(compiledPdfFile(projectDir));
+    let stale = status.stale;
+    if (status.sourceHash) {
+      try {
+        stale = paperSourceHash(projectDir) !== status.sourceHash;
+      } catch {
+        // Keep the persisted indicator when the source is temporarily unreadable.
+      }
+    }
     return {
       ...status,
       pdfAvailable,
+      ...(stale === undefined ? {} : { stale }),
       ...(pdfAvailable && status.state === "success" ? { pageBudget: inspectPaperPageBudget(projectDir) } : {}),
     };
   } catch {
@@ -57,20 +74,29 @@ export function requestPaperCompile(projectDir: string): PaperCompileStatus {
   const newestHash = paperSourceHash(projectDir);
   if (running.has(projectDir)) {
     if (current.sourceHash !== newestHash) queuedAfterCurrent.add(projectDir);
-    return { state: "running", sourceHash: newestHash, startedAt: current.startedAt || new Date().toISOString() };
+    return {
+      state: "running",
+      jobId: current.jobId,
+      sourceHash: newestHash,
+      startedAt: current.startedAt || new Date().toISOString(),
+      stale: current.sourceHash !== newestHash,
+    };
   }
   const sourceHash = newestHash;
   if (current.state === "success" && current.sourceHash === sourceHash && fs.existsSync(compiledPdfFile(projectDir))) return current;
 
-  const status: PaperCompileStatus = { state: "running", sourceHash, startedAt: new Date().toISOString() };
+  const jobId = `compile-${randomUUID()}`;
+  const status: PaperCompileStatus = { state: "running", jobId, sourceHash, startedAt: new Date().toISOString(), stale: false };
   persistStatus(projectDir, status);
-  const job = runLatexmk(projectDir, sourceHash)
+  const job = runLatexmk(projectDir, sourceHash, jobId)
     .catch((error): PaperCompileStatus => ({
       state: "error",
+      jobId,
       sourceHash,
       completedAt: new Date().toISOString(),
       message: error instanceof Error ? error.message : String(error),
       diagnostics: [error instanceof Error ? error.message : String(error)],
+      parsedDiagnostics: [],
     }))
     .then((result) => {
       persistStatus(projectDir, result);
@@ -109,7 +135,7 @@ export function latexmkArgs(buildDir: string, rootFile = "paper.tex"): string[] 
   return ["-pdf", "-interaction=nonstopmode", "-file-line-error", "-no-shell-escape", "-norc", "-synctex=1", "-jobname=paper", `-outdir=${buildDir}`, rootFile];
 }
 
-function runLatexmk(projectDir: string, sourceHash: string): Promise<PaperCompileStatus> {
+function runLatexmk(projectDir: string, sourceHash: string, jobId: string): Promise<PaperCompileStatus> {
   const paths = texPaths(projectDir);
   fs.mkdirSync(paths.buildDir, { recursive: true });
   const startedAt = new Date().toISOString();
@@ -124,11 +150,14 @@ function runLatexmk(projectDir: string, sourceHash: string): Promise<PaperCompil
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     const onChunk = (chunk: Buffer) => {
       output += chunk.toString();
-      if (output.length > 250_000) output = output.slice(-250_000);
+      output = boundedLog(output);
       persistStatus(projectDir, {
         state: "running",
+        jobId,
         sourceHash,
         startedAt,
+        stale: false,
+        rawLog: output,
         lastLines: tail(output, 5),
       });
     };
@@ -147,26 +176,34 @@ function runLatexmk(projectDir: string, sourceHash: string): Promise<PaperCompil
       const unavailable = (error as NodeJS.ErrnoException).code === "ENOENT";
       finish({
         state: unavailable ? "unavailable" : "error",
+        jobId,
         sourceHash,
         startedAt,
         completedAt: new Date().toISOString(),
         message: unavailable ? "latexmk is not installed on this server." : error.message,
         diagnostics: unavailable ? ["Install latexmk to enable PDF preview."] : [error.message],
+        parsedDiagnostics: [],
+        rawLog: boundedLog(output),
       });
     });
     child.on("close", (code, signal) => {
       const diagnostics = parseDiagnostics(output).slice(-16);
+      const parsedDiagnostics = parseTexFileLines(diagnostics);
       if (code === 0 && fs.existsSync(compiledPdfFile(projectDir))) {
-        finish({ state: "success", sourceHash, startedAt, completedAt: new Date().toISOString(), diagnostics });
+        finish({ state: "success", jobId, sourceHash, startedAt, completedAt: new Date().toISOString(), diagnostics, parsedDiagnostics, rawLog: boundedLog(output), stale: false });
         return;
       }
       finish({
         state: "error",
+        jobId,
         sourceHash,
         startedAt,
         completedAt: new Date().toISOString(),
         message: signal ? `LaTeX compilation stopped (${signal}).` : `LaTeX compilation failed (exit ${code ?? "unknown"}).`,
         diagnostics: diagnostics.length ? diagnostics : tail(output, 12),
+        parsedDiagnostics,
+        rawLog: boundedLog(output),
+        stale: false,
       });
     });
   });
@@ -180,4 +217,9 @@ function parseDiagnostics(output: string): string[] {
 
 function tail(value: string, count: number): string[] {
   return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(-count);
+}
+
+function boundedLog(value: string): string {
+  const maxChars = 100_000;
+  return value.length > maxChars ? value.slice(-maxChars) : value;
 }
