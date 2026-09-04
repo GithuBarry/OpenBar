@@ -2234,7 +2234,7 @@ function CanvasNode({
           {node.todoId ? (
             <div className="mindmap-node-todo-text">
               <span className="mr-1">{completed ? "☑" : missing ? "⚠" : "☐"}</span>
-              {title.trim() && <span className="font-semibold"><NodeRichText text={title} /></span>}
+              {title.trim() && <span className="mindmap-node-todo-title font-semibold"><NodeRichText text={title} /></span>}
               {body.trim() && <p className="mindmap-node-detail"><NodeRichText text={body} /></p>}
             </div>
           ) : (

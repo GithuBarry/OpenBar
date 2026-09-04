@@ -34,8 +34,10 @@ const MIN_WIDTH = 96;
 const MIN_ROOT_WIDTH = 96;
 const TITLE_PX = 13.5;
 const TITLE_LH = 17;
-const TODO_TITLE_PX = 12.2;
-const TODO_TITLE_LH = 17.08;
+const TODO_TITLE_PX = 13.5;
+const TODO_TITLE_LH = 17;
+const TODO_BODY_PX = 11.6;
+const TODO_BODY_LH = 15;
 const ROOT_TITLE_PX = 15.7;
 const ROOT_TITLE_LH = 20;
 const DETAIL_PX = 11.6;
@@ -77,7 +79,7 @@ export function nodeDimensions(node: MindmapNode, displayText?: string, forcedWi
   const title = wrappedSize(titleLine || "Untitled topic", maxInner, titlePx, titleLh);
   const detailText = detailLines.join("\n").trim();
   const naturalDetail = detailText
-    ? wrappedSize(detailText, maxInner, node.todoId ? TODO_TITLE_PX : DETAIL_PX, node.todoId ? TODO_TITLE_LH : DETAIL_LH)
+    ? wrappedSize(detailText, maxInner, node.todoId ? TODO_BODY_PX : DETAIL_PX, node.todoId ? TODO_BODY_LH : DETAIL_LH)
     : { width: 0, height: 0 };
   const naturalInnerW = Math.max(title.width, naturalDetail.width);
   const minimumWidth = isRoot ? MIN_ROOT_WIDTH : MIN_WIDTH;
@@ -87,7 +89,7 @@ export function nodeDimensions(node: MindmapNode, displayText?: string, forcedWi
   const actualInner = Math.max(titlePx * CHAR, width - PAD_X);
   const actualTitle = wrappedSize(titleLine || "Untitled topic", actualInner, titlePx, titleLh);
   const detail = detailText
-    ? wrappedSize(detailText, actualInner, node.todoId ? TODO_TITLE_PX : DETAIL_PX, node.todoId ? TODO_TITLE_LH : DETAIL_LH)
+    ? wrappedSize(detailText, actualInner, node.todoId ? TODO_BODY_PX : DETAIL_PX, node.todoId ? TODO_BODY_LH : DETAIL_LH)
     : { width: 0, height: 0 };
   const meta = node.tags?.length || node.progress !== undefined ? META_H : 0;
   const height = Math.max(
