@@ -1642,7 +1642,7 @@ export function MindmapEditor({
   }, []);
 
   return (
-    <section className="mindmap-editor">
+    <section className={cn("mindmap-editor", showInspector && "mindmap-editor-inspector-open")}>
       <div className="mindmap-workspace">
         {paperState && viewMode === "map" && (
         <PaperActivityRail

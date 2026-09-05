@@ -311,6 +311,8 @@ button, input, textarea, select { font: inherit; }
 .prose-ob strong { font-weight: 700; }
 .prose-ob em { font-style: italic; }
 .prose-ob ul, .prose-ob ol { margin: 0 0 1em; padding-left: 1.5em; }
+.prose-ob ul { list-style: disc; }
+.prose-ob ol { list-style: decimal; }
 .prose-ob li { margin: 0.25em 0; }
 .prose-ob li::marker { color: rgb(var(--faint)); }
 .prose-ob blockquote {
@@ -395,6 +397,22 @@ button, input, textarea, select { font: inherit; }
 }
 .prose-ob img { max-width: 100%; border-radius: 8px; }
 .prose-ob .katex-display { margin: 1.1em 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.prose-ob .ob-tex-shortstack {
+  display: inline-block;
+  line-height: 1.1;
+  text-align: center;
+  vertical-align: middle;
+}
+.prose-ob .ob-tex-small-caps { font-variant: small-caps; }
+.prose-ob .ob-tex-caption {
+  margin: 0.7rem auto 1.25rem;
+  max-width: 48rem;
+  color: rgb(var(--muted));
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  text-align: center;
+}
 
 /* ---- Syntax Highlighted Manuscript Editor ---- */
 .ob-editor-container {
@@ -971,6 +989,7 @@ button, input, textarea, select { font: inherit; }
   overflow: hidden;
   background: rgb(var(--surface));
 }
+.mindmap-editor-inspector-open { --mindmap-inspector-width: min(280px, 100%); }
 .mindmap-activity {
   display: flex;
   flex-shrink: 0;
@@ -1047,6 +1066,7 @@ button, input, textarea, select { font: inherit; }
   color: rgb(var(--ink)) !important;
 }
 .mindmap-workspace { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; }
+.mindmap-editor-inspector-open .mindmap-workspace { padding-right: var(--mindmap-inspector-width); }
 .mindmap-toolbar {
   position: relative;
   z-index: 21;
@@ -1456,8 +1476,8 @@ button, input, textarea, select { font: inherit; }
   top: 0;
   right: 0;
   bottom: 0;
-  z-index: 20;
-  width: min(280px, 100%);
+  z-index: 22;
+  width: var(--mindmap-inspector-width, min(280px, 100%));
   min-height: 0;
   overflow-y: auto;
   border-left: 1px solid rgb(var(--line));
@@ -1602,7 +1622,7 @@ button, input, textarea, select { font: inherit; }
 }
 .mindmap-inspector-more[open] > summary::after { content: "▾"; }
 @media (max-width: 900px) {
-  .mindmap-inspector { width: min(280px, 86vw); }
+  .mindmap-editor-inspector-open { --mindmap-inspector-width: min(280px, 86vw); }
   .mindmap-canvas-hint { display: none; }
 }
 

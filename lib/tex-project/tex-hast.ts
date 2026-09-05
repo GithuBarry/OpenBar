@@ -13,6 +13,7 @@ import { getArgsContent } from "@unified-latex/unified-latex-util-arguments";
 import { printRaw } from "@unified-latex/unified-latex-util-print-raw";
 import type { Macro, Node } from "@unified-latex/unified-latex-types";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
+import katex from "katex";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { createElement, type ReactElement, type ReactNode } from "react";
 
@@ -23,7 +24,7 @@ import { sanitizeHtmlFragmentSync } from "@/lib/html-policy";
 import { extractPreviewMacroBindings } from "./pandoc-macros";
 import { inlineBundleIncludes } from "./source-bundle-format";
 import { wrapComplexTablesForPreview } from "./table-fragments";
-import { parseTexForDisplay } from "./tex-ast";
+import { parseTexForDisplay, type TexRoot } from "./tex-ast";
 
 type HastPreviewOptions = {
   bibliography?: BibEntry[];
@@ -211,8 +212,41 @@ const SILENT_HAST_MACROS = [
   "hypersetup",
   "makeatletter",
   "makeatother",
+  "bibliographystyle",
   "label",
+  "PassOptionsToPackage",
+  "RequirePackage",
+  "addlinespace",
+  "bottomrule",
+  "cline",
+  "cmidrule",
+  "hline",
+  "midrule",
+  "toprule",
 ];
+
+const TEXT_MACRO_VALUES = {
+  "%": "%",
+  "&": "&",
+  "$": "$",
+  "#": "#",
+  "_": "_",
+  "{": "{",
+  "}": "}",
+  textbackslash: "\\",
+  textasciitilde: "~",
+  textasciicircum: "^",
+  textbar: "|",
+  textless: "<",
+  textgreater: ">",
+  ldots: "…",
+  dots: "…",
+  pm: "±",
+  checkmark: "✓",
+  times: "×",
+  dagger: "†",
+  ddagger: "‡",
+} as const;
 
 function buildReplacements(
   options: HastPreviewOptions,
@@ -364,27 +398,28 @@ function buildReplacements(
     input: inputLike,
     include: inputLike,
     bibliography: inputLike,
+    bibliographystyle: () => silent(),
+    caption: (node: Macro) => htmlLike({
+      tag: "div",
+      attributes: { className: "ob-tex-caption" },
+      content: lastArg(node),
+    }),
     documentclass: () => silent(),
     usepackage: () => silent(),
     maketitle: () => silent(),
     appendix: () => silent(),
+    shortstack: (node: Macro) => htmlLike({
+      tag: "span",
+      attributes: { className: "ob-tex-shortstack" },
+      content: lastArg(node),
+    }),
+    textsc: (node: Macro) => htmlLike({
+      tag: "span",
+      attributes: { className: "ob-tex-small-caps" },
+      content: lastArg(node),
+    }),
   };
-  for (const [name, value] of Object.entries({
-    "%": "%",
-    "&": "&",
-    "$": "$",
-    "#": "#",
-    "_": "_",
-    "{": "{",
-    "}": "}",
-    textbackslash: "\\",
-    textasciitilde: "~",
-    textasciicircum: "^",
-    textbar: "|",
-    textless: "<",
-    textgreater: ">",
-    pm: "±",
-  })) {
+  for (const [name, value] of Object.entries(TEXT_MACRO_VALUES)) {
     replacements[name] = () => str(value);
   }
   for (const name of SILENT_HAST_MACROS) {
@@ -406,14 +441,74 @@ function buildReplacements(
 }
 
 function unwrapDocumentEnv(source: string): string {
-  return source.replace(/\\begin\{document\}/g, "").replace(/\\end\{document\}/g, "");
+  const begin = /\\begin\s*\{\s*document\s*\}/.exec(source);
+  if (!begin) return source;
+  const bodyStart = begin.index + begin[0].length;
+  const endPattern = /\\end\s*\{\s*document\s*\}/g;
+  endPattern.lastIndex = bodyStart;
+  const end = endPattern.exec(source);
+  return source.slice(bodyStart, end?.index ?? source.length);
+}
+
+function bodyTreeForPreview(source: string): TexRoot {
+  const full = parseTexForDisplay(source);
+  const document = full.content.find((node) => (
+    node.type === "environment"
+    && node.env === "document"
+    && Array.isArray(node.content)
+  ));
+  if (!document || document.type !== "environment") {
+    return parseTexForDisplay(unwrapDocumentEnv(source));
+  }
+
+  // The title is authored before \begin{document}, while \maketitle is in
+  // the document body. Keep that one presentation datum without leaking
+  // package options or class declarations into the reader projection.
+  const title = full.content.find((node) => node.type === "macro" && node.content === "title");
+  return {
+    type: "root",
+    content: title ? [title, ...document.content] : document.content,
+  } as TexRoot;
+}
+
+function textContent(value: unknown): string {
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (Array.isArray(value)) return value.map(textContent).join("");
+  if (!value || typeof value !== "object") return "";
+  const props = (value as { props?: { children?: unknown } }).props;
+  return props ? textContent(props.children) : "";
+}
+
+function classNameOf(props: Record<string, unknown>): string {
+  const value = props.className;
+  return Array.isArray(value) ? value.map(String).join(" ") : String(value || "");
+}
+
+function mathComponent(props: Record<string, unknown>, display: boolean): ReactNode {
+  const { children, className, ...rest } = props;
+  const source = textContent(children);
+  const html = katex.renderToString(source, {
+    displayMode: display,
+    throwOnError: false,
+  });
+  const classes = [classNameOf({ className }), "ob-rendered-math"].filter(Boolean).join(" ");
+  return createElement(display ? "div" : "span", {
+    ...rest,
+    className: classes,
+    dangerouslySetInnerHTML: { __html: html },
+  });
+}
+
+function previewSpanComponent(props: Record<string, unknown>): ReactNode {
+  if (classNameOf(props).split(/\s+/).includes("inline-math")) return mathComponent(props, false);
+  return createElement("span", props);
 }
 
 function convertTree(source: string, options: HastPreviewOptions = {}) {
   const cites: CiteState = { order: [], num: new Map() };
   const headingCounts = new Map<string, number>();
   const previewSource = wrapComplexTablesForPreview(inlineBundleIncludes(source), options.pandocTables);
-  const tree = parseTexForDisplay(unwrapDocumentEnv(previewSource));
+  const tree = bodyTreeForPreview(previewSource);
   const processor = unified().use(unifiedLatexToHast, {
     macroReplacements: buildReplacements(options, cites, headingCounts, previewSource),
   });
@@ -446,6 +541,7 @@ function previewDivComponent(options: HastPreviewOptions, headingKey: string) {
   const bib = bibliographyComponent(options, headingKey);
   return function HastPreviewDiv(props: Record<string, unknown>): ReactNode {
     const className = Array.isArray(props.className) ? props.className.join(" ") : String(props.className || "");
+    if (className.split(/\s+/).includes("display-math")) return mathComponent(props, true);
     if (className.includes("ob-hast-pandoc-table")) {
       const key = String(props["data-table-key"] || props.dataTableKey || "");
       const html = options.pandocTables?.[key];
@@ -477,6 +573,7 @@ export function texFragmentPreview(source: string, options: HastPreviewOptions =
       jsxs,
       components: {
         div: previewDivComponent(options, headingKey) as never,
+        span: previewSpanComponent as never,
       },
     });
     return { tree, headingKeys };
