@@ -1048,6 +1048,8 @@ button, input, textarea, select { font: inherit; }
 }
 .mindmap-workspace { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; }
 .mindmap-toolbar {
+  position: relative;
+  z-index: 21;
   display: flex;
   min-height: 40px;
   flex-shrink: 0;

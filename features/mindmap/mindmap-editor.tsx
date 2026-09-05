@@ -1635,7 +1635,10 @@ export function MindmapEditor({
                 </div>
               )}
             </div>
-            <ToolbarButton title={showInspector ? "Hide inspector" : "Show inspector"} onClick={() => setShowInspector((shown) => !shown)}>
+            <ToolbarButton
+              title={showInspector ? "Hide inspector" : "Show inspector"}
+              onClick={() => setShowInspector((shown) => !shown)}
+            >
               {showInspector ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
             </ToolbarButton>
             {saveError ? (
@@ -2821,6 +2824,7 @@ function ToolbarButton({
     <button
       type="button"
       title={title}
+      aria-label={title}
       disabled={disabled}
       onClick={onClick}
       className={cn("mindmap-toolbar-button", danger && "mindmap-toolbar-button-danger")}
