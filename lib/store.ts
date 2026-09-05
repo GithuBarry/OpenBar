@@ -46,6 +46,8 @@ import { TexEnvelopeError, sha256, withWriteLock } from "./tex-project/codec";
 import { mindmapDiskHash } from "./mindmap/mindmap";
 import { readPaper } from "./research/paper-service";
 import { buildSourceBundle } from "./tex-project/source-bundle";
+import { buildSourceContextIndex } from "./research/source-context";
+import type { SourceDiagnostic } from "./tex-project/source-graph";
 import type { ClientSourceBundle } from "./tex-project/source-bundle-format";
 import {
   projectSchema,
@@ -385,12 +387,32 @@ type PaperEditorState = {
     appendix?: boolean;
   }>;
   bundle: ClientSourceBundle;
+  sourceContext: {
+    sections: Array<{
+      id: string;
+      title: string;
+      level: number;
+      order: number;
+      file: string;
+      sourceHash: string;
+      sourceRange: { from: number; to: number };
+      writeTargetId?: string;
+      excerpt: string;
+      headingPath: string[];
+      parseStatus: "ok" | "error";
+      diagnostic?: SourceDiagnostic;
+      diagnostics: SourceDiagnostic[];
+    }>;
+    diagnostics: SourceDiagnostic[];
+  };
 };
 
 export function getPaperEditorState(slug: string): PaperEditorState | null {
   const paper = getEditableTexPaper(slug);
   if (!paper) return null;
-  const bundle = buildSourceBundle(texPaths(projectDir(slug)).manuscriptDir);
+  const manuscriptDir = texPaths(projectDir(slug)).manuscriptDir;
+  const bundle = buildSourceBundle(manuscriptDir);
+  const sourceContext = buildSourceContextIndex(manuscriptDir, bundle.rootFile, bundle);
   return {
     title: paper.title,
     sections: paper.sections.map((section) => ({
@@ -408,6 +430,24 @@ export function getPaperEditorState(slug: string): PaperEditorState | null {
       bundleHash: bundle.bundleHash,
       segments: bundle.segments,
       diagnostics: bundle.diagnostics,
+    },
+    sourceContext: {
+      sections: sourceContext.sections.map((section) => ({
+        id: section.id,
+        title: section.title,
+        level: section.level,
+        order: section.order,
+        file: section.file,
+        sourceHash: section.sourceHash,
+        sourceRange: section.sourceRange,
+        ...(section.writeTargetId ? { writeTargetId: section.writeTargetId } : {}),
+        excerpt: section.excerpt,
+        headingPath: section.headingPath,
+        parseStatus: section.parseStatus,
+        ...(section.diagnostic ? { diagnostic: section.diagnostic } : {}),
+        diagnostics: section.diagnostics,
+      })),
+      diagnostics: sourceContext.diagnostics,
     },
   };
 }

@@ -14,6 +14,7 @@ export async function GET() {
       git: capabilities.git.available,
       pandoc: capabilities.pandoc.available,
       latexmk: capabilities.latexmk.available,
+      tectonic: capabilities.tectonic.available,
       pdflatex: capabilities.pdflatex.available,
       latexpand: capabilities.latexpand.available,
     },

@@ -55,12 +55,13 @@ export default async function PaperPage({
             project={slug}
             title={paper.title}
             initialSections={paper.sections}
-          initialBundle={paper.bundle}
-          bibliography={bibliography}
-          bibliographyRaw={getBibliographyRaw(slug)}
-          initialPandocTables={pandocTables}
-          placementTargets={placementTargets}
-          boundTodoIds={boundTodoIds}
+            initialBundle={paper.bundle}
+            sourceContext={paper.sourceContext}
+            bibliography={bibliography}
+            bibliographyRaw={getBibliographyRaw(slug)}
+            initialPandocTables={pandocTables}
+            placementTargets={placementTargets}
+            boundTodoIds={boundTodoIds}
           />
         ) : (
           <p className="rounded-lg border border-line bg-surface px-4 py-3 text-sm text-muted">This project has no TeX manuscript yet.</p>

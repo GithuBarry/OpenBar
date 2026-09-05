@@ -40,8 +40,8 @@ import {
 } from "@/lib/types";
 import { getPaperCompileStatus, requestPaperCompile } from "@/lib/tex-project/compile";
 import { FIGURE_MAX_BYTES, uploadFigureAsset, texPaths, patchDocument, patchDocumentState, readDocument, DRAFT_MINDMAP_ID, resolveMindmapStorageIdentity } from "@/lib/tex-project/project";
-import { persistSourceBundle, applyConversionWrite } from "@/lib/tex-project/source-persist";
-import { getOverleafGitStatus, pushOverleafGit, refreshOverleafGitStatus } from "@/lib/tex-project/overleaf-git";
+import { persistSourceBundle, applyConversionWrite, repairPaperSectionEnvelope } from "@/lib/tex-project/source-persist";
+import { getOverleafGitHistory, getOverleafGitStatus, pushOverleafGit, refreshOverleafGitStatus } from "@/lib/tex-project/overleaf-git";
 import { inspectRepository } from "@/lib/tex-project/source-graph";
 import { getConversionPlan, previewManuscriptConversion } from "@/lib/tex-project/pandoc";
 import { convertComplexTables } from "@/lib/tex-project/pandoc-tables";
@@ -62,7 +62,7 @@ import {
   writeWorkspaceSkill,
   workspaceRoot,
 } from "@/lib/research/project-skills";
-import { persistPaperTodoOperation, insertTodoAtSection } from "@/lib/research/paper-todo-persist";
+import { persistPaperTodoOperation, insertTodoAtSection, persistPaperTodoPlacement, previewPaperTodoPlacement, relocatePaperTodo } from "@/lib/research/paper-todo-persist";
 import { convertMindmapCardToTodo } from "@/lib/research/mindmap-todo-conversion";
 import { remoteSyncResult } from "@/lib/research/project-sync";
 import { applyMindmapAction, newNodeId } from "@/features/mindmap/mindmap-state";
@@ -234,6 +234,11 @@ export async function getProjectGitStatusAction(slug: string, refreshRemote = fa
   return refreshRemote ? refreshOverleafGitStatus(projectDir) : getOverleafGitStatus(projectDir);
 }
 
+export async function getProjectGitHistoryAction(slug: string, since?: string, limit = 40) {
+  await requireProjectAccess(slug);
+  return getOverleafGitHistory(projectContentDir(slug), since, limit);
+}
+
 export async function commitAndPushProjectAction(slug: string, message?: string) {
   await requireProjectAccess(slug);
   assertAdministrativeWriteAllowed("Git commit and push");
@@ -272,6 +277,23 @@ export async function getEditablePaperAction(slug: string) {
     cwd: texPaths(projectContentDir(slug)).manuscriptDir,
   });
   return { ...paper, pandocTables };
+}
+
+export async function repairPaperSectionEnvelopeAction(
+  slug: string,
+  filePath: string,
+  sectionId: string,
+  expectedSourceHash?: string,
+) {
+  await requireProjectAccess(slug);
+  const result = repairPaperSectionEnvelope({
+    manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
+    filePath,
+    sectionId,
+    expectedSourceHash,
+  });
+  if (result.ok) bust(slug);
+  return result;
 }
 
 export async function previewTableFallbacksAction(slug: string, source: string) {
@@ -691,11 +713,11 @@ export async function insertPaperTodoAtSectionAction(
   const manuscriptDir = texPaths(projectContentDir(slug)).manuscriptDir;
   const bundle = buildSourceBundle(manuscriptDir);
   const inserted = insertTodoAtSection(bundle.source, sectionId, text, undefined, title);
-  if (!inserted.sectionFound) {
+  if (!inserted.sectionFound || inserted.error) {
     return {
       ok: false as const,
-      code: "unknown_section",
-      message: `Unknown paper section id "${sectionId}".`,
+      code: inserted.sectionFound ? "invalid_tex" : "unknown_section",
+      message: inserted.error || `Unknown paper section id "${sectionId}".`,
       retryable: false,
     };
   }
@@ -706,6 +728,61 @@ export async function insertPaperTodoAtSectionAction(
   });
   if (result.ok) bust(slug);
   return { ...result, id: inserted.id };
+}
+
+export async function previewPaperTodoPlacementAction(
+  slug: string,
+  sectionId: string,
+  text: string,
+  title?: string,
+  id?: string,
+) {
+  await requireProjectAccess(slug);
+  return previewPaperTodoPlacement({
+    manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
+    sectionId,
+    text,
+    title,
+    id,
+  });
+}
+
+export async function persistPaperTodoPlacementAction(
+  slug: string,
+  sectionId: string,
+  text: string,
+  title?: string,
+  id?: string,
+  expectedBundleHash?: string,
+) {
+  await requireProjectAccess(slug);
+  const result = persistPaperTodoPlacement({
+    manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
+    sectionId,
+    text,
+    title,
+    id,
+    expectedBundleHash,
+  });
+  if (result.ok) bust(slug);
+  return result;
+}
+
+export async function relocatePaperTodoAction(
+  slug: string,
+  todoId: string,
+  sectionId: string,
+  expectedBundleHash?: string,
+) {
+  await requireProjectAccess(slug);
+  const result = relocatePaperTodo({
+    manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
+    todoId,
+    sectionId,
+    expectedBundleHash,
+  });
+  if (result.ok) bust(slug);
+  return result;
 }
 
 export async function convertMindmapCardToTodoAction(

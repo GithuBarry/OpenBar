@@ -7,10 +7,8 @@ import type { SourceOperation } from "@/lib/research/operations";
 import { failResult } from "@/lib/research/operation-result";
 import { persistSourceBundle, persistVirtualRange } from "@/lib/tex-project/source-persist";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
-import { splitBundleSource } from "@/lib/tex-project/source-bundle-format";
-import { parseSectionMeta } from "@/lib/tex-project/codec";
 import { analyzePaper } from "@/lib/research/paper-analysis";
-import { composeObtodo } from "@/lib/todo-meta";
+import { previewTodoAtSection, relocateTodoInBundle } from "./paper-todo-placement";
 
 export function persistPaperTodoOperation(input: {
   manuscriptDir: string;
@@ -61,28 +59,111 @@ export function insertTodoAtSection(source: string, sectionId: string, text: str
   from: number;
   to: number;
   sectionFound: boolean;
+  filePath?: string;
+  before?: string;
+  after?: string;
+  error?: string;
 } {
-  const composed = composeObtodo({ id, title, text });
-  const idMatch = composed.match(/id=([A-Za-z0-9._-]+)/);
-  const todoId = id || idMatch?.[1] || "";
-  const parts = splitBundleSource(source);
-  const targetPart = parts.find((part) => {
-    try {
-      return parseSectionMeta(part.body).id === sectionId.trim();
-    } catch {
-      return false;
-    }
-  });
-  if (!targetPart) {
-    return { source, id: todoId, from: source.length, to: source.length, sectionFound: false };
+  const placement = previewTodoAtSection(source, sectionId, text, title, id);
+  return {
+    source: placement.nextSource,
+    id: placement.id,
+    from: placement.from,
+    to: placement.to,
+    sectionFound: placement.sectionFound,
+    ...(placement.filePath ? { filePath: placement.filePath } : {}),
+    before: placement.before,
+    after: placement.after,
+    ...(placement.error ? { error: placement.error } : {}),
+  };
+}
+
+export function previewPaperTodoPlacement(input: {
+  manuscriptDir: string;
+  sectionId: string;
+  text: string;
+  title?: string;
+  id?: string;
+}) {
+  const bundle = buildSourceBundle(input.manuscriptDir);
+  return {
+    ...previewTodoAtSection(bundle.source, input.sectionId, input.text, input.title, input.id),
+    bundleHash: bundle.bundleHash,
+  };
+}
+
+export function persistPaperTodoPlacement(input: {
+  manuscriptDir: string;
+  sectionId: string;
+  text: string;
+  title?: string;
+  id?: string;
+  expectedBundleHash?: string;
+}) {
+  const preview = previewPaperTodoPlacement(input);
+  if (!preview.sectionFound || preview.error) {
+    return failResult(preview.sectionFound ? "invalid_tex" : "unknown_section", preview.error || `Unknown paper section id "${input.sectionId}".`, {
+      retryable: false,
+    });
   }
-  const editEnd = /^%\s*OB-EDIT-END[^\n]*(?:\n|$)/m.exec(targetPart.body);
-  const insertAt = editEnd ? targetPart.bodyFrom + editEnd.index : targetPart.bodyTo;
-  const prefix = source.slice(0, insertAt).replace(/\s*$/, "\n");
-  const suffix = source.slice(insertAt).replace(/^\s*/, "\n");
-  const next = `${prefix}${composed}${suffix}`;
-  const from = prefix.length;
-  return { source: next, id: todoId, from, to: from + composed.length, sectionFound: true };
+  const result = persistSourceBundle({
+    manuscriptDir: input.manuscriptDir,
+    nextSource: preview.nextSource,
+    expectedBundleHash: input.expectedBundleHash ?? preview.bundleHash,
+  });
+  if (!result.ok) return result;
+  return {
+    ...result,
+    value: {
+      ...result.value,
+      id: preview.id,
+      sectionId: preview.sectionId,
+      filePath: preview.filePath,
+      from: preview.from,
+      to: preview.to,
+      before: preview.before,
+      after: preview.after,
+      changed: true,
+    },
+  };
+}
+
+export function relocatePaperTodo(input: {
+  manuscriptDir: string;
+  todoId: string;
+  sectionId: string;
+  expectedBundleHash?: string;
+}) {
+  const bundle = buildSourceBundle(input.manuscriptDir);
+  if (input.expectedBundleHash && input.expectedBundleHash !== bundle.bundleHash) {
+    return failResult("stale_disk_state", "The paper changed on disk. Reload the paper before relocating this TODO.", {
+      retryable: true,
+      currentHash: bundle.bundleHash,
+    });
+  }
+  const moved = relocateTodoInBundle(bundle.source, input.todoId, input.sectionId);
+  if (!moved.todoFound) return failResult("unknown_todo", `Unknown TODO "${input.todoId}".`, false);
+  if (!moved.targetFound || moved.error) return failResult(moved.targetFound ? "invalid_tex" : "unknown_section", moved.error || `Unknown paper section id "${input.sectionId}".`, false);
+  const result = persistSourceBundle({
+    manuscriptDir: input.manuscriptDir,
+    nextSource: moved.source,
+    expectedBundleHash: input.expectedBundleHash ?? bundle.bundleHash,
+  });
+  if (!result.ok) return result;
+  return {
+    ...result,
+    value: {
+      ...result.value,
+      todoId: moved.id,
+      sectionId: input.sectionId,
+      filePath: moved.filePath,
+      from: moved.from,
+      to: moved.to,
+      before: moved.before,
+      after: moved.after,
+      changed: true,
+    },
+  };
 }
 
 export function findSectionTitleForId(source: string, sectionId: string, sections: Array<{ id: string; title: string }>): string | undefined {

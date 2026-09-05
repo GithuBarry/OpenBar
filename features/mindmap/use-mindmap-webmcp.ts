@@ -23,6 +23,7 @@ export function useMindmapWebMcp(host: MindmapWebMcpHost): void {
         addNode: (parentId, text, expectedRevision, title) => hostRef.current.addNode(parentId, text, expectedRevision, title),
         moveNode: (id, parentId, beforeId, afterId, expectedRevision) => hostRef.current.moveNode(id, parentId, beforeId, afterId, expectedRevision),
         deleteNode: (id, expectedRevision) => hostRef.current.deleteNode(id, expectedRevision),
+        deleteBranch: (id, expectedRevision) => hostRef.current.deleteBranch?.(id, expectedRevision),
         setCollapsed: (id, collapsed, expectedRevision) => hostRef.current.setCollapsed(id, collapsed, expectedRevision),
         patchNode: (id, patch, expectedRevision) => hostRef.current.patchNode(id, patch, expectedRevision),
         setActivityHighlight: (since) => hostRef.current.setActivityHighlight(since),

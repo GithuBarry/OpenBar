@@ -37,6 +37,16 @@ export type OperationDiagnostic = {
   filePath?: string;
 };
 
+/** Explicit Overleaf visibility for a locally successful mutation. */
+export type RemoteSyncOutcome = {
+  status: "pushed" | "pending" | "failed" | "unconfigured";
+  message: string;
+  code?: string;
+  commitHash?: string;
+  retryable: boolean;
+  credentialNeeded?: boolean;
+};
+
 export type ConflictPayload = {
   currentRevision: number;
   currentHash: string;
@@ -50,6 +60,7 @@ export type OperationResult<T> =
       value: T;
       revision?: number;
       diskHash?: string;
+      remote?: RemoteSyncOutcome;
       warnings?: OperationDiagnostic[];
       diagnostics?: OperationDiagnostic[];
     }
@@ -58,6 +69,7 @@ export type OperationResult<T> =
       code: OperationErrorCode | string;
       message: string;
       retryable: boolean;
+      remote?: RemoteSyncOutcome;
       currentRevision?: number;
       currentHash?: string;
       diagnostics?: OperationDiagnostic[];
@@ -69,6 +81,7 @@ export function okResult<T>(
   extra: {
     revision?: number;
     diskHash?: string;
+    remote?: RemoteSyncOutcome;
     warnings?: OperationDiagnostic[];
     diagnostics?: OperationDiagnostic[];
   } = {},
@@ -83,6 +96,7 @@ export function failResult(
     | boolean
     | {
         retryable: boolean;
+        remote?: RemoteSyncOutcome;
         currentRevision?: number;
         currentHash?: string;
         diagnostics?: OperationDiagnostic[];
@@ -97,6 +111,7 @@ export function failResult(
     code,
     message,
     retryable: extra.retryable,
+    remote: extra.remote,
     currentRevision: extra.currentRevision,
     currentHash: extra.currentHash,
     diagnostics: extra.diagnostics,

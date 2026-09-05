@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -30,6 +30,7 @@ export interface PaperCompileStatus {
   parsedDiagnostics?: TexFileLine[];
   /** Bounded raw latexmk output for precise follow-up without unbounded logs. */
   rawLog?: string;
+  compiler?: "latexmk" | "tectonic";
   lastLines?: string[];
   pageBudget?: PaperPageBudget;
 }
@@ -135,13 +136,47 @@ export function latexmkArgs(buildDir: string, rootFile = "paper.tex"): string[] 
   return ["-pdf", "-interaction=nonstopmode", "-file-line-error", "-no-shell-escape", "-norc", "-synctex=1", "-jobname=paper", `-outdir=${buildDir}`, rootFile];
 }
 
+export function tectonicArgs(buildDir: string, rootFile = "paper.tex"): string[] {
+  return ["--outdir", buildDir, "--keep-logs", "--synctex", "--untrusted", rootFile];
+}
+
+function findCompiler(): "latexmk" | "tectonic" | null {
+  for (const candidate of ["latexmk", "tectonic"] as const) {
+    try {
+      execFileSync(candidate, ["--version"], {
+        stdio: "ignore",
+        timeout: 4_000,
+        env: process.env,
+      });
+      return candidate;
+    } catch {
+      // Try the next supported compiler.
+    }
+  }
+  return null;
+}
+
 function runLatexmk(projectDir: string, sourceHash: string, jobId: string): Promise<PaperCompileStatus> {
   const paths = texPaths(projectDir);
   fs.mkdirSync(paths.buildDir, { recursive: true });
+  const buildDir = path.resolve(paths.buildDir);
   const startedAt = new Date().toISOString();
   const rootFile = path.relative(paths.manuscriptDir, locateTexRoot(paths.manuscriptDir)).split(path.sep).join("/");
+  const compiler = findCompiler();
+  if (!compiler) {
+    return Promise.resolve({
+      state: "unavailable",
+      jobId,
+      sourceHash,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      message: "No supported TeX compiler is installed on this server.",
+      diagnostics: ["Install latexmk or tectonic to enable PDF preview."],
+      parsedDiagnostics: [],
+    });
+  }
   return new Promise((resolve) => {
-    const child = spawn("latexmk", latexmkArgs(paths.buildDir, rootFile), {
+    const child = spawn(compiler, compiler === "tectonic" ? tectonicArgs(buildDir, rootFile) : latexmkArgs(buildDir, rootFile), {
       cwd: paths.manuscriptDir,
       env: { ...process.env, TEXINPUTS: `${paths.manuscriptDir}${path.delimiter}` },
       stdio: ["ignore", "pipe", "pipe"],
@@ -157,6 +192,7 @@ function runLatexmk(projectDir: string, sourceHash: string, jobId: string): Prom
         sourceHash,
         startedAt,
         stale: false,
+        compiler,
         rawLog: output,
         lastLines: tail(output, 5),
       });
@@ -178,10 +214,11 @@ function runLatexmk(projectDir: string, sourceHash: string, jobId: string): Prom
         state: unavailable ? "unavailable" : "error",
         jobId,
         sourceHash,
+        compiler,
         startedAt,
         completedAt: new Date().toISOString(),
-        message: unavailable ? "latexmk is not installed on this server." : error.message,
-        diagnostics: unavailable ? ["Install latexmk to enable PDF preview."] : [error.message],
+        message: unavailable ? `The ${compiler} compiler could not be started.` : error.message,
+        diagnostics: unavailable ? [`The ${compiler} compiler could not be started.`] : [error.message],
         parsedDiagnostics: [],
         rawLog: boundedLog(output),
       });
@@ -189,17 +226,24 @@ function runLatexmk(projectDir: string, sourceHash: string, jobId: string): Prom
     child.on("close", (code, signal) => {
       const diagnostics = parseDiagnostics(output).slice(-16);
       const parsedDiagnostics = parseTexFileLines(diagnostics);
+      if (code === 0 && compiler === "tectonic") {
+        const tectonicPdf = path.join(buildDir, `${path.basename(rootFile, path.extname(rootFile))}.pdf`);
+        if (tectonicPdf !== compiledPdfFile(projectDir) && fs.existsSync(tectonicPdf)) {
+          fs.copyFileSync(tectonicPdf, compiledPdfFile(projectDir));
+        }
+      }
       if (code === 0 && fs.existsSync(compiledPdfFile(projectDir))) {
-        finish({ state: "success", jobId, sourceHash, startedAt, completedAt: new Date().toISOString(), diagnostics, parsedDiagnostics, rawLog: boundedLog(output), stale: false });
+        finish({ state: "success", jobId, sourceHash, startedAt, completedAt: new Date().toISOString(), diagnostics, parsedDiagnostics, rawLog: boundedLog(output), stale: false, compiler });
         return;
       }
       finish({
         state: "error",
         jobId,
         sourceHash,
+        compiler,
         startedAt,
         completedAt: new Date().toISOString(),
-        message: signal ? `LaTeX compilation stopped (${signal}).` : `LaTeX compilation failed (exit ${code ?? "unknown"}).`,
+        message: signal ? `TeX compilation stopped (${signal}).` : `TeX compilation failed with ${compiler} (exit ${code ?? "unknown"}).`,
         diagnostics: diagnostics.length ? diagnostics : tail(output, 12),
         parsedDiagnostics,
         rawLog: boundedLog(output),

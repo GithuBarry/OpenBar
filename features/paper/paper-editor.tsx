@@ -41,6 +41,7 @@ import {
   removePaperSectionAction,
   renamePaperSectionAction,
   requestPaperCompileAction,
+  repairPaperSectionEnvelopeAction,
   setPaperSectionHeadingAction,
   uploadPaperFigureAction,
 } from "@/app/actions";
@@ -64,6 +65,7 @@ import {
 } from "./use-paper-webmcp";
 import { AnchoredPop } from "@/components/pop";
 import { composeObcomment } from "@/lib/research/paper-analysis";
+import { previewTodoAtSection, relocateTodoInBundle } from "@/lib/research/paper-todo-placement";
 import { assignMissingTodoIds, composeObtodo, rewriteObtodo, type TodoAttrPatch } from "@/lib/todo-meta";
 import { proposedTableRepair, suspiciousTexSequences } from "@/lib/tex-project/tex-repair";
 import { extractComplexTableFragments } from "@/lib/tex-project/table-fragments";
@@ -73,6 +75,8 @@ import { PaperAppearance, type PaperEditorWidth, type PaperReaderFont } from "./
 import { countPaperWords } from "./paper-stats";
 import { TodoPanel } from "./todo-panel";
 import { sharedWebMcpActions } from "@/features/webmcp-actions";
+import { remoteSyncResult } from "@/lib/research/project-sync";
+import type { RemoteSyncOutcome } from "@/lib/research/operation-result";
 import {
   collectEditorComments,
   collectEditorTodos,
@@ -122,6 +126,34 @@ type HydratedPaper = {
   sections: PaperEditorSection[];
   bundle: ClientSourceBundle;
   pandocTables?: Record<string, string>;
+  sourceContext: {
+    sections: PaperSourceContextSection[];
+    diagnostics: SourceDiagnostic[];
+  };
+};
+
+type SourceDiagnostic = {
+  severity: "error" | "warning" | "info";
+  code: string;
+  message: string;
+  filePath?: string;
+  repair?: { kind: "missing-edit-end"; sectionId: string; filePath?: string };
+};
+
+type PaperSourceContextSection = {
+  id: string;
+  title: string;
+  level: number;
+  order: number;
+  file: string;
+  sourceHash: string;
+  sourceRange: { from: number; to: number };
+  writeTargetId?: string;
+  excerpt: string;
+  headingPath: string[];
+  parseStatus: "ok" | "error";
+  diagnostic?: SourceDiagnostic;
+  diagnostics: SourceDiagnostic[];
 };
 
 type EditorPrefs = {
@@ -146,6 +178,7 @@ export function PaperEditor({
   title,
   initialSections,
   initialBundle,
+  sourceContext,
   bibliography,
   bibliographyRaw,
   initialPandocTables,
@@ -156,6 +189,7 @@ export function PaperEditor({
   title: string;
   initialSections: PaperEditorSection[];
   initialBundle: ClientSourceBundle;
+  sourceContext: HydratedPaper["sourceContext"];
   bibliography?: BibEntry[];
   bibliographyRaw?: string;
   initialPandocTables?: Record<string, string>;
@@ -169,6 +203,7 @@ export function PaperEditor({
   const [savedSource, setSavedSource] = useState(initialSource);
   const [bundleHash, setBundleHash] = useState(initialBundle.bundleHash);
   const [bundleDiagnostics, setBundleDiagnostics] = useState(initialBundle.diagnostics);
+  const [sourceContextState, setSourceContextState] = useState(sourceContext);
   const [pandocTables, setPandocTables] = useState<Record<string, string>>(initialPandocTables || {});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -199,6 +234,7 @@ export function PaperEditor({
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [repairOpen, setRepairOpen] = useState(false);
+  const [repairingSectionId, setRepairingSectionId] = useState<string | null>(null);
   const [previewAnnotate, setPreviewAnnotate] = useState<{
     from: number;
     to: number;
@@ -251,14 +287,28 @@ export function PaperEditor({
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const remoteSavePendingRef = useRef(false);
   const remoteStatusRequestRef = useRef(0);
+  const remoteSyncRef = useRef<RemoteSyncOutcome | undefined>(undefined);
 
   const pushRemote = useCallback(async (message: string) => {
     setRemoteSaveState("saving");
     setRemoteSaveError(null);
+    remoteSyncRef.current = {
+      status: "pending",
+      code: "push_in_progress",
+      message: "Local save complete; pushing to Overleaf…",
+      retryable: true,
+    };
     try {
       const result = await commitAndPushProjectAction(project, message);
+      remoteSyncRef.current = remoteSyncResult(result);
       if (!result.ok) {
-        setRemoteSaveState(result.code === "remote_ahead" || result.code === "remote_conflict" ? "changed" : "error");
+        setRemoteSaveState(
+          result.code === "remote_ahead" || result.code === "remote_conflict"
+            ? "changed"
+            : result.code === "remote_unconfigured" || result.code === "remote_not_overleaf" || result.code === "not_git_repo"
+              ? "unavailable"
+              : "error",
+        );
         setRemoteSaveError(result.message);
       } else {
         remoteSavePendingRef.current = false;
@@ -267,6 +317,7 @@ export function PaperEditor({
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not save to the remote.";
+      remoteSyncRef.current = remoteSyncResult({ ok: false, code: "remote_save_failed", message });
       setRemoteSaveState("error");
       setRemoteSaveError(message);
       return { ok: false as const, code: "remote_save_failed", message };
@@ -289,24 +340,29 @@ export function PaperEditor({
       if (requestId !== remoteStatusRequestRef.current) return;
       if (!status.isGitRepo) {
         setRemoteSaveState("unavailable");
-        setRemoteSaveError("Remote status unavailable: this project has no Git repository.");
+        setRemoteSaveError("Overleaf Git status unavailable: this project has no Git repository.");
+        return;
+      }
+      if (!status.isOverleafRemote) {
+        setRemoteSaveState("unavailable");
+        setRemoteSaveError("Overleaf Git remote unavailable: origin is not git.overleaf.com.");
         return;
       }
       if (status.error) {
         setRemoteSaveState("unavailable");
-        setRemoteSaveError(`Remote status unavailable: ${status.error}`);
+        setRemoteSaveError(`Overleaf Git status unavailable: ${status.error}`);
         return;
       }
       if ((status.behind || 0) > 0) {
         setRemoteSaveState("changed");
-        setRemoteSaveError("The remote has newer commits. Pull before saving remotely.");
+        setRemoteSaveError("Overleaf has newer commits. Pull before saving to Overleaf.");
         return;
       }
       setRemoteSaveState((status.ahead || 0) > 0 || !status.isClean ? "local" : "saved");
     } catch (error) {
       if (requestId !== remoteStatusRequestRef.current) return;
       setRemoteSaveState("unavailable");
-      setRemoteSaveError(`Remote status unavailable: ${error instanceof Error ? error.message : "Could not check the remote."}`);
+      setRemoteSaveError(`Overleaf Git status unavailable: ${error instanceof Error ? error.message : "Could not check Overleaf."}`);
     } finally {
       if (timeoutId !== undefined) window.clearTimeout(timeoutId);
     }
@@ -539,6 +595,7 @@ export function PaperEditor({
     setSavedSource(next);
     setBundleHash(paper.bundle.bundleHash);
     setBundleDiagnostics(paper.bundle.diagnostics);
+    setSourceContextState(paper.sourceContext);
     if (paper.pandocTables) setPandocTables(paper.pandocTables);
     setSaveError(null);
     setSaveConflict(false);
@@ -613,8 +670,13 @@ export function PaperEditor({
         ...(saveFailureRef.current?.currentHash ? { currentHash: saveFailureRef.current.currentHash } : {}),
       };
       setSaving(false);
-      if (failureCode === "remote_save_failed") setSaveError(null);
-      else if (failureCode !== "cancelled") setSaveError(failureMessage);
+      if (failureCode === "remote_save_failed") {
+        setSaveError(null);
+        // The source bundle is already durable locally. Keep the operation
+        // successful while exposing the actionable Overleaf outcome for retry.
+        return true;
+      }
+      if (failureCode !== "cancelled") setSaveError(failureMessage);
       return false;
     }
   }, [project, pushRemote]);
@@ -627,6 +689,31 @@ export function PaperEditor({
     }
     applyHydrated(paper);
   }, [applyHydrated, project]);
+
+  const repairSectionEnvelope = useCallback(async (section: PaperSourceContextSection) => {
+    const repair = section.diagnostic?.repair;
+    if (!repair || repair.kind !== "missing-edit-end" || !repair.filePath) return;
+    setRepairingSectionId(section.id);
+    try {
+      const result = await repairPaperSectionEnvelopeAction(project, repair.filePath, section.id, section.sourceHash);
+      if (!result.ok) {
+        setSaveError(result.message);
+        return;
+      }
+      const paper = await getEditablePaperAction(project);
+      if (paper) {
+        applyHydrated(paper);
+        remoteSavePendingRef.current = true;
+        await pushRemote("OpenBar: repair paper source envelope");
+        setAgentNotice(result.value.changed ? `Repaired ${section.file}` : `${section.file} is already repaired`);
+        window.setTimeout(() => setAgentNotice(null), 4000);
+      }
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not repair the section envelope.");
+    } finally {
+      setRepairingSectionId(null);
+    }
+  }, [applyHydrated, project, pushRemote]);
 
   const runStructure = useCallback(async (op: () => Promise<HydratedPaper | null>) => {
     if (sourceRef.current !== savedSourceRef.current) {
@@ -1031,10 +1118,13 @@ export function PaperEditor({
       dirty: liveSource() !== savedSourceRef.current,
       persistedHash: bundleHashRef.current,
       pendingSave: saving || liveSource() !== savedSourceRef.current,
+      remoteSync: remoteSyncRef.current,
       sourceSegments: sourceSegmentsRef.current,
+      sourceContext: sourceContextState,
       activeHeadingKey: activeBookmarkRef.current || lastHeadingKeyRef.current,
       compileState: {
         state: compileRef.current.state,
+        compiler: compileRef.current.compiler,
         jobId: compileRef.current.jobId,
         sourceHash: compileRef.current.sourceHash,
         stale: compileRef.current.stale,
@@ -1068,6 +1158,89 @@ export function PaperEditor({
     },
     setReaderMode: (mode) => {
       setLayout(mode);
+    },
+    repairSection: async (sectionId, filePath, expectedSourceHash, signal) => {
+      if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
+      const result = await repairPaperSectionEnvelopeAction(project, filePath, sectionId, expectedSourceHash);
+      if (!result.ok) {
+        throw Object.assign(new Error(result.message), {
+          code: result.code,
+          ...(result.currentHash ? { currentHash: result.currentHash } : {}),
+        });
+      }
+      const paper = await getEditablePaperAction(project);
+      if (paper) {
+        applyHydrated(paper);
+        remoteSavePendingRef.current = true;
+        await pushRemote("OpenBar: repair paper source envelope");
+      }
+      return result.value;
+    },
+    addTodoAtSection: async (sectionId, text, todoTitle, todoId, signal) => {
+      const before = liveSource();
+      const existing = todoId ? collectEditorTodos(before).find((todo) => todo.id === todoId) : undefined;
+      if (existing) {
+        return {
+          todoId: todoId!,
+          sectionId: existing.section,
+          filePath: "live-editor",
+          from: existing.from,
+          to: existing.to,
+          before: before.slice(Math.max(0, existing.from - 320), existing.from),
+          after: before.slice(existing.to, Math.min(before.length, existing.to + 320)),
+          proposedText: before.slice(existing.from, existing.to),
+        };
+      }
+      const preview = previewTodoAtSection(before, sectionId, text, todoTitle, todoId);
+      if (!preview.sectionFound || preview.error) {
+        throw Object.assign(new Error(preview.error || `Unknown paper section "${sectionId}".`), {
+          code: preview.sectionFound ? "invalid_tex" : "unknown_section",
+        });
+      }
+      const proposedText = preview.nextSource.slice(preview.from, preview.to);
+      const nextChar = preview.nextSource[preview.to] || "";
+      await applyAndSave(preview.from, preview.from, `${proposedText}${nextChar === "\n" ? "" : "\n"}`, signal);
+      return {
+        todoId: preview.id,
+        sectionId: preview.sectionId,
+        filePath: preview.filePath,
+        from: preview.from,
+        to: preview.to,
+        before: preview.before,
+        after: preview.after,
+        proposedText,
+      };
+    },
+    relocateTodo: async (todoId, sectionId, signal) => {
+      const before = liveSource();
+      const moved = relocateTodoInBundle(before, todoId, sectionId);
+      if (!moved.todoFound || moved.error || !moved.targetFound) {
+        throw Object.assign(new Error(moved.error || `Could not relocate TODO "${todoId}".`), {
+          code: !moved.todoFound ? "unknown_todo" : !moved.targetFound ? "unknown_section" : "invalid_tex",
+        });
+      }
+      sourceRef.current = moved.source;
+      revisionRef.current += 1;
+      setSource(moved.source);
+      setRenderSource(moved.source);
+      const saved = await saveNow(moved.source, signal);
+      if (!saved) {
+        const failure = saveFailureRef.current;
+        throw Object.assign(new Error(failure?.message || "Could not save the relocated TODO."), {
+          code: failure?.code || "save_failed",
+          ...(failure?.currentHash ? { currentHash: failure.currentHash } : {}),
+        });
+      }
+      return {
+        todoId: moved.id,
+        sectionId,
+        filePath: moved.filePath,
+        from: moved.from,
+        to: moved.to,
+        before: moved.before,
+        after: moved.after,
+        proposedText: moved.source.slice(moved.from, moved.to),
+      };
     },
     replaceSection: async (sectionId, tex, signal) => {
       const source = liveSource();
@@ -1158,20 +1331,26 @@ export function PaperEditor({
       : saveConflict
           ? "Conflict"
           : remoteSaveState === "checking"
-            ? "Checking remote…"
+            ? "Checking Overleaf…"
             : remoteSaveState === "saving"
-              ? "Saving remotely…"
+              ? "Pushing to Overleaf…"
               : remoteSaveState === "changed"
-                ? "Remote changed"
+                ? "Overleaf changed"
                 : remoteSaveState === "unavailable"
-                  ? "Remote unavailable"
+                  ? "Overleaf unavailable"
                 : remoteSaveState === "error"
-                  ? "Remote save failed"
+                  ? "Overleaf push failed"
                 : isSaved && remoteSaveState === "saved"
-                  ? "Remote saved"
-                  : isSaved
-                    ? "Local saved"
-                    : "Unsaved";
+                  ? "Overleaf pushed"
+                    : isSaved
+                      ? "Local saved"
+                      : "Unsaved";
+  const sourceRepairSections = useMemo(
+    () => sourceContextState.sections.filter((section) =>
+      Boolean(section.diagnostic?.repair) || section.diagnostics.some((item) => item.severity === "error"),
+    ),
+    [sourceContextState.sections],
+  );
   const pdfCurrent = isSaved && compile.state === "success";
   const pdfVisible = layout === "pdf" || layout === "pdf-only";
   const widthClass =
@@ -1361,7 +1540,7 @@ export function PaperEditor({
         </div>
       ) : remoteSaveError ? (
         <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-1.5 text-xs text-danger" role="alert">
-          <p>Remote save: {remoteSaveError}</p>
+          <p>Overleaf: {remoteSaveError}</p>
           <button
             type="button"
             className="btn-outline shrink-0 px-2 py-0.5 text-[11px]"
@@ -1370,7 +1549,7 @@ export function PaperEditor({
               else void pushRemote("OpenBar: save paper");
             }}
           >
-            {remoteSaveState === "changed" || remoteSaveState === "unavailable" ? "Check again" : "Retry remote save"}
+            {remoteSaveState === "changed" || remoteSaveState === "unavailable" ? "Check Overleaf" : "Retry Overleaf push"}
           </button>
         </div>
       ) : null}
@@ -1378,6 +1557,44 @@ export function PaperEditor({
         <div className="shrink-0 rounded-lg border border-warn/30 bg-warn/10 px-3 py-1.5 text-xs text-ink">
           Include graph: {bundleDiagnostics.map((item) => item.message).join(" · ")}
         </div>
+      )}
+      {sourceRepairSections.length > 0 && (
+        <details
+          className="shrink-0 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs"
+          open={sourceRepairSections.some((section) => section.diagnostic?.severity === "error")}
+        >
+          <summary className="cursor-pointer font-medium text-ink">
+            Source issues ({sourceRepairSections.length})
+          </summary>
+          <div className="mt-2 grid gap-1.5">
+            {sourceRepairSections.map((section) => {
+              const diagnostic = section.diagnostic;
+              const repairable = diagnostic?.repair?.kind === "missing-edit-end" && Boolean(diagnostic.repair.filePath);
+              const messages = section.diagnostics.length ? section.diagnostics.map((item) => item.message).join(" · ") : section.excerpt;
+              return (
+                <div key={`${section.file}:${section.id}`} className="flex flex-wrap items-start justify-between gap-2 rounded-md border border-line/70 bg-surface-2/40 px-2 py-1.5">
+                  <div className="min-w-0">
+                    <p className="font-medium text-ink">
+                      <span className={cn("mr-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle", diagnostic ? "bg-danger" : "bg-ok")} />
+                      {section.title} <span className="font-normal text-muted">· {section.file}</span>
+                    </p>
+                    <p className="mt-0.5 text-muted">{messages}</p>
+                  </div>
+                  {repairable && (
+                    <button
+                      type="button"
+                      className="btn-outline shrink-0 px-2 py-0.5 text-[11px]"
+                      disabled={repairingSectionId === section.id}
+                      onClick={() => { void repairSectionEnvelope(section); }}
+                    >
+                      {repairingSectionId === section.id ? "Repairing…" : "Repair envelope"}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </details>
       )}
       {companionCurrent && (repairHits.length > 0 || percentFixes.length > 0) && (
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-warn/30 bg-warn/10 px-3 py-1.5 text-xs text-ink">
@@ -1819,7 +2036,7 @@ function PdfPreview({
       <div className="p-8 flex flex-col items-center justify-center gap-3 text-sm text-muted">
         <div className="flex items-center gap-2 font-medium text-ink">
           <LoaderCircle size={15} className="animate-spin text-accent" />
-          Compiling TeX with latexmk…
+          Compiling TeX with {compile.compiler || "the available compiler"}…
         </div>
         {compile.lastLines && compile.lastLines.length > 0 && (
           <div className="w-full max-w-xl rounded-lg border border-line bg-canvas p-3 font-mono text-[11px] leading-relaxed shadow-xs">

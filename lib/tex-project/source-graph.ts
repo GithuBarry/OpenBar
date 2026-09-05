@@ -13,6 +13,11 @@ export type SourceDiagnostic = {
   code: string;
   message: string;
   filePath?: string;
+  repair?: {
+    kind: "missing-edit-end";
+    sectionId: string;
+    filePath?: string;
+  };
 };
 
 export type GraphNode = {

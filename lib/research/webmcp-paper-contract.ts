@@ -14,12 +14,14 @@ import {
   okResult,
   WEBMCP_ERROR_CODES,
 } from "./operation-result";
+import type { RemoteSyncOutcome } from "./operation-result";
 import { PAPER_MUTATION_SCHEMAS } from "./mcp-tool-schemas";
 import { analyzePaper } from "./paper-analysis";
 import { findMacroMatches, parseAnchorAttrs } from "@/lib/marker-codec";
 import { patchSectionTableCell } from "@/lib/tex-project/table-fragments";
 import { summarizeTabulars } from "@/lib/tex-project/table-ast";
 import { todoIsComplete, todoMetaFromAttrs, todoTitleFromAttrs } from "@/lib/todo-meta";
+import { previewTodoAtSection } from "./paper-todo-placement";
 import type { OperationDiagnostic as WebMcpDiagnostic, OperationResult } from "./operation-result";
 
 export {
@@ -43,13 +45,18 @@ export const PAPER_WEBMCP_TOOL_NAMES = [
   "get_paper_state",
   "get_paper_outline",
   "read_paper_section",
+  "preview_paper_todo",
+  "add_paper_todo_at_section",
+  "relocate_paper_todo",
   "navigate_paper_section",
+  "repair_paper_section",
   "set_paper_reader_mode",
   "replace_paper_section",
   "patch_paper_table",
   "remove_paper_todo",
   "lint_paper",
   "compile_paper",
+  "get_paper_compile",
   "get_bibliography",
 ] as const;
 
@@ -62,8 +69,14 @@ export const MINDMAP_WEBMCP_TOOL_NAMES = [
   "add_mindmap_node",
   "move_mindmap_node",
   "delete_mindmap_node",
+  "delete_mindmap_branch",
   "set_mindmap_collapsed",
   "patch_mindmap_node",
+  "attach_mindmap_image",
+  "detach_mindmap_image",
+  "reorder_mindmap_image",
+  "caption_mindmap_image",
+  "read_mindmap_image",
   "highlight_mindmap_activity",
   "place_todo_card",
   "convert_card_to_todo",
@@ -102,6 +115,17 @@ export type LivePaperTodo = {
   completed: boolean;
 };
 
+export type PaperTodoPlacement = {
+  todoId: string;
+  sectionId: string;
+  filePath?: string;
+  from: number;
+  to: number;
+  before: string;
+  after: string;
+  proposedText: string;
+};
+
 export type LivePaperComment = {
   id?: string;
   kind?: string;
@@ -113,6 +137,28 @@ export type LivePaperMarker = {
   kind: string;
   text: string;
   sectionId?: string;
+};
+
+export type LivePaperSourceSection = {
+  id: string;
+  title: string;
+  level: number;
+  order: number;
+  file: string;
+  sourceHash: string;
+  sourceRange: { from: number; to: number };
+  writeTargetId?: string;
+  excerpt: string;
+  headingPath: string[];
+  parseStatus: "ok" | "error";
+  diagnostic?: {
+    severity: "error" | "warning" | "info";
+    code: string;
+    message: string;
+    filePath?: string;
+    repair?: { kind: "missing-edit-end"; sectionId: string; filePath?: string };
+  };
+  diagnostics: Array<NonNullable<LivePaperSourceSection["diagnostic"]>>;
 };
 
 export type LivePaperSnapshot = {
@@ -127,9 +173,12 @@ export type LivePaperSnapshot = {
   persistedHash?: string;
   /** True while dirty content is waiting for or undergoing a save. */
   pendingSave?: boolean;
+  /** Last local-save-to-Overleaf outcome, including an actionable failure. */
+  remoteSync?: RemoteSyncOutcome;
   sourceSegments?: Array<{ filePath: string; editable: boolean }>;
   compileState?: {
     state: string;
+    compiler?: "latexmk" | "tectonic";
     jobId?: string;
     sourceHash?: string;
     stale?: boolean;
@@ -144,12 +193,35 @@ export type LivePaperSnapshot = {
   todos?: LivePaperTodo[];
   comments?: LivePaperComment[];
   markers?: LivePaperMarker[];
+  sourceContext?: {
+    rootFile?: string;
+    sections: LivePaperSourceSection[];
+    diagnostics: Array<NonNullable<LivePaperSourceSection["diagnostic"]>>;
+  };
 };
 
 export type PaperWebMcpHost = {
   getSnapshot: () => LivePaperSnapshot;
   navigateSection: (sectionId: string) => void;
   setReaderMode: (mode: WebMcpReaderMode) => void;
+  repairSection?: (
+    sectionId: string,
+    filePath: string,
+    expectedSourceHash: string | undefined,
+    signal?: AbortSignal,
+  ) => { changed: boolean; filePath: string; sourceHash: string } | Promise<{ changed: boolean; filePath: string; sourceHash: string }>;
+  addTodoAtSection?: (
+    sectionId: string,
+    text: string,
+    title: string | undefined,
+    todoId: string | undefined,
+    signal?: AbortSignal,
+  ) => PaperTodoPlacement | Promise<PaperTodoPlacement>;
+  relocateTodo?: (
+    todoId: string,
+    sectionId: string,
+    signal?: AbortSignal,
+  ) => PaperTodoPlacement | Promise<PaperTodoPlacement>;
   replaceSection: (sectionId: string, tex: string, signal?: AbortSignal) => void | Promise<void>;
   removeTodo: (todoId: string, signal?: AbortSignal) => void | Promise<void>;
   compile: (signal?: AbortSignal) =>
@@ -204,7 +276,38 @@ export const PAPER_WEBMCP_TOOL_SCHEMAS: Record<PaperWebMcpToolName, JsonSchemaOb
   get_paper_state: objectSchema(),
   get_paper_outline: objectSchema(),
   read_paper_section: objectSchema({ sectionId: sectionIdSchema, maxChars: maxCharsSchema }, ["sectionId"]),
+  preview_paper_todo: objectSchema(
+    {
+      sectionId: sectionIdSchema,
+      title: { type: "string" },
+      text: { type: "string" },
+      todoId: { type: "string", pattern: SECTION_ID_PATTERN },
+    },
+    ["sectionId", "text"],
+  ),
+  add_paper_todo_at_section: objectSchema(
+    {
+      sectionId: sectionIdSchema,
+      title: { type: "string" },
+      text: { type: "string" },
+      todoId: { type: "string", pattern: SECTION_ID_PATTERN, description: "Reuse preview_paper_todo.todoId for an idempotent retry." },
+      expectedRevision: expectedRevisionSchema,
+    },
+    ["sectionId", "text", "expectedRevision"],
+  ),
+  relocate_paper_todo: objectSchema(
+    { todoId: sectionIdSchema, sectionId: sectionIdSchema, expectedRevision: expectedRevisionSchema },
+    ["todoId", "sectionId", "expectedRevision"],
+  ),
   navigate_paper_section: objectSchema({ sectionId: sectionIdSchema }, ["sectionId"]),
+  repair_paper_section: objectSchema(
+    {
+      sectionId: sectionIdSchema,
+      filePath: { type: "string", minLength: 1, description: "Exact included TeX file from get_paper_state.sourceContext." },
+      expectedSourceHash: { type: "string", minLength: 1, description: "File hash from the source-context diagnostic." },
+    },
+    ["sectionId", "filePath"],
+  ),
   set_paper_reader_mode: objectSchema(
     {
       mode: {
@@ -233,6 +336,7 @@ export const PAPER_WEBMCP_TOOL_SCHEMAS: Record<PaperWebMcpToolName, JsonSchemaOb
   ),
   lint_paper: objectSchema(),
   compile_paper: objectSchema(),
+  get_paper_compile: objectSchema({ jobId: { type: "string", description: "Optional compile job id to compare with the live result." } }),
   get_bibliography: objectSchema({
     raw: { type: "boolean", description: "When true, include the exact BibTeX text." },
     maxChars: maxCharsSchema,
@@ -256,10 +360,31 @@ const TOOL_META: Record<PaperWebMcpToolName, { title: string; description: strin
     description: "Return the live TeX and revision for one section id. Unsaved editor edits are visible. Use this before replace_paper_section.",
     readOnly: true,
   },
+  preview_paper_todo: {
+    title: "Preview a paper TODO placement",
+    description: "Show the exact included file, insertion range, neighboring manuscript text, and proposed TeX TODO before writing it. This is read-only.",
+    readOnly: true,
+  },
+  add_paper_todo_at_section: {
+    title: "Add a paper TODO at a section",
+    description: "Insert a TeX-owned TODO at the selected stable section's end after previewing it. Reuse the preview todoId on retry; the result separates the local save from Overleaf Git synchronization.",
+    readOnly: false,
+  },
+  relocate_paper_todo: {
+    title: "Relocate one paper TODO",
+    description: "Move an existing TeX TODO to another stable section without changing its id, title, text, completion, or map references. Read the target context first and pass the live revision.",
+    readOnly: false,
+  },
   navigate_paper_section: {
     title: "Navigate to a paper section",
     description: "Move the live document and editor to a stable section id from get_paper_outline. The paper page must already be open.",
     readOnly: true,
+  },
+  repair_paper_section: {
+    title: "Repair one paper section envelope",
+    description:
+      "Append only a missing OB-EDIT-END marker to the exact included source file. Read get_paper_state first, pass the diagnostic filePath and expectedSourceHash, and preserve all manuscript content. This does not mark a TODO complete or claim a compile/research result.",
+    readOnly: false,
   },
   set_paper_reader_mode: {
     title: "Switch paper reader",
@@ -292,6 +417,11 @@ const TOOL_META: Record<PaperWebMcpToolName, { title: string; description: strin
     title: "Compile the paper",
     description: "Flush live edits onto the ordinary save path and start compilation. Returns the source hash being compiled. The human PDF preview updates when the build finishes.",
     readOnly: false,
+  },
+  get_paper_compile: {
+    title: "Read paper compile result",
+    description: "Read the current compile job, exact source hash, parsed file/line diagnostics, bounded raw log, and stale/PDF-current state. Poll this tool with the returned jobId until the state is no longer running; compile success is not research completion.",
+    readOnly: true,
   },
   get_bibliography: {
     title: "Read the bibliography",
@@ -518,6 +648,46 @@ function defaultLint(snapshot: LivePaperSnapshot): { readiness?: string; diagnos
   return { diagnostics };
 }
 
+function paperMutationFailure(host: PaperWebMcpHost, error: unknown): OperationResult<never> {
+  const code = error && typeof error === "object" && "code" in error
+    ? String((error as { code?: unknown }).code || "")
+    : "";
+  const message = error instanceof Error ? error.message : String(error);
+  const current = host.getSnapshot();
+  const remoteFailure = current.remoteSync && current.remoteSync.status !== "pushed"
+    ? { remote: current.remoteSync }
+    : {};
+  if (code === WEBMCP_ERROR_CODES.cancelled || /cancelled/i.test(message)) {
+    return failResult(WEBMCP_ERROR_CODES.cancelled, message || "Operation cancelled.", {
+      retryable: false,
+      currentRevision: current.revision,
+    });
+  }
+  if (code === WEBMCP_ERROR_CODES.stale_live_state || code === WEBMCP_ERROR_CODES.stale_selection) {
+    return failResult(code, message, { retryable: true, currentRevision: current.revision });
+  }
+  if (code === WEBMCP_ERROR_CODES.stale_disk_state || /conflict|hash|changed on disk|stale/i.test(message)) {
+    return failResult(WEBMCP_ERROR_CODES.stale_disk_state, message, {
+      retryable: true,
+      currentRevision: current.revision,
+      currentHash: current.persistedHash,
+    });
+  }
+  return failResult(code || "operation_failed", message || "Could not update the paper.", {
+    retryable: true,
+    currentRevision: current.revision,
+    ...remoteFailure,
+  });
+}
+
+function paperMutationSuccess<T>(host: PaperWebMcpHost, value: T): OperationResult<T> {
+  const current = host.getSnapshot();
+  return okResult(value, {
+    revision: current.revision,
+    ...(current.remoteSync ? { remote: current.remoteSync } : {}),
+  });
+}
+
 async function executeNamed(
   host: PaperWebMcpHost,
   name: PaperWebMcpToolName,
@@ -545,12 +715,14 @@ async function executeNamed(
           dirty: snapshot.dirty,
           persistedHash: snapshot.persistedHash,
           pendingSave: snapshot.pendingSave ?? snapshot.dirty,
+          remoteSync: snapshot.remoteSync,
           activeSection: snapshot.activeSectionId || snapshot.sections[0]?.id,
           outline,
           openTodoCount: todos.filter((todo) => !todo.completed).length,
           openMarkerCount: markers.length,
           comments,
           markers,
+          sourceContext: snapshot.sourceContext,
           compileState: snapshot.compileState || { state: "idle" },
         },
         { revision: snapshot.revision },
@@ -584,12 +756,169 @@ async function executeNamed(
         { revision: snapshot.revision },
       );
     }
+    case "preview_paper_todo": {
+      if (typeof args.sectionId !== "string" || typeof args.text !== "string") {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "sectionId and text are required.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      if (args.title !== undefined && typeof args.title !== "string") {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "title must be a string.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      if (args.todoId !== undefined && typeof args.todoId !== "string") {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "todoId must be a string.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      const preview = previewTodoAtSection(snapshot.source, args.sectionId, args.text, typeof args.title === "string" ? args.title : undefined, typeof args.todoId === "string" ? args.todoId : undefined);
+      if (!preview.sectionFound || preview.error) {
+        return failResult(preview.sectionFound ? WEBMCP_ERROR_CODES.invalid_tex : WEBMCP_ERROR_CODES.unknown_section, preview.error || `Unknown paper section "${args.sectionId}".`, {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      return okResult(
+        {
+          todoId: preview.id,
+          sectionId: preview.sectionId,
+          filePath: preview.filePath,
+          from: preview.from,
+          to: preview.to,
+          before: preview.before,
+          after: preview.after,
+          proposedText: preview.nextSource.slice(preview.from, preview.to),
+          revision: snapshot.revision,
+        },
+        { revision: snapshot.revision },
+      );
+    }
+    case "add_paper_todo_at_section": {
+      const revision = assertLiveRevision(args.expectedRevision, snapshot.revision);
+      if (!revision.ok) return revision;
+      if (typeof args.sectionId !== "string" || typeof args.text !== "string") {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "sectionId and text are required.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      if (args.title !== undefined && typeof args.title !== "string") {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "title must be a string.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      if (args.todoId !== undefined && typeof args.todoId !== "string") {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "todoId must be a string.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      if (!host.addTodoAtSection) {
+        return failResult(WEBMCP_ERROR_CODES.capability_unavailable, "The live paper page cannot add a section TODO.", {
+          retryable: true,
+          currentRevision: snapshot.revision,
+        });
+      }
+      try {
+        const placement = await host.addTodoAtSection(
+          args.sectionId,
+          args.text,
+          typeof args.title === "string" ? args.title : undefined,
+          typeof args.todoId === "string" ? args.todoId : undefined,
+        );
+        return paperMutationSuccess(host, placement);
+      } catch (error) {
+        return paperMutationFailure(host, error);
+      }
+    }
+    case "relocate_paper_todo": {
+      const revision = assertLiveRevision(args.expectedRevision, snapshot.revision);
+      if (!revision.ok) return revision;
+      if (typeof args.todoId !== "string" || typeof args.sectionId !== "string") {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "todoId and sectionId are required.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      if (!liveTodos(snapshot).some((todo) => todo.id === args.todoId)) {
+        return failResult(WEBMCP_ERROR_CODES.unknown_todo, `Unknown TODO "${args.todoId}".`, {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      if (!host.relocateTodo) {
+        return failResult(WEBMCP_ERROR_CODES.capability_unavailable, "The live paper page cannot relocate TODOs.", {
+          retryable: true,
+          currentRevision: snapshot.revision,
+        });
+      }
+      try {
+        const placement = await host.relocateTodo(args.todoId, args.sectionId);
+        return paperMutationSuccess(host, placement);
+      } catch (error) {
+        return paperMutationFailure(host, error);
+      }
+    }
     case "navigate_paper_section": {
       if (typeof args.sectionId !== "string") return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "sectionId must be a string.", { retryable: false, currentRevision: snapshot.revision });
       const found = findLiveSection(snapshot, args.sectionId);
       if (!found.ok) return found;
       host.navigateSection(found.value.id);
       return okResult({ sectionId: found.value.id }, { revision: snapshot.revision });
+    }
+    case "repair_paper_section": {
+      if (typeof args.sectionId !== "string" || typeof args.filePath !== "string") {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "sectionId and filePath are required.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      const context = snapshot.sourceContext?.sections.find((section) => section.id === args.sectionId && section.file === args.filePath);
+      if (!context) {
+        return failResult(WEBMCP_ERROR_CODES.unknown_section, `Unknown source section "${args.sectionId}" in "${args.filePath}".`, {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      if (context.diagnostic?.repair?.kind !== "missing-edit-end") {
+        return failResult(WEBMCP_ERROR_CODES.capability_unavailable, `Section "${args.sectionId}" has no supported envelope repair.`, {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      if (args.expectedSourceHash !== undefined && typeof args.expectedSourceHash !== "string") {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "expectedSourceHash must be a string.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      if (!host.repairSection) {
+        return failResult(WEBMCP_ERROR_CODES.capability_unavailable, "The live paper page cannot repair source envelopes.", {
+          retryable: true,
+          currentRevision: snapshot.revision,
+        });
+      }
+      try {
+        const repaired = await host.repairSection(
+          context.id,
+          context.file,
+          typeof args.expectedSourceHash === "string" ? args.expectedSourceHash : context.sourceHash,
+          options?.signal,
+        );
+        return paperMutationSuccess(host, repaired);
+      } catch (error) {
+        const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code || "") : "";
+        const message = error instanceof Error ? error.message : String(error);
+        return failResult(code || WEBMCP_ERROR_CODES.invalid_tex, message, {
+          retryable: code === WEBMCP_ERROR_CODES.stale_disk_state,
+          currentRevision: snapshot.revision,
+        });
+      }
     }
     case "set_paper_reader_mode": {
       const mode = args.mode;
@@ -634,13 +963,11 @@ async function executeNamed(
         }
         throw error;
       }
-      const next = host.getSnapshot();
-      return okResult(
+      return paperMutationSuccess(host,
         {
           sectionId: found.value.id,
           changed: { insertedCharacters: args.tex.length },
         },
-        { revision: next.revision },
       );
     }
     case "patch_paper_table": {
@@ -731,15 +1058,13 @@ async function executeNamed(
         }
         throw error;
       }
-      const next = host.getSnapshot();
-      return okResult(
+      return paperMutationSuccess(host,
         {
           sectionId: found.value.id,
           tableIndex: args.tableIndex,
           row: cell.row,
           column: cell.column,
         },
-        { revision: next.revision },
       );
     }
     case "remove_paper_todo": {
@@ -788,7 +1113,7 @@ async function executeNamed(
         }
         throw error;
       }
-      return okResult({ todoId: todo.id }, { revision: host.getSnapshot().revision });
+      return paperMutationSuccess(host, { todoId: todo.id });
     }
     case "lint_paper": {
       const report = host.lint ? host.lint() : defaultLint(snapshot);
@@ -824,6 +1149,20 @@ async function executeNamed(
           },
         );
       }
+    }
+    case "get_paper_compile": {
+      const compile = snapshot.compileState || { state: "idle" };
+      if (args.jobId !== undefined && typeof args.jobId !== "string") {
+        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "jobId must be a string.", {
+          retryable: false,
+          currentRevision: snapshot.revision,
+        });
+      }
+      return okResult({
+        ...compile,
+        ...(args.jobId !== undefined ? { jobIdMatches: compile.jobId === args.jobId } : {}),
+        pdfCurrent: compile.state === "success" && compile.stale !== true && Boolean(compile.sourceHash && compile.sourceHash === snapshot.persistedHash),
+      }, { revision: snapshot.revision });
     }
     case "get_bibliography": {
       if (args.raw !== undefined && typeof args.raw !== "boolean") {

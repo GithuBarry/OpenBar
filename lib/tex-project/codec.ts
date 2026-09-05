@@ -218,6 +218,64 @@ export function parseEditBlocks(source: string): EditBlock[] {
   return blocks;
 }
 
+export type EditEnvelopeRepair = {
+  id: string;
+  changed: boolean;
+  source: string;
+  previousHash: string;
+  nextHash: string;
+};
+
+/**
+ * Repair only a missing end marker for one otherwise identifiable edit block.
+ *
+ * This intentionally refuses nested blocks, mismatched markers, and any other
+ * malformed envelope shape. The safe repair is an idempotent append at EOF;
+ * callers still perform their normal source-hash compare-and-swap before
+ * writing it to disk.
+ */
+export function repairMissingEditEnd(source: string, id: string): EditEnvelopeRepair {
+  const safeId = safeFileSegment(id, "envelope id");
+  let open: { id: string; start: number } | null = null;
+  let found = false;
+  let closed = false;
+
+  for (const entry of linesWithOffsets(source)) {
+    const begin = entry.line.match(EDIT_BEGIN);
+    const end = entry.line.match(EDIT_END);
+    if (begin) {
+      const beginId = safeFileSegment(begin[2]!, "envelope id");
+      if (open) throw new TexEnvelopeError(`Nested OB-EDIT block "${beginId}" is not allowed.`);
+      open = { id: beginId, start: entry.start };
+      if (beginId === safeId) found = true;
+      continue;
+    }
+    if (!end) continue;
+    const endId = safeFileSegment(end[1]!, "envelope id");
+    if (!open) throw new TexEnvelopeError(`OB-EDIT block "${endId}" has no begin marker.`);
+    if (endId !== open.id) throw new TexEnvelopeError(`OB-EDIT end id "${endId}" does not match "${open.id}".`);
+    if (open.id === safeId) closed = true;
+    open = null;
+  }
+
+  if (!found) throw new TexEnvelopeError(`OB-EDIT block "${safeId}" has no begin marker.`);
+  const previousHash = sha256(source);
+  if (closed) {
+    // Validate the complete structure before reporting an idempotent repair.
+    parseEditBlocks(source);
+    return { id: safeId, changed: false, source, previousHash, nextHash: previousHash };
+  }
+  if (!open || open.id !== safeId) {
+    throw new TexEnvelopeError(`OB-EDIT block "${safeId}" has no end marker.`);
+  }
+
+  const prefix = source.endsWith("\n") ? source : `${source}\n`;
+  const repaired = `${prefix}% OB-EDIT-END id=${safeId}\n`;
+  // Ensure the result is parseable before any caller is allowed to persist it.
+  parseEditBlocks(repaired);
+  return { id: safeId, changed: true, source: repaired, previousHash, nextHash: sha256(repaired) };
+}
+
 export function getEditBlock(source: string, id: string): EditBlock | null {
   return parseEditBlocks(source).find((block) => block.id === id) ?? null;
 }

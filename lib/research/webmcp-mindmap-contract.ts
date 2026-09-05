@@ -2,11 +2,13 @@
  * Mindmap page WebMCP tools. Schemas match the browser WebMCP mindmap contract.
  */
 
-import { failResult, okResult, WEBMCP_ERROR_CODES, type OperationResult } from "./operation-result";
+import { failResult, okResult, WEBMCP_ERROR_CODES, type OperationResult, type RemoteSyncOutcome } from "./operation-result";
 import { MINDMAP_WEBMCP_TOOL_NAMES, parseWebMcpArgs, unknownWebMcpArgument, type JsonSchemaObject, type MindmapWebMcpToolName } from "./webmcp-paper-contract";
 import type { SharedWebMcpActions, CurrentLocation } from "./webmcp-shared-contract";
 import { ARTIFACT_KINDS, isArtifactKind } from "./artifact-link";
 import { safeUrl } from "@/lib/safe-url";
+import { artifactHref } from "./artifact-link";
+import { attachMindmapImage, captionMindmapImage, detachMindmapImage, reorderMindmapImage } from "@/lib/mindmap/image-refs";
 import type { ArtifactRef, Mindmap, MindmapNode, MindmapNodeShape } from "@/lib/types";
 import { MAX_MINDMAP_LABELS, MAX_MINDMAP_LABEL_CHARS, normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import { isPrimaryMindmap as isPrimaryMindmapRole } from "./todo-map";
@@ -81,6 +83,8 @@ export type LiveMindmapSnapshot = {
   nodes: LiveMindmapNode[];
   selectedId?: string;
   activitySince?: string;
+  /** Last local-save-to-Overleaf outcome, including an actionable failure. */
+  remoteSync?: RemoteSyncOutcome;
 };
 
 export type MindmapWebMcpHost = {
@@ -89,6 +93,7 @@ export type MindmapWebMcpHost = {
   addNode: (parentId: string, text?: string, expectedRevision?: number, title?: string) => string | Promise<string>;
   moveNode: (id: string, parentId: string, beforeId?: string, afterId?: string, expectedRevision?: number) => void | Promise<void>;
   deleteNode: (id: string, expectedRevision?: number) => void | Promise<void>;
+  deleteBranch?: (id: string, expectedRevision?: number) => void | Promise<void>;
   setCollapsed: (id: string, collapsed: boolean, expectedRevision?: number) => void | Promise<void>;
   patchNode: (id: string, patch: MindmapNodeContentPatch, expectedRevision?: number) => void | Promise<void>;
   setActivityHighlight: (since?: string) => void;
@@ -126,6 +131,10 @@ export const MINDMAP_WEBMCP_TOOL_SCHEMAS: Record<MindmapWebMcpToolName, JsonSche
     ["id", "parentId", "expectedRevision"],
   ),
   delete_mindmap_node: objectSchema(
+    { id: { type: "string" }, expectedRevision: { type: "integer", minimum: 0 } },
+    ["id", "expectedRevision"],
+  ),
+  delete_mindmap_branch: objectSchema(
     { id: { type: "string" }, expectedRevision: { type: "integer", minimum: 0 } },
     ["id", "expectedRevision"],
   ),
@@ -172,6 +181,28 @@ export const MINDMAP_WEBMCP_TOOL_SCHEMAS: Record<MindmapWebMcpToolName, JsonSche
     },
     ["id", "expectedRevision"],
   ),
+  attach_mindmap_image: objectSchema(
+    {
+      id: { type: "string" },
+      assetId: { type: "string", minLength: 1, description: "Existing project figure asset path, normally from an upload result." },
+      label: { type: "string" },
+      expectedRevision: { type: "integer", minimum: 0 },
+    },
+    ["id", "assetId", "expectedRevision"],
+  ),
+  detach_mindmap_image: objectSchema(
+    { id: { type: "string" }, assetId: { type: "string" }, expectedRevision: { type: "integer", minimum: 0 } },
+    ["id", "assetId", "expectedRevision"],
+  ),
+  reorder_mindmap_image: objectSchema(
+    { id: { type: "string" }, assetId: { type: "string" }, index: { type: "integer", minimum: 0 }, expectedRevision: { type: "integer", minimum: 0 } },
+    ["id", "assetId", "index", "expectedRevision"],
+  ),
+  caption_mindmap_image: objectSchema(
+    { id: { type: "string" }, assetId: { type: "string" }, label: { type: "string" }, expectedRevision: { type: "integer", minimum: 0 } },
+    ["id", "assetId", "label", "expectedRevision"],
+  ),
+  read_mindmap_image: objectSchema({ id: { type: "string" }, assetId: { type: "string" } }, ["id", "assetId"]),
   highlight_mindmap_activity: objectSchema({
     since: { type: "string", description: "ISO calendar date (YYYY-MM-DD). Omit for the past seven days." },
     clear: { type: "boolean", description: "Clear the activity highlight from the open map." },
@@ -253,6 +284,7 @@ async function runPersistedMutation<T>(
     return okResult(value, {
       revision: persisted.revision,
       ...(persisted.diskHash ? { diskHash: persisted.diskHash } : {}),
+      ...(persisted.remoteSync ? { remote: persisted.remoteSync } : {}),
     });
   } catch (error) {
     return mutationFailure(host, error);
@@ -395,7 +427,7 @@ export async function executeMindmapWebMcpTool(
         snapshot.revision,
         typeof args.title === "string" ? args.title : undefined,
       ));
-      return result.ok ? okResult({ id: result.value }, { revision: result.revision, diskHash: result.diskHash }) : result;
+      return result.ok ? okResult({ id: result.value }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
     }
     case "move_mindmap_node": {
       const rev = assertRevision(args.expectedRevision, snapshot.revision);
@@ -429,7 +461,7 @@ export async function executeMindmapWebMcpTool(
         typeof args.afterId === "string" ? args.afterId : undefined,
         snapshot.revision,
       ));
-      return result.ok ? okResult({ id: args.id }, { revision: result.revision, diskHash: result.diskHash }) : result;
+      return result.ok ? okResult({ id: args.id }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
     }
     case "delete_mindmap_node": {
       const rev = assertRevision(args.expectedRevision, snapshot.revision);
@@ -437,7 +469,16 @@ export async function executeMindmapWebMcpTool(
       if (!hasNode(args.id)) return failResult("invalid_arguments", `Unknown mindmap node "${String(args.id ?? "")}".`, false);
       if (args.id === snapshot.rootId) return failResult("invalid_arguments", "The root topic cannot be deleted.", false);
       const result = await runPersistedMutation(host, () => host.deleteNode(String(args.id ?? ""), snapshot.revision));
-      return result.ok ? okResult({ id: args.id }, { revision: result.revision, diskHash: result.diskHash }) : result;
+      return result.ok ? okResult({ id: args.id }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
+    }
+    case "delete_mindmap_branch": {
+      const rev = assertRevision(args.expectedRevision, snapshot.revision);
+      if (!rev.ok) return rev;
+      if (!hasNode(args.id)) return failResult("invalid_arguments", `Unknown mindmap node "${String(args.id ?? "")}".`, false);
+      if (args.id === snapshot.rootId) return failResult("invalid_arguments", "The root topic cannot be deleted.", false);
+      if (!host.deleteBranch) return failResult("capability_unavailable", "This map cannot remove branches.", false);
+      const result = await runPersistedMutation(host, () => host.deleteBranch!(String(args.id ?? ""), snapshot.revision));
+      return result.ok ? okResult({ id: args.id, branch: true }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
     }
     case "set_mindmap_collapsed": {
       const rev = assertRevision(args.expectedRevision, snapshot.revision);
@@ -445,7 +486,7 @@ export async function executeMindmapWebMcpTool(
       if (!hasNode(args.id)) return failResult("invalid_arguments", `Unknown mindmap node "${String(args.id ?? "")}".`, false);
       if (typeof args.collapsed !== "boolean") return failResult("invalid_arguments", "collapsed must be a boolean.", false);
       const result = await runPersistedMutation(host, () => host.setCollapsed(String(args.id ?? ""), args.collapsed as boolean, snapshot.revision));
-      return result.ok ? okResult({ id: args.id }, { revision: result.revision, diskHash: result.diskHash }) : result;
+      return result.ok ? okResult({ id: args.id }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
     }
     case "patch_mindmap_node": {
       const rev = assertRevision(args.expectedRevision, snapshot.revision);
@@ -487,7 +528,59 @@ export async function executeMindmapWebMcpTool(
         return failResult("invalid_arguments", "Provide title, text, labels, refs, metadata, or presentation.", false);
       }
       const result = await runPersistedMutation(host, () => host.patchNode(String(args.id ?? ""), patch, snapshot.revision));
-      return result.ok ? okResult({ id: args.id, patch }, { revision: result.revision, diskHash: result.diskHash }) : result;
+      return result.ok ? okResult({ id: args.id, patch }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
+    }
+    case "attach_mindmap_image": {
+      const rev = assertRevision(args.expectedRevision, snapshot.revision);
+      if (!rev.ok) return rev;
+      if (!hasNode(args.id)) return failResult("invalid_arguments", `Unknown mindmap node "${String(args.id ?? "")}".`, false);
+      if (typeof args.assetId !== "string" || !args.assetId.trim() || args.assetId.includes("..")) return failResult("invalid_arguments", "assetId must be a safe existing figure reference.", false);
+      if (args.label !== undefined && (typeof args.label !== "string" || args.label.length > 240)) return failResult("invalid_arguments", "label must be at most 240 characters.", false);
+      const node = snapshot.nodes.find((item) => item.id === args.id)!;
+      const ref: ArtifactRef = { kind: "figure", id: args.assetId.trim(), ...(typeof args.label === "string" && args.label.trim() ? { label: args.label.trim() } : {}) };
+      const refs = attachMindmapImage(node.refs || [], ref);
+      const result = await runPersistedMutation(host, () => host.patchNode(String(args.id), { refs }, snapshot.revision));
+      return result.ok ? okResult({ id: args.id, assetId: ref.id, refs }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
+    }
+    case "detach_mindmap_image": {
+      const rev = assertRevision(args.expectedRevision, snapshot.revision);
+      if (!rev.ok) return rev;
+      if (!hasNode(args.id)) return failResult("invalid_arguments", `Unknown mindmap node "${String(args.id ?? "")}".`, false);
+      if (typeof args.assetId !== "string" || !args.assetId.trim()) return failResult("invalid_arguments", "assetId is required.", false);
+      const node = snapshot.nodes.find((item) => item.id === args.id)!;
+      if (!node.refs?.some((ref) => ref.kind === "figure" && ref.id === args.assetId)) return failResult("invalid_arguments", `Image "${args.assetId}" is not attached to this card.`, false);
+      const refs = detachMindmapImage(node.refs || [], args.assetId);
+      const result = await runPersistedMutation(host, () => host.patchNode(String(args.id), { refs }, snapshot.revision));
+      return result.ok ? okResult({ id: args.id, assetId: args.assetId, refs }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
+    }
+    case "reorder_mindmap_image": {
+      const rev = assertRevision(args.expectedRevision, snapshot.revision);
+      if (!rev.ok) return rev;
+      if (!hasNode(args.id)) return failResult("invalid_arguments", `Unknown mindmap node "${String(args.id ?? "")}".`, false);
+      if (typeof args.assetId !== "string" || !args.assetId.trim() || !Number.isInteger(args.index) || (args.index as number) < 0) return failResult("invalid_arguments", "assetId and a non-negative integer index are required.", false);
+      const node = snapshot.nodes.find((item) => item.id === args.id)!;
+      if (!node.refs?.some((ref) => ref.kind === "figure" && ref.id === args.assetId)) return failResult("invalid_arguments", `Image "${args.assetId}" is not attached to this card.`, false);
+      const refs = reorderMindmapImage(node.refs || [], args.assetId, args.index as number);
+      const result = await runPersistedMutation(host, () => host.patchNode(String(args.id), { refs }, snapshot.revision));
+      return result.ok ? okResult({ id: args.id, assetId: args.assetId, refs }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
+    }
+    case "caption_mindmap_image": {
+      const rev = assertRevision(args.expectedRevision, snapshot.revision);
+      if (!rev.ok) return rev;
+      if (!hasNode(args.id)) return failResult("invalid_arguments", `Unknown mindmap node "${String(args.id ?? "")}".`, false);
+      if (typeof args.assetId !== "string" || !args.assetId.trim() || typeof args.label !== "string" || args.label.length > 240) return failResult("invalid_arguments", "assetId and a label of at most 240 characters are required.", false);
+      const node = snapshot.nodes.find((item) => item.id === args.id)!;
+      if (!node.refs?.some((ref) => ref.kind === "figure" && ref.id === args.assetId)) return failResult("invalid_arguments", `Image "${args.assetId}" is not attached to this card.`, false);
+      const refs = captionMindmapImage(node.refs || [], args.assetId, args.label);
+      const result = await runPersistedMutation(host, () => host.patchNode(String(args.id), { refs }, snapshot.revision));
+      return result.ok ? okResult({ id: args.id, assetId: args.assetId, refs }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
+    }
+    case "read_mindmap_image": {
+      if (!hasNode(args.id) || typeof args.assetId !== "string" || !args.assetId.trim()) return failResult("invalid_arguments", "A valid card id and assetId are required.", false);
+      const node = snapshot.nodes.find((item) => item.id === args.id)!;
+      const ref = node.refs?.find((item) => item.kind === "figure" && item.id === args.assetId);
+      if (!ref) return failResult("invalid_arguments", `Image "${args.assetId}" is not attached to this card.`, false);
+      return okResult({ id: args.id, ref, url: artifactHref(snapshot.project, ref), mediaType: "image", bounded: true }, { revision: snapshot.revision });
     }
     case "highlight_mindmap_activity": {
       if (args.clear === true) {
@@ -517,7 +610,7 @@ export async function executeMindmapWebMcpTool(
       }
       if (!host.placeTodoCard) return failResult("capability_unavailable", "This map cannot place TODOs.", false);
       const result = await runPersistedMutation(host, () => host.placeTodoCard!(todoId, String(args.parentId), snapshot.revision));
-      return result.ok ? okResult({ id: result.value, todoId }, { revision: result.revision, diskHash: result.diskHash }) : result;
+      return result.ok ? okResult({ id: result.value, todoId }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
     }
     case "convert_card_to_todo": {
       const rev = assertRevision(args.expectedRevision, snapshot.revision);
@@ -544,13 +637,21 @@ export async function executeMindmapWebMcpTool(
       if (typeof args.todoId !== "string" || !args.todoId.trim()) return failResult("invalid_arguments", "todoId is required.", false);
       if (!host.completeTodo) return failResult("capability_unavailable", "This map cannot complete TODOs.", false);
       await host.completeTodo(String(args.todoId));
-      return okResult({ todoId: args.todoId, completed: true }, { revision: host.getSnapshot().revision });
+      const completedSnapshot = host.getSnapshot();
+      return okResult({ todoId: args.todoId, completed: true }, {
+        revision: completedSnapshot.revision,
+        ...(completedSnapshot.remoteSync ? { remote: completedSnapshot.remoteSync } : {}),
+      });
     }
     case "reopen_todo": {
       if (typeof args.todoId !== "string" || !args.todoId.trim()) return failResult("invalid_arguments", "todoId is required.", false);
       if (!host.reopenTodo) return failResult("capability_unavailable", "This map cannot reopen TODOs.", false);
       await host.reopenTodo(String(args.todoId));
-      return okResult({ todoId: args.todoId, completed: false }, { revision: host.getSnapshot().revision });
+      const reopenedSnapshot = host.getSnapshot();
+      return okResult({ todoId: args.todoId, completed: false }, {
+        revision: reopenedSnapshot.revision,
+        ...(reopenedSnapshot.remoteSync ? { remote: reopenedSnapshot.remoteSync } : {}),
+      });
     }
     case "focus_todo_in_paper": {
       if (typeof args.todoId !== "string" || !args.todoId.trim()) return failResult("invalid_arguments", "todoId is required.", false);
@@ -566,7 +667,7 @@ export async function executeMindmapWebMcpTool(
       if (!host.renameMap) return failResult("capability_unavailable", "This map cannot be renamed.", false);
       const title = args.title.trim();
       const result = await runPersistedMutation(host, () => host.renameMap!(title, snapshot.revision));
-      return result.ok ? okResult({ title }, { revision: result.revision, diskHash: result.diskHash }) : result;
+      return result.ok ? okResult({ title }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
     }
     default:
       return failResult(WEBMCP_ERROR_CODES.invalid_arguments, `Unknown mindmap tool "${name}".`, false);
@@ -579,7 +680,7 @@ export function buildMindmapWebMcpTools(host: MindmapWebMcpHost) {
     title: name.replaceAll("_", " "),
     description: mindmapToolDescription(name),
     inputSchema: MINDMAP_WEBMCP_TOOL_SCHEMAS[name],
-    annotations: { readOnlyHint: name === "get_mindmap" || name === "focus_mindmap_node", untrustedContentHint: true },
+    annotations: { readOnlyHint: name === "get_mindmap" || name === "focus_mindmap_node" || name === "read_mindmap_image", untrustedContentHint: true },
     execute: (args?: unknown) => executeMindmapWebMcpTool(host, name, args),
   }));
 }
@@ -598,7 +699,10 @@ function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Move a saved mindmap card to a new parent or sibling position on this map only. Does not change TeX or other maps.";
   }
   if (name === "delete_mindmap_node") {
-    return "Delete a saved mindmap card and its subtree. For a TODO with children, convert it to an ordinary card first if you want to keep the subtree.";
+    return "Remove one saved mindmap card while keeping its children in the same sibling position. Use delete_mindmap_branch only when the whole descendant branch should be removed.";
+  }
+  if (name === "delete_mindmap_branch") {
+    return "Remove one saved mindmap card and all descendants. The root cannot be removed; use delete_mindmap_node when children should survive.";
   }
   if (name === "highlight_mindmap_activity") {
     return "Visually highlight cards whose meaningful content changed since a date. Omit since for the past seven days. Pan, zoom, and collapse do not count.";
@@ -606,6 +710,11 @@ function mindmapToolDescription(name: MindmapWebMcpToolName): string {
   if (name === "patch_mindmap_node") {
     return "Patch authored card fields: title and text (ordinary cards only), labels, refs, metadata, and presentation (shape, color, contentFormat, progress). TODO title and text come from TeX.";
   }
+  if (name === "attach_mindmap_image") return "Attach an existing project image asset to exactly one card. Use read_mindmap_image to inspect it; this changes only this map's reference list.";
+  if (name === "detach_mindmap_image") return "Detach one image reference from this card without deleting the shared project asset.";
+  if (name === "reorder_mindmap_image") return "Move one attached image to an explicit zero-based position without changing other card fields.";
+  if (name === "caption_mindmap_image") return "Change one attached image's caption/alt label without changing the asset or other references.";
+  if (name === "read_mindmap_image") return "Read one attached image reference and its bounded project asset URL. The original asset remains available; no OCR or research claim is inferred.";
   if (name === "set_mindmap_collapsed") {
     return "Collapse or expand a branch in the live map. Collapse is not Recent activity.";
   }
@@ -613,7 +722,7 @@ function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Add a card for an existing TeX TODO to the currently open map. Use this after the paper page add_todo tool returns todoId, choose the intended parentId, and place the card in the Primary or selected secondary map. Each map may contain one card for a TODO. The same TODO may appear on Primary and multiple secondary maps. All cards share TeX-owned text and completion. This is a shared card, not a move from another map. If the TODO is already on this map, the existing card is returned unchanged.";
   }
   if (name === "convert_card_to_todo") {
-    return "Insert a pending TeX \\obtodo in the paper section identified by sectionId using this card's title and main text, then bind the card to that id. Hierarchy is preserved and completion is left unset. The result separates durable local saves from remote Git sync: remote status is pushed, pending, failed, or unconfigured. Reuse requestId to retry safely.";
+    return "Insert a pending TeX \\obtodo in the paper section identified by sectionId using this card's title and main text, then bind the card to that id. Hierarchy is preserved and completion is left unset. The result separates durable local saves from Overleaf Git sync: status is pushed, pending, failed, or unconfigured. Reuse requestId to retry safely.";
   }
   if (name === "complete_todo") {
     return "Set the TeX completed timestamp. Completing does not require new manuscript prose.";
@@ -694,7 +803,26 @@ export function createMindmapWebMcpHarness(init: {
       bump();
     },
     deleteNode: (id) => {
-      snapshot.nodes = snapshot.nodes.filter((node) => node.id !== id && node.parentId !== id);
+      const node = snapshot.nodes.find((item) => item.id === id);
+      if (!node || !node.parentId) return;
+      const children = snapshot.nodes.filter((item) => item.parentId === id);
+      snapshot.nodes = snapshot.nodes
+        .filter((item) => item.id !== id)
+        .map((item) => children.some((child) => child.id === item.id) ? { ...item, parentId: node.parentId } : item);
+      bump();
+    },
+    deleteBranch: (id) => {
+      const descendants = new Set<string>();
+      const visit = (parentId: string) => {
+        for (const child of snapshot.nodes.filter((item) => item.parentId === parentId)) {
+          if (descendants.has(child.id)) continue;
+          descendants.add(child.id);
+          visit(child.id);
+        }
+      };
+      visit(id);
+      descendants.add(id);
+      snapshot.nodes = snapshot.nodes.filter((node) => !descendants.has(node.id));
       bump();
     },
     setCollapsed: () => {},

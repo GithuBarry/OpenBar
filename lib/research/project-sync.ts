@@ -17,7 +17,7 @@ export type RemoteSyncResult = {
   credentialNeeded?: boolean;
 };
 
-const UNCONFIGURED_CODES = new Set(["not_git_repo", "remote_unconfigured"]);
+const UNCONFIGURED_CODES = new Set(["not_git_repo", "remote_unconfigured", "remote_not_overleaf"]);
 const PENDING_CODES = new Set(["push_failed", "remote_ahead", "remote_conflict", "remote_check_failed"]);
 
 export function remoteSyncResult(result: OverleafGitPushResult): RemoteSyncResult {

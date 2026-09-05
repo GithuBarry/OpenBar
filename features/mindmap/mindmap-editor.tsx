@@ -24,7 +24,7 @@ import {
   ZoomIn,
 } from "lucide-react";
 
-import { commitAndPushProjectAction, convertMindmapCardToTodoAction, ensurePaperCommentAction, getMindmapAction, getProjectGitStatusAction, persistPaperTodoAction, removePaperTodoAction, saveMindmapAction, uploadMindmapImageAction } from "@/app/actions";
+import { commitAndPushProjectAction, convertMindmapCardToTodoAction, ensurePaperCommentAction, getMindmapAction, getProjectGitHistoryAction, getProjectGitStatusAction, persistPaperTodoAction, removePaperTodoAction, saveMindmapAction, uploadMindmapImageAction } from "@/app/actions";
 import { sharedWebMcpActions } from "@/features/webmcp-actions";
 import { PaperActivityRail } from "@/features/mindmap/paper-activity-rail";
 import {
@@ -52,6 +52,7 @@ import { applyMindmapDrop, resolveMindmapDrop, type MindmapDrop } from "@/lib/mi
 import { mindmapDiskHash } from "@/lib/mindmap/mindmap";
 import { cn } from "@/lib/utils";
 import { artifactHref, isArtifactKind } from "@/lib/research/artifact-link";
+import { attachMindmapImage, captionMindmapImage, detachMindmapImage, reorderMindmapImage } from "@/lib/mindmap/image-refs";
 import { availableTodoCandidates } from "@/lib/research/map-todo-candidates";
 import { safeUrl } from "@/lib/safe-url";
 import {
@@ -60,6 +61,8 @@ import {
   MAX_MINDMAP_LABEL_CHARS,
   MAX_MINDMAP_LABELS,
 } from "@/lib/research/webmcp-mindmap-contract";
+import { remoteSyncResult } from "@/lib/research/project-sync";
+import type { RemoteSyncOutcome } from "@/lib/research/operation-result";
 import type { ArtifactKind, ArtifactRef, Mindmap, MindmapNode } from "@/lib/types";
 import type { ProjectState, ProjectStateComment, ProjectStateOutlineItem, ProjectStateTodo } from "@/lib/research/project-state";
 import type { MindmapTodoConversionResult } from "@/lib/research/webmcp-mindmap-contract";
@@ -192,12 +195,20 @@ export function MindmapEditor({
   const [remoteSaveError, setRemoteSaveError] = useState<string | null>(null);
   const [assetError, setAssetError] = useState<string | null>(null);
   const remoteStatusRequestRef = useRef(0);
+  const remoteSyncRef = useRef<RemoteSyncOutcome | undefined>(undefined);
 
   const pushRemote = useCallback(async (message: string) => {
     setRemoteSaveState("saving");
     setRemoteSaveError(null);
+    remoteSyncRef.current = {
+      status: "pending",
+      code: "push_in_progress",
+      message: "Local save complete; pushing to Overleaf…",
+      retryable: true,
+    };
     try {
       const result = await commitAndPushProjectAction(project, message);
+      remoteSyncRef.current = remoteSyncResult(result);
       if (!result.ok) {
         setRemoteSaveState(result.code === "remote_ahead" || result.code === "remote_conflict" ? "changed" : "error");
         setRemoteSaveError(result.message);
@@ -207,15 +218,16 @@ export function MindmapEditor({
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not save to the remote.";
+      remoteSyncRef.current = remoteSyncResult({ ok: false, code: "remote_save_failed", message });
       setRemoteSaveState("error");
       setRemoteSaveError(message);
       return { ok: false as const, code: "remote_save_failed", message };
     }
   }, [project]);
 
-  const refreshRemoteStatus = useCallback(async (refreshRemote = true) => {
+  const refreshRemoteStatus = useCallback(async (refreshRemote = true, announce = true) => {
     const requestId = ++remoteStatusRequestRef.current;
-    setRemoteSaveState("checking");
+    if (announce) setRemoteSaveState("checking");
     setRemoteSaveError(null);
     let timeoutId: number | undefined;
     try {
@@ -229,24 +241,29 @@ export function MindmapEditor({
       if (requestId !== remoteStatusRequestRef.current) return;
       if (!status.isGitRepo) {
         setRemoteSaveState("unavailable");
-        setRemoteSaveError("Remote status unavailable: this project has no Git repository.");
+        setRemoteSaveError("Overleaf Git status unavailable: this project has no Git repository.");
+        return;
+      }
+      if (!status.isOverleafRemote) {
+        setRemoteSaveState("unavailable");
+        setRemoteSaveError("Overleaf Git remote unavailable: origin is not git.overleaf.com.");
         return;
       }
       if (status.error) {
         setRemoteSaveState("unavailable");
-        setRemoteSaveError(`Remote status unavailable: ${status.error}`);
+        setRemoteSaveError(`Overleaf Git status unavailable: ${status.error}`);
         return;
       }
       if ((status.behind || 0) > 0) {
         setRemoteSaveState("changed");
-        setRemoteSaveError("The remote has newer commits. Pull before saving remotely.");
+        setRemoteSaveError("Overleaf has newer commits. Pull before saving to Overleaf.");
         return;
       }
       setRemoteSaveState((status.ahead || 0) > 0 || !status.isClean ? "local" : "saved");
     } catch (error) {
       if (requestId !== remoteStatusRequestRef.current) return;
       setRemoteSaveState("unavailable");
-      setRemoteSaveError(`Remote status unavailable: ${error instanceof Error ? error.message : "Could not check the remote."}`);
+      setRemoteSaveError(`Overleaf Git status unavailable: ${error instanceof Error ? error.message : "Could not check Overleaf."}`);
     } finally {
       if (timeoutId !== undefined) window.clearTimeout(timeoutId);
     }
@@ -255,7 +272,9 @@ export function MindmapEditor({
   useEffect(() => {
     // The first paint only needs local Git state. A remote fetch is an
     // explicit retry operation and must never delay opening the editor.
-    void refreshRemoteStatus(false);
+    // Keep the first paint usable. A slow Git/Overleaf check must not leave the
+    // editor presenting a permanent "Checking remote…" state.
+    void refreshRemoteStatus(false, false);
   }, [refreshRemoteStatus]);
 
   const webMcpSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -305,7 +324,7 @@ export function MindmapEditor({
         sessionRef.current = rebased;
         dispatch({ type: "rebase-disk-hash", diskHash: persistedDiskHashRef.current });
       }
-      void pushRemote("OpenBar: save mindmap");
+      await pushRemote("OpenBar: save mindmap");
       return saved;
     });
     webMcpSaveQueueRef.current = job.then(() => undefined, () => undefined).finally(() => {
@@ -331,6 +350,7 @@ export function MindmapEditor({
         isPrimary: isPrimaryMindmap(current),
         revision: sessionRef.current.revision,
         diskHash: persistedDiskHashRef.current,
+        remoteSync: remoteSyncRef.current,
         rootId: current.rootId,
         nodes: current.nodes.map((node) => {
           const content = cardContentForNodeWithPaperState(node, paperState);
@@ -368,6 +388,9 @@ export function MindmapEditor({
       await persistWebMcpMutation({ type: "reparent", id, parentId, beforeId, afterId }, expectedRevision);
     },
     deleteNode: async (id, expectedRevision) => {
+      await persistWebMcpMutation({ type: "delete-node-keep-children", id }, expectedRevision);
+    },
+    deleteBranch: async (id, expectedRevision) => {
       await persistWebMcpMutation({ type: "delete-subtree", id }, expectedRevision);
     },
     setCollapsed: async (id, collapsed, expectedRevision) => {
@@ -473,6 +496,7 @@ export function MindmapEditor({
   const [isPending, startTransition] = useTransition();
   const [viewMode, setViewMode] = useState<MindmapViewMode>("map");
   const [canvasEditMode, setCanvasEditMode] = useState(false);
+  const [pipelineOpen, setPipelineOpen] = useState(false);
   const [convertSectionId, setConvertSectionId] = useState("");
   const [labelDraft, setLabelDraft] = useState("");
   const [externalDraft, setExternalDraft] = useState({ url: "", label: "" });
@@ -485,8 +509,16 @@ export function MindmapEditor({
   const [todoEditError, setTodoEditError] = useState<string | null>(null);
   const mapTitleDirtyRef = useRef(false);
   const metadataDirtyRef = useRef(false);
+  const metadataBaselineRef = useRef("");
+  const metadataDraftRef = useRef("");
   const todoEditDirtyRef = useRef(false);
+  const todoBaselineRef = useRef({ title: "", text: "" });
+  const todoTitleDraftRef = useRef("");
+  const todoTextDraftRef = useRef("");
   const saveInFlightRef = useRef<Promise<void> | null>(null);
+  metadataDraftRef.current = metadataDraft;
+  todoTitleDraftRef.current = todoTitleDraft;
+  todoTextDraftRef.current = todoTextDraft;
 
   useEffect(() => {
     if (!mapTitleDirtyRef.current) setMapTitleDraft(mindmap.title || "");
@@ -498,21 +530,52 @@ export function MindmapEditor({
     setConvertSectionId("");
     const node = mindmap.nodes.find((item) => item.id === selectedId);
     metadataDirtyRef.current = false;
-    setMetadataDraft(node?.metadata ? JSON.stringify(node.metadata, null, 2) : "");
+    const metadata = node?.metadata ? JSON.stringify(node.metadata, null, 2) : "";
+    metadataBaselineRef.current = metadata;
+    setMetadataDraft(metadata);
+    metadataDraftRef.current = metadata;
     setMetadataError(null);
     const todo = node?.todoId ? paperState?.paper?.todos.find((item) => item.id === node.todoId) : undefined;
     todoEditDirtyRef.current = false;
+    const todoDraft = { title: todo?.title || "", text: todo?.text || "" };
+    todoBaselineRef.current = todoDraft;
     setTodoEditOpen(false);
-    setTodoTitleDraft(todo?.title || "");
-    setTodoTextDraft(todo?.text || "");
+    setTodoTitleDraft(todoDraft.title);
+    setTodoTextDraft(todoDraft.text);
+    todoTitleDraftRef.current = todoDraft.title;
+    todoTextDraftRef.current = todoDraft.text;
     setTodoEditError(null);
   }, [selectedId]);
+
+  useEffect(() => {
+    const node = mindmap.nodes.find((item) => item.id === selectedId);
+    const metadata = node?.metadata ? JSON.stringify(node.metadata, null, 2) : "";
+    if (!metadataDirtyRef.current) {
+      metadataBaselineRef.current = metadata;
+      setMetadataDraft(metadata);
+    } else if (metadata !== metadataBaselineRef.current && metadata !== metadataDraftRef.current) {
+      setMetadataError("This card's metadata changed elsewhere. Review your draft before saving.");
+    }
+
+    const todo = node?.todoId ? paperState?.paper?.todos.find((item) => item.id === node.todoId) : undefined;
+    const nextTodo = { title: todo?.title || "", text: todo?.text || "" };
+    if (!todoEditDirtyRef.current) {
+      todoBaselineRef.current = nextTodo;
+      setTodoTitleDraft(nextTodo.title);
+      setTodoTextDraft(nextTodo.text);
+    } else if (
+      (nextTodo.title !== todoBaselineRef.current.title && nextTodo.title !== todoTitleDraftRef.current)
+      || (nextTodo.text !== todoBaselineRef.current.text && nextTodo.text !== todoTextDraftRef.current)
+    ) {
+      setTodoEditError("This TODO changed elsewhere. Review your draft before saving.");
+    }
+  }, [mindmap, paperState?.paper?.todos, selectedId]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const interactionRef = useRef<Interaction | null>(null);
   const lastNodeClickRef = useRef<{ id: string; at: number; x: number; y: number } | null>(null);
   const pendingMoveRef = useRef<{ id: string; x: number; y: number } | null>(null);
-  const editBaselineRef = useRef<Mindmap | null>(null);
+  const editBaselineRef = useRef<{ mindmap: Mindmap; nodeId: string } | null>(null);
   const didFitRef = useRef(false);
   const viewAnimRef = useRef<number | null>(null);
 
@@ -934,8 +997,8 @@ export function MindmapEditor({
     return result;
   }
 
-  function beginTextTransaction() {
-    if (!editBaselineRef.current) editBaselineRef.current = cloneMindmap(sessionRef.current.mindmap);
+  function beginTextTransaction(nodeId = sessionRef.current.selectedId) {
+    if (!editBaselineRef.current) editBaselineRef.current = { mindmap: cloneMindmap(sessionRef.current.mindmap), nodeId };
   }
 
   function finishTextTransaction(commitChanges = true) {
@@ -944,10 +1007,16 @@ export function MindmapEditor({
     setEditingId(null);
     if (!before) return;
     if (!commitChanges) {
-      dispatch({ type: "revert", mindmap: before });
+      const baselineNode = indexMindmap(before.mindmap).nodeById.get(before.nodeId);
+      const currentNode = indexMindmap(sessionRef.current.mindmap).nodeById.get(before.nodeId);
+      // Cancel only this card's active fields. Other cards may have changed
+      // while the editor was open and must remain in the live map.
+      if (baselineNode && currentNode && !currentNode.todoId) {
+        dispatch({ type: "edit-card", id: before.nodeId, title: baselineNode.title || "", text: baselineNode.text });
+      }
       return;
     }
-    dispatch({ type: "record-history", before });
+    dispatch({ type: "record-history", before: before.mindmap });
   }
 
   function startEditing(id: string) {
@@ -957,7 +1026,7 @@ export function MindmapEditor({
       return;
     }
     dispatch({ type: "select", id });
-    beginTextTransaction();
+    beginTextTransaction(id);
     setEditingId(id);
   }
 
@@ -1044,6 +1113,23 @@ export function MindmapEditor({
     dispatch({ type: "move-sibling", id: selected.id, direction });
   }
 
+  function moveNodeById(id: string, direction: -1 | 1) {
+    const current = sessionRef.current.mindmap;
+    const node = indexMindmap(current).nodeById.get(id);
+    if (!node?.parentId) return;
+    const siblings = indexMindmap(current).childrenByParent.get(node.parentId) || [];
+    const index = siblings.findIndex((item) => item.id === id);
+    const neighbor = siblings[index + direction];
+    if (!neighbor) return;
+    setSaveError(null);
+    dispatch({
+      type: "reparent",
+      id,
+      parentId: node.parentId,
+      ...(direction < 0 ? { beforeId: neighbor.id } : { afterId: neighbor.id }),
+    });
+  }
+
   const undo = useCallback(() => dispatch({ type: "undo" }), []);
   const redo = useCallback(() => dispatch({ type: "redo" }), []);
 
@@ -1080,7 +1166,7 @@ export function MindmapEditor({
           sessionRef.current = rebased;
           dispatch({ type: "rebase-disk-hash", diskHash: persistedDiskHashRef.current });
         }
-        void pushRemote("OpenBar: save mindmap");
+        await pushRemote("OpenBar: save mindmap");
       } catch (error) {
         setSaveError(error instanceof Error ? error.message : "Could not save the mindmap.");
       }
@@ -1442,6 +1528,7 @@ export function MindmapEditor({
       || paperSectionRefs(selected).some((ref) => ref.id === section.id)
     ))
     : undefined;
+  const selectedChildren = selected ? (layout.children.get(selected.id) || []) : [];
   const projectLabels = useMemo(() => {
     const seen = new Set<string>();
     const labels: string[] = [];
@@ -1511,7 +1598,19 @@ export function MindmapEditor({
     });
   }
 
-  async function addImageToSelectedCard(file: File, input: HTMLInputElement) {
+  function imageFileFromTransfer(data: DataTransfer): File | null {
+    for (const file of Array.from(data.files || [])) {
+      if (file.type.startsWith("image/") || file.type === "application/pdf") return file;
+    }
+    for (const item of Array.from(data.items || [])) {
+      if (!item.type.startsWith("image/")) continue;
+      const file = item.getAsFile();
+      if (file) return file;
+    }
+    return null;
+  }
+
+  async function addImageToSelectedCard(file: File, input?: HTMLInputElement) {
     if (!selected) return;
     setAssetError(null);
     const formData = new FormData();
@@ -1521,12 +1620,12 @@ export function MindmapEditor({
       dispatch({
         type: "patch-node",
         id: selected.id,
-        patch: { refs: [...(selected.refs || []), upload.ref] },
+        patch: { refs: attachMindmapImage(selected.refs || [], upload.ref) },
       });
     } catch (error) {
       setAssetError(error instanceof Error ? error.message : "Could not attach the image.");
     } finally {
-      input.value = "";
+      if (input) input.value = "";
     }
   }
 
@@ -1661,7 +1760,7 @@ export function MindmapEditor({
                 }}
               >
                 <AlertCircle size={13} />
-                {remoteSaveState === "changed" ? "Remote changed" : remoteSaveState === "unavailable" ? "Retry remote check" : "Remote save failed"}
+                {remoteSaveState === "changed" ? "Overleaf changed" : remoteSaveState === "unavailable" ? "Retry Overleaf check" : "Overleaf push failed"}
               </button>
             ) : (
               <span className={cn("mindmap-save-status", dirty && !isPending && "mindmap-save-status-pending")}>
@@ -1671,13 +1770,13 @@ export function MindmapEditor({
                 {isPending
                   ? "Saving…"
                   : remoteSaveState === "checking"
-                    ? "Checking remote…"
+                    ? "Checking Overleaf…"
                     : remoteSaveState === "saving"
-                      ? "Saving remotely…"
+                      ? "Pushing to Overleaf…"
                       : dirty
                         ? "Unsaved edits"
                         : remoteSaveState === "saved"
-                          ? "Remote saved"
+                          ? "Overleaf pushed"
                           : "Local changes"}
               </span>
             )}
@@ -1767,7 +1866,7 @@ export function MindmapEditor({
                   onSelect={() => dispatch({ type: "select", id: node.id })}
                   onDropTodo={(todoId) => placeUnplacedTodo(todoId, node.id)}
                   onTextChange={(text) => updateNodeText(node.id, text)}
-                  onTextFocus={beginTextTransaction}
+                  onTextFocus={() => beginTextTransaction(node.id)}
                   onTextBlur={() => finishTextTransaction(true)}
                   onTextKeyDown={(event) => {
                     const mod = event.metaKey || event.ctrlKey;
@@ -1785,7 +1884,7 @@ export function MindmapEditor({
                     // to the canvas history instead of swallowing ⌘Z there.
                     if (mod && key === "z") {
                       const baselineNode = editBaselineRef.current
-                        ? indexMindmap(editBaselineRef.current).nodeById.get(node.id)
+                        ? indexMindmap(editBaselineRef.current.mindmap).nodeById.get(node.id)
                         : undefined;
                       if (baselineNode && editableCardText(baselineNode) === editableCardText(node)) {
                         const redoAction = event.shiftKey;
@@ -1818,15 +1917,16 @@ export function MindmapEditor({
             <MindmapUnplacedView
               paperState={paperState}
               nodes={mindmap.nodes}
-              onPlaceTodo={(todoId) => placeUnplacedTodo(todoId)}
+              selectedParentId={selected?.id || mindmap.rootId}
+              onPlaceTodo={(todoId, parentId) => placeUnplacedTodo(todoId, parentId)}
             />
           ) : (
-            <MindmapChangesView recent={paperState?.recent || []} />
+            <MindmapChangesView project={project} recent={paperState?.recent || []} />
           )}
         </div>
 
         {saveError && <p className="mindmap-save-error" role="alert">{saveError}</p>}
-        {remoteSaveError && !saveError && <p className="mindmap-save-error" role="alert">Remote: {remoteSaveError}</p>}
+        {remoteSaveError && !saveError && <p className="mindmap-save-error" role="alert">Overleaf: {remoteSaveError}</p>}
         <footer className="mindmap-footer">
           <span>{layout.nodes.length === mindmap.nodes.length ? mindmap.nodes.length : `${layout.nodes.length} of ${mindmap.nodes.length}`} topic{mindmap.nodes.length === 1 ? "" : "s"}</span>
           {activitySince && <span>{activityNodeIds.size} active since {formatMindmapDate(activitySince)}</span>}
@@ -1993,7 +2093,7 @@ export function MindmapEditor({
                 <span>Title</span>
                 <input
                   value={selectedParts.title}
-                  onFocus={beginTextTransaction}
+                  onFocus={() => beginTextTransaction(selected.id)}
                   onChange={(event) => updateNodeCard(selected.id, event.target.value, selectedParts.body)}
                   onBlur={() => finishTextTransaction(true)}
                   placeholder="Title"
@@ -2004,7 +2104,7 @@ export function MindmapEditor({
                 <span>Main text</span>
                 <textarea
                   value={selectedParts.body}
-                  onFocus={beginTextTransaction}
+                  onFocus={() => beginTextTransaction(selected.id)}
                   onChange={(event) => updateNodeCard(selected.id, selectedParts.title, event.target.value)}
                   onBlur={() => finishTextTransaction(true)}
                   rows={4}
@@ -2022,6 +2122,71 @@ export function MindmapEditor({
               )}
             </div>
           )}
+
+          <div className="mindmap-inspector-group mindmap-pipeline-group">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-ink">Children / pipeline</span>
+              <button
+                type="button"
+                className="btn-ghost px-1.5 py-0.5 text-[11px]"
+                aria-expanded={pipelineOpen}
+                onClick={() => setPipelineOpen((open) => !open)}
+              >
+                {pipelineOpen ? "Hide pipeline" : "Show pipeline"}
+              </button>
+            </div>
+            {pipelineOpen && (
+              <>
+                {selectedChildren.length > 0 ? (
+                  <ol className="mindmap-pipeline-list" aria-label="Ordered child cards">
+                    {selectedChildren.map((child, index) => {
+                      const content = cardContentForNodeWithPaperState(child, paperState);
+                      return (
+                        <li key={child.id} className="mindmap-pipeline-step">
+                          <button type="button" className="mindmap-pipeline-step-label" onClick={() => dispatch({ type: "select", id: child.id })}>
+                            <span className="mindmap-pipeline-index">{index + 1}</span>
+                            <span className="min-w-0 flex-1 truncate">{content.title || content.body || child.id}</span>
+                          </button>
+                          {child.progress !== undefined && (
+                            <ProgressCircles
+                              value={child.progress}
+                              compact
+                              label={`Step ${index + 1} progress`}
+                              onChange={(progress) => dispatch({ type: "patch-node", id: child.id, patch: { progress } })}
+                            />
+                          )}
+                          <button
+                            type="button"
+                            className="mindmap-ref-remove"
+                            aria-label={`Move step ${index + 1} up`}
+                            disabled={index === 0}
+                            onClick={() => moveNodeById(child.id, -1)}
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            className="mindmap-ref-remove"
+                            aria-label={`Move step ${index + 1} down`}
+                            disabled={index === selectedChildren.length - 1}
+                            onClick={() => moveNodeById(child.id, 1)}
+                          >
+                            ↓
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                ) : (
+                  <p className="text-xs text-faint">No child steps yet.</p>
+                )}
+                <button type="button" className="btn-outline w-fit px-2 py-0.5 text-[11px]" onClick={() => addChild(selected.id)}>
+                  Add pipeline step
+                </button>
+                <small>Steps are ordinary map cards. Their order and progress stay separate from TeX TODO completion.</small>
+              </>
+            )}
+          </div>
 
           {!selected.todoId && paperSections.length > 0 && (
             <div className="mindmap-inspector-group">
@@ -2131,15 +2296,58 @@ export function MindmapEditor({
                 );
               })}
             </ul>
-            <div className="mindmap-card-assets mt-2">
+            <div
+              className="mindmap-card-assets mt-2"
+              onPaste={(event) => {
+                const file = imageFileFromTransfer(event.clipboardData);
+                if (!file) return;
+                event.preventDefault();
+                event.stopPropagation();
+                void addImageToSelectedCard(file);
+              }}
+              onDragOver={(event) => {
+                if (imageFileFromTransfer(event.dataTransfer)) {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "copy";
+                }
+              }}
+              onDrop={(event) => {
+                const file = imageFileFromTransfer(event.dataTransfer);
+                if (!file) return;
+                event.preventDefault();
+                event.stopPropagation();
+                void addImageToSelectedCard(file);
+              }}
+            >
               <span className="text-xs font-medium text-muted">Images</span>
               <div className="mindmap-card-asset-grid">
                 {selectedRefs.filter((ref) => ref.kind === "figure").map((ref) => {
                   const href = artifactHref(project, ref);
                   return (
-                    <a key={`${ref.kind}:${ref.id}`} href={href} target="_blank" rel="noreferrer" className="mindmap-card-asset" title={ref.label || ref.id}>
-                      <img src={href} alt={ref.label || "Card image"} loading="lazy" />
-                    </a>
+                    <div key={`${ref.kind}:${ref.id}`} className="mindmap-card-asset-item flex flex-col gap-1">
+                      <a href={href} target="_blank" rel="noreferrer" className="mindmap-card-asset" title={ref.label || ref.id}>
+                        <img src={href} alt={ref.label || "Card image"} loading="lazy" />
+                      </a>
+                      <input
+                        value={ref.label || ""}
+                        placeholder="Caption / alt text"
+                        aria-label={`Caption for ${ref.id}`}
+                        onChange={(event) => dispatch({ type: "patch-node", id: selected.id, patch: { refs: captionMindmapImage(selected.refs || [], ref.id, event.target.value) } })}
+                      />
+                      <div className="flex items-center justify-between gap-1">
+                        {(() => {
+                          const images = selectedRefs.filter((item) => item.kind === "figure");
+                          const index = images.findIndex((item) => item.id === ref.id);
+                          return (
+                            <>
+                              <button type="button" className="mindmap-ref-remove" disabled={index <= 0} aria-label="Move image left" onClick={() => dispatch({ type: "patch-node", id: selected.id, patch: { refs: reorderMindmapImage(selected.refs || [], ref.id, index - 1) } })}>←</button>
+                              <button type="button" className="mindmap-ref-remove" aria-label="Remove image" onClick={() => dispatch({ type: "patch-node", id: selected.id, patch: { refs: detachMindmapImage(selected.refs || [], ref.id) } })}><X size={11} /></button>
+                              <button type="button" className="mindmap-ref-remove" disabled={index < 0 || index >= images.length - 1} aria-label="Move image right" onClick={() => dispatch({ type: "patch-node", id: selected.id, patch: { refs: reorderMindmapImage(selected.refs || [], ref.id, index + 1) } })}>→</button>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
                   );
                 })}
               </div>
@@ -2423,15 +2631,23 @@ function MindmapOutlineView({
 function MindmapUnplacedView({
   paperState,
   nodes,
+  selectedParentId,
   onPlaceTodo,
 }: {
   paperState?: ProjectState | null;
-  nodes: ReadonlyArray<Pick<MindmapNode, "id" | "todoId">>;
-  onPlaceTodo: (todoId: string) => void;
+  nodes: ReadonlyArray<Pick<MindmapNode, "id" | "todoId" | "title" | "text">>;
+  selectedParentId: string;
+  onPlaceTodo: (todoId: string, parentId: string) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [destination, setDestination] = useState(selectedParentId);
   const todos = paperState?.paper?.todos || [];
   const candidates = useMemo(() => availableTodoCandidates(todos, nodes), [nodes, todos]);
+  const destinations = useMemo(() => nodes.filter((node) => !node.todoId), [nodes]);
+  useEffect(() => {
+    if (destinations.some((node) => node.id === selectedParentId)) setDestination(selectedParentId);
+    else if (!destinations.some((node) => node.id === destination)) setDestination(destinations[0]?.id || selectedParentId);
+  }, [destination, destinations, selectedParentId]);
   const needle = query.trim().toLowerCase();
   const visible = needle
     ? candidates.filter((todo) => `${todo.id}\n${todo.title || ""}\n${todo.text}`.toLowerCase().includes(needle))
@@ -2452,6 +2668,12 @@ function MindmapUnplacedView({
         placeholder="Search TODOs"
         aria-label="Search unplaced paper TODOs"
       />
+      <label className="mindmap-field">
+        <span>Place under</span>
+        <select value={destination} onChange={(event) => setDestination(event.target.value)} aria-label="Unplaced TODO destination">
+          {destinations.map((node) => <option key={node.id} value={node.id}>{node.title?.trim() || node.text.split("\n")[0].trim() || node.id}</option>)}
+        </select>
+      </label>
       {visible.length === 0 ? (
         <p className="mindmap-peer-empty">{candidates.length === 0 ? "Every paper TODO is represented on this map." : "No TODO matches that search."}</p>
       ) : (
@@ -2463,7 +2685,7 @@ function MindmapUnplacedView({
                 <p>{todo.text || "No details"}</p>
                 <small>{todo.sectionTitle || todo.file || todo.id}</small>
               </div>
-              <button type="button" className="btn-outline px-2 py-0.5 text-[11px]" onClick={() => onPlaceTodo(todo.id)}>Place</button>
+              <button type="button" className="btn-outline px-2 py-0.5 text-[11px]" onClick={() => onPlaceTodo(todo.id, destination)}>Place</button>
             </li>
           ))}
         </ul>
@@ -2476,21 +2698,57 @@ function MindmapUnplacedView({
 }
 
 function MindmapChangesView({
+  project,
   recent,
 }: {
+  project: string;
   recent: ProjectState["recent"];
 }) {
   const [since, setSince] = useState(() => daysAgoDate(LAST_WEEK_DAYS));
   const [advisorOpen, setAdvisorOpen] = useState(false);
   const [advisorText, setAdvisorText] = useState("");
+  const [history, setHistory] = useState<Array<{ hash: string; message: string; author: string; date: string; files: string[] }>>([]);
+  const [historyMessage, setHistoryMessage] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    setHistoryMessage(null);
+    void getProjectGitHistoryAction(project, since, 40)
+      .then((result) => {
+        if (!active) return;
+        setHistory(result.ok ? result.commits : []);
+        setHistoryMessage(result.ok ? null : result.message || "Git history unavailable.");
+      })
+      .catch((error) => {
+        if (!active) return;
+        setHistory([]);
+        setHistoryMessage(error instanceof Error ? error.message : "Git history unavailable.");
+      });
+    return () => { active = false; };
+  }, [project, since]);
   const visible = useMemo(
     () => recent.filter((item) => Date.parse(item.at) >= Date.parse(`${since}T00:00:00`)),
     [recent, since],
   );
-  const advisorDraft = useMemo(() => visible
+  const changes = useMemo(() => [
+    ...visible.map((item) => ({
+      at: item.at,
+      href: item.href,
+      title: item.title,
+      description: item.kind === "section_edit" ? "Paper section edited" : item.kind === "todo" ? "Paper TODO changed" : "Mindmap card changed",
+      detail: undefined as string | undefined,
+    })),
+    ...history.map((item) => ({
+      at: item.date,
+      href: `/p/${project}/mindmap`,
+      title: item.message || item.hash.slice(0, 8),
+      description: `Committed by ${item.author || "Unknown actor"}`,
+      detail: item.files.length ? item.files.join(", ") : item.hash.slice(0, 8),
+    })),
+  ].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 40), [history, project, visible]);
+  const advisorDraft = useMemo(() => changes
     .slice(0, 8)
-    .map((item) => `- ${item.title} (${item.kind})`)
-    .join("\n"), [visible]);
+    .map((item) => `- ${item.title}: ${item.description}${item.detail ? ` (${item.detail})` : ""}`)
+    .join("\n"), [changes]);
   return (
     <section className="mindmap-peer-view mindmap-changes-view" aria-label="Project changes">
       <div className="mindmap-peer-view-heading">
@@ -2503,15 +2761,17 @@ function MindmapChangesView({
           <input type="date" value={since} onChange={(event) => setSince(event.target.value || daysAgoDate(LAST_WEEK_DAYS))} />
         </label>
       </div>
-      {visible.length === 0 ? (
+      {historyMessage && <p className="mindmap-peer-warning">{historyMessage}</p>}
+      {changes.length === 0 ? (
         <p className="mindmap-peer-empty">No recorded changes in this range.</p>
       ) : (
         <ul className="mindmap-changes-list">
-          {visible.map((item, index) => (
-            <li key={`${item.at}:${item.href}:${index}`} className="mindmap-change-item">
+          {changes.map((item, index) => (
+            <li key={`${item.at}:${item.href}:${item.title}:${index}`} className="mindmap-change-item">
               <div className="min-w-0 flex-1">
                 <a href={item.href} className="mindmap-unplaced-title">{item.title}</a>
-                <p>{item.kind === "section_edit" ? "Paper section edited" : item.kind === "todo" ? "Paper TODO changed" : "Mindmap card changed"}</p>
+                <p>{item.description}</p>
+                {item.detail && <p className="font-mono text-[10px] text-faint">{item.detail}</p>}
               </div>
               <time dateTime={item.at}>{formatMindmapDate(item.at)}</time>
             </li>

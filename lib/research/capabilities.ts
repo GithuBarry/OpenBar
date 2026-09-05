@@ -19,6 +19,7 @@ export type RuntimeCapabilities = {
   git: ToolCapability;
   pandoc: ToolCapability;
   latexmk: ToolCapability;
+  tectonic: ToolCapability;
   pdflatex: ToolCapability;
   latexpand: ToolCapability;
   writableContent: ToolCapability;
@@ -72,6 +73,7 @@ export function getRuntimeCapabilities(contentRoot = process.env.OPENBARRY_CONTE
     git: probe("git", "git", ["--version"]),
     pandoc: probe("pandoc", "pandoc", ["--version"]),
     latexmk: probe("latexmk", "latexmk", ["-v"]),
+    tectonic: probe("tectonic", "tectonic", ["--version"]),
     pdflatex: probe("pdflatex", "pdflatex", ["-version"]),
     latexpand: probe("latexpand", resolveLatexpandBin(), ["--help"]),
     writableContent: writableDir(contentRoot),

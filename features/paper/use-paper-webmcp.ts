@@ -10,6 +10,7 @@ import {
   type LivePaperSnapshot,
   type LivePaperTodo,
 } from "@/lib/research/webmcp-paper-contract";
+import type { RemoteSyncOutcome } from "@/lib/research/operation-result";
 import { buildPaperSourceWebMcpTools, type PaperSourceHost } from "@/lib/research/webmcp-source-contract";
 import { registerWebMcpToolsIndependent, waitForModelContext } from "@/lib/research/webmcp-register";
 import { lintPaperSource } from "@/lib/tex-project/tex-lint";
@@ -91,10 +92,13 @@ export function liveSnapshotFromSource(input: {
   dirty: boolean;
   persistedHash?: string;
   pendingSave?: boolean;
+  remoteSync?: RemoteSyncOutcome;
   sourceSegments?: Array<{ filePath: string; editable: boolean }>;
+  sourceContext?: LivePaperSnapshot["sourceContext"];
   activeHeadingKey?: string;
   compileState?: {
     state: string;
+    compiler?: "latexmk" | "tectonic";
     jobId?: string;
     sourceHash?: string;
     stale?: boolean;
@@ -172,7 +176,9 @@ export function liveSnapshotFromSource(input: {
     dirty: input.dirty,
     ...(input.persistedHash ? { persistedHash: input.persistedHash } : {}),
     ...(input.pendingSave != null ? { pendingSave: input.pendingSave } : {}),
+    ...(input.remoteSync ? { remoteSync: input.remoteSync } : {}),
     ...(input.sourceSegments ? { sourceSegments: input.sourceSegments } : {}),
+    ...(input.sourceContext ? { sourceContext: input.sourceContext } : {}),
     compileState: input.compileState,
     bibliographyKeys: input.bibliographyKeys,
     ...(input.bibliographyRaw != null ? { bibliographyRaw: input.bibliographyRaw } : {}),
@@ -222,6 +228,18 @@ export function usePaperWebMcp(host: PaperSourceHost): void {
         getSnapshot: () => hostRef.current.getSnapshot(),
         navigateSection: (sectionId) => hostRef.current.navigateSection(sectionId),
         setReaderMode: (mode) => hostRef.current.setReaderMode(mode),
+        repairSection: (sectionId, filePath, expectedSourceHash, signal) => {
+          if (!hostRef.current.repairSection) throw new Error("The live paper page cannot repair source envelopes.");
+          return hostRef.current.repairSection(sectionId, filePath, expectedSourceHash, signal);
+        },
+        addTodoAtSection: (sectionId, text, title, todoId, signal) => {
+          if (!hostRef.current.addTodoAtSection) throw new Error("The live paper page cannot add a section TODO.");
+          return hostRef.current.addTodoAtSection(sectionId, text, title, todoId, signal);
+        },
+        relocateTodo: (todoId, sectionId, signal) => {
+          if (!hostRef.current.relocateTodo) throw new Error("The live paper page cannot relocate TODOs.");
+          return hostRef.current.relocateTodo(todoId, sectionId, signal);
+        },
         replaceSection: (sectionId, tex, signal) => hostRef.current.replaceSection(sectionId, tex, signal),
         removeTodo: (todoId, signal) => hostRef.current.removeTodo(todoId, signal),
         compile: (signal) => hostRef.current.compile(signal),

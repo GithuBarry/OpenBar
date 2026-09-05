@@ -178,6 +178,7 @@ export async function convertMindmapCardToTodo(input: MindmapTodoConversionInput
     }
     const inserted = insertTodoAtSection(bundle.source, input.sectionId, text, undefined, title || undefined);
     if (!inserted.sectionFound) return conversionFailure("unknown_section", `Unknown paper section id "${input.sectionId}".`);
+    if (inserted.error) return conversionFailure("invalid_tex", inserted.error);
 
     const bound = applyMindmapAction(map, { type: "bind-todo", id: input.cardId, todoId: inserted.id }).mindmap;
     const nextMap = normalizeMindmap({

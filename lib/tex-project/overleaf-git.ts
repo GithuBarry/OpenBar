@@ -14,6 +14,8 @@ export interface OverleafGitStatus {
   isGitRepo: boolean;
   branch?: string;
   remoteUrl?: string;
+  /** True only when origin is the Overleaf Git service, not an arbitrary Git host. */
+  isOverleafRemote?: boolean;
   isClean?: boolean;
   ahead?: number;
   behind?: number;
@@ -25,6 +27,14 @@ export interface OverleafGitStatus {
     date: string;
   };
   error?: string;
+}
+
+export interface OverleafGitCommit {
+  hash: string;
+  message: string;
+  author: string;
+  date: string;
+  files: string[];
 }
 
 export interface TexGitRepoInspection {
@@ -178,6 +188,22 @@ function hasEmbeddedCredentials(remoteUrl: string): boolean {
     return Boolean(parsed.username || parsed.password);
   } catch {
     return /:\/\/[^/@]+@/.test(remoteUrl);
+  }
+}
+
+/**
+ * OpenBar's "remote visible" contract is deliberately narrow: it means the
+ * project is visible through the project's Overleaf Git remote. A generic Git
+ * origin must never be reported as an Overleaf save.
+ */
+export function isOverleafGitRemote(remoteUrl: string | undefined): boolean {
+  if (!remoteUrl?.trim()) return false;
+  const value = remoteUrl.trim();
+  try {
+    return new URL(value).hostname.toLowerCase() === "git.overleaf.com";
+  } catch {
+    // Also accept the SSH form used by Overleaf: git@git.overleaf.com:project.
+    return /^git@git\.overleaf\.com:/i.test(value);
   }
 }
 
@@ -353,6 +379,7 @@ export async function getOverleafGitStatus(projectDir: string): Promise<Overleaf
       isGitRepo: true,
       branch,
       remoteUrl: redactGitRemote(remoteUrl),
+      isOverleafRemote: isOverleafGitRemote(remoteUrl),
       isClean,
       ahead,
       behind,
@@ -367,6 +394,60 @@ export async function getOverleafGitStatus(projectDir: string): Promise<Overleaf
   }
 }
 
+/** Return a bounded, credential-free commit summary for the Changes view. */
+export async function getOverleafGitHistory(
+  projectDir: string,
+  since?: string,
+  limit = 40,
+): Promise<{ ok: boolean; commits: OverleafGitCommit[]; message?: string }> {
+  const cwd = resolveGitDir(projectDir);
+  if (!fs.existsSync(path.join(cwd, ".git"))) {
+    return { ok: false, commits: [], message: "Directory is not a git repository." };
+  }
+  try {
+    const remoteUrl = await runGit(cwd, ["config", "--get", "remote.origin.url"]).then((value) => value.trim()).catch(() => "");
+    if (!isOverleafGitRemote(remoteUrl)) {
+      return { ok: false, commits: [], message: "Overleaf Git history is unavailable because origin is not an Overleaf Git remote." };
+    }
+    const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    const args = [
+      "log",
+      `-${boundedLimit}`,
+      "--date=iso-strict",
+      "--format=%H%x00%an%x00%cI%x00%s%x1e",
+      "--name-only",
+      ...(since ? [`--since=${since}T00:00:00`] : []),
+      "--",
+      ...texGitPathspec(projectDir, cwd),
+    ];
+    const output = await runGit(cwd, args);
+    const commits: OverleafGitCommit[] = [];
+    const header = /(?:^|\n)([0-9a-f]{40})\0([^\0]*)\0([^\0]*)\0([^\x1e]*)\x1e\n?/g;
+    const matches = [...output.matchAll(header)];
+    for (let index = 0; index < matches.length; index += 1) {
+      const match = matches[index]!;
+      const next = matches[index + 1];
+      const start = (match.index ?? 0) + match[0].length;
+      const end = next?.index ?? output.length;
+      const files = output
+        .slice(start, end)
+        .split(/\r?\n/)
+        .map((file) => file.trim())
+        .filter(Boolean);
+      commits.push({
+        hash: match[1]!,
+        author: match[2] || "Unknown actor",
+        date: match[3] || "",
+        message: match[4]!.trim(),
+        files: [...new Set(files)],
+      });
+    }
+    return { ok: true, commits };
+  } catch (error) {
+    return { ok: false, commits: [], message: "Git history unavailable: " + gitErrorMessage(error) };
+  }
+}
+
 /**
  * Refresh remote-tracking refs before presenting status so another checkout's
  * latest push is visible before the next edit is saved.
@@ -374,13 +455,19 @@ export async function getOverleafGitStatus(projectDir: string): Promise<Overleaf
 export async function refreshOverleafGitStatus(projectDir: string): Promise<OverleafGitStatus> {
   const current = await getOverleafGitStatus(projectDir);
   if (!current.isGitRepo || !current.remoteUrl) return current;
+  if (!current.isOverleafRemote) {
+    return {
+      ...current,
+      error: "Overleaf Git remote unavailable: origin is not git.overleaf.com.",
+    };
+  }
   const cwd = resolveGitDir(projectDir);
   try {
     await runGit(cwd, ["fetch", "--prune", "origin"]);
   } catch (error) {
     return {
       ...current,
-      error: "Remote status unavailable: " + gitErrorMessage(error),
+      error: "Overleaf Git status unavailable: " + gitErrorMessage(error),
     };
   }
   return getOverleafGitStatus(projectDir);
@@ -393,12 +480,16 @@ export async function pullOverleafGit(projectDir: string): Promise<{ ok: boolean
   }
 
   try {
+    const remoteUrl = (await runGit(cwd, ["config", "--get", "remote.origin.url"])).trim();
+    if (!isOverleafGitRemote(remoteUrl)) {
+      return { ok: false, message: "Overleaf Git remote unavailable: origin is not git.overleaf.com." };
+    }
     const output = (await runGit(cwd, ["pull", "--ff-only"])).trim();
     return { ok: true, message: output || "Already up to date." };
   } catch (error) {
     return {
       ok: false,
-      message: `Failed to pull from Overleaf remote: ${gitErrorMessage(error)}`,
+      message: `Failed to pull from Overleaf Git: ${gitErrorMessage(error)}`,
     };
   }
 }
@@ -427,6 +518,13 @@ export async function pushOverleafGit(
           message: "No origin remote is configured. The edit remains local until a Git remote is configured.",
         };
       }
+      if (!isOverleafGitRemote(remoteUrl)) {
+        return {
+          ok: false,
+          code: "remote_not_overleaf",
+          message: "Origin is not the Overleaf Git remote (git.overleaf.com). The edit remains local; no non-Overleaf push was attempted.",
+        };
+      }
 
       let remoteCheck: { configured: boolean; ahead: number; behind: number; error?: string };
       try {
@@ -451,7 +549,7 @@ export async function pushOverleafGit(
         return {
           ok: false,
           code: "remote_check_failed",
-          message: "Could not check the remote before saving: " + remoteCheck.error,
+          message: "Could not check Overleaf before saving: " + remoteCheck.error,
         };
       }
       if (remoteCheck.behind > 0) {
@@ -460,8 +558,8 @@ export async function pushOverleafGit(
           ok: false,
           code: diverged ? "remote_conflict" : "remote_ahead",
           message: diverged
-            ? "The remote and this checkout both have new commits. Pull and resolve the Git conflict before saving remotely."
-            : "The remote has newer commits. Pull the latest paper, resolve any conflict, then retry the remote save.",
+            ? "Overleaf and this checkout both have new commits. Pull and resolve the Git conflict before saving to Overleaf."
+            : "Overleaf has newer commits. Pull the latest paper, resolve any conflict, then retry the Overleaf save.",
         };
       }
 
@@ -508,14 +606,14 @@ export async function pushOverleafGit(
         return {
           ok: true,
           commitHash,
-          message: pushOutput || "Committed " + commitHash.slice(0, 8) + " and pushed to the remote.",
+          message: pushOutput || "Committed " + commitHash.slice(0, 8) + " and pushed to Overleaf.",
         };
       } catch (error) {
         return {
           ok: false,
           code: "push_failed",
           commitHash,
-          message: "Committed " + commitHash + " locally. Remote push failed: " + gitErrorMessage(error) + ". The local commit exists.",
+          message: "Committed " + commitHash + " locally. Overleaf push failed: " + gitErrorMessage(error) + ". The local commit exists.",
         };
       }
     } catch (error) {
@@ -523,7 +621,7 @@ export async function pushOverleafGit(
       return {
         ok: false,
         code: "commit_failed",
-        message: "Failed to save to the remote: " + gitErrorMessage(error),
+        message: "Failed to save to Overleaf: " + gitErrorMessage(error),
       };
     }
   });
@@ -533,6 +631,12 @@ export async function initOverleafGit(
   projectDir: string,
   remoteUrl: string,
 ): Promise<{ ok: boolean; message: string }> {
+  if (!isOverleafGitRemote(remoteUrl)) {
+    return {
+      ok: false,
+      message: "Only the Overleaf Git remote at git.overleaf.com can be configured for remote visibility.",
+    };
+  }
   if (hasEmbeddedCredentials(remoteUrl)) {
     return {
       ok: false,

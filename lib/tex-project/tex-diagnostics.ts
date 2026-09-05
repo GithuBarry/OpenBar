@@ -4,7 +4,7 @@ export type TexFileLine = { file: string; line: number; message: string };
 export function parseTexFileLines(diagnostics: string[]): TexFileLine[] {
   const hits: TexFileLine[] = [];
   for (const raw of diagnostics) {
-    const match = raw.match(/(?:^|[\\/])([^\\/\s:]+\.tex):(\d+)(?::(?:\d+:)?\s*(.*))?/);
+    const match = raw.match(/(?:^|[\s("'`])((?:[A-Za-z]:)?[^()\s:]*?\.tex):(\d+)(?::(?:\d+:)?\s*(.*))?/);
     if (!match) continue;
     hits.push({
       file: match[1]!,

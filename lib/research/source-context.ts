@@ -7,7 +7,13 @@
 import { parseSectionMeta, getEditBlock, sha256, type SectionMeta } from "@/lib/tex-project/codec";
 import type { SourceBundle } from "@/lib/tex-project/source-bundle";
 import { traverseInputGraph, type GraphNode, type SourceDiagnostic } from "@/lib/tex-project/source-graph";
-import { plainHeadingTitle, texHeadingLevel } from "@/lib/tex-project/paper-compose";
+import {
+  discoverTexHeadings,
+  headingPathAt,
+  inspectTexEnvironments,
+  texHeadingRange,
+  type TexHeading,
+} from "@/lib/tex-project/tex-structure";
 import { analyzePaper, type PaperAnalysis, type PaperMarker, type PaperNote, type PaperTodo } from "./paper-analysis";
 
 export type SourceRange = { from: number; to: number };
@@ -50,10 +56,13 @@ export type SourceContextSection = SectionMeta & {
   sourceHash: string;
   sourceRange: SourceRange;
   editable: boolean;
+  /** Stable managed envelope used for writes when this is a natural nested heading. */
+  writeTargetId?: string;
   headingPath: string[];
   excerpt: string;
   parseStatus: "ok" | "error";
   diagnostic?: SourceDiagnostic;
+  diagnostics: SourceDiagnostic[];
   todos: LocatedPaperTodo[];
   comments: LocatedPaperNote[];
   markers: LocatedPaperMarker[];
@@ -81,7 +90,6 @@ export type SourceContextIndex = {
 
 const SECTION_META_LINE = /^%\s*OB-SECTION\s+(\{.*\})\s*$/m;
 const EDIT_BEGIN_LINE = /^%\s*OB-EDIT-BEGIN\s+([^\s]+)\s+id=([^\s]+)\s*$/gm;
-const HEADING_RE = /\\(title|section|subsection|subsubsection|paragraph|subparagraph)\*?(?:\[[^\]\n]*\])?\{([^{}\n]*)\}/g;
 
 function lineEnd(source: string, from: number): number {
   const end = source.indexOf("\n", from);
@@ -108,6 +116,7 @@ function sectionMeta(node: GraphNode): { meta?: SectionMeta; id?: string; diagno
   try {
     return { meta: parseSectionMeta(node.source), id };
   } catch (error) {
+    if (!SECTION_META_LINE.test(node.source)) return { id };
     return {
       id,
       diagnostic: {
@@ -118,21 +127,6 @@ function sectionMeta(node: GraphNode): { meta?: SectionMeta; id?: string; diagno
       },
     };
   }
-}
-
-function headingPath(source: string, baseLevel: number, start: number, end: number): string[] {
-  const stack: Array<{ level: number; title: string }> = [];
-  for (const match of source.matchAll(HEADING_RE)) {
-    const at = match.index ?? 0;
-    if (at < start || at > end) continue;
-    const command = match[1] || "section";
-    const level = texHeadingLevel(command);
-    const title = plainHeadingTitle(match[2] || "").trim();
-    if (!title || level <= baseLevel) continue;
-    while (stack.at(-1) && stack.at(-1)!.level >= level) stack.pop();
-    stack.push({ level, title });
-  }
-  return stack.map((item) => item.title);
 }
 
 function bodyRange(source: string, id: string | undefined): { range: SourceRange; valid: boolean; error?: string } {
@@ -181,12 +175,12 @@ function locateTodo(
   todo: PaperTodo,
   node: GraphNode,
   section: SourceContextSection | undefined,
-  range: SourceRange,
+  headings: TexHeading[],
   toVirtual?: (node: GraphNode, offset: number) => number,
 ): LocatedPaperTodo {
-  const sectionId = section?.id;
+  const sectionId = section ? (section.writeTargetId || section.id) : undefined;
   const sectionTitle = section?.title;
-  const path = headingPath(node.source, section?.level ?? 1, range.from, todo.end || range.to);
+  const path = headings.length ? headingPathAt(headings, todo.start) : (section?.headingPath || []);
   return {
     ...todo,
     file: node.filePath,
@@ -203,59 +197,126 @@ function locateNote<T extends PaperNote | PaperMarker>(
   item: T,
   node: GraphNode,
   section: SourceContextSection | undefined,
-  range: SourceRange,
+  headings: TexHeading[],
   toVirtual?: (node: GraphNode, offset: number) => number,
 ): T & { file: string; sectionId?: string; sectionTitle?: string; headingPath: string[]; sourceHash: string; virtualStart?: number; virtualEnd?: number } {
   return {
     ...item,
     file: node.filePath,
-    ...(section?.id ? { sectionId: section.id } : {}),
+    ...((section?.writeTargetId || section?.id) ? { sectionId: section.writeTargetId || section.id } : {}),
     ...(section?.title ? { sectionTitle: section.title } : {}),
-    headingPath: headingPath(node.source, section?.level ?? 1, range.from, item.end || range.to),
+    headingPath: headings.length ? headingPathAt(headings, item.start) : (section?.headingPath || []),
     sourceHash: node.hash,
     ...(toVirtual ? { virtualStart: toVirtual(node, item.start), virtualEnd: toVirtual(node, item.end) } : {}),
   };
 }
 
-function makeSection(node: GraphNode, analysis: PaperAnalysis, toVirtual?: (node: GraphNode, offset: number) => number): SourceContextSection | null {
+function fallbackHeadingId(node: GraphNode, heading: TexHeading): string {
+  return heading.label || `${node.filePath.replace(/[^A-Za-z0-9._-]+/g, "-")}:${heading.start}`;
+}
+
+/**
+ * Build logical manuscript headings from the TeX AST. A file is only a source
+ * location: one file may contain many headings, and a heading may be backed by
+ * an OpenBar envelope or remain source-native/read-only.
+ */
+function makeSections(node: GraphNode): { sections: SourceContextSection[]; headings: TexHeading[] } {
   const parsed = sectionMeta(node);
-  if (!parsed.meta && !parsed.id && node.kind !== "section") return null;
-  const id = parsed.meta?.id || parsed.id || node.filePath.replace(/[^A-Za-z0-9._-]+/g, "-") || "section";
-  const range = bodyRange(node.source, id);
-  const diagnostic = parsed.diagnostic || (!range.valid
-    ? {
-        severity: "error" as const,
-        code: "malformed_section",
-        message: range.error || `Section "${id}" is missing a complete editable OpenBar envelope.`,
+  const headings = discoverTexHeadings(node.source, node.filePath);
+  if (!parsed.meta && !parsed.id && !headings.length && node.kind !== "section") return { sections: [], headings };
+
+  const managedId = parsed.meta?.id || parsed.id;
+  const naturalOnly = !parsed.meta && !parsed.id;
+  const primaryIndex = headings.length
+    ? Math.max(0, headings.findIndex((heading) => (
+      (managedId && (heading.label === managedId || heading.label === parsed.meta?.label))
+      || (parsed.meta && heading.level === parsed.meta.level && heading.title.trim().toLowerCase() === parsed.meta.title.trim().toLowerCase())
+    )))
+    : -1;
+  const envelope = managedId ? bodyRange(node.source, managedId) : undefined;
+  const environmentDiagnostics = inspectTexEnvironments(node.source);
+  const candidates = headings.length
+    ? headings.map((heading, index) => ({ heading, index }))
+    : [{ heading: undefined, index: -1 }];
+
+  const sections = candidates.map(({ heading, index }) => {
+    const primary = index < 0 || index === primaryIndex;
+    const naturalRange = heading && index >= 0
+      ? texHeadingRange(node.source, headings, index)
+      : (envelope?.range || { from: 0, to: node.source.length });
+    const range = primary && envelope && !heading ? envelope.range : naturalRange;
+    const id = primary
+      ? (managedId || heading?.label || node.filePath.replace(/[^A-Za-z0-9._-]+/g, "-") || "section")
+      : fallbackHeadingId(node, heading!);
+    const missingEnd = primary && envelope?.error?.includes(`OB-EDIT block "${id}" has no end marker.`) === true;
+    const diagnostics: SourceDiagnostic[] = [];
+    if (primary && parsed.diagnostic) diagnostics.push(parsed.diagnostic);
+    if (primary && naturalOnly) {
+      diagnostics.push({
+        severity: "warning",
+        code: "unmanaged_section",
+        message: `Discovered ${heading?.command || "section"} "${heading?.title || id}" from the TeX AST. This source has no OpenBar edit envelope, so source-range writes must be explicit.`,
         filePath: node.filePath,
+      });
+    } else if (primary && envelope && !envelope.valid) {
+      diagnostics.push({
+        severity: "error",
+        code: missingEnd ? "missing_edit_end" : "malformed_section",
+        message: envelope.error || `Section "${id}" is missing a complete editable OpenBar envelope.`,
+        filePath: node.filePath,
+        ...(missingEnd ? { repair: { kind: "missing-edit-end" as const, sectionId: id, filePath: node.filePath } } : {}),
+      });
+    }
+    if (primary) {
+      for (const item of environmentDiagnostics) {
+        diagnostics.push({
+          severity: item.severity,
+          code: item.code,
+          message: `${item.message} (line ${item.line})`,
+          filePath: node.filePath,
+        });
       }
-    : undefined);
-  const fallback: SectionMeta = parsed.meta || {
-    id,
-    title: id,
-    level: 2,
-    order: Number.MAX_SAFE_INTEGER,
-    label: id,
-  };
-  const section: SourceContextSection = {
-    ...fallback,
-    file: node.filePath,
-    absPath: node.absPath,
-    sourceHash: node.hash,
-    sourceRange: { from: 0, to: node.source.length },
-    editable: node.editable,
-    headingPath: headingPath(node.source, fallback.level, range.range.from, node.source.length),
-    excerpt: excerpt(node.source, range.range),
-    parseStatus: diagnostic ? "error" : "ok",
-    ...(diagnostic ? { diagnostic } : {}),
-    todos: [],
-    comments: [],
-    markers: [],
-  };
-  section.todos = analysis.todos.filter((todo) => inRange(todo.start, range.range)).map((todo) => locateTodo(todo, node, section, range.range, toVirtual));
-  section.comments = analysis.comments.filter((item) => inRange(item.start, range.range)).map((item) => locateNote(item, node, section, range.range, toVirtual));
-  section.markers = analysis.markers.filter((item) => inRange(item.start, range.range)).map((item) => locateNote(item, node, section, range.range, toVirtual));
-  return section;
+    }
+
+    const fallback: SectionMeta = primary && parsed.meta
+      ? parsed.meta
+      : {
+          id,
+          title: heading?.title || parsed.meta?.title || id,
+          level: (heading?.level || parsed.meta?.level || 2) as SectionMeta["level"],
+          order: parsed.meta?.order ?? Number.MAX_SAFE_INTEGER,
+          label: heading?.label || parsed.meta?.label || id,
+          ...(parsed.meta?.appendix ? { appendix: true } : {}),
+        };
+    return {
+      ...fallback,
+      file: node.filePath,
+      absPath: node.absPath,
+      sourceHash: node.hash,
+      sourceRange: range,
+      editable: Boolean(primary && node.editable && parsed.meta && envelope?.valid),
+      ...(parsed.meta?.id && !primary ? { writeTargetId: parsed.meta.id } : {}),
+      headingPath: heading?.path || [],
+      excerpt: excerpt(node.source, range),
+      parseStatus: diagnostics.some((item) => item.severity === "error") ? "error" : "ok",
+      ...(diagnostics[0] ? { diagnostic: diagnostics[0] } : {}),
+      diagnostics,
+      todos: [],
+      comments: [],
+      markers: [],
+    } satisfies SourceContextSection;
+  });
+  return { sections, headings };
+}
+
+function ownerForOffset(sections: SourceContextSection[], offset: number): SourceContextSection | undefined {
+  return sections
+    .filter((section) => inRange(offset, section.sourceRange))
+    .sort((left, right) => {
+      const leftSize = left.sourceRange.to - left.sourceRange.from;
+      const rightSize = right.sourceRange.to - right.sourceRange.from;
+      return leftSize - rightSize || right.level - left.level;
+    })[0];
 }
 
 export function buildSourceContextIndex(manuscriptDir: string, rootFile?: string, bundle?: SourceBundle): SourceContextIndex {
@@ -284,21 +345,43 @@ export function buildSourceContextIndex(manuscriptDir: string, rootFile?: string
   for (const node of graph.nodes) {
     if (!node.editable && node.kind !== "section") continue;
     const analysis = safeAnalysis(node.source);
-    const section = makeSection(node, analysis, toVirtual);
-    if (section) {
-      sections.push(section);
-      if (section.diagnostic) diagnostics.push(section.diagnostic);
-      allTodos.push(...section.todos);
-      allComments.push(...section.comments);
-      allMarkers.push(...section.markers);
+    const discovered = makeSections(node);
+    if (discovered.sections.length) {
+      sections.push(...discovered.sections);
+      diagnostics.push(...discovered.sections.flatMap((section) => section.diagnostics));
+      for (const todo of analysis.todos) {
+        const owner = ownerForOffset(discovered.sections, todo.start);
+        const located = locateTodo(todo, node, owner, discovered.headings, toVirtual);
+        allTodos.push(located);
+        owner?.todos.push(located);
+      }
+      for (const comment of analysis.comments) {
+        const owner = ownerForOffset(discovered.sections, comment.start);
+        const located = locateNote(comment, node, owner, discovered.headings, toVirtual);
+        allComments.push(located);
+        owner?.comments.push(located);
+      }
+      for (const marker of analysis.markers) {
+        const owner = ownerForOffset(discovered.sections, marker.start);
+        const located = locateNote(marker, node, owner, discovered.headings, toVirtual);
+        allMarkers.push(located);
+        owner?.markers.push(located);
+      }
       continue;
     }
-    allTodos.push(...analysis.todos.map((todo) => locateTodo(todo, node, undefined, { from: 0, to: node.source.length }, toVirtual)));
-    allComments.push(...analysis.comments.map((item) => locateNote(item, node, undefined, { from: 0, to: node.source.length }, toVirtual)));
-    allMarkers.push(...analysis.markers.map((item) => locateNote(item, node, undefined, { from: 0, to: node.source.length }, toVirtual)));
+    const headings = discoverTexHeadings(node.source, node.filePath);
+    allTodos.push(...analysis.todos.map((todo) => locateTodo(todo, node, undefined, headings, toVirtual)));
+    allComments.push(...analysis.comments.map((item) => locateNote(item, node, undefined, headings, toVirtual)));
+    allMarkers.push(...analysis.markers.map((item) => locateNote(item, node, undefined, headings, toVirtual)));
     diagnostics.push(...analysis.diagnostics.map((item) => ({ ...item, severity: "error" as const, filePath: node.filePath })));
   }
-  sections.sort((left, right) => left.order - right.order || left.file.localeCompare(right.file) || left.id.localeCompare(right.id));
+  const graphOrder = new Map(graph.nodes.map((node, index) => [node.filePath, index]));
+  sections.sort((left, right) => (
+    (graphOrder.get(left.file) || 0) - (graphOrder.get(right.file) || 0)
+    || left.sourceRange.from - right.sourceRange.from
+    || left.level - right.level
+    || left.id.localeCompare(right.id)
+  ));
   const sourceHash = sha256(JSON.stringify(graph.nodes.map((node) => ({ file: node.filePath, hash: node.hash }))));
   return {
     rootFile: graph.rootFile,
