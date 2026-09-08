@@ -11,6 +11,9 @@ import { isPublicDemoMode } from "@/lib/server/demo-mode";
  */
 export function proxy(request: NextRequest) {
   if (isPublicDemoMode()) return NextResponse.next();
+  // Authenticated agent routes verify their own bearer or Access identity.
+  const pathname = request.nextUrl.pathname;
+  if (pathname === "/api/mcp" || pathname === "/api/projects" || pathname === "/api/tools" || pathname.startsWith("/api/tools/")) return NextResponse.next();
   const configured = Boolean(process.env.CLOUDFLARE_ACCESS_TEAM_DOMAIN && process.env.CLOUDFLARE_ACCESS_AUD);
   if (!configured || process.env.NODE_ENV !== "production") {
     return NextResponse.next();

@@ -45,6 +45,36 @@ declare global {
   }
 }
 
+type BrowserAgentBridge = {
+  listTools: () => Array<Omit<WebMcpTool, "execute">>;
+  executeTool: (name: string, args?: unknown) => Promise<unknown>;
+  waitForNavigation: (href: string, timeoutMs?: number) => Promise<{ href: string; tools: string[] }>;
+};
+declare global { interface Window { openbarAgent?: BrowserAgentBridge } }
+const pageTools = new Map<string, { tool: WebMcpTool; owner: symbol }>();
+const browserFallback: WebMcpModelContext = { async registerTool() {} };
+
+function exposeBrowserBridge(): void {
+  window.openbarAgent = {
+    listTools: () => [...pageTools.values()].map(({ tool: { execute: _execute, ...tool } }) => tool),
+    executeTool: async (name, args = {}) => {
+      const tool = pageTools.get(name)?.tool;
+      return tool ? tool.execute(args) : failResult("capability_unavailable", `Open the page that provides ${name} and discover tools again.`, { retryable: true });
+    },
+    waitForNavigation: async (href, timeoutMs = 30_000) => {
+      const target = new URL(href, window.location.href);
+      if (target.origin !== window.location.origin) throw new Error("Use a same-origin project URL.");
+      const expectedTool = target.pathname.includes("/mindmap") ? "get_mindmap" : target.pathname.includes("/paper") ? "get_paper_state" : target.pathname.includes("/instructions") ? "write_agents_md" : "get_project_state";
+      const started = Date.now();
+      while (Date.now() - started < Math.min(Math.max(timeoutMs, 0), 60_000)) {
+        if (window.location.pathname === target.pathname && window.location.hash === target.hash && pageTools.has(expectedTool)) return { href: window.location.pathname + window.location.hash, tools: [...pageTools.keys()] };
+        await new Promise(resolve => window.setTimeout(resolve, 50));
+      }
+      throw new Error(`Navigation to ${target.pathname} exceeded the wait limit.`);
+    },
+  };
+}
+
 let navigatorHost: WebMcpModelContext | undefined;
 let navigatorAdapter: WebMcpModelContext | undefined;
 
@@ -163,6 +193,7 @@ export async function registerWebMcpToolsIndependent(
     owner.active = false;
     for (const tool of dedupedTools) {
       if (localCatalog.get(tool.name)?.owner === owner.id) localCatalog.delete(tool.name);
+      if (pageTools.get(tool.name)?.owner === owner.id) pageTools.delete(tool.name);
     }
     localDiagnostics.delete(owner.id);
     emitWebMcpCatalog({ surface });
@@ -170,18 +201,21 @@ export async function registerWebMcpToolsIndependent(
   if (signal.aborted) release();
   else signal.addEventListener("abort", release, { once: true });
 
+  exposeBrowserBridge();
   const exposedTo: string[] = JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="openbar-agent-origins"]')?.content || "[]");
   const diagnostics = await Promise.all(
     dedupedTools.map(async (tool): Promise<WebMcpRegistration> => {
       if (signal.aborted) return { name: tool.name, ok: false, error: "aborted" };
       try {
-        await modelContext.registerTool({
+        const registeredTool: WebMcpTool = {
           ...tool,
           execute: (args, options) => {
             if (!owner.active || signal.aborted) return unavailableToolResult(tool.name);
             return tool.execute(args, options);
           },
-        }, { signal, ...(exposedTo.length ? { exposedTo } : {}) });
+        };
+        pageTools.set(tool.name, { tool: registeredTool, owner: owner.id });
+        await modelContext.registerTool(registeredTool, { signal, ...(exposedTo.length ? { exposedTo } : {}) });
         if (!owner.active || signal.aborted) return { name: tool.name, ok: false, error: "aborted" };
         localCatalog.set(tool.name, {
           name: tool.name,
@@ -214,38 +248,9 @@ export async function registerWebMcpToolsIndependent(
 }
 
 export function waitForModelContext(
-  timeoutMs = 30_000,
+  _timeoutMs = 30_000,
   signal?: AbortSignal,
-): Promise<NonNullable<Document["modelContext"]> | null> {
-  if (typeof document === "undefined") return Promise.resolve(null);
-  const available = getBrowserModelContext();
-  if (available) return Promise.resolve(available);
-  return new Promise((resolve) => {
-    const started = Date.now();
-    let settled = false;
-    const events = ["load", "model-context", "modelcontextavailable"];
-    const finish = (value: NonNullable<Document["modelContext"]> | null) => {
-      if (settled) return;
-      settled = true;
-      window.clearInterval(timer);
-      for (const event of events) document.removeEventListener(event, check);
-      signal?.removeEventListener("abort", abort);
-      resolve(value);
-    };
-    const check = () => {
-      const available = getBrowserModelContext();
-      if (available) {
-        finish(available);
-        return;
-      }
-      if (Date.now() - started >= timeoutMs) {
-        finish(null);
-      }
-    };
-    const abort = () => finish(null);
-    const timer = window.setInterval(check, 250);
-    for (const event of events) document.addEventListener(event, check);
-    signal?.addEventListener("abort", abort, { once: true });
-    check();
-  });
+): Promise<WebMcpModelContext | null> {
+  if (typeof document === "undefined" || signal?.aborted) return Promise.resolve(null);
+  return Promise.resolve(getBrowserModelContext() || browserFallback);
 }

@@ -33,7 +33,7 @@ const FLOWS: Record<TexRepoSetupKind, Record<string, unknown>> = {
   },
   overleaf: {
     nextTools: ["inspect_tex_git_repo", "configure_overleaf_remote"],
-    required: ["An allowed existing TeX Git repository path", "A credential-free Overleaf Git URL", "A remote name such as overleaf"],
+    required: ["An allowed existing TeX Git repository path", "A credential-free Git URL", "A remote name such as overleaf"],
     steps: [
       "Ask whether the user prefers SSH or the operating-system credential helper.",
       "Inspect the local repository, configure the remote, then push only manuscript and paper asset paths after user approval.",

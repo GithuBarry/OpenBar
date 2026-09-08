@@ -32,6 +32,7 @@ export function useMindmapWebMcp(host: MindmapWebMcpHost): void {
         completeTodo: (todoId) => hostRef.current.completeTodo?.(todoId),
         reopenTodo: (todoId) => hostRef.current.reopenTodo?.(todoId),
         focusTodoInPaper: (todoId) => hostRef.current.focusTodoInPaper?.(todoId),
+        setFontSize: (fontSize, expectedRevision) => hostRef.current.setFontSize?.(fontSize, expectedRevision),
         renameMap: (title, expectedRevision) => hostRef.current.renameMap?.(title, expectedRevision),
       };
       const tools = [...buildMindmapWebMcpTools(bound)];

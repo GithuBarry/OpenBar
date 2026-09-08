@@ -20,10 +20,11 @@ const SURFACE_LABEL: Partial<Record<WebMcpSurface, string>> = {
   paper: "Paper",
   mindmap: "Mindmap",
   instructions: "Instructions",
+  wiki: "Wiki",
   setup: "Setup",
 };
 
-const SURFACE_ORDER: WebMcpSurface[] = ["workspace", "shared", "paper", "mindmap", "instructions", "setup"];
+const SURFACE_ORDER: WebMcpSurface[] = ["workspace", "shared", "paper", "mindmap", "wiki", "instructions", "setup"];
 
 export function AgentReadyIndicator() {
   const [catalog, setCatalog] = useState<WebMcpCatalogEntry[]>([]);
@@ -63,7 +64,7 @@ export function AgentReadyIndicator() {
             ? "The browser provides document.modelContext. If no tools appear, registration has not completed; reload this page and check for registration errors below."
             : typeof legacyContext?.registerTool === "function"
               ? "This browser provides navigator.modelContext. OpenBar supports this native API and registers tools automatically. Registration diagnostics appear below."
-              : "This browser does not expose the WebMCP registration API. Enable WebMCP support in the browser or its agent integration, then reload this page. HTTPS is working, but it does not enable WebMCP by itself.",
+              : "Browser automation can use window.openbarAgent.listTools() and executeTool(name, args). Native WebMCP integrations can enable their browser support and reload.",
       );
     };
     inspectHost();
@@ -96,23 +97,23 @@ export function AgentReadyIndicator() {
 
   return (
     <>
-    <aside className="sr-only" aria-label="Agent instructions" data-agent-instructions>{AGENT_GUIDANCE}</aside>
+    <aside className="sr-only" aria-label="Agent tool usage instructions" data-agent-tool-instructions>{AGENT_GUIDANCE}</aside>
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
       <button
         type="button"
         className={cn("ob-agent-ready", ready && "ob-agent-ready-on")}
-        aria-label="Tools and agent access"
+        aria-label="MCP and WebMCP agent tools"
         aria-expanded={open}
         title={issueCount ? "WebMCP registration issues" : ready ? "WebMCP tools on this page" : "Waiting for WebMCP"}
       >
         <span className="ob-agent-ready-dot" aria-hidden="true" />
-        Agent tools
+        MCP / WebMCP
       </button>
       </Popover.Trigger>
       {open && (
         <Popover.Portal>
-        <Popover.Content className="ob-agent-ready-panel" align="end" sideOffset={8} collisionPadding={12} aria-label="Tools and agent access">
+        <Popover.Content className="ob-agent-ready-panel" align="end" sideOffset={8} collisionPadding={12} aria-label="MCP and WebMCP agent tools">
           <p className="ob-agent-ready-heading">Tools and agent access</p>
           <Link href="/agents" className="text-xs text-accent underline">How to connect a browser or headless agent</Link>
           <p className="ob-agent-ready-heading mt-3">{statusText}</p>

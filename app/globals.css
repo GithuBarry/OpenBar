@@ -618,6 +618,7 @@ button, input, textarea, select { font: inherit; }
   padding: 0.55rem 0.65rem;
 }
 .input:focus { outline: 2px solid rgb(var(--accent) / 0.4); outline-offset: 0; border-color: rgb(var(--accent)); }
+.input.todo-search-input { padding: 0.25rem 0.5rem 0.25rem 1.75rem; }
 
 /* Current section breadcrumb. No motion. Mobile shows only the leaf heading. */
 .ob-jump {
@@ -1072,7 +1073,6 @@ button, input, textarea, select { font: inherit; }
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.06);
 }
 .mindmap-node-orphan { border-style: dashed; border-color: rgb(var(--warn) / 0.65); }
-.mindmap-node-note { border-style: dashed; background: rgb(var(--surface-2)); }
 .mindmap-node-callout { border-color: var(--mind-node-accent); background: color-mix(in srgb, var(--mind-node-accent) 9%, rgb(var(--surface))); }
 .mindmap-node-editing { cursor: text; user-select: text; }
 .mindmap-node-drop-target {
@@ -1336,14 +1336,21 @@ button, input, textarea, select { font: inherit; }
   border: none;
   box-shadow: none;
 }
+
 .mindmap-rf .react-flow__node.selected {
   box-shadow: none;
 }
-.mindmap-rf-card .mindmap-node-card {
-  position: relative;
-  left: auto;
-  top: auto;
+.mindmap-rf-card { height: 100%; }
+.mindmap-rf-card > .mindmap-node-card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  /* A fixed backing size keeps text layout identical at every canvas zoom. */
+  zoom: 3;
+  transform: scale(0.3333333333333333);
+  transform-origin: 0 0;
 }
+.mindmap-rf[data-sharp-cards="true"] .mindmap-node-card { will-change: transform; }
 .mindmap-card-menu-header {
   display: flex;
   align-items: flex-start;
@@ -1524,7 +1531,7 @@ button, input, textarea, select { font: inherit; }
 .mindmap-rich-text p { margin: 0; white-space: pre-wrap; }
 .mindmap-rich-text > * + * { margin-top: 0.4em; }
 .mindmap-rich-text :is(h1, h2, h3, h4, h5, h6) { margin: 0; font-size: 1em; font-weight: 650; }
-.mindmap-rich-text :is(ul, ol) { margin: 0; padding-left: 1.25em; }
+.mindmap-rich-text :is(ul, ol) { margin: 0; padding-left: 2.25em; }
 .mindmap-rich-text ul { list-style: disc; }
 .mindmap-rich-text ol { list-style: decimal; }
 .mindmap-rich-text blockquote { margin: 0; padding-left: 0.6em; border-left: 2px solid rgb(var(--line)); }
@@ -1565,8 +1572,6 @@ button, input, textarea, select { font: inherit; }
 .mindmap-card-asset-item { min-width: 0; }
 .mindmap-card-asset { display: block; overflow: hidden; aspect-ratio: 4 / 3; border: 1px solid rgb(var(--line)); border-radius: 0.35rem; background: rgb(var(--surface-2)); }
 .mindmap-card-asset img { width: 100%; height: 100%; object-fit: cover; }
-.mindmap-node-assets { display: flex; gap: 0.3rem; margin-top: 0.45rem; max-height: 56px; overflow: hidden; }
-.mindmap-node-assets img { width: 54px; height: 42px; border-radius: 4px; object-fit: cover; border: 1px solid rgb(var(--line)); background: rgb(var(--surface-2)); }
 .mindmap-rf-handle { width: 6px; height: 6px; border: 0; opacity: 0.01; background: rgb(var(--accent)); }
 .ob-preview-figure { margin: 0.75rem 0; max-width: 100%; overflow: hidden; }
 .ob-preview-figure .textLayer,
@@ -1812,3 +1817,5 @@ button, input, textarea, select { font: inherit; }
     -webkit-backdrop-filter: none;
   }
 }
+
+.mindmap-image-drop-active { outline: 2px dashed rgb(var(--accent)); outline-offset: 5px; }

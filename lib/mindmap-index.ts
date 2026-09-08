@@ -29,9 +29,11 @@ export function persistableMindmapNode(node: MindmapNode): MindmapNode {
     text: node.todoId?.trim() ? "" : node.text,
     parentId: node.parentId,
   };
+  if (!node.todoId?.trim() && node.caption?.trim()) next.caption = node.caption.trim();
   if (!node.todoId?.trim() && node.title !== undefined) next.title = node.title;
   if (node.todoId?.trim()) next.todoId = node.todoId.trim();
-  if (node.shape) next.shape = node.shape;
+  if (node.shape) next.shape = node.shape === "note" ? "leaf" : node.shape;
+  if (node.agentDraft || node.shape === "note") next.agentDraft = true;
   if (node.collapsed) next.collapsed = node.collapsed;
   if (node.metadata) next.metadata = node.metadata;
   if (node.contentFormat) next.contentFormat = node.contentFormat;
@@ -95,4 +97,25 @@ export function emptyMindmap(
 export function slugifyMindmapId(title: string): string {
   const slug = title.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   return slug || "map";
+}
+
+/** Count a forest bottom-up in linear time, including very deep branches. */
+export function countMindmapDescendants(mindmap: Mindmap): Map<string, number> {
+  const nodeById = new Map(mindmap.nodes.map(node => [node.id, node]));
+  const counts = new Map(mindmap.nodes.map(node => [node.id, 0]));
+  const remaining = new Map(mindmap.nodes.map(node => [node.id, 0]));
+  for (const node of mindmap.nodes) {
+    if (node.parentId && nodeById.has(node.parentId)) remaining.set(node.parentId, remaining.get(node.parentId)! + 1);
+  }
+  const queue = mindmap.nodes.filter(node => remaining.get(node.id) === 0).map(node => node.id);
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const id = queue[cursor];
+    const parent = nodeById.get(id)?.parentId;
+    if (!parent || !nodeById.has(parent)) continue;
+    counts.set(parent, counts.get(parent)! + 1 + counts.get(id)!);
+    const left = remaining.get(parent)! - 1;
+    remaining.set(parent, left);
+    if (left === 0) queue.push(parent);
+  }
+  return counts;
 }

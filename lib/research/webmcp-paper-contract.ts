@@ -74,7 +74,6 @@ export const MINDMAP_WEBMCP_TOOL_NAMES = [
   "patch_mindmap_node",
   "attach_mindmap_image",
   "detach_mindmap_image",
-  "reorder_mindmap_image",
   "caption_mindmap_image",
   "read_mindmap_image",
   "highlight_mindmap_activity",
@@ -84,6 +83,7 @@ export const MINDMAP_WEBMCP_TOOL_NAMES = [
   "reopen_todo",
   "focus_todo_in_paper",
   "rename_mindmap",
+  "set_mindmap_font_size",
 ] as const;
 
 export type MindmapWebMcpToolName = (typeof MINDMAP_WEBMCP_TOOL_NAMES)[number];
@@ -173,7 +173,7 @@ export type LivePaperSnapshot = {
   persistedHash?: string;
   /** True while dirty content is waiting for or undergoing a save. */
   pendingSave?: boolean;
-  /** Last local-save-to-Overleaf outcome, including an actionable failure. */
+  /** Last local-save-to-Git outcome, including an actionable failure. */
   remoteSync?: RemoteSyncOutcome;
   sourceSegments?: Array<{ filePath: string; editable: boolean }>;
   compileState?: {
@@ -367,7 +367,7 @@ const TOOL_META: Record<PaperWebMcpToolName, { title: string; description: strin
   },
   add_paper_todo_at_section: {
     title: "Add a paper TODO at a section",
-    description: "Insert a TeX-owned TODO at the selected stable section's end after previewing it. Reuse the preview todoId on retry; the result separates the local save from Overleaf Git synchronization.",
+    description: "Insert a TeX-owned TODO at the selected stable section's end after previewing it. Reuse the preview todoId on retry; the result separates the local save from Git synchronization.",
     readOnly: false,
   },
   relocate_paper_todo: {

@@ -1,7 +1,9 @@
 "use client";
 
 import "katex/dist/katex.min.css";
-import { OverleafPull } from "@/components/overleaf-pull";
+import { useGitAutoSync } from "@/components/use-git-auto-sync";
+import { OverleafSyncNotice } from "@/components/overleaf-sync-notice";
+import { EditorNotice } from "@/components/editor-notice";
 import paperStyles from "./paper-outline-rail.module.css";
 import { PaperOutlineRail } from "./paper-outline-rail";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -247,7 +249,13 @@ export function PaperEditor({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveConflict, setSaveConflict] = useState(false);
+  const [remoteOutOfSync, setRemoteOutOfSync] = useState(false);
+  const [applyingRemote, setApplyingRemote] = useState(false);
+  const applyingRemoteRef = useRef(false);
+  const remoteOutOfSyncRef = useRef(false);
+  remoteOutOfSyncRef.current = remoteOutOfSync || applyingRemoteRef.current;
   const [remoteSaveState, setRemoteSaveState] = useState<RemoteSaveState>("local");
+  const [checkingRemote, setCheckingRemote] = useState(false);
   const [remoteSaveError, setRemoteSaveError] = useState<string | null>(null);
   const [agentNotice, setAgentNotice] = useState<string | null>(null);
   const [expectedSections, setExpectedSections] = useState(initialSections);
@@ -360,18 +368,20 @@ export function PaperEditor({
   const reviewingRemoteRef = useRef(false);
   const pushRemote = useCallback(async (message: string) => {
     if (reviewingRemoteRef.current) return { ok: false as const, code: "review_in_progress", message: "Local changes saved for pull review." };
+    ++remoteStatusRequestRef.current;
+    setCheckingRemote(false);
     setRemoteSaveState("saving");
-    setRemoteSaveError(null);
     remoteSyncRef.current = {
       status: "pending",
       code: "push_in_progress",
-      message: "Local save complete; pushing to Overleaf…",
+      message: "Local save complete. Pushing to Git…",
       retryable: true,
     };
     try {
       const result = await commitAndPushProjectAction(project, message);
       remoteSyncRef.current = remoteSyncResult(result);
       if (!result.ok) {
+        if (result.code === "remote_ahead" || result.code === "remote_conflict") setRemoteOutOfSync(true);
         setRemoteSaveState(
           result.code === "remote_ahead" || result.code === "remote_conflict"
             ? "changed"
@@ -383,6 +393,8 @@ export function PaperEditor({
       } else {
         remoteSavePendingRef.current = false;
         setRemoteSaveState("saved");
+        setRemoteOutOfSync(false);
+        setRemoteSaveError(null);
       }
       return result;
     } catch (error) {
@@ -394,53 +406,57 @@ export function PaperEditor({
     }
   }, [project]);
 
-  const refreshRemoteStatus = useCallback(async (refreshRemote = true) => {
+  const refreshRemoteStatus = useCallback(async (refreshRemote = true, announce = true) => {
     const requestId = ++remoteStatusRequestRef.current;
-    setRemoteSaveState("checking");
-    setRemoteSaveError(null);
+    setCheckingRemote(true);
+    if (announce) setRemoteSaveState(current => current === "changed" || current === "error" || current === "unavailable" ? current : "checking");
     let timeoutId: number | undefined;
     try {
-      const timeout = new Promise<never>((_, reject) => {
-        timeoutId = window.setTimeout(() => reject(new Error("Remote status check timed out; local editing is still available.")), 5_000);
-      });
-      const status = await Promise.race([
-        getProjectGitStatusAction(project, refreshRemote),
-        timeout,
-      ]);
+      const timeout = announce ? new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(() => reject(new Error("Remote status check timed out. Retry to refresh synchronization status.")), 5_000);
+      }) : null;
+      const request = getProjectGitStatusAction(project, refreshRemote);
+      const status = timeout ? await Promise.race([request, timeout]) : await request;
       if (requestId !== remoteStatusRequestRef.current) return;
       if (!status.isGitRepo) {
         setRemoteSaveState("unavailable");
-        setRemoteSaveError("Overleaf Git status unavailable: this project has no Git repository.");
-        return;
+        setRemoteSaveError("Git status unavailable: this project has no Git repository.");
+        return status;
       }
       if (!status.isOverleafRemote) {
         setRemoteSaveState("unavailable");
-        setRemoteSaveError("Overleaf Git remote unavailable: origin is not git.overleaf.com.");
-        return;
+        setRemoteSaveError("Git remote unavailable: origin is not git.overleaf.com.");
+        return status;
       }
       if (status.error) {
         setRemoteSaveState("unavailable");
-        setRemoteSaveError(`Overleaf Git status unavailable: ${status.error}`);
-        return;
+        setRemoteSaveError(`Git status unavailable: ${status.error}`);
+        return status;
       }
       if ((status.behind || 0) > 0) {
+        remoteOutOfSyncRef.current = true;
+        setRemoteOutOfSync(true);
         setRemoteSaveState("changed");
-        setRemoteSaveError("Overleaf has newer commits. Pull before saving to Overleaf.");
-        return;
+        setRemoteSaveError("Git has newer commits. Pull before saving to Git.");
+        return status;
       }
+      remoteOutOfSyncRef.current = applyingRemoteRef.current;
+      setRemoteOutOfSync(false);
+      setRemoteSaveError(null);
       setRemoteSaveState((status.ahead || 0) > 0 || !status.isClean ? "local" : "saved");
+      return status;
     } catch (error) {
       if (requestId !== remoteStatusRequestRef.current) return;
       setRemoteSaveState("unavailable");
-      setRemoteSaveError(`Overleaf Git status unavailable: ${error instanceof Error ? error.message : "Could not check Overleaf."}`);
+      setRemoteSaveError(`Git status unavailable: ${error instanceof Error ? error.message : "Could not check Git."}`);
     } finally {
       if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      if (requestId === remoteStatusRequestRef.current) setCheckingRemote(false);
     }
   }, [project]);
 
   useEffect(() => {
-    // Opening the editor only needs local Git state. A remote fetch is an
-    // explicit retry operation and must never delay the manuscript view.
+    // Start with cached Git state. Background checks fetch after first paint.
     void refreshRemoteStatus(false);
   }, [refreshRemoteStatus]);
 
@@ -762,7 +778,7 @@ export function PaperEditor({
       if (failureCode === "remote_save_failed") {
         setSaveError(null);
         // The source bundle is already durable locally. Keep the operation
-        // successful while exposing the actionable Overleaf outcome for retry.
+        // successful while exposing the actionable Git outcome for retry.
         return true;
       }
       if (failureCode !== "cancelled") setSaveError(failureMessage);
@@ -780,6 +796,31 @@ export function PaperEditor({
   }, [applyHydrated, project]);
 
   const liveSource = useCallback(() => editorRef.current?.getLiveSource() ?? sourceRef.current, []);
+
+  const canAutoPull = () => !saving && !saveBusyRef.current && !pendingSaveRef.current
+    && !uploading && !saveErrorRef.current && !saveConflictRef.current && !recoveryDraft
+    && !reviewingRemoteRef.current && liveSource() === savedSourceRef.current
+    && !document.activeElement?.closest("input, textarea, [contenteditable=true]");
+  useGitAutoSync({
+    project,
+    isBusy: () => checkingRemote || remoteSaveState === "saving" || saving || uploading || reviewingRemoteRef.current,
+    canPull: canAutoPull,
+    check: () => refreshRemoteStatus(true, false),
+    onApplying: (applying) => {
+      applyingRemoteRef.current = applying;
+      if (applying) remoteOutOfSyncRef.current = true;
+      setApplyingRemote(applying);
+    },
+    onApplied: async () => {
+      const paper = await getEditablePaperAction(project);
+      if (!canAutoPull()) throw new Error("Git updates arrived while this editor changed. Preserve your draft and reload the latest paper.");
+      if (!paper) throw new Error("Git updates were pulled. Reload the paper to display the latest source.");
+      applyHydrated(paper);
+      await refreshRemoteStatus(false, false);
+      router.refresh();
+    },
+    onError: (message) => { setRemoteSaveState("error"); setRemoteSaveError(message); },
+  });
 
   const scheduleSave = useCallback((immediate = false) => {
     if (saveConflictRef.current && !immediate) return;
@@ -934,10 +975,10 @@ export function PaperEditor({
           setTodoPanelHeight(Math.max(TODO_PANEL_MIN, prefs.todoPanelHeight));
         }
         if (typeof prefs.previewFontScale === "number" && Number.isFinite(prefs.previewFontScale)) {
-          setPreviewFontScale(Math.max(0.72, Math.min(1.35, prefs.previewFontScale)));
+          setPreviewFontScale(Math.max(10 / 17, Math.min(24 / 17, prefs.previewFontScale)));
         }
         if (typeof prefs.editorFontScale === "number" && Number.isFinite(prefs.editorFontScale)) {
-          setEditorFontScale(Math.max(0.8, Math.min(1.5, prefs.editorFontScale)));
+          setEditorFontScale(Math.max(10 / 14, Math.min(24 / 14, prefs.editorFontScale)));
         }
         if (typeof prefs.previewLineHeight === "number" && Number.isFinite(prefs.previewLineHeight)) {
           setPreviewLineHeight(Math.max(1.45, Math.min(1.85, prefs.previewLineHeight)));
@@ -1119,6 +1160,7 @@ export function PaperEditor({
   }, [applyPaperHash, jumpToSection]);
 
   const removeTodoEverywhere = useCallback(async (todoId: string, signal?: AbortSignal) => {
+    if (remoteOutOfSyncRef.current) throw Object.assign(new Error("Synchronize Git to resume editing."), { code: "remote_conflict" });
     if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
     let current = liveSource();
     let live = collectEditorTodos(current).find((item) => item.id === todoId);
@@ -1180,6 +1222,7 @@ export function PaperEditor({
   }, [currentTodo, saveNow]);
 
   const applyAndSave = useCallback(async (from: number, to: number, insert: string, signal?: AbortSignal) => {
+    if (remoteOutOfSyncRef.current) throw Object.assign(new Error("Synchronize Git to resume editing."), { code: "remote_conflict" });
     if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
     const before = editorRef.current?.getLiveSource() ?? sourceRef.current;
     if (from < 0 || to < from || to > before.length) {
@@ -1262,6 +1305,7 @@ export function PaperEditor({
       setLayout(mode);
     },
     repairSection: async (sectionId, filePath, expectedSourceHash, signal) => {
+      if (remoteOutOfSyncRef.current) throw Object.assign(new Error("Synchronize Git to resume editing."), { code: "remote_conflict" });
       if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
       const result = await repairPaperSectionEnvelopeAction(project, filePath, sectionId, expectedSourceHash);
       if (!result.ok) {
@@ -1317,6 +1361,7 @@ export function PaperEditor({
       };
     },
     relocateTodo: async (todoId, sectionId, signal) => {
+      if (remoteOutOfSyncRef.current) throw Object.assign(new Error("Synchronize Git to resume editing."), { code: "remote_conflict" });
       const before = liveSource();
       const moved = relocateTodoInBundle(before, todoId, sectionId);
       if (!moved.todoFound || moved.error || !moved.targetFound) {
@@ -1400,6 +1445,7 @@ export function PaperEditor({
   });
 
   const onUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (remoteOutOfSyncRef.current) return;
     const file = event.target.files?.[0];
     if (!file) return;
     setUploading(true);
@@ -1436,17 +1482,17 @@ export function PaperEditor({
       : saveConflict
           ? "Conflict"
           : remoteSaveState === "checking"
-            ? "Checking Overleaf…"
+            ? "Checking Git…"
             : remoteSaveState === "saving"
-              ? "Pushing to Overleaf…"
+              ? "Pushing to Git…"
               : remoteSaveState === "changed"
-                ? "Overleaf changed"
+                ? "Git changed"
                 : remoteSaveState === "unavailable"
-                  ? "Overleaf unavailable"
+                  ? "Git unavailable"
                 : remoteSaveState === "error"
-                  ? "Overleaf push failed"
+                  ? "Git push failed"
                 : isSaved && remoteSaveState === "saved"
-                  ? "Overleaf pushed"
+                  ? "Git pushed"
                     : isSaved
                       ? "Local saved"
                       : "Unsaved";
@@ -1623,36 +1669,21 @@ export function PaperEditor({
           </div>
         </div>
       )}
-      {saveConflict ? (
-        <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-danger/40 bg-danger/15 px-3 py-2 text-xs text-danger" role="alert">
-          <div>
-            <p className="font-semibold">Conflict</p>
-            <p className="mt-0.5 text-ink">The manuscript changed on disk. Your unsaved buffer is still in the editor.</p>
-          </div>
-          <button type="button" className="btn-outline shrink-0 px-2 py-0.5 text-[11px]" onClick={() => void reloadLatest()}>
-            Reload latest (discards local edits)
-          </button>
-        </div>
-      ) : saveError ? (
-        <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-1.5 text-xs text-danger">
-          <p>{saveError}</p>
-        </div>
-      ) : null}
-      {remoteSaveError && <div className={paperStyles.syncBar} aria-label="Overleaf synchronization">
-        <p role="status">{remoteSaveError || remoteStatusLabel}</p>
-        <div className={paperStyles.syncActions}>
-          <OverleafPull project={project} disabled={saving || uploading || saveConflict}
-            beforeReview={async () => {
-              reviewingRemoteRef.current = true;
-              await saveQueueRef.current;
-              return doSave(liveSource());
-            }}
-            onApplied={async () => { await reloadLatest(); await refreshRemoteStatus(false); router.refresh(); }}
-            onClosed={() => { reviewingRemoteRef.current = false; void refreshRemoteStatus(false); }} />
-          <button type="button" disabled={saving || remoteSaveState === "saving" || remoteSaveState === "checking"} onClick={() => void refreshRemoteStatus()}>Check updates</button>
-          <button type="button" disabled={saving || saveConflict || remoteSaveState === "saving" || remoteSaveState === "changed"} onClick={async () => { if (await doSave(liveSource())) await pushRemote("OpenBar: save paper"); }}>Save to Overleaf</button>
-        </div>
-      </div>}
+      {(saveConflict || saveError) && <EditorNotice project={project} title={saveConflict ? "Saved file conflict" : "Saving needs attention"} label={saveConflict ? "Editing paused · saved file changed" : "Saving needs attention"} message={saveError || "The manuscript changed on disk. Your unsaved text remains in the editor."} paused={saveConflict}>
+        <button type="button" className="btn-outline" onClick={() => { if (saveConflict) void reloadLatest(); else void doSave(liveSource()); }}>{saveConflict ? "Reload latest (discards local edits)" : "Retry save"}</button>
+      </EditorNotice>}
+      {!saveError && remoteSaveError && <OverleafSyncNotice project={project} message={remoteSaveError} editingPaused={remoteOutOfSync}
+        disabled={saving || uploading || saveConflict || applyingRemote} checking={checkingRemote || remoteSaveState === "saving"}
+        beforeReview={async () => {
+          reviewingRemoteRef.current = true;
+          await saveQueueRef.current;
+          return doSave(liveSource());
+        }}
+        onApplied={async () => { await reloadLatest(); await refreshRemoteStatus(false); router.refresh(); }}
+        onClosed={() => { reviewingRemoteRef.current = false; void refreshRemoteStatus(false); }}
+        onCheck={async () => { await refreshRemoteStatus(); }}
+        onPush={() => { void (async () => { if (await doSave(liveSource())) await pushRemote("OpenBar: save paper"); })(); }}
+      />}
       {bundleDiagnostics.length > 0 && (
         <div className="shrink-0 rounded-lg border border-warn/30 bg-warn/10 px-3 py-1.5 text-xs text-ink">
           Include graph: {bundleDiagnostics.map((item) => item.message).join(" · ")}
@@ -1863,6 +1894,7 @@ export function PaperEditor({
               onWheelCapture={() => claimScrollSource("editor")}
             >
             <NestedBundleEditor
+              readOnly={remoteOutOfSync || applyingRemote || saveConflict}
               ref={editorRef}
               value={source}
               onDocChanges={onDocChanges}

@@ -358,6 +358,12 @@ export async function getProjectGitStatusAction(slug: string, refreshRemote = fa
   return refreshRemote ? refreshOverleafGitStatus(projectDir) : getOverleafGitStatus(projectDir);
 }
 
+/** Read cached Git change details without modifying the checkout. */
+export async function getProjectSyncDetailsAction(slug: string) {
+  await requireProjectAccess(slug);
+  return getOverleafSyncDetails(projectContentDir(slug));
+}
+
 /** Bring a clean checkout forward using Git's fast-forward rule. */
 export async function pullProjectUpdatesAction(slug: string) {
   await requireProjectAccess(slug);
@@ -392,7 +398,7 @@ export async function commitProjectAction(slug: string, message?: string) {
   return result;
 }
 
-/** Push an existing local commit to the explicit validated Overleaf branch. */
+/** Push an existing local commit to the explicit validated Git branch. */
 export async function syncProjectAction(slug: string, commitHash?: string) {
   await requireProjectAccess(slug);
   assertAdministrativeWriteAllowed("Git remote synchronization");
@@ -1162,13 +1168,13 @@ export async function deleteWorkspaceSkillAction(id: string, expectedHash: strin
 
 export async function prepareProjectPullAction(slug: string) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Review Overleaf pull");
+  assertAdministrativeWriteAllowed("Review Git pull");
   return prepareOverleafPull(projectContentDir(slug));
 }
 
 export async function finishProjectPullAction(slug: string, token: string, choices: OverleafConflictChoice[], cancel = false) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Apply Overleaf pull");
+  assertAdministrativeWriteAllowed("Apply Git pull");
   const result = await finishOverleafPull(projectContentDir(slug), token, choices, cancel);
   if (result.ok && !cancel) bust(slug);
   return result;

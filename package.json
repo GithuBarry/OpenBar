@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@11.9.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=26.8.1"
   },
   "scripts": {
     "dev": "next dev",
@@ -24,7 +24,11 @@
     "cf:deploy": "wrangler deploy",
     "cf:tail": "wrangler tail",
     "clean": "rm -rf .next tsconfig.tsbuildinfo",
-    "clean:all-generated": "rm -rf .next node_modules tsconfig.tsbuildinfo"
+    "clean:all-generated": "rm -rf .next node_modules tsconfig.tsbuildinfo",
+    "mcp:stdio": "node scripts/mcp-stdio.mjs",
+    "check:agent-access": "node scripts/check-agent-access.mjs",
+    "check:agent-transport": "tsx scripts/check-agent-transport.ts",
+    "check:agent-writes": "node --conditions=react-server --import tsx scripts/check-agent-writes.ts"
   },
   "dependencies": {
     "@citation-js/core": "0.8.2",
@@ -68,10 +72,12 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
     "@types/node": "^22.20.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "postcss": "^8.5.16",
+    "server-only": "0.0.1",
     "tailwindcss": "^3.4.19",
     "tsx": "^4.22.4",
     "typescript": "^5.9.3",

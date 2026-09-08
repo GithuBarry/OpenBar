@@ -10,11 +10,11 @@ export type PaperReaderFont = "serif" | "sans";
 export type PaperEditorWidth = "compact" | "wide" | "full";
 
 function TextSizeSlider({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
-  const percent = Math.round(value * 100);
+  const size = Number(value.toFixed(1));
   return <label className="flex min-w-0 flex-1 items-center gap-3">
-    <input type="range" min={80} max={150} step={1} value={percent} aria-label={label} aria-valuetext={`${percent}%`}
-      className="min-w-0 flex-1 cursor-pointer accent-accent" onChange={(event) => onChange(Number(event.target.value) / 100)} />
-    <output className="w-10 shrink-0 text-right text-[11px] tabular-nums">{percent}%</output>
+    <input type="range" min={10} max={24} step={1} value={size} aria-label={label} aria-valuetext={`${size} pixels`}
+      className="min-w-0 flex-1 cursor-pointer accent-accent" onChange={(event) => onChange(Number(event.target.value))} />
+    <output className="w-12 shrink-0 text-right text-[11px] tabular-nums">{size} px</output>
   </label>;
 }
 
@@ -92,8 +92,8 @@ export function PaperAppearance({
         </div>
         <p className="ob-paper-appearance-section">Reader</p>
         <div className="ob-paper-appearance-row">
-          <span>Text size</span>
-          <TextSizeSlider label="Reader text size" value={readerFontScale / 0.9} onChange={(value) => onReaderFontScaleChange(Number((value * 0.9).toFixed(3)))} />
+          <span>Font size</span>
+          <TextSizeSlider label="Reader text size" value={readerFontScale * 17} onChange={(value) => onReaderFontScaleChange(value / 17)} />
         </div>
         <div className="ob-paper-appearance-row">
           <span>Line spacing</span>
@@ -105,8 +105,8 @@ export function PaperAppearance({
         </div>
         <p className="ob-paper-appearance-section">Editor</p>
         <div className="ob-paper-appearance-row">
-          <span>Text size</span>
-          <TextSizeSlider label="Editor text size" value={editorFontScale} onChange={onEditorFontScaleChange} />
+          <span>Font size</span>
+          <TextSizeSlider label="Editor text size" value={editorFontScale * 14} onChange={(value) => onEditorFontScaleChange(value / 14)} />
         </div>
         <p className="ob-paper-appearance-section">Layout</p>
         <div className="ob-paper-appearance-row">

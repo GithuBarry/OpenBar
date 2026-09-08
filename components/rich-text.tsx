@@ -57,7 +57,7 @@ export function RichText({ text, format = "plain", tableLayout = "wide" }: { tex
     <div className={`mindmap-rich-text ${styles.markdown}`}>
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkAgentMentions]} components={{
         table: ({ children }) => <div
-          className={`${styles.tableScroll} ${tableLayout === "scroll" ? `${styles.tableCompact} nowheel nodrag nopan` : ""}`}
+          className={`${styles.tableScroll} ${tableLayout === "scroll" ? `${styles.tableCompact} nowheel nodrag nopan` : styles.tableWide}`}
           tabIndex={0}
           role="region"
           aria-label="Table"

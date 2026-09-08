@@ -1,4 +1,23 @@
 import "server-only";
+import { artifactRefSchema } from "@/lib/schemas";
+import { inspectRepository } from "@/lib/tex-project/source-graph";
+import { getConversionPlan, previewManuscriptConversion } from "@/lib/tex-project/pandoc";
+import { applyConversionWrite, repairPaperSectionEnvelope } from "@/lib/tex-project/source-persist";
+import { previewPaperTodoPlacement, relocatePaperTodo } from "./paper-todo-persist";
+import { lintBrokenTex } from "@/lib/tex-project/tex-lint";
+import { patchSectionTableCell } from "@/lib/tex-project/table-fragments";
+import { findMacroMatches, parseAnchorAttrs } from "@/lib/marker-codec";
+import { analyzePaper } from "./paper-analysis";
+import { artifactHref } from "./artifact-link";
+import { resolveFigureAsset, uploadFigureAsset } from "@/lib/tex-project/project";
+import { readDocument } from "@/lib/tex-project/project";
+import { readAnySkill, writeAgentsMd, writeProjectSkill, deleteProjectSkill, workspaceRoot, writeWorkspaceSkill, deleteWorkspaceSkill } from "./project-skills";
+import { persistVirtualRange } from "@/lib/tex-project/source-persist";
+import { attachMindmapImage, detachMindmapImage, captionMindmapImage } from "@/lib/mindmap/image-refs";
+import { captionWithinLimit, MAX_VISIBLE_MINDMAP_WORDS, visibleMindmapWordCount } from "@/lib/mindmap/card-content";
+
+import { buildInstructionsWebMcpTools } from "./webmcp-instructions-contract";
+
 
 import { syncProjectCommand } from "./sync-project-command";
 import { syncProjectProperties } from "./sync-project-contract";
@@ -11,6 +30,7 @@ import {
   getMindmap,
   getProject,
   listMindmaps,
+  listWiki,
   listProjects,
   projectContentDir,
   saveMindmap,
@@ -144,7 +164,7 @@ function assertPaperHash(current: string, expected: string | undefined): void {
 function pendingRemote(): RemoteSyncOutcome {
   return {
     status: "pending",
-    message: "Saved locally. Run sync_git to attempt the validated Overleaf remote.",
+    message: "Saved locally. Run sync_git to attempt the validated Git remote.",
     retryable: true,
   };
 }
@@ -236,7 +256,7 @@ async function idempotentWrite<T>(
   return result;
 }
 
-function writeMap(
+async function writeMap(
   project: string,
   map: Mindmap,
   next: Mindmap,
@@ -245,7 +265,9 @@ function writeMap(
   resources: Array<{ kind: string; id: string; mapId?: string }>,
   changes: ActivityChange[] = [],
   deleted = false,
-): OperationResult<unknown> {
+): Promise<OperationResult<unknown>> {
+  const status = await getOverleafGitStatus(projectContentDir(project));
+  if (status.isOverleafRemote && (status.behind || 0) > 0) return failResult("remote_conflict", "Editing is paused. Review and synchronize Git updates to resume.", true);
   const normalized = normalizeMindmap({
     ...next,
     projectId: project,
@@ -525,8 +547,14 @@ async function executePatchMindmapNode(args: unknown, context: McpCommandContext
     const current = map.nodes.find((node) => node.id === nodeId);
     if (!current) throw new McpCommandError("invalid_arguments", `Unknown mindmap card "${nodeId}".`, false);
     const patch: Record<string, unknown> = {};
-    for (const key of ["title", "text", "shape", "metadata", "contentFormat", "tableLayout", "color", "refs"] as const) if (record[key] !== undefined) patch[key] = record[key];
+    for (const key of ["title", "text", "caption", "shape", "metadata", "contentFormat", "tableLayout", "color", "refs"] as const) if (record[key] !== undefined) patch[key] = record[key];
+    if (record.refs !== undefined) {
+      const refs = artifactRefSchema.array().safeParse(record.refs);
+      if (!refs.success || refs.data.filter(ref => ref.kind === "figure").length > 1) return failResult("invalid_arguments", "Use valid references with one image per card and imageWidth from 25 to 100. Add child cards for additional images.", false);
+      patch.refs = refs.data;
+    }
     if (record.labels !== undefined) patch.tags = normalizeMindmapLabels(requireArray(record.labels, "labels") as string[]);
+    if (record.caption !== undefined && !captionWithinLimit(String(record.caption))) throw new McpCommandError("invalid_arguments", "Card notes must be 500 words or fewer.", false);
     if (record.progress !== undefined) patch.progress = record.progress === null ? undefined : normalizeMindmapProgress(record.progress);
     if (record.priority !== undefined) {
       if (record.priority !== null && !["P0", "P1", "P2", "P3"].includes(String(record.priority))) throw new McpCommandError("invalid_arguments", "priority must be P0–P3 or null.", false);
@@ -553,8 +581,13 @@ async function executeAddMindmapNode(args: unknown, context: McpCommandContext):
     assertDiskHash(map, typeof record.expectedDiskHash === "string" ? record.expectedDiskHash : undefined);
     if (!map.nodes.some((node) => node.id === parentId)) throw new McpCommandError("invalid_arguments", `Unknown parent card "${parentId}".`, false);
     const id = typeof record.id === "string" && record.id.trim() ? record.id.trim() : newNodeId();
-    const next = applyMindmapAction(map, { type: "add-node", id, parentId: parentId!, title: typeof record.title === "string" ? record.title : undefined, text: typeof record.text === "string" ? record.text : "" }).mindmap;
-    return idempotentWrite(project, "add_mindmap_node", { ...record, project, mapId, id }, context, (requestId) => writeMap(project, map, next, requestId, "add_mindmap_node", [{ kind: "mindmap-node", id, mapId }], [{ field: "added", after: id }]));
+    const next = applyMindmapAction(map, { type: "add-node", agentDraft: true, id, parentId: parentId!, title: typeof record.title === "string" ? record.title : undefined, text: typeof record.text === "string" ? record.text : "" }).mindmap;
+    const result = await idempotentWrite(project, "add_mindmap_node", { ...record, project, mapId, id }, context, (requestId) => writeMap(project, map, next, requestId, "add_mindmap_node", [{ kind: "mindmap-node", id, mapId }], [{ field: "added", after: id }]));
+    if (result.ok && visibleMindmapWordCount(typeof record.title === "string" ? record.title : "", typeof record.text === "string" ? record.text : "") > MAX_VISIBLE_MINDMAP_WORDS) {
+      const value = result.value as { value?: unknown };
+      if (value && typeof value === "object") (value as Record<string, unknown>).creationWarning = "Visible content exceeds 100 words. Consider splitting this into more cards.";
+    }
+    return result;
   } catch (error) { return caught(error); }
 }
 
@@ -867,7 +900,7 @@ const PROJECT_FIELDS = {
 };
 
 const MAP_NODE_PATCH_SCHEMA = {
-  title: { type: "string" }, text: { type: "string" }, labels: { type: "array", items: { type: "string" } }, refs: { type: "array" }, metadata: { type: ["object", "null"] }, contentFormat: { type: "string", enum: ["plain", "markdown", "tex"] }, tableLayout: { type: "string", enum: ["wide", "scroll"] }, shape: { type: "string", enum: ["branch", "leaf", "note", "callout"] }, color: { type: "string" }, progress: { type: ["integer", "null"], minimum: 0, maximum: 6 }, priority: { type: ["string", "null"], enum: ["P0", "P1", "P2", "P3", null] }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, requestId: { type: "string" },
+  title: { type: "string" }, text: { type: "string" }, caption: { type: "string", description: "Model-facing card note, hidden from the rendered card, up to 500 words." }, labels: { type: "array", items: { type: "string" } }, refs: { type: "array", items: { type: "object", properties: { kind: { type: "string" }, id: { type: "string" }, label: { type: "string" }, url: { type: "string" }, imageWidth: { type: "integer", minimum: 25, maximum: 100, description: "Map-local image width, percent of card content area." } }, required: ["kind", "id"] } }, metadata: { type: ["object", "null"] }, contentFormat: { type: "string", enum: ["plain", "markdown", "tex"] }, tableLayout: { type: "string", enum: ["wide", "scroll"] }, shape: { type: "string", enum: ["branch", "leaf", "callout"] }, color: { type: "string" }, progress: { type: ["integer", "null"] }, priority: { type: ["string", "null"], enum: ["P0", "P1", "P2", "P3", null] }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, requestId: { type: "string" },
 };
 
 const BATCH_SCHEMA = {
@@ -885,10 +918,257 @@ function tool(
   return { name, title, description, inputSchema, annotations: { readOnlyHint: false, idempotentHint: true, ...options }, execute };
 }
 
+
+function instructionsTools(): McpToolDefinition[] {
+  const actions = { writeAgentsMd: (project: string, body: string, hash?: string) => Promise.resolve(writeAgentsMd(projectContentDir(project), body, hash)),
+    writeProjectSkill: (project: string, spec: Parameters<typeof writeProjectSkill>[1], hash?: string) => Promise.resolve(writeProjectSkill(projectContentDir(project), spec, hash)),
+    deleteProjectSkill: (project: string, id: string, hash: string) => Promise.resolve(deleteProjectSkill(projectContentDir(project), id, "project", hash)),
+    writeWorkspaceAgentsMd: (body: string, hash?: string) => Promise.resolve(writeAgentsMd(workspaceRoot(), body, hash)),
+    writeWorkspaceSkill: (spec: Parameters<typeof writeWorkspaceSkill>[0], hash?: string) => Promise.resolve(writeWorkspaceSkill(spec, hash)),
+    deleteWorkspaceSkill: (id: string, hash: string) => Promise.resolve(deleteWorkspaceSkill(id, hash)),
+  };
+  // The instructions builder only uses its actions, project and optional refresh.
+  const build = (project: string) => buildInstructionsWebMcpTools({ project, actions });
+  return build("").map(def => tool(def.name, def.title, def.description,
+    objectSchema({ ...def.inputSchema.properties, project: projectIdSchema }, ["project", ...(def.inputSchema.required || [])]),
+    async (raw, context) => {
+      const args = asObject(raw)!;
+      const project = projectArg(args);
+      assertAdministrativeWriteAllowed("MCP instructions and skills");
+      const { project: _project, ...input } = args;
+      return idempotentWrite(project, def.name, args, context, async () => {
+        const result = await build(project).find(item => item.name === def.name)!.execute(input) as OperationResult<unknown>;
+        if (result.ok) recordWebMcpActivity(project, context, { operation: def.name, resources: [{ kind: "instructions", id: String(args.id || "AGENTS.md") }] });
+        return result;
+      });
+    }));
+}
+
+const sourceSchema = { project: projectIdSchema, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: MAX_READ_CHARS } };
+const imageSchema = { project: projectIdSchema, mapId: mapIdSchema, id: { type: "string", minLength: 1 }, assetId: { type: "string", minLength: 1 }, label: { type: "string", maxLength: 240 }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, requestId: { type: "string" } };
+
+async function executeMapImage(name: string, raw: unknown, context: McpCommandContext): Promise<OperationResult<unknown>> {
+  const args = asObject(raw)!;
+  const project = projectArg(args);
+  return idempotentWrite(project, name, args, context, requestId => {
+    const map = mapRequired(project, mapArg(args));
+    assertRevision(map, integerArg(args, "expectedRevision"));
+    assertDiskHash(map, stringArg(args, "expectedDiskHash", false));
+    const node = map.nodes.find(node => node.id === args.id);
+    if (!node) return failResult("invalid_arguments", "Unknown mindmap card.", false);
+    const assetId = stringArg(args, "assetId")!;
+    if (assetId.split("/").some(part => part === ".." || part === "." || !part) || /[\\?#]/.test(assetId)) return failResult("invalid_path", "Use a safe project-relative image path.", false);
+    if (name === "attach_mindmap_image" && !resolveFigureAsset(projectContentDir(project), assetId)) return failResult("invalid_path", "The project image asset must exist before attachment.", false);
+    if (name !== "attach_mindmap_image" && !node.refs?.some(ref => ref.kind === "figure" && ref.id === assetId)) return failResult("invalid_arguments", "Image must be attached to this card.", false);
+    if (name === "attach_mindmap_image" && node.refs?.some(ref => ref.kind === "figure" && ref.id !== assetId)) return failResult("invalid_arguments", "This card already has an image. Create a child with add_mindmap_node, then attach there.", false);
+    const refs = name === "attach_mindmap_image" ? attachMindmapImage(node.refs || [], { kind: "figure", id: assetId, ...(args.label ? { label: String(args.label) } : {}) })
+      : name === "detach_mindmap_image" ? detachMindmapImage(node.refs || [], assetId)
+      : captionMindmapImage(node.refs || [], assetId, String(args.label ?? ""));
+    const next = { ...map, nodes: map.nodes.map(item => item.id === node.id ? { ...item, refs } : item) };
+    return writeMap(project, map, next, requestId, name, [{ kind: "mindmap_node", id: node.id, mapId: map.id }], activityChanges(node, { ...node, refs }, ["refs"]));
+  });
+}
+
 export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
+  tool("upload_figure", "Upload a figure asset", "Store a base64 encoded project figure up to 2 MB. Returns an asset path for attach_mindmap_image.", objectSchema({ project: projectIdSchema, filename: { type: "string", minLength: 1, maxLength: 240 }, base64: { type: "string", minLength: 1, maxLength: 2800000 }, requestId: { type: "string" } }, ["project", "filename", "base64"]), async (raw, context) => {
+    const args = asObject(raw)!;
+    const project = projectArg(args);
+    assertAdministrativeWriteAllowed("MCP figure upload");
+    const encoded = String(args.base64);
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) return failResult("invalid_arguments", "base64 must contain a canonical encoded file.", false);
+    const bytes = Buffer.from(encoded, "base64");
+    if (bytes.length > 2 * 1024 * 1024) return failResult("invalid_arguments", "Agent figure uploads are limited to 2 MB.", false);
+    return idempotentWrite(project, "upload_figure", args, context, () => okResult(uploadFigureAsset(projectContentDir(project), String(args.filename), bytes)));
+  }),
+  tool("search_projects", "Search workspace projects", "Find a project by slug, title or tagline.", objectSchema({ query: { type: "string", minLength: 1 } }, ["query"]), async raw => {
+    const query = String(asObject(raw)!.query).toLowerCase();
+    return okResult(listProjects().filter(project => `${project.slug} ${project.title} ${project.tagline}`.toLowerCase().includes(query)).map(project => ({ slug: project.slug, title: project.title, href: `/p/${encodeURIComponent(project.slug)}/paper` })));
+  }, { readOnlyHint: true }),
+  tool("inspect_repository", "Inspect repository", "Read the saved TeX include graph, source files and diagnostics.", objectSchema({ project: projectIdSchema }, ["project"]), async raw => okResult(inspectRepository(texPaths(projectContentDir(projectArg(asObject(raw)!))).manuscriptDir)), { readOnlyHint: true }),
+  tool("lint_paper", "Lint saved manuscript", "Read TeX syntax diagnostics and unresolved TODO counts.", objectSchema({ project: projectIdSchema }, ["project"]), async raw => {
+    const bundle = buildSourceBundle(texPaths(projectContentDir(projectArg(asObject(raw)!))).manuscriptDir);
+    return okResult({ diagnostics: lintBrokenTex(bundle.source), todoCount: analyzePaper(bundle.source).todos.length, bundleHash: bundle.bundleHash });
+  }, { readOnlyHint: true }),
+  tool("preview_paper_todo", "Preview paper TODO", "Preview exact TODO placement in a stable section or the manuscript root.", objectSchema({ project: projectIdSchema, sectionId: { type: "string" }, text: { type: "string" }, title: { type: "string" }, id: { type: "string" } }, ["project", "text"]), async raw => {
+    const args = asObject(raw)!;
+    return okResult(previewPaperTodoPlacement({ manuscriptDir: texPaths(projectContentDir(projectArg(args))).manuscriptDir, sectionId: stringArg(args, "sectionId", false), text: String(args.text), title: stringArg(args, "title", false), id: stringArg(args, "id", false) }));
+  }, { readOnlyHint: true }),
+  tool("relocate_paper_todo", "Relocate paper TODO", "Move a TeX TODO to a stable section with the current source-bundle hash.", objectSchema({ project: projectIdSchema, todoId: { type: "string", minLength: 1 }, sectionId: { type: "string", minLength: 1 }, expectedBundleHash: diskHashSchema, requestId: { type: "string" } }, ["project", "todoId", "sectionId", "expectedBundleHash"]), async (raw, context) => {
+    const args = asObject(raw)!;
+    const project = projectArg(args);
+    assertAdministrativeWriteAllowed("MCP TODO relocation");
+    return idempotentWrite<unknown>(project, "relocate_paper_todo", args, context, () => relocatePaperTodo({ manuscriptDir: texPaths(projectContentDir(project)).manuscriptDir, todoId: String(args.todoId), sectionId: String(args.sectionId), expectedBundleHash: String(args.expectedBundleHash) }));
+  }),
+  tool("remove_paper_todo", "Remove paper TODO", "Remove one exact TeX TODO macro with source hash validation. Use dryRun to inspect its source patch.", objectSchema({ project: projectIdSchema, todoId: { type: "string", minLength: 1 }, expectedBundleHash: diskHashSchema, dryRun: { type: "boolean" }, requestId: { type: "string" } }, ["project", "todoId", "expectedBundleHash"]), async (raw, context) => {
+    const args = asObject(raw)!;
+    const project = projectArg(args);
+    assertAdministrativeWriteAllowed("MCP TODO removal");
+    const run = () => {
+      const manuscriptDir = texPaths(projectContentDir(project)).manuscriptDir;
+      const bundle = buildSourceBundle(manuscriptDir);
+      assertPaperHash(bundle.bundleHash, String(args.expectedBundleHash));
+      const todo = findMacroMatches(bundle.source, ["obtodo"]).find(todo => parseAnchorAttrs(todo.attrs).id === args.todoId);
+      if (!todo) return failResult("unknown_todo", "Unknown TODO.", false);
+      return persistVirtualRange({ manuscriptDir, from: todo.index, to: todo.index + todo.length, text: "", expectedBundleHash: String(args.expectedBundleHash), dryRun: args.dryRun === true });
+    };
+    return args.dryRun === true ? run() : idempotentWrite<unknown>(project, "remove_paper_todo", args, context, run);
+  }, { destructiveHint: true }),
+  tool("patch_paper_table", "Patch one table cell", "Update one saved table cell while preserving axes and other cells. Uses the section hash returned by read_paper_section.", objectSchema({ project: projectIdSchema, sectionId: { type: "string" }, baseHash: diskHashSchema, tableIndex: { type: "integer", minimum: 0 }, row: { type: "integer", minimum: 0 }, column: { type: "integer", minimum: 0 }, tex: { type: "string", maxLength: 200000 }, dryRun: { type: "boolean" }, requestId: { type: "string" } }, ["project", "sectionId", "baseHash", "tableIndex", "row", "column", "tex"]), async (raw, context) => {
+    const args = asObject(raw)!;
+    const project = projectArg(args);
+    const section = getEditableTexPaper(project)?.sections.find(section => section.id === args.sectionId);
+    if (!section) return failResult("unknown_section", "Unknown section.", false);
+    assertPaperHash(section.hash, String(args.baseHash));
+    const patch = patchSectionTableCell(section.tex, Number(args.tableIndex), Number(args.row), Number(args.column), String(args.tex));
+    if (!patch.ok) return failResult(patch.reason === "complex" ? "capability_unavailable" : "invalid_arguments", `Table cell patch: ${patch.reason}.`, false);
+    if (args.dryRun === true) return okResult({ sectionId: args.sectionId, tex: patch.tex, baseHash: section.hash, dryRun: true });
+    return executePaperPatch({ project, sectionId: args.sectionId, baseHash: args.baseHash, tex: patch.tex, requestId: args.requestId }, context);
+  }),
+  tool("repair_paper_section", "Repair section envelope", "Repair a missing OpenBar section end marker using the expected file hash.", objectSchema({ project: projectIdSchema, filePath: { type: "string" }, sectionId: { type: "string" }, expectedSourceHash: diskHashSchema, requestId: { type: "string" } }, ["project", "filePath", "sectionId", "expectedSourceHash"]), async (raw, context) => {
+    const args = asObject(raw)!;
+    const project = projectArg(args);
+    assertAdministrativeWriteAllowed("MCP section repair");
+    return idempotentWrite<unknown>(project, "repair_paper_section", args, context, () => repairPaperSectionEnvelope({ manuscriptDir: texPaths(projectContentDir(project)).manuscriptDir, filePath: String(args.filePath), sectionId: String(args.sectionId), expectedSourceHash: String(args.expectedSourceHash) }));
+  }),
+  tool("preview_conversion", "Preview document conversion", "Create a bounded Pandoc conversion preview and source-bound plan. Review losses before applying.", objectSchema({ project: projectIdSchema, filePath: { type: "string" }, to: { type: "string" }, expandProject: { type: "boolean" } }, ["project", "filePath"]), async raw => {
+    const args = asObject(raw)!;
+    const project = projectArg(args);
+    const preview = await previewManuscriptConversion({ projectId: project, manuscriptDir: texPaths(projectContentDir(project)).manuscriptDir, filePath: String(args.filePath), source: "", to: stringArg(args, "to", false) || "html5", expandProject: args.expandProject === true });
+    if (!preview.ok) return failResult("conversion_loss", preview.message, false);
+    const plan = preview.plan;
+    return okResult({ id: plan.id, filePath: plan.filePath, toFormat: plan.toFormat, ...plan.artifact });
+  }, { readOnlyHint: true }),
+  tool("apply_conversion", "Apply reviewed conversion", "Apply a saved conversion plan with source-hash checks and explicit loss acknowledgment. dryRun previews persistence.", objectSchema({ project: projectIdSchema, planId: { type: "string" }, expectedHash: diskHashSchema, acknowledgeLoss: { type: "boolean" }, dryRun: { type: "boolean" }, requestId: { type: "string" } }, ["project", "planId", "expectedHash"]), async (raw, context) => {
+    const args = asObject(raw)!;
+    const project = projectArg(args);
+    assertAdministrativeWriteAllowed("MCP document conversion");
+    const manuscriptDir = texPaths(projectContentDir(project)).manuscriptDir;
+    const plan = getConversionPlan(String(args.planId), manuscriptDir);
+    if (!plan || plan.projectId !== project) return failResult("invalid_arguments", "Unknown conversion plan.", false);
+    assertPaperHash(plan.artifact.sourceHash, String(args.expectedHash));
+    const run = () => applyConversionWrite({ manuscriptDir, filePath: plan.filePath, output: plan.artifact.output, loss: plan.artifact.loss, acknowledgeLoss: args.acknowledgeLoss === true, expectedSourceFileHash: plan.artifact.sourceFileHash, expectedSourceBundleHash: plan.artifact.sourceBundleHash, expectedExpandedSourceHash: plan.artifact.sourceHash, expandProject: plan.artifact.expandMethod !== "none", dryRun: args.dryRun === true });
+    return args.dryRun === true ? run() : idempotentWrite<unknown>(project, "apply_conversion", args, context, run);
+  }),
+  ...["read_document", "render_preview"].map(name => tool(name, name.replaceAll("_", " "), "Read an existing wiki document as supporting memory.", objectSchema({ project: projectIdSchema, kind: { type: "string", enum: ["wiki"] }, id: { type: "string", minLength: 1 } }, ["project", "kind", "id"]), async raw => {
+    const args = asObject(raw)!;
+    const document = readDocument(projectContentDir(projectArg(args)), "wiki", String(args.id));
+    return document ? okResult(name === "read_document" ? { ...document, bodyHash: document.hash, hash: document.stateHash } : { format: "markdown", body: document.markdown, hash: document.stateHash }) : failResult("invalid_path", "Unknown wiki document.", false);
+  }, { readOnlyHint: true })),
+  tool("set_mindmap_collapsed", "Set card collapse state", "Persist a card's collapsed state with map revision validation.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, id: { type: "string" }, collapsed: { type: "boolean" }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, requestId: { type: "string" } }, ["project", "mapId", "id", "collapsed", "expectedRevision"]), async (raw, context) => {
+    const args = asObject(raw)!;
+    const project = projectArg(args);
+    return idempotentWrite(project, "set_mindmap_collapsed", args, context, requestId => {
+      const map = mapRequired(project, mapArg(args));
+      assertRevision(map, integerArg(args, "expectedRevision"));
+      assertDiskHash(map, stringArg(args, "expectedDiskHash", false));
+      if (!map.nodes.some(node => node.id === args.id)) return failResult("invalid_arguments", "Unknown card.", false);
+      return writeMap(project, map, { ...map, nodes: map.nodes.map(node => node.id === args.id ? { ...node, collapsed: Boolean(args.collapsed) } : node) }, requestId, "set_mindmap_collapsed", [{ kind: "mindmap_node", id: String(args.id), mapId: map.id }]);
+    });
+  }),
+  tool("place_todo_card", "Place paper TODO in map", "Place an existing TeX TODO under a map parent. Each TODO has at most one card per map.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, todoId: { type: "string" }, parentId: { type: "string" }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, requestId: { type: "string" } }, ["project", "mapId", "todoId", "parentId", "expectedRevision"]), async (raw, context) => {
+    const args = asObject(raw)!;
+    const project = projectArg(args);
+    return idempotentWrite(project, "place_todo_card", args, context, requestId => {
+      const map = mapRequired(project, mapArg(args));
+      assertRevision(map, integerArg(args, "expectedRevision"));
+      assertDiskHash(map, stringArg(args, "expectedDiskHash", false));
+      if (!getProjectState(project)?.paper?.todos.some(todo => todo.id === args.todoId)) return failResult("unknown_todo", "Unknown paper TODO.", false);
+      const existing = map.nodes.find(node => node.todoId === args.todoId);
+      if (existing) return okResult({ id: existing.id, todoId: args.todoId, revision: map.revision, diskHash: map.diskHash });
+      const next = applyMindmapAction(map, { type: "add-node", agentDraft: true, parentId: String(args.parentId), todoId: String(args.todoId), id: newNodeId() });
+      return writeMap(project, map, next.mindmap, requestId, "place_todo_card", [{ kind: "mindmap_node", id: next.selectedId!, mapId: map.id }]);
+    });
+  }),
+  tool("get_agent_capabilities", "Discover agent access", "Discover transports, authentication, canonical tool schemas, and saved versus browser state.", objectSchema(), async () => okResult({
+    transports: { mcp: "/api/mcp", rest: "/api/tools/{name}", openapi: "/openapi.json", stdio: "node scripts/mcp-stdio.mjs", browser: "window.openbarAgent" },
+    authentication: { methods: ["bearer", "configured Cloudflare Access"], tokenEnvironment: "OPENBARRY_ACCESS_TOKEN", browserOriginsEnvironment: "OPENBARRY_AGENT_ORIGINS" },
+    state: { http: "saved repository", browser: "live page and editor" },
+    browserOnly: ["open_project", "navigate_project", "focus_mindmap_node", "focus_todo_in_paper", "set_paper_reader_mode", "navigate_paper_section", "highlight_mindmap_activity"],
+    tools: listMcpTools().map(({ execute: _execute, ...definition }) => definition),
+  }), { readOnlyHint: true }),
+  tool("list_wiki_pages", "List wiki pages", "Discover readable supporting-memory pages.", objectSchema({ project: projectIdSchema }, ["project"]), async raw => {
+    const project = projectArg(asObject(raw)!);
+    return okResult(listWiki(project).map(page => ({ slug: page.slug, title: page.title, href: `/p/${encodeURIComponent(project)}/wiki/${encodeURIComponent(page.slug)}` })));
+  }, { readOnlyHint: true }),
+  tool("get_paper_state", "Read saved paper state", "Read saved paper outline, TODOs, comments and source identity. Browser state also includes unsaved edits.", objectSchema({ project: projectIdSchema }, ["project"]), async raw => {
+    const project = projectArg(asObject(raw)!);
+    return okResult({ project, paper: getProjectState(project)?.paper, saved: true });
+  }, { readOnlyHint: true }),
+  tool("read_source_range", "Read saved source range", "Read exact characters from a bounded saved source range, with the source bundle hash.", objectSchema({ project: projectIdSchema, from: { type: "integer", minimum: 0 }, to: { type: "integer", minimum: 0 } }, ["project", "from", "to"]), async raw => {
+    const args = asObject(raw)!;
+    const project = projectArg(args);
+    const bundle = buildSourceBundle(texPaths(projectContentDir(project)).manuscriptDir);
+    const from = Number(args.from), to = Number(args.to);
+    if (to < from || to > bundle.source.length || to - from > MAX_READ_CHARS) return failResult("invalid_arguments", "Use an ordered source range within the document and 200000 characters.", false);
+    return okResult({ project, from, to, source: bundle.source.slice(from, to), bundleHash: bundle.bundleHash });
+  }, { readOnlyHint: true }),
+  ...["add_todo", "update_todo", "add_comment"].map(name => tool(name, name.replaceAll("_", " "), "Apply a source annotation operation to saved TeX with a required bundle hash. dryRun previews the operation.", objectSchema({ project: projectIdSchema, id: { type: "string" }, from: { type: "integer", minimum: 0 }, to: { type: "integer", minimum: 0 }, title: { type: "string" }, text: { type: "string", maxLength: 200000 }, textFormat: { type: "string", enum: ["plain", "tex"] }, kind: { type: "string" }, completed: { type: "boolean" }, expectedBundleHash: diskHashSchema, dryRun: { type: "boolean" }, requestId: { type: "string" } }, ["project", "expectedBundleHash", ...(name === "update_todo" ? ["id"] : ["from", "to", "text"])]), async (raw, context) => {
+    const args = asObject(raw)!;
+    const project = projectArg(args);
+    assertAdministrativeWriteAllowed("MCP paper annotations");
+    const { project: _project, expectedBundleHash, dryRun, requestId: _requestId, ...fields } = args;
+    const run = () => persistPaperTodoOperation({ manuscriptDir: texPaths(projectContentDir(project)).manuscriptDir, operation: { ...fields, type: name } as SourceOperation, expectedBundleHash: String(expectedBundleHash), dryRun: dryRun === true });
+    if (dryRun === true) return run();
+    return idempotentWrite<unknown>(project, name, args, context, () => {
+      const result = run();
+      if (result.ok) recordWebMcpActivity(project, context, { operation: name, resources: [{ kind: "paper", id: String(args.id || "source") }] });
+      return result;
+    });
+  })),
+  tool("set_mindmap_font_size", "Set map font size", "Set the map card body font size from 10 through 20 CSS pixels. Titles and tables scale proportionally.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, fontSize: { type: "integer", minimum: 10, maximum: 20 }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, requestId: { type: "string" } }, ["project", "mapId", "fontSize", "expectedRevision"]), async (raw, context) => {
+    const args = asObject(raw)!;
+    const project = projectArg(args);
+    return idempotentWrite(project, "set_mindmap_font_size", args, context, requestId => {
+      const map = mapRequired(project, mapArg(args));
+      assertRevision(map, integerArg(args, "expectedRevision"));
+      assertDiskHash(map, stringArg(args, "expectedDiskHash", false));
+      const fontSize = integerArg(args, "fontSize")!;
+      return writeMap(project, map, { ...map, fontSize }, requestId, "set_mindmap_font_size", [{ kind: "mindmap", id: map.id! }], [{ field: "fontSize", before: map.fontSize, after: fontSize }]);
+    });
+  }),
+  tool("rename_mindmap", "Rename map", "Change a saved map title with revision checks.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, title: { type: "string", minLength: 1, maxLength: 500 }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, requestId: { type: "string" } }, ["project", "mapId", "title", "expectedRevision"]), async (raw, context) => {
+    const args = asObject(raw)!;
+    const project = projectArg(args);
+    return idempotentWrite(project, "rename_mindmap", args, context, requestId => {
+      const map = mapRequired(project, mapArg(args));
+      assertRevision(map, integerArg(args, "expectedRevision"));
+      assertDiskHash(map, stringArg(args, "expectedDiskHash", false));
+      return writeMap(project, map, { ...map, title: String(args.title).trim() }, requestId, "rename_mindmap", [{ kind: "mindmap", id: map.id! }], [{ field: "title", before: map.title, after: args.title }]);
+    });
+  }),
+  ...instructionsTools(),
+  tool("read_project_skill", "Read project skill", "Read a project, workspace or bundled skill returned by get_project_state.", objectSchema({ project: projectIdSchema, id: { type: "string", minLength: 1 } }, ["project", "id"]), async raw => {
+    const args = asObject(raw)!;
+    const result = readAnySkill(projectContentDir(projectArg(args)), stringArg(args, "id")!);
+    return result ? okResult({ ...result.skill, body: result.body }) : failResult("invalid_path", "Unknown skill.", false);
+  }, { readOnlyHint: true }),
+  tool("get_source_bundle", "Read saved source bundle", "Read bounded saved TeX source, segments and hashes. Browser calls read live editor state.", objectSchema(sourceSchema, ["project"]), executeReadPaperSource, { readOnlyHint: true }),
+  tool("get_paper_compile", "Read compile status", "Read latest attempted build and latest successful artifact state.", objectSchema({ project: projectIdSchema }, ["project"]), executeCompileStatus, { readOnlyHint: true }),
+  tool("get_bibliography", "Read bibliography", "Read bibliography entries or raw BibTeX.", objectSchema({ project: projectIdSchema, raw: { type: "boolean" } }, ["project"]), executeBibliography, { readOnlyHint: true }),
+  tool("get_paper_outline", "Read paper outline", "Read saved manuscript headings and stable section identities.", objectSchema({ project: projectIdSchema }, ["project"]), async raw => okResult(getProjectState(projectArg(asObject(raw)!))?.paper?.outline || []), { readOnlyHint: true }),
+  tool("replace_source_range", "Replace saved source range", "Replace one editable source-file range using the source bundle hash. Use dryRun to preview exact patches.", objectSchema({ project: projectIdSchema, from: { type: "integer", minimum: 0 }, to: { type: "integer", minimum: 0 }, text: { type: "string", maxLength: 1000000 }, expectedBundleHash: diskHashSchema, dryRun: { type: "boolean" }, requestId: { type: "string" } }, ["project", "from", "to", "text", "expectedBundleHash"]), async (raw, context) => {
+    const args = asObject(raw)!;
+    const project = projectArg(args);
+    assertAdministrativeWriteAllowed("MCP source edits");
+    const run = () => persistVirtualRange({ manuscriptDir: texPaths(projectContentDir(project)).manuscriptDir, from: Number(args.from), to: Number(args.to), text: String(args.text), expectedBundleHash: String(args.expectedBundleHash), dryRun: args.dryRun === true });
+    if (args.to! < args.from!) return failResult("invalid_arguments", "to must be at least from.", false);
+    if (args.dryRun === true) return run();
+    return idempotentWrite(project, "replace_source_range", args, context, () => {
+      const result = run();
+      if (result.ok) recordWebMcpActivity(project, context, { operation: "replace_source_range", resources: [{ kind: "paper", id: result.value.filePath }] });
+      return result;
+    });
+  }),
+  ...["attach_mindmap_image", "detach_mindmap_image", "caption_mindmap_image"].map(name => tool(name, name.replaceAll("_", " "), "Edit the card image with revision and disk hash checks. Each card holds one image. Create a child with add_mindmap_node for another image. Resize through patch_mindmap_node refs.imageWidth (25 to 100 percent).", objectSchema(imageSchema, ["project", "mapId", "id", "assetId", "expectedRevision", ...(name === "caption_mindmap_image" ? ["label"] : [])]), (raw, context) => executeMapImage(name, raw, context))),
+  tool("read_mindmap_image", "Read map image", "Read an attached image reference and its project asset URL.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, id: { type: "string" }, assetId: { type: "string" } }, ["project", "mapId", "id", "assetId"]), async raw => {
+    const args = asObject(raw)!;
+    const project = projectArg(args);
+    const ref = mapRequired(project, mapArg(args)).nodes.find(node => node.id === args.id)?.refs?.find(ref => ref.kind === "figure" && ref.id === args.assetId);
+    return ref ? okResult({ id: args.id, ref, url: artifactHref(project, ref) }) : failResult("invalid_path", "Unknown attached image.", false);
+  }, { readOnlyHint: true }),
   tool("list_projects", "List projects", "List project slugs and titles available to this authenticated MCP connection.", objectSchema(), async () => executeListProjects(), { readOnlyHint: true }),
   tool("get_project_state", "Read project state", "Read bounded project orientation, paper outline, TODO coverage, mindmaps, skills, and durable activity. Saved repository state is returned.", objectSchema({ project: projectIdSchema, detail: { type: "string", enum: ["summary", "full"] }, todoLimit: { type: "integer", minimum: 0, maximum: 200 } }, ["project"]), executeGetProjectState, { readOnlyHint: true }),
-  tool("sync_project", "Review and resolve Overleaf synchronization", "Inspect branch, local/base/remote commit IDs, changed files, and recovery refs. review_pull returns base/local/remote contents for every conflicting file. Resolve whole files with local, remote, or edited merged text, then apply_pull with the returned token. Local changes arriving during review require a fresh review. The project checkout is preserved while reviewing.", objectSchema({ project: projectIdSchema, ...syncProjectProperties }, ["project", "action"]), async (args) => {
+  tool("sync_project", "Review and resolve Git synchronization", "Inspect branch, local/base/remote commit IDs, changed files, and recovery refs. review_pull returns base/local/remote contents for every conflicting file. Resolve whole files with local, remote, or edited merged text, then apply_pull with the returned token. Local changes arriving during review require a fresh review. The project checkout is preserved while reviewing.", objectSchema({ project: projectIdSchema, ...syncProjectProperties }, ["project", "action"]), async (args) => {
     const record = asObject(args);
     if (!record) return failResult("invalid_arguments", "Arguments must be an object.", false);
     try { const project = projectArg(record); const { project: _project, ...input } = record; return syncProjectCommand(projectContentDir(project), input); }
@@ -904,7 +1184,7 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
   tool("read_bibliography", "Read bibliography", "Read parsed bibliography entries or bounded raw BibTeX.", objectSchema({ project: projectIdSchema, raw: { type: "boolean" } }, ["project"]), executeBibliography, { readOnlyHint: true }),
   tool("update_project", "Update project metadata", "Update project metadata or compiler settings with the project hash. The local save and remote state are separate.", objectSchema({ project: projectIdSchema, ...PROJECT_FIELDS }, ["project", "expectedHash"]), executeUpdateProject, { destructiveHint: false }),
   tool("patch_mindmap_node", "Patch map card", "Patch one map-owned card with revision and optional disk-hash compare-and-swap. TODO title and text remain TeX-owned.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, id: { type: "string" }, ...MAP_NODE_PATCH_SCHEMA }, ["project", "mapId", "id", "expectedRevision"]), executePatchMindmapNode),
-  tool("add_mindmap_node", "Add map card", "Add one ordinary card under an existing parent with a revision compare-and-swap.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, parentId: { type: "string" }, id: { type: "string" }, title: { type: "string" }, text: { type: "string" }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, requestId: { type: "string" } }, ["project", "mapId", "parentId", "expectedRevision"]), executeAddMindmapNode),
+  tool("add_mindmap_node", "Add map card", "Add one agent draft under an existing parent with a revision compare-and-swap. The human accepts it with Save card or removes it with Delete. Edits preserve draft status.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, parentId: { type: "string" }, id: { type: "string" }, title: { type: "string" }, text: { type: "string" }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, requestId: { type: "string" } }, ["project", "mapId", "parentId", "expectedRevision"]), executeAddMindmapNode),
   tool("move_mindmap_node", "Move map card", "Move one card to a parent or sibling position. Cycles and root movement are rejected.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, id: { type: "string" }, parentId: { type: "string" }, beforeId: { type: "string" }, afterId: { type: "string" }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, requestId: { type: "string" } }, ["project", "mapId", "id", "parentId", "expectedRevision"]), executeMoveMindmapNode),
   tool("preview_mindmap_batch", "Preview map batch", "Preview exact affected cards, descendants, TODO-card count, branch roots, and a revision-bound token. This never writes.", objectSchema(BATCH_SCHEMA, ["project", "mapId", "selectedIds", "expectedRevision"]), executePreviewMindmapBatch, { readOnlyHint: true }),
   tool("apply_mindmap_batch", "Apply map batch", "Apply one validated atomic batch for card fields, selected-branch movement, or deletion. Deletion requires a current preview token.", objectSchema(BATCH_SCHEMA, ["project", "mapId", "selectedIds", "expectedRevision", "previewToken"]), executeApplyMindmapBatch, { destructiveHint: true }),
@@ -921,8 +1201,13 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
   tool("get_compile_status", "Read compile status", "Read latest attempted build and latest successful artifact state.", objectSchema({ project: projectIdSchema }, ["project"]), executeCompileStatus, { readOnlyHint: true }),
   tool("get_git_status", "Read Git status", "Read local branch, remote, ahead/behind, changed paths, and latest commit.", objectSchema({ project: projectIdSchema }, ["project"]), executeGitStatus, { readOnlyHint: true }),
   tool("commit_git", "Create local Git commit", "Commit accepted manuscript and OpenBar paths locally without waiting for network access. The receipt includes exact committed file hashes.", objectSchema({ project: projectIdSchema, message: { type: "string", maxLength: 240 }, requestId: { type: "string" } }, ["project"]), executeGitCommit),
-  tool("sync_git", "Synchronize Git remote", "Fetch before comparing ahead/behind, then push explicitly to the validated Overleaf remote and current branch. Existing local commits remain available after failure.", objectSchema({ project: projectIdSchema, commitHash: { type: "string" } }, ["project"]), executeGitSync),
+  tool("sync_git", "Synchronize Git remote", "Fetch before comparing ahead/behind, then push explicitly to the validated Git remote and current branch. Existing local commits remain available after failure.", objectSchema({ project: projectIdSchema, commitHash: { type: "string" } }, ["project"]), executeGitSync),
 ];
+
+for (const [name, target] of [["replace_paper_section", "patch_paper_section"], ["add_paper_todo_at_section", "add_paper_todo"]]) {
+  const original = MCP_TOOL_REGISTRY.find(tool => tool.name === target)!;
+  MCP_TOOL_REGISTRY.push({ ...original, name, description: `${original.description} Saved-state equivalent of the browser ${name} operation.` });
+}
 
 const REGISTRY_BY_NAME = new Map(MCP_TOOL_REGISTRY.map((entry) => [entry.name, entry]));
 
@@ -939,7 +1224,23 @@ export async function executeMcpTool(name: string, args: unknown, context: McpCo
   if (!entry) return failResult("invalid_arguments", `Unknown MCP tool "${name}".`, { retryable: false });
   if (context.signal?.aborted) return failResult("cancelled", "The MCP request was cancelled before execution.", { retryable: false });
   try {
+    const record = asObject(args);
+    if (!record) return failResult("invalid_arguments", "Arguments must be an object.", false);
+    for (const key of Object.keys(record)) if (!Object.hasOwn(entry.inputSchema.properties, key)) return failResult("invalid_arguments", `Unknown argument "${key}".`, false);
+    for (const key of entry.inputSchema.required || []) if (record[key] === undefined) return failResult("invalid_arguments", `Missing argument "${key}".`, false);
+    for (const [key, value] of Object.entries(record)) {
+      const schema = entry.inputSchema.properties[key] as { type?: string | string[]; enum?: unknown[]; minimum?: number; maximum?: number; minLength?: number; maxLength?: number; pattern?: string };
+      const types = Array.isArray(schema.type) ? schema.type : schema.type ? [schema.type] : [];
+      const actual = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+      if (types.length && !types.includes(actual) && !(types.includes("integer") && typeof value === "number" && Number.isInteger(value))) return failResult("invalid_arguments", `${key} has an invalid type.`, false);
+      if (schema.enum && !schema.enum.includes(value)) return failResult("invalid_arguments", `${key} must be one of ${schema.enum.join(", ")}.`, false);
+      if (typeof value === "number" && ((schema.minimum !== undefined && value < schema.minimum) || (schema.maximum !== undefined && value > schema.maximum))) return failResult("invalid_arguments", `${key} is outside its allowed range.`, false);
+      if (typeof value === "string" && ((schema.minLength !== undefined && value.length < schema.minLength) || (schema.maxLength !== undefined && value.length > schema.maxLength) || (schema.pattern && !new RegExp(schema.pattern).test(value)))) return failResult("invalid_arguments", `${key} has an invalid length or format.`, false);
+    }
     const result = await entry.execute(args, context);
+    if (result.ok && record.dryRun !== true && ["relocate_paper_todo", "remove_paper_todo", "repair_paper_section", "apply_conversion"].includes(name)) {
+      recordWebMcpActivity(projectArg(record), context, { operation: name, resources: [{ kind: "paper", id: String(record.todoId || record.sectionId || record.filePath || "source") }] });
+    }
     if (context.signal?.aborted && result.ok) return result;
     return result;
   } catch (error) {

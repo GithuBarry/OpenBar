@@ -178,12 +178,15 @@ function localFocusContext(
 
 export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
   value: string;
+  readOnly?: boolean;
   onDocChanges: (changes: TexDocChange[], length: number) => void;
   onScroll?: () => void;
   placeholder?: string;
   className?: string;
   focusContext?: TexFocusContext | null;
-}>(function NestedBundleEditor({ value, onDocChanges, onScroll, placeholder, className, focusContext = null }, ref) {
+}>(function NestedBundleEditor({ value, readOnly = false, onDocChanges, onScroll, placeholder, className, focusContext = null }, ref) {
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
   const scrollerRef = useRef<HTMLDivElement>(null);
   const sourceRef = useRef(value);
   const [live, setLive] = useState(value);
@@ -213,6 +216,7 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
   };
 
   const commit = (next: string) => {
+    if (readOnlyRef.current) return;
     const previous = sourceRef.current;
     if (previous === next) return;
     let from = 0;
@@ -226,6 +230,7 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
   };
 
   const applyVirtualChange = useCallback((from: number, to: number, insert: string): boolean => {
+    if (readOnlyRef.current) return false;
     if (from === 0 && to === sourceRef.current.length) { commit(insert); return true; }
     const start = slotForVirtual(from);
     const end = slotForVirtual(Math.max(from, to - 1));
@@ -334,6 +339,7 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
             <TexCodeMirror
               ref={bindHandle(item.key)}
               variant="nested"
+              readOnly={readOnly}
               lineOffset={item.lineOffset}
               value={item.text}
               headingCounts={item.headingCounts}

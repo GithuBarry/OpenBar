@@ -191,3 +191,14 @@ partial root-layout and durability changes, preserve unrelated artifacts, and
 remove only explicitly identified stale generated material during the final
 cleanup. The final integration target is the repository’s `main` branch, with
 the current branch merged and pushed only after fresh verification.
+# Card notes and visible-content guidance
+
+Each ordinary mindmap card may carry an optional Extended note of up to 500
+words. The note is map-owned, model-readable context that opens in a floating window from the
+bottom of the card with one click and is edited independently from the visible
+title and body.
+TODO cards keep their TeX-owned content rules.
+
+The editor warns when a card's visible title plus body exceeds 100 words. The
+warning recommends splitting the material into more cards. This is advisory so
+existing research content remains intact.

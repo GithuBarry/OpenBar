@@ -55,10 +55,14 @@ export interface MindmapNode {
    * Empty on TODO cards — TeX owns the text.
    */
   text: string;
+  /** Model-facing context hidden from the rendered card. */
+  caption?: string;
   /** When set, this card is a view of the TeX `\obtodo` with this id. */
   todoId?: string;
   parentId: string | null;
   shape?: MindmapNodeShape;
+  /** Agent-created card awaiting explicit human Save. */
+  agentDraft?: boolean;
   collapsed?: boolean;
   metadata?: Record<string, unknown>;
   contentFormat?: "plain" | "markdown" | "tex";
@@ -93,6 +97,8 @@ export interface Mindmap {
   revision?: number;
   /** Map-owned Recent activity window, in calendar days. */
   activityWindowDays?: number;
+  /** Map-owned card body font size in CSS pixels, 10 through 20. */
+  fontSize?: number;
   diskHash?: string;
 }
 
@@ -108,6 +114,8 @@ export type ArtifactKind =
   | "external";
 
 export interface ArtifactRef {
+  /** Map-local image width as a percentage of the card content area. */
+  imageWidth?: number;
   kind: ArtifactKind;
   id: string;
   label?: string;

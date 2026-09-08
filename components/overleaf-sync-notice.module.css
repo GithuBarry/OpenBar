@@ -1,0 +1,22 @@
+.anchor { position: absolute; top: var(--overleaf-notice-top, 52px); left: 50%; transform: translateX(-50%); z-index: 45; width: max-content; max-width: calc(100% - 24px); pointer-events: none; }
+.trigger { display: inline-flex; align-items: center; justify-content: center; gap: 7px; max-width: 100%; min-height: 29px; padding: 5px 10px; border: 1px solid rgb(255 176 0 / .4); border-radius: 9px; background: color-mix(in srgb, rgb(var(--surface)) 88%, #ffb000); color: rgb(var(--ink)); box-shadow: 0 3px 12px rgb(0 0 0 / .07); font-size: 11px; line-height: 17px; white-space: nowrap; cursor: pointer; pointer-events: auto; }
+.trigger span { overflow: hidden; text-overflow: ellipsis; }
+.trigger svg { flex-shrink: 0; color: #ffb000; }
+.trigger:hover { border-color: rgb(255 176 0 / .7); }
+.trigger:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 3px; }
+.panel { z-index: 70; width: min(360px, calc(100vw - 24px)); padding: 14px; border: 1px solid rgb(var(--line)); border-radius: 12px; background: rgb(var(--surface)); color: rgb(var(--ink)); box-shadow: 0 12px 42px rgb(0 0 0 / .16); font-family: var(--font-sans); }
+.panel header { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+.panel header button { padding: 4px; border-radius: 5px; color: rgb(var(--muted)); cursor: pointer; }
+.panel p { margin: 10px 0 14px; font-size: 12px; line-height: 1.6; color: rgb(var(--muted)); overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.actions > button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 9px; border: 1px solid rgb(var(--line)); border-radius: 7px; background: rgb(var(--surface)); color: rgb(var(--ink)); font-size: 11px; cursor: pointer; }
+.actions > button:disabled { opacity: .5; cursor: default; }
+
+.panel { max-height: min(640px, calc(100dvh - 32px)); overflow-y: auto; overscroll-behavior: contain; }
+.copy { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; padding: 5px 0; color: rgb(var(--muted)); font-size: 11px; cursor: pointer; }
+.copy:hover { color: rgb(var(--ink)); }
+.changeSummary { display: grid; gap: 8px; margin-bottom: 14px; padding: 10px; border: 1px solid rgb(var(--line)); border-radius: 8px; font-size: 11px; }
+.changeSummary summary { cursor: pointer; color: rgb(var(--ink)); }
+.changeSummary ul { max-height: 140px; overflow: auto; margin-top: 5px; padding-left: 14px; list-style: disc; }
+.changeSummary li { overflow-wrap: anywhere; line-height: 1.6; color: rgb(var(--muted)); }
+.changeSummary small { color: rgb(var(--muted)); line-height: 1.5; }

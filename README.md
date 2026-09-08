@@ -116,7 +116,7 @@ instruction writes, and skill writes in demo mode.
 
 ## Local setup
 
-The repository targets Node 22 from [.nvmrc](.nvmrc) and pins pnpm 11.9.0 in
+The repository targets Node 26.8.1 from [.nvmrc](.nvmrc) and pins pnpm 11.9.0 in
 `package.json`.
 
 ```bash

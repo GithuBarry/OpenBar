@@ -71,13 +71,13 @@ export function OverleafForce({ project, beforeReview, onApplied, onClosed, disa
     <dialog ref={dialog} className={styles.dialog} aria-labelledby="force-sync-title" onCancel={(event) => { event.preventDefault(); void close(); }}>
       <div className={styles.header}><h2 id="force-sync-title">Force {direction} · confirmation {confirmation ? "2" : "1"} of 2</h2></div>
       <div className={styles.body}>
-        <p>{direction === "pull" ? "Replace the local project with the reviewed Overleaf version. Local-only commits will move out of the active branch." : "Replace the Overleaf branch with the reviewed local version. Remote-only commits will move out of the active branch."}</p>
+        <p>{direction === "pull" ? "Replace the local project with the reviewed Git version. Local-only commits will move out of the active branch." : "Replace the Git branch with the reviewed local version. Remote-only commits will move out of the active branch."}</p>
         <p>Both versions receive local Git recovery points before replacement.</p>
         {busy && <p role="status">Working…</p>}
         {error && <p role="alert" className={styles.error}>{error}</p>}
         {review && <>
-          <p><strong>{review.branch}</strong> · {review.ahead} local-only commits · {review.behind} Overleaf-only commits</p>
-          <p>Local <code>{review.localCommit.slice(0,12)}</code> · Overleaf <code>{review.remoteCommit.slice(0,12)}</code></p>
+          <p><strong>{review.branch}</strong> · {review.ahead} local-only commits · {review.behind} Git-only commits</p>
+          <p>Local <code>{review.localCommit.slice(0,12)}</code> · Git <code>{review.remoteCommit.slice(0,12)}</code></p>
           <details><summary>{review.files.length} differing files</summary><ul>{review.files.map(file => <li key={file}><code>{file}</code></li>)}</ul></details>
         </>}
         {confirmation && <label className={styles.confirmPhrase}>Type <strong>{expectedPhrase}</strong> to confirm replacement.<input aria-label="Force synchronization confirmation" value={phrase} autoComplete="off" spellCheck={false} onChange={(event) => setPhrase(event.target.value)} /></label>}

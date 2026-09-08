@@ -45,12 +45,13 @@ export function coerceArtifactKind(value: string): ArtifactKind | undefined {
   return ARTIFACT_KINDS.includes(value as ArtifactKind) ? value as ArtifactKind : undefined;
 }
 
-export function coerceArtifactRef(ref: { kind: string; id: string; label?: string; url?: string }): ArtifactRef | undefined {
+export function coerceArtifactRef(ref: { kind: string; id: string; label?: string; url?: string; imageWidth?: number }): ArtifactRef | undefined {
   const kind = coerceArtifactKind(ref.kind);
   if (!kind || !ref.id) return undefined;
   return {
     kind,
     id: ref.id,
+    ...(Number.isInteger(ref.imageWidth) && ref.imageWidth! >= 25 && ref.imageWidth! <= 100 ? { imageWidth: ref.imageWidth } : {}),
     ...(ref.label ? { label: ref.label } : {}),
     ...(ref.url ? { url: ref.url } : {}),
   };

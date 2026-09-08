@@ -79,6 +79,7 @@ function FlowCanvas({
   nodes,
   renderCard,
   readOnly,
+  virtualize,
   onSelect,
   onDoubleClick,
   onReparent,
@@ -90,6 +91,7 @@ function FlowCanvas({
   nodes: MindmapFlowNode[];
   renderCard: (id: string) => ReactNode;
   readOnly: boolean;
+  virtualize?: boolean;
   onSelect: (id: string, additive: boolean) => void;
   onDoubleClick: (id: string) => void;
   onReparent: (id: string, parentId: string, beforeId?: string, afterId?: string) => void;
@@ -102,6 +104,23 @@ function FlowCanvas({
   const lastFocusRef = useRef<number | null>(null);
   const draggingIdRef = useRef<string | null>(null);
   const initialViewRef = useRef(false);
+  const rasterFrame = useRef<number | null>(null);
+  const beginViewportMove = useCallback(() => {
+    if (rasterFrame.current !== null) cancelAnimationFrame(rasterFrame.current);
+    const viewport = canvasRef.current?.querySelector<HTMLElement>(".react-flow__viewport");
+    if (viewport) viewport.style.willChange = "transform";
+  }, []);
+  const finishViewportMove = useCallback(() => {
+    // Release the gesture's cached layer so the browser rasterizes text at
+    // the final scale. Card layout remains in unchanged world coordinates.
+    rasterFrame.current = requestAnimationFrame(() => {
+      rasterFrame.current = null;
+      const viewport = canvasRef.current?.querySelector<HTMLElement>(".react-flow__viewport");
+      if (viewport) viewport.style.willChange = "auto";
+      if (canvasRef.current) canvasRef.current.dataset.sharpCards = String(getZoom() > 1.25);
+    });
+  }, [getZoom]);
+  useEffect(() => () => { if (rasterFrame.current !== null) cancelAnimationFrame(rasterFrame.current); }, []);
   useEffect(() => {
     if (initialViewRef.current || focusRequest) return;
     const timer = window.setTimeout(() => {
@@ -133,9 +152,11 @@ function FlowCanvas({
       position: { x: node.x, y: node.y },
       selected: node.selected,
       draggable: !readOnly && node.id !== mindmap.rootId,
+      initialWidth: node.width,
+      initialHeight: node.height,
       sourcePosition: Position.Right,
       targetPosition: Position.Left,
-        style: { width: node.width, height: "auto" },
+        style: { width: node.width, height: node.height },
         data: { render: renderCard, renderVersion: node.renderVersion },
       })),
     [mindmap.rootId, nodes, readOnly, renderCard],
@@ -150,19 +171,12 @@ function FlowCanvas({
       });
     });
   }, [baseFlowNodes]);
-  const flowNodes = controlledNodes.length === baseFlowNodes.length ? controlledNodes : baseFlowNodes;
+  const flowNodes = controlledNodes;
   const edges: Edge[] = useMemo(() => {
-    const byId = new Map(nodes.map((node) => [node.id, node]));
-    return mindmap.nodes.flatMap((node) => {
+    const byId = new Map(nodes.map(node => [node.id, node]));
+    return mindmap.nodes.flatMap(node => {
       if (!node.parentId || !byId.has(node.id) || !byId.has(node.parentId)) return [];
-      return [{
-        id: `${node.parentId}-${node.id}`,
-        source: node.parentId,
-        target: node.id,
-        type: "default",
-        focusable: false,
-        interactionWidth: 0,
-      }];
+      return [{ id: `${node.parentId}-${node.id}`, source: node.parentId, target: node.id, type: "default", focusable: false, interactionWidth: 0 }];
     });
   }, [mindmap.nodes, nodes]);
 
@@ -199,6 +213,7 @@ function FlowCanvas({
 
   return (
     <ReactFlow
+      key="fixed-card-geometry"
       ref={canvasRef}
       className="mindmap-viewport mindmap-rf"
       onPointerDownCapture={(event) => {
@@ -208,6 +223,9 @@ function FlowCanvas({
         const card = target.closest<HTMLElement>('[data-mind-node]');
         if (card?.dataset.mindNode) onSelect(card.dataset.mindNode, event.shiftKey);
       }}
+      onlyRenderVisibleElements={virtualize}
+      onMoveStart={beginViewportMove}
+      onMoveEnd={finishViewportMove}
       nodes={flowNodes}
       edges={edges}
       onNodesChange={(changes: NodeChange[]) => {
@@ -282,6 +300,7 @@ export function MindmapCanvas(props: {
   nodes: MindmapFlowNode[];
   renderCard: (id: string) => ReactNode;
   readOnly: boolean;
+  virtualize?: boolean;
   onSelect: (id: string, additive: boolean) => void;
   onDoubleClick: (id: string) => void;
   onReparent: (id: string, parentId: string, beforeId?: string, afterId?: string) => void;

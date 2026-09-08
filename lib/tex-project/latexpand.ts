@@ -26,7 +26,7 @@ export function discoverTexBinDirs(): string[] {
   const dirs = new Set<string>();
   const configured = process.env.OPENBARRY_TEX_BIN;
   if (configured) dirs.add(path.resolve(configured));
-  for (const dir of ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"]) {
+  for (const dir of ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin", "/home/linuxbrew/.linuxbrew/bin", path.join(os.homedir(), ".local/bin"), "/usr/bin"]) {
     dirs.add(dir);
   }
 

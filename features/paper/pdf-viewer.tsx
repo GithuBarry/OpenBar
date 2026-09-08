@@ -134,9 +134,13 @@ export function PdfJsViewer({
         wrapper.appendChild(textLayerDiv);
         wrapper.appendChild(annotationLayerDiv);
         host.appendChild(wrapper);
-        const textContent = await page.getTextContent();
-        const textLayer = new TextLayer({ textContentSource: textContent, container: textLayerDiv, viewport });
+        // TextLayer consumes the stream with getReader, including browsers whose
+        // ReadableStream implementation has no async iterator.
+        const textLayer = new TextLayer({ textContentSource: page.streamTextContent(), container: textLayerDiv, viewport });
+        const layer: (typeof layers)[number] = { canvas, text: textLayer };
+        layers.push(layer);
         await textLayer.render();
+        if (cancelled) return;
         const annotations = await page.getAnnotations({ intent: "display" });
         const annotationLayer = new AnnotationLayer({
           div: annotationLayerDiv,
@@ -150,6 +154,7 @@ export function PdfJsViewer({
           annotationStorage: undefined,
           linkService: linkService as never,
         });
+        layer.annotation = annotationLayer;
         await annotationLayer.render({
           annotations,
           div: annotationLayerDiv,
@@ -167,7 +172,6 @@ export function PdfJsViewer({
             if (result.ok) onJumpToSource?.(result.edit.file, result.edit.line);
           });
         });
-        layers.push({ canvas, text: textLayer, annotation: annotationLayer });
       }
     };
     void render().catch((reason) => {

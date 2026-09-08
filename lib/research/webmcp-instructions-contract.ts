@@ -95,7 +95,7 @@ const META: Record<ToolName, { title: string; description: string }> = {
   },
 };
 
-export function buildInstructionsWebMcpTools(host: InstructionsWebMcpHost): PaperWebMcpTool[] {
+export function buildInstructionsWebMcpTools(host: Pick<InstructionsWebMcpHost, "project" | "actions" | "refresh">): PaperWebMcpTool[] {
   return NAMES.map((name) => ({
     name,
     title: META[name].title,
@@ -107,7 +107,7 @@ export function buildInstructionsWebMcpTools(host: InstructionsWebMcpHost): Pape
 }
 
 async function executeInstructionsTool(
-  host: InstructionsWebMcpHost,
+  host: Pick<InstructionsWebMcpHost, "project" | "actions" | "refresh">,
   name: ToolName,
   rawArgs: unknown,
 ): Promise<OperationResult<unknown>> {

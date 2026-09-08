@@ -22,6 +22,7 @@ export default function AgentAccessPage() {
       <section className="space-y-3" aria-labelledby="browser-help">
         <h2 id="browser-help" className="text-xl font-semibold">Connect a browser agent</h2>
         <p>Open the project over HTTPS or localhost in a browser integration that supports <code>document.modelContext</code> or Chrome’s <code>navigator.modelContext</code>. OpenBar registers WebMCP tools for the active page. Open <strong>Tools</strong> to inspect the registered tool names and connection diagnostics.</p>
+        <p>Standard browser automation can call <code>window.openbarAgent.listTools()</code> and <code>await window.openbarAgent.executeTool(name, args)</code>. These tools use the live page and editor. After navigation, call <code>await window.openbarAgent.waitForNavigation(href)</code> before using destination tools.</p>
         <p>Use your integration’s tool discovery. Call <code>get_project_state</code> with <code>{'{"detail":"full"}'}</code> to read the project and its instructions. Use <code>search_project</code> and <code>navigate_project</code>, then the tools listed for the paper or mindmap. The active browser page supplies the project identity.</p>
         <p>Use the labeled interface for visual verification or a capability missing from the tool catalog. Prefer WebMCP for supported operations.</p>
       </section>
@@ -34,8 +35,10 @@ export default function AgentAccessPage() {
           <li>Call <code>get_project_state</code> with <code>{'{"project":"<slug>","detail":"full"}'}</code>. The slug is the segment after <code>/p/</code> in a project URL.</li>
           <li>Use the returned map IDs, revisions, and file hashes in subsequent operations. Inspect local-save and remote-sync results separately.</li>
         </ol>
-        <p>For Overleaf conflicts, inspect the <code>sync</code> field in project state. Use <code>sync_project</code> with <code>review_pull</code> to receive the base, local, and Overleaf contents for each conflicting file. Resolve whole files and call <code>apply_pull</code> with the returned token. Changes arriving during review require a fresh review.</p>
+        <p>For Git conflicts, inspect the <code>sync</code> field in project state. Use <code>sync_project</code> with <code>review_pull</code> to receive the base, local, and Git contents for each conflicting file. Resolve whole files and call <code>apply_pull</code> with the returned token. Changes arriving during review require a fresh review.</p>
         <p>HTTP MCP operates saved repository state. Browser WebMCP additionally exposes the live page and editing session.</p>
+        <p>REST clients can read <code>/api/tools</code> and send JSON arguments to <code>/api/tools/&lt;name&gt;</code> with the same bearer token. <Link href="/openapi.json" className="text-accent underline">OpenAPI discovery</Link> describes every endpoint. MCP and REST results use <code>{'{"ok":true,"value":...}'}</code> with revision and save details.</p>
+        <p>Stdio clients can launch <code>node scripts/mcp-stdio.mjs</code> with <code>OPENBARRY_URL</code> and <code>OPENBARRY_ACCESS_TOKEN</code> in their environment. Tailscale addresses require access to your private network. External browser origins require configuration in <code>OPENBARRY_AGENT_ORIGINS</code>.</p>
         <p><Link href="/llms.txt" className="text-accent underline">Plain-text discovery guide</Link></p>
       </section>
     </main>

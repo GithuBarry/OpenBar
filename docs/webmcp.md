@@ -228,3 +228,67 @@ HTTP MCP preflight and response CORS, the tools permissions policy, and WebMCP
 iframe `allow` attribute and its own permissions policy. HTTP MCP continues to
 require `OPENBARRY_ACCESS_TOKEN`. Approved browser callers can read the MCP session
 header and send authorization and protocol headers.
+
+## Portable browser and headless access
+
+Standard browser automation can call `window.openbarAgent.listTools()` and
+`await window.openbarAgent.executeTool(name, args)` on the open page. This uses
+the same live operation handlers, validation, revision checks and page lifecycle
+as WebMCP. Native browser integrations continue to use their native API.
+
+Navigation returns `{ok:true,value:{href,status:"scheduled",readyWhen:...}}`.
+The destination mounts asynchronously. Browser automation should call
+`await window.openbarAgent.waitForNavigation(href)` and discover its tools.
+Native integrations should wait for the destination URL and page tool catalog.
+
+HTTP MCP and REST preserve the complete operation envelope, including hashes,
+revisions and remote-save receipts. Both MCP text and `structuredContent`
+contain `{ok:true,value,...}` or `{ok:false,code,message,retryable,...}`. Array
+values live inside `value`, so standard MCP clients can validate every result.
+
+- `GET /api/tools` lists the authenticated saved-state tool catalog.
+- `POST /api/tools/<name>` executes its JSON arguments using bearer authentication.
+- `GET /api/projects` lists projects using the same authentication.
+- `GET /openapi.json` describes every tool endpoint in OpenAPI 3.1.
+- `get_agent_capabilities` explains transport selection and the current catalog.
+- MCP resources expose the guide and project states, with source and skill URI templates.
+- The `start_project` MCP prompt describes project orientation.
+
+The HTTP catalog includes instructions and skills, source-range edits, TODO and
+comment edits, and image-reference operations. HTTP uses saved repository state.
+Browser tools also operate live editor drafts and visible selection. Each tool's
+input schema specifies its own required hashes and revisions.
+
+A stdio-only client can launch:
+
+```json
+{
+  "command": "node",
+  "args": ["/absolute/path/to/OpenBar/scripts/mcp-stdio.mjs"],
+  "env": {
+    "OPENBARRY_URL": "https://openbar.example.ts.net",
+    "OPENBARRY_ACCESS_TOKEN": "<provide securely>"
+  }
+}
+```
+
+Use the direct Node command so package-manager output stays out of the protocol.
+The bridge requires a running authenticated OpenBar server.
+
+The MCP endpoint accepts versions `2025-03-26`, `2025-06-18`, and `2025-11-25`.
+It uses JSON responses and returns 405 for optional GET event streams. Clients
+poll `get_paper_compile` for jobs. POST requests refresh session activity. A 404
+for an expired session requires initialization again. Unknown protocol versions
+receive 400. Untrusted origins receive 403. Existing bearer authentication receives
+a Bearer challenge on 401.
+
+Private-network access, trusted external browser origins, and an OAuth identity
+provider are deployment choices. The owner supplies these settings. OpenBar's
+bearer connection and stdio bridge work with clients that support configured
+credentials. Native WebMCP requires a browser exposing that API, while the
+portable browser bridge works with ordinary page-evaluation tooling.
+
+Run `node --env-file=.env.local scripts/check-agent-access.mjs` against localhost,
+or set `OPENBARRY_URL` for a remote server. Set `OB_SMOKE_WRITES=1` to verify a
+scratch skill create/update/delete cycle and stale-hash protection. The check
+preserves existing instructions and cleans up its unique scratch skill.

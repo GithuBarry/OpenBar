@@ -15,7 +15,7 @@ before sharing the dev page URL.
 
 ## Requirements
 
-- Node 22 and pnpm 11.9.0
+- Node 26.8.1 and pnpm 11.9.0
 - A Cloudflare account with Workers Containers enabled
 - The OpenBar GitHub repository connected to Workers Builds
 - A domain managed by Cloudflare for the private hostname
@@ -65,7 +65,7 @@ Use the repository root as the build root and enter these settings:
 | Build command | `pnpm typecheck && pnpm test && pnpm check:domain && pnpm evals` |
 | Deploy command | `pnpm exec wrangler deploy --containers-rollout=immediate` |
 | Non-production branch builds | Disabled |
-| `NODE_VERSION` | `22` |
+| `NODE_VERSION` | `26.8.1` |
 | `PNPM_VERSION` | `11.9.0` |
 
 Save the settings, then push the production branch or retry the production

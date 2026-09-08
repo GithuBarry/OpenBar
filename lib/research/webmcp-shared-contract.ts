@@ -108,11 +108,11 @@ const PUBLIC_DEMO_PROJECT_TOOLS = [
 ] as const satisfies readonly SharedToolName[];
 
 const TOOL_META: Record<SharedToolName, { title: string; description: string }> = {
-  sync_project: { title: "Review and resolve Overleaf synchronization", description: "Inspect Git status, exact commit IDs and recovery refs. review_pull prepares an isolated merge and returns base/local/Overleaf contents for conflicting files. Resolve whole files, then apply_pull with its token and resolutions. Save live editor drafts before reviewing. Local edits arriving during review require a fresh review. cancel_pull closes the review." },
+  sync_project: { title: "Review and resolve Git synchronization", description: "Inspect Git status, exact commit IDs and recovery refs. review_pull prepares an isolated merge and returns base/local/Git contents for conflicting files. Resolve whole files, then apply_pull with its token and resolutions. Save live editor drafts before reviewing. Local edits arriving during review require a fresh review. cancel_pull closes the review." },
   get_project_state: {
     title: "Read project state",
     description:
-      "Read this first when entering an OpenBar project or after losing context. Default detail=summary returns location, paper title, section TODO counts, Primary Unplaced count, recent activity, mindmaps (id, title, primary, nodeCount, href), shared expectations, skills, and AGENTS.md path/hash. TODOs include stable source location fields when available. Pass detail=full for the full expectations block, AGENTS bodies, and every TODO. Read relevant paper context before editing, preserve unfinished scientific structures and Primary coverage, use seven independent progress states, and distinguish local save, remote sync, compile success, and research completion. The sync field includes Git status, commit IDs, changed paths and recovery refs. Use sync_project to review and resolve Overleaf conflicts. Then search_project or navigate_project for detail. Does not modify files.",
+      "Read this first when entering an OpenBar project or after losing context. Default detail=summary returns location, paper title, section TODO counts, Primary Unplaced count, recent activity, mindmaps (id, title, primary, nodeCount, href), shared expectations, skills, and AGENTS.md path/hash. TODOs include stable source location fields when available. Pass detail=full for the full expectations block, AGENTS bodies, and every TODO. Read relevant paper context before editing, preserve unfinished scientific structures and Primary coverage, use seven independent progress states, and distinguish local save, remote sync, compile success, and research completion. The sync field includes Git status, commit IDs, changed paths and recovery refs. Use sync_project to review and resolve Git conflicts. Then search_project or navigate_project for detail. Does not modify files.",
   },
   search_project: {
     title: "Search the project",
@@ -236,7 +236,7 @@ async function executeSharedWebMcpTool(
           );
         }
         host.navigate(target.href);
-        return okResult(target);
+        return okResult({ ...target, status: "scheduled", readyWhen: "Wait for the destination URL and its page-local tool catalog. Browser bridge clients can call window.openbarAgent.waitForNavigation(href)." });
       }
       case "read_project_skill": {
         const id = requiredString(args, "id");

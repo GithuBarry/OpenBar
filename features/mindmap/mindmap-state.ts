@@ -19,13 +19,15 @@ export type MindmapSession = {
 /** Semantic node fields that the inspector and agent tools may edit. */
 export type MindmapNodePatch = Pick<
   MindmapNode,
-  "title" | "shape" | "metadata" | "contentFormat" | "tableLayout" | "color" | "refs" | "tags" | "progress"
+  "agentDraft" | "title" | "caption" | "shape" | "metadata" | "contentFormat" | "tableLayout" | "color" | "refs" | "tags" | "progress"
 > & { text?: string; priority?: MindmapNode["priority"] };
 
 function semanticPatch(patch: MindmapNodePatch): MindmapNodePatch {
   const next: MindmapNodePatch = {};
+  if (Object.prototype.hasOwnProperty.call(patch, "agentDraft")) next.agentDraft = patch.agentDraft;
   if (Object.prototype.hasOwnProperty.call(patch, "title")) next.title = patch.title;
   if (Object.prototype.hasOwnProperty.call(patch, "text")) next.text = patch.text;
+  if (Object.prototype.hasOwnProperty.call(patch, "caption")) next.caption = patch.caption;
   if (Object.prototype.hasOwnProperty.call(patch, "shape")) next.shape = patch.shape;
   if (Object.prototype.hasOwnProperty.call(patch, "metadata")) next.metadata = patch.metadata;
   if (Object.prototype.hasOwnProperty.call(patch, "contentFormat")) next.contentFormat = patch.contentFormat;
@@ -50,7 +52,8 @@ function patchTouchesActivity(patch: MindmapNodePatch): boolean {
 }
 
 export type MindmapTreeAction =
-  | { type: "add-node"; parentId: string; id: string; title?: string; text?: string; todoId?: string }
+  | { type: "paste-images"; id: string; images: Array<{ ref: NonNullable<MindmapNode["refs"]>[number]; childId: string }> }
+  | { type: "add-node"; parentId: string; id: string; title?: string; text?: string; todoId?: string; agentDraft?: boolean }
   | { type: "move-sibling"; id: string; direction: -1 | 1 }
   | { type: "edit-text"; id: string; text: string }
   | { type: "edit-card"; id: string; title: string; text: string; contentFormat?: MindmapNode["contentFormat"] }
@@ -64,6 +67,7 @@ export type MindmapTreeAction =
   | { type: "unbind-todo"; id: string; title?: string; text: string }
   | { type: "reparent"; id: string; parentId: string; beforeId?: string; afterId?: string }
   | { type: "rename-map"; title: string }
+  | { type: "set-font-size"; fontSize: number }
   | { type: "replace"; mindmap: Mindmap; selectedId?: string };
 
 export type MindmapSessionAction =
@@ -111,7 +115,7 @@ function splitCardText(value: string): { title: string; text: string } {
 }
 
 export function mapSignature(mindmap: Mindmap): string {
-  return JSON.stringify({ projectId: mindmap.projectId, title: mindmap.title, rootId: mindmap.rootId, nodes: mindmap.nodes });
+  return JSON.stringify({ projectId: mindmap.projectId, title: mindmap.title, fontSize: mindmap.fontSize, rootId: mindmap.rootId, nodes: mindmap.nodes });
 }
 
 export function descendantsOf(mindmap: Mindmap, id: string, index = indexMindmap(mindmap)): Set<string> {
@@ -170,11 +174,40 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
   const index = indexMindmap(mindmap);
 
   switch (action.type) {
+    case "paste-images": {
+      const target = index.nodeById.get(action.id);
+      if (!target || !action.images.length) return { mindmap };
+      const now = new Date().toISOString();
+      let filled = Boolean(target.refs?.some(ref => ref.kind === "figure"));
+      const nodes = [...mindmap.nodes];
+      let nextOrder = Math.max(-1, ...(index.childrenByParent.get(action.id) || []).map(node => node.order ?? 0)) + 1;
+      for (const { ref, childId } of action.images) {
+        if (ref.kind !== "figure") continue;
+        if (!filled) {
+          const i = nodes.findIndex(node => node.id === action.id);
+          nodes[i] = { ...target, refs: [...(target.refs || []), ref], updatedAt: now };
+          filled = true;
+        } else if (!nodes.some(node => node.id === childId)) {
+          nodes.push({
+            id: childId,
+            parentId: target.id,
+            title: ref.label?.replace(/\.[^.]+$/, "") || "Image",
+            text: "",
+            shape: "leaf",
+            order: nextOrder++,
+            refs: [ref],
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+      }
+      return { mindmap: { ...mindmap, nodes } };
+    }
     case "add-node": {
       if (!index.nodeById.has(action.parentId) || index.nodeById.has(action.id)) return { mindmap };
       const siblingOrders = (index.childrenByParent.get(action.parentId) || []).map((node) => node.order ?? 0);
       const legacy = splitCardText(action.text ?? "");
-      const title = action.title ?? (action.text?.trim() ? legacy.title : "New topic");
+      const title = action.title ?? (action.text?.trim() ? legacy.title : "");
       const text = action.todoId ? "" : (action.title !== undefined ? (action.text ?? "") : legacy.text);
       return {
         selectedId: action.id,
@@ -187,6 +220,7 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
               ...(action.todoId ? {} : { title }),
               text,
               ...(action.todoId ? { todoId: action.todoId } : {}),
+              ...(action.agentDraft ? { agentDraft: true } : {}),
               parentId: action.parentId,
               shape: "leaf",
               order: siblingOrders.length ? Math.max(...siblingOrders) + 1 : 0,
@@ -396,6 +430,11 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
           )),
         },
       };
+    }
+    case "set-font-size": {
+      const fontSize = Math.max(10, Math.min(20, Math.round(action.fontSize)));
+      if (!Number.isFinite(fontSize) || fontSize === (mindmap.fontSize || 12)) return { mindmap };
+      return { mindmap: { ...mindmap, fontSize, updatedAt: new Date().toISOString() } };
     }
     case "rename-map": {
       const title = action.title.trim();

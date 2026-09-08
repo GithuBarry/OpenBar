@@ -21,6 +21,7 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: "/:path*", headers: [
       { key: "Origin-Agent-Cluster", value: "?1" },
+      { key: "Link", value: '</agents>; rel="help"; title="MCP and WebMCP setup", </llms.txt>; rel="alternate"; type="text/plain"; title="OpenBar agent instructions"' },
       { key: "Permissions-Policy", value: agentPermissionsPolicy() },
     ] }];
   },
@@ -58,7 +59,7 @@ const nextConfig: NextConfig = {
   experimental: {
     authInterrupts: true,
     serverActions: {
-      bodySizeLimit: "8mb",
+      bodySizeLimit: "10mb",
     },
   },
   transpilePackages: [

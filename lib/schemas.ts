@@ -1,11 +1,13 @@
 import { z } from "zod";
 
 import { safeUrl } from "@/lib/safe-url";
+import { captionWithinLimit } from "@/lib/mindmap/card-content";
 
 const isoDateTime = z.string().datetime({ offset: true });
 
 export const artifactRefSchema = z
   .object({
+    imageWidth: z.number().int().min(25).max(100).optional(),
     kind: z.enum([
       "project",
       "paper-section",
@@ -83,9 +85,11 @@ export const mindmapNodeSchema = z
     id: z.string(),
     title: z.string().optional(),
     text: z.string().default(""),
+    caption: z.string().max(20_000).refine(captionWithinLimit, "Card notes must be 500 words or fewer.").optional(),
     todoId: z.string().optional(),
     parentId: z.string().nullable(),
     shape: z.enum(["root", "branch", "leaf", "note", "callout"]).optional(),
+    agentDraft: z.boolean().optional(),
     collapsed: z.boolean().optional(),
     metadata: z.record(z.unknown()).optional(),
     contentFormat: z.enum(["plain", "markdown", "tex"]).optional(),
@@ -94,7 +98,7 @@ export const mindmapNodeSchema = z
     tags: z.array(z.string()).optional(),
     progress: z.number().int().min(0).max(6).optional(),
     priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
-    refs: z.array(artifactRefSchema).optional(),
+    refs: z.array(artifactRefSchema).refine(refs => refs.filter(ref => ref.kind === "figure").length <= 1, "Each card holds one image. Add child cards for additional images.").optional(),
     order: z.number().optional(),
     createdAt: z.string().optional(),
     updatedAt: z.string().optional(),

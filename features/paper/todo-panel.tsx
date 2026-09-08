@@ -90,7 +90,7 @@ export function TodoPanel({
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search TODOs"
             aria-label="Search TODOs"
-            className="input h-7 w-full pl-7 pr-2 text-xs"
+            className="input todo-search-input h-7 w-full text-xs"
           />
         </label>
         <div className="flex rounded-md border border-line p-0.5 text-[11px]">

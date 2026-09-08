@@ -320,6 +320,13 @@ export function analyzePaper(source: string): PaperAnalysis {
   }
 
   attachCommentMatches(source, comments);
+  // AST macro positions can end before the optional attributes and body.
+  // Source edits need the complete lexical macro range.
+  const todoMatches = new Map(findMacroMatches(source, ["obtodo"]).map(match => [match.index, match]));
+  for (const todo of todos) {
+    const match = todoMatches.get(todo.start);
+    if (match) todo.end = match.index + match.length;
+  }
 
   const outline: PaperHeading[] = [];
   for (const node of liveMacros) {

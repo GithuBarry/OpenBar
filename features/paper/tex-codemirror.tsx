@@ -450,6 +450,7 @@ export type TexDocChange = { from: number; to: number; insert: string };
 
 export type TexCodeMirrorProps = {
   value: string;
+  readOnly?: boolean;
   onChange?: (value: string) => void;
   onDocChanges?: (changes: TexDocChange[], length: number) => void;
   onScroll?: () => void;
@@ -489,6 +490,7 @@ function seedKeyOf(counts?: Map<string, number>): string {
 export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>(
   function TexCodeMirror({
     value,
+    readOnly = false,
     onChange,
     onDocChanges,
     onScroll,
@@ -509,6 +511,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
     const seedCompRef = useRef(new Compartment());
     const lineCompRef = useRef(new Compartment());
     const languageCompRef = useRef(new Compartment());
+    const readOnlyCompRef = useRef(new Compartment());
     const onChangeRef = useRef(onChange);
     const onDocChangesRef = useRef(onDocChanges);
     const onScrollRef = useRef(onScroll);
@@ -534,7 +537,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
 
     const applyLocal = (from: number, to: number, insert: string): boolean => {
       const view = viewRef.current;
-      if (!view) return false;
+      if (!view || view.state.readOnly) return false;
       const len = view.state.doc.length;
       const start = clampPos(from, len);
       const end = clampPos(to, len);
@@ -574,16 +577,16 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
       },
       surround: (open, close, ph) => {
         const view = viewRef.current;
-        if (!view) return;
+        if (!view || view.state.readOnly) return;
         surroundSelection(view, open, close, ph);
       },
       format: (syntax, kind) => {
         const view = viewRef.current;
-        return view ? applyInlineFormat(view, syntax, kind) : false;
+        return view && !view.state.readOnly ? applyInlineFormat(view, syntax, kind) : false;
       },
       insertAtCursor: (text, asBlock = false) => {
         const view = viewRef.current;
-        if (!view) return;
+        if (!view || view.state.readOnly) return;
         insertAtCursor(view, text, asBlock);
       },
       getLiveSource: () => viewRef.current?.state.doc.toString() ?? valueRef.current,
@@ -611,6 +614,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
         state: EditorState.create({
           doc: valueRef.current,
           extensions: [
+            readOnlyCompRef.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
             languageCompRef.current.of(texHighlighting ? StreamLanguage.define(stex) : []),
             syntaxHighlighting(obHighlightStyle),
             history(),
@@ -716,6 +720,10 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
         viewRef.current = null;
       };
     }, []);
+
+    useEffect(() => {
+      viewRef.current?.dispatch({ effects: readOnlyCompRef.current.reconfigure([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]) });
+    }, [readOnly]);
 
     const focusContextKey = focusContext
       ? `${focusContext.from}:${focusContext.to}:${focusContext.beforeLines}:${focusContext.afterLines}`

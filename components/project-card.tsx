@@ -316,7 +316,7 @@ export function ProjectCard({
                     aria-label={`Link ${index + 1} URL`}
                     className="input text-sm"
                   />
-                  <ChoiceButtons label={`Link ${index + 1} kind`} value={link.kind} options={[{value:"web",label:"Web"},{value:"repo",label:"Repo"},{value:"arxiv",label:"arXiv"},{value:"overleaf",label:"Overleaf"},{value:"latex",label:"LaTeX"}]} onChange={(value) => setLinks((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, kind: value as ProjectLink["kind"] } : item))} />
+                  <ChoiceButtons label={`Link ${index + 1} kind`} value={link.kind} options={[{value:"web",label:"Web"},{value:"repo",label:"Repo"},{value:"arxiv",label:"arXiv"},{value:"overleaf",label:"Git"},{value:"latex",label:"LaTeX"}]} onChange={(value) => setLinks((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, kind: value as ProjectLink["kind"] } : item))} />
                   <button
                     type="button"
                     onClick={() => setLinks((current) => current.filter((_, itemIndex) => itemIndex !== index))}

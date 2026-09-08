@@ -37,7 +37,7 @@ export type OperationDiagnostic = {
   filePath?: string;
 };
 
-/** Explicit Overleaf visibility for a locally successful mutation. */
+/** Explicit Git visibility for a locally successful mutation. */
 export type RemoteSyncOutcome = {
   status: "pushed" | "pending" | "failed" | "unconfigured";
   message: string;

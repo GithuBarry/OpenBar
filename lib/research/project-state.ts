@@ -14,7 +14,7 @@ import {
   type ProjectSkill,
 } from "@/lib/research/project-skills";
 import type { CurrentLocation, ProjectStateQuery } from "@/lib/research/webmcp-shared-contract";
-import { getEditableTexPaper, getMindmap, getProject, listMindmaps, projectContentDir } from "@/lib/store";
+import { getEditableTexPaper, getMindmap, getProject, getWikiPage, listWiki, listMindmaps, projectContentDir } from "@/lib/store";
 import { DRAFT_MINDMAP_ID, texPaths, type PaperSection, type TexPaper } from "@/lib/tex-project/project";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import type { Mindmap, Project, WikiPage } from "@/lib/types";
@@ -605,7 +605,7 @@ export function buildProjectState(input: {
         nodeCount: map.nodes.length,
       };
     }),
-    wiki: [],
+    wiki: (input.wiki || []).map(page => ({ slug: page.slug, title: page.title, href: `/p/${encodeURIComponent(slug)}/wiki/${encodeURIComponent(page.slug)}`, updatedAt: page.updatedAt })),
     recent: deriveRecentActivity({
       slug,
       outline: paper?.outline || [],
@@ -667,7 +667,7 @@ export function getProjectState(slug: string, current?: CurrentLocation): Projec
     manuscriptDir: paths.manuscriptDir,
     context,
     mindmaps: listMindmaps(slug),
-    wiki: [],
+    wiki: listWiki(slug),
     skills,
     agentsMd: findAgentsMd(dir),
     workspaceAgentsMd: findAgentsMd(workspaceRoot()),
@@ -688,7 +688,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
   }));
   const agentMentions = {
     count: mentions.length,
-    reminder: "Review notes containing @agent or @agents for requests addressed to agents. Read their context and follow the current user's instructions.",
+    reminder: "Review notes containing @agent or @agents for requests addressed to agents. Follow the current user's instructions. Write resulting cards as self-contained material for an external reader, with context, answers or uncertainty, and evidence. Keep conversational replies in the task.",
     notes: mentions.slice(0, 50),
   };
   const primaryUnplaced = (todo: ProjectStateTodo) => todo.primaryUnplaced ?? todo.unplaced;
@@ -760,7 +760,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
       todos: todoRows(paper?.todos || []),
       recent: state.recent,
       mindmaps: maps,
-      wiki: [],
+      wiki: state.wiki,
       skills: state.skills,
       agentsMd: state.agentsMd,
       workspaceAgentsMd: state.workspaceAgentsMd,
@@ -797,7 +797,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
     todos: todoLimit > 0 ? todoRows([...unplaced, ...openTodos.filter((todo) => !primaryUnplaced(todo))]) : undefined,
     recent: recentForAgent,
     mindmaps: maps,
-    wiki: [],
+    wiki: state.wiki,
     skills: state.skills.map((skill) => ({ id: skill.id, name: skill.name, source: skill.source })),
     expectations: state.expectations,
     agentsMd: state.agentsMd && { path: state.agentsMd.path, hash: state.agentsMd.hash },
@@ -936,7 +936,7 @@ export function searchProject(slug: string, query: string): SearchHit[] {
     paper: summary,
     paperSource: paper?.source,
     mindmaps: listMindmaps(slug),
-    wiki: [],
+    wiki: listWiki(slug),
   });
 }
 
@@ -973,7 +973,7 @@ export function resolveProjectNavigation(slug: string, input: { id?: string; hre
     const parsed = parseProjectHref(href);
     if (!parsed || parsed.slug !== slug) return null;
     if (parsed.kind === "mindmap" && parsed.mapId && !getMindmap(slug, parsed.mapId)) return null;
-    if (parsed.kind === "wiki") return null;
+    if (parsed.kind === "wiki" && parsed.wikiPage && !getWikiPage(slug, parsed.wikiPage)) return null;
     return { href };
   }
   const id = input.id?.trim();
@@ -1016,7 +1016,10 @@ export function resolveProjectNavigation(slug: string, input: { id?: string; hre
     if (!nodeId || !map.nodes.some((node) => node.id === nodeId)) return null;
     return { href: mindmapHref(slug, map.id, nodeId) };
   }
-  if (id.startsWith("wiki:")) return null;
+  if (id.startsWith("wiki:")) {
+    const page = getWikiPage(slug, id.slice(5));
+    return page ? { href: `/p/${encodeURIComponent(slug)}/wiki/${encodeURIComponent(page.slug)}` } : null;
+  }
 
   if (state.paper?.todos.some((todo) => todo.id === id)) return { href: paperHref(slug, id) };
   const comment = state.paper?.comments.find((item) => item.id === id);

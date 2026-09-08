@@ -9,7 +9,7 @@ export async function syncProjectCommand(projectDir: string, input: unknown): Pr
     if (Object.keys(args).some((key) => !["action", "refresh", "token", "resolutions"].includes(key))) return failResult("invalid_arguments", "Unknown synchronization argument.", false);
     if (args.refresh !== undefined && typeof args.refresh !== "boolean") return failResult("invalid_arguments", "refresh must be a boolean.", false);
     if (args.action === "inspect") return okResult(await getOverleafSyncDetails(projectDir, args.refresh === true));
-    assertAdministrativeWriteAllowed("Overleaf synchronization review");
+    assertAdministrativeWriteAllowed("Git synchronization review");
     if (args.action === "review_pull") {
       const result = await prepareOverleafPull(projectDir);
       return result.ok ? okResult({ ...result.review, scope: "Saved repository files", resolutionScope: "Each choice selects an entire file", nextStep: "Resolve every listed conflict. apply_pull requires this token and one resolution per path. Untracked files are preserved. The main checkout remains at localCommit throughout review." }) : failResult("sync_review_failed", result.message, true);
