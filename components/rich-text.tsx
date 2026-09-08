@@ -6,13 +6,37 @@ import ReactMarkdown from "react-markdown";
 import { texClosingBrace } from "@/lib/mindmap/text-formatting";
 import { safeUrl } from "@/lib/safe-url";
 
+function highlightedMentions(text: string): ReactNode {
+  return text.split(/(?<![\w@])(@agents?)(?![\w])/gi).map((part, index) =>
+    /^@agents?$/i.test(part) ? <mark key={index} className={styles.agentMention}>{part}</mark> : part,
+  );
+}
+
+type MarkdownNode = { type: string; value?: string; children?: MarkdownNode[]; data?: unknown };
+function remarkAgentMentions() {
+  return (tree: MarkdownNode) => {
+    const visit = (node: MarkdownNode) => {
+      if (!node.children || node.type === "link" || node.type === "linkReference") return;
+      node.children = node.children.flatMap((child): MarkdownNode[] => {
+        if (child.type !== "text" || !child.value) { visit(child); return [child]; }
+        return child.value.split(/(?<![\w@])(@agents?)(?![\w])/gi).filter(Boolean).map((part) =>
+          /^@agents?$/i.test(part)
+            ? { type: "agentMention", data: { hName: "mark", hProperties: { className: styles.agentMention } }, children: [{ type: "text", value: part }] }
+            : { type: "text", value: part },
+        );
+      });
+    };
+    visit(tree);
+  };
+}
+
 function linkedPlainText(text: string, keyPrefix: string): ReactNode[] {
   const nodes: ReactNode[] = [];
   const pattern = /https?:\/\/[^\s<>]+/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text))) {
-    if (match.index > cursor) nodes.push(text.slice(cursor, match.index));
+    if (match.index > cursor) nodes.push(highlightedMentions(text.slice(cursor, match.index)));
     const raw = match[0];
     const trailing = raw.match(/[.,;:!?\]\)}]+$/)?.[0] || "";
     const href = raw.slice(0, raw.length - trailing.length);
@@ -23,7 +47,7 @@ function linkedPlainText(text: string, keyPrefix: string): ReactNode[] {
     if (trailing) nodes.push(trailing);
     cursor = match.index + raw.length;
   }
-  if (cursor < text.length) nodes.push(text.slice(cursor));
+  if (cursor < text.length) nodes.push(highlightedMentions(text.slice(cursor)));
   return nodes;
 }
 
@@ -31,7 +55,7 @@ export function RichText({ text, format = "plain", tableLayout = "wide" }: { tex
   if (format === "plain") return <>{linkedPlainText(text, "text")}{text.endsWith("\n") && <span aria-hidden="true">{"\u200b"}</span>}</>;
   if (format === "markdown") return (
     <div className={`mindmap-rich-text ${styles.markdown}`}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkAgentMentions]} components={{
         table: ({ children }) => <div
           className={`${styles.tableScroll} ${tableLayout === "scroll" ? `${styles.tableCompact} nowheel nodrag nopan` : ""}`}
           tabIndex={0}

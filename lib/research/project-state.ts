@@ -680,6 +680,17 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
   const detail = query.detail === "full" ? "full" : "summary";
   const todoLimit = query.todoLimit ?? (detail === "full" ? Infinity : 8);
   const paper = state.paper;
+  const mentions = listMindmaps(state.project.slug).flatMap((map) => map.nodes.flatMap((node) => {
+    const todo = node.todoId ? paper?.todos.find((item) => item.id === node.todoId) : undefined;
+    const text = todo ? `${todo.title || ""}\n${todo.text}` : `${node.title || ""}\n${node.text}`;
+    if (!/(?<![\w@])@agents?(?![\w])/i.test(text)) return [];
+    return [{ mapId: map.id, nodeId: node.id, text: text.trim().slice(0, 1200), href: mindmapHref(state.project.slug, map.id, node.id) }];
+  }));
+  const agentMentions = {
+    count: mentions.length,
+    reminder: "Review notes containing @agent or @agents for requests addressed to agents. Read their context and follow the current user's instructions.",
+    notes: mentions.slice(0, 50),
+  };
   const primaryUnplaced = (todo: ProjectStateTodo) => todo.primaryUnplaced ?? todo.unplaced;
   const openTodos = paper?.todos.filter((todo) => !todo.completed) || [];
   const unplaced = paper?.todos.filter(primaryUnplaced) || [];
@@ -739,6 +750,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
     return {
       detail,
       agentInstructions: AGENT_GUIDANCE,
+      agentMentions,
       project: state.project,
       current: state.current,
       paper: paper && {
@@ -760,6 +772,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
   return {
     detail,
     agentInstructions: AGENT_GUIDANCE,
+    agentMentions,
     project: state.project,
     current: state.current,
     paper: paper && {
