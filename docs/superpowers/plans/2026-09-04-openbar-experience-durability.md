@@ -1,5 +1,14 @@
 # OpenBar experience and durability implementation plan
 
+> **Superseded as the current experience record.** Durability work from this
+> plan (locks, journals, local vs remote outcomes) is in the tree. For the
+> redesign, removals, and verification status, use
+> [`output/openbar-experience-review/review.md`](../../../output/openbar-experience-review/review.md).
+
+---
+
+# OpenBar experience and durability implementation plan (historical)
+
 > **Verification constraint:** The user approved no new durable test files.
 > Use one temporary validation file outside the repository for focused
 > behavior checks, remove it after verification, and preserve existing test
@@ -30,8 +39,8 @@ and project state from those shared contracts.
   generated evidence until the cleanup inventory is complete.
 - Use `apply_patch` for edits. Do not reset, clean, or broadly delete.
 - Keep TeX as the source of TODO text/status and paper comments/markers.
-- Resolve paper destinations by stable section ID and expected source hash;
-  never by section title.
+- Resolve explicit paper destinations by stable section ID and expected source
+  hash. An omitted destination uses the manuscript root insertion point.
 - A failed remote push leaves the local save intact and retryable.
 - Use one temporary validation file outside the repository at a time for
   durable observable behavior; remove it after verification and leave no new
@@ -187,8 +196,8 @@ the last result in project state.
 ### Step 4: Update contracts and verify
 
 Make UI and WebMCP conversion calls use the central action. Add expected paper
-source hash, map disk hash, stable section ID, and request ID to mutation
-schemas. Add a separate keep-children node removal operation and explicit
+source hash, map disk hash, optional stable section ID, and request ID to
+mutation schemas. Add a separate keep-children node removal operation and explicit
 branch removal. Run focused tests, full tests, typecheck, domain checks, and
 WebMCP evals.
 

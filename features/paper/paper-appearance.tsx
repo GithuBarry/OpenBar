@@ -3,18 +3,20 @@
 import { RotateCcw, SlidersHorizontal } from "lucide-react";
 import { useRef, useState } from "react";
 
+import { ChoiceButtons } from "@/components/choice-buttons";
 import { AnchoredPop } from "@/components/pop";
 
 export type PaperReaderFont = "serif" | "sans";
 export type PaperEditorWidth = "compact" | "wide" | "full";
 
-const FONT_SCALE_OPTIONS = [
-  { value: 0.8, label: "80%" },
-  { value: 0.9, label: "90%" },
-  { value: 1, label: "100%" },
-  { value: 1.1, label: "110%" },
-  { value: 1.2, label: "120%" },
-] as const;
+function TextSizeSlider({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
+  const percent = Math.round(value * 100);
+  return <label className="flex min-w-0 flex-1 items-center gap-3">
+    <input type="range" min={80} max={150} step={1} value={percent} aria-label={label} aria-valuetext={`${percent}%`}
+      className="min-w-0 flex-1 cursor-pointer accent-accent" onChange={(event) => onChange(Number(event.target.value) / 100)} />
+    <output className="w-10 shrink-0 text-right text-[11px] tabular-nums">{percent}%</output>
+  </label>;
+}
 
 const LINE_HEIGHT_OPTIONS = [
   { value: 1.45, label: "Compact" },
@@ -89,63 +91,28 @@ export function PaperAppearance({
           </button>
         </div>
         <p className="ob-paper-appearance-section">Reader</p>
-        <label className="ob-paper-appearance-row">
+        <div className="ob-paper-appearance-row">
           <span>Text size</span>
-          <select
-            value={String(readerFontScale)}
-            aria-label="Reader text size"
-            onChange={(event) => onReaderFontScaleChange(Number(event.target.value))}
-          >
-            {FONT_SCALE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <label className="ob-paper-appearance-row">
+          <TextSizeSlider label="Reader text size" value={readerFontScale / 0.9} onChange={(value) => onReaderFontScaleChange(Number((value * 0.9).toFixed(3)))} />
+        </div>
+        <div className="ob-paper-appearance-row">
           <span>Line spacing</span>
-          <select
-            value={String(lineHeight)}
-            aria-label="Reader line spacing"
-            onChange={(event) => onLineHeightChange(Number(event.target.value))}
-          >
-            {LINE_HEIGHT_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <label className="ob-paper-appearance-row">
+          <ChoiceButtons label="Reader line spacing" value={lineHeight} options={LINE_HEIGHT_OPTIONS} onChange={onLineHeightChange} />
+        </div>
+        <div className="ob-paper-appearance-row">
           <span>Typeface</span>
-          <select value={font} aria-label="Reader typeface" onChange={(event) => onFontChange(event.target.value as PaperReaderFont)}>
-            <option value="serif">Serif</option>
-            <option value="sans">Sans</option>
-          </select>
-        </label>
+          <ChoiceButtons label="Reader typeface" value={font} options={[{value: "serif" as const, label: "Serif"}, {value: "sans" as const, label: "Sans"}]} onChange={onFontChange} />
+        </div>
         <p className="ob-paper-appearance-section">Editor</p>
-        <label className="ob-paper-appearance-row">
+        <div className="ob-paper-appearance-row">
           <span>Text size</span>
-          <select
-            value={String(editorFontScale)}
-            aria-label="Editor text size"
-            onChange={(event) => onEditorFontScaleChange(Number(event.target.value))}
-          >
-            {FONT_SCALE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
+          <TextSizeSlider label="Editor text size" value={editorFontScale} onChange={onEditorFontScaleChange} />
+        </div>
         <p className="ob-paper-appearance-section">Layout</p>
-        <label className="ob-paper-appearance-row">
+        <div className="ob-paper-appearance-row">
           <span>Workspace width</span>
-          <select
-            value={width}
-            aria-label="Workspace width"
-            onChange={(event) => onWidthChange(event.target.value as PaperEditorWidth)}
-          >
-            {WIDTH_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
+          <ChoiceButtons label="Workspace width" value={width} options={WIDTH_OPTIONS} onChange={onWidthChange} />
+        </div>
         <p className="ob-paper-appearance-help">Saved for this project on this device.</p>
       </AnchoredPop>
     </div>

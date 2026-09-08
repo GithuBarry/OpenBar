@@ -232,6 +232,12 @@ async function executeDocumentWebMcpTool(
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const code = error && typeof error === "object" && "code" in error
+      ? (error as { code?: unknown }).code
+      : undefined;
+    if (code === "capability_unavailable") {
+      return failResult("capability_unavailable", message, { retryable: false });
+    }
     if (/hash|conflict|stale/i.test(message)) {
       return failResult("stale_disk_state", message, { retryable: true });
     }

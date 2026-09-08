@@ -1,4 +1,5 @@
 import { byOrder, indexMindmap, type MindmapIndex } from "@/lib/mindmap-index";
+import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import type { Mindmap, MindmapNode } from "@/lib/types";
 
 export { byOrder, indexMindmap };
@@ -9,6 +10,7 @@ export const HISTORY_LIMIT = 50;
 export type MindmapSession = {
   mindmap: Mindmap;
   selectedId: string;
+  selectedIds: string[];
   past: Mindmap[];
   future: Mindmap[];
   revision: number;
@@ -17,8 +19,8 @@ export type MindmapSession = {
 /** Semantic node fields that the inspector and agent tools may edit. */
 export type MindmapNodePatch = Pick<
   MindmapNode,
-  "title" | "shape" | "metadata" | "contentFormat" | "color" | "refs" | "tags" | "progress"
-> & { text?: string };
+  "title" | "shape" | "metadata" | "contentFormat" | "tableLayout" | "color" | "refs" | "tags" | "progress"
+> & { text?: string; priority?: MindmapNode["priority"] };
 
 function semanticPatch(patch: MindmapNodePatch): MindmapNodePatch {
   const next: MindmapNodePatch = {};
@@ -27,10 +29,12 @@ function semanticPatch(patch: MindmapNodePatch): MindmapNodePatch {
   if (Object.prototype.hasOwnProperty.call(patch, "shape")) next.shape = patch.shape;
   if (Object.prototype.hasOwnProperty.call(patch, "metadata")) next.metadata = patch.metadata;
   if (Object.prototype.hasOwnProperty.call(patch, "contentFormat")) next.contentFormat = patch.contentFormat;
+  if (Object.prototype.hasOwnProperty.call(patch, "tableLayout")) next.tableLayout = patch.tableLayout;
   if (Object.prototype.hasOwnProperty.call(patch, "color")) next.color = patch.color;
   if (Object.prototype.hasOwnProperty.call(patch, "refs")) next.refs = patch.refs;
   if (Object.prototype.hasOwnProperty.call(patch, "tags")) next.tags = patch.tags;
   if (Object.prototype.hasOwnProperty.call(patch, "progress")) next.progress = patch.progress;
+  if (Object.prototype.hasOwnProperty.call(patch, "priority")) next.priority = patch.priority;
   return next;
 }
 
@@ -40,18 +44,22 @@ function patchTouchesActivity(patch: MindmapNodePatch): boolean {
     || Object.prototype.hasOwnProperty.call(patch, "progress")
     || Object.prototype.hasOwnProperty.call(patch, "tags")
     || Object.prototype.hasOwnProperty.call(patch, "metadata")
-    || Object.prototype.hasOwnProperty.call(patch, "refs");
+    || Object.prototype.hasOwnProperty.call(patch, "refs")
+    || Object.prototype.hasOwnProperty.call(patch, "priority")
+    || Object.prototype.hasOwnProperty.call(patch, "tableLayout");
 }
 
 export type MindmapTreeAction =
   | { type: "add-node"; parentId: string; id: string; title?: string; text?: string; todoId?: string }
   | { type: "move-sibling"; id: string; direction: -1 | 1 }
   | { type: "edit-text"; id: string; text: string }
-  | { type: "edit-card"; id: string; title: string; text: string }
+  | { type: "edit-card"; id: string; title: string; text: string; contentFormat?: MindmapNode["contentFormat"] }
   | { type: "collapse"; id: string }
   | { type: "delete-subtree"; id: string }
   | { type: "delete-node-keep-children"; id: string }
   | { type: "patch-node"; id: string; patch: MindmapNodePatch }
+  | { type: "patch-nodes"; ids: string[]; patch: MindmapNodePatch }
+  | { type: "update-tags"; ids: string[]; tag: string; operation: "add" | "remove" }
   | { type: "bind-todo"; id: string; todoId: string }
   | { type: "unbind-todo"; id: string; title?: string; text: string }
   | { type: "reparent"; id: string; parentId: string; beforeId?: string; afterId?: string }
@@ -63,7 +71,8 @@ export type MindmapSessionAction =
   | { type: "hydrate"; mindmap: Mindmap }
   | { type: "ack-save"; diskHash?: string; persistedRevision?: number; updatedAt?: string }
   | { type: "rebase-disk-hash"; diskHash?: string }
-  | { type: "select"; id: string }
+  | { type: "select"; id: string; additive?: boolean }
+  | { type: "clear-selection" }
   | { type: "undo" }
   | { type: "redo" }
   | { type: "record-history"; before: Mindmap }
@@ -142,6 +151,7 @@ export function createMindmapSession(mindmap: Mindmap, selectedId?: string): Min
   return {
     mindmap: cloned,
     selectedId: initialSelected,
+    selectedIds: [initialSelected],
     past: [],
     future: [],
     revision: Math.max(0, cloned.revision ?? 0),
@@ -224,9 +234,9 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
       if (node?.todoId) return { mindmap };
       return {
         mindmap: updateNode(mindmap, index, action.id, (item) => (
-          item.title === action.title && item.text === action.text
+          item.title === action.title && item.text === action.text && (!action.contentFormat || item.contentFormat === action.contentFormat)
             ? item
-            : { ...item, title: action.title, text: action.text, updatedAt: new Date().toISOString() }
+            : { ...item, title: action.title, text: action.text, ...(action.contentFormat ? { contentFormat: action.contentFormat } : {}), updatedAt: new Date().toISOString() }
         )),
       };
     }
@@ -315,6 +325,48 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
         })),
       };
     }
+    case "patch-nodes": {
+      const ids = new Set(action.ids.filter((id) => index.nodeById.has(id)));
+      const patch = semanticPatch(action.patch);
+      if (ids.size === 0 || Object.keys(patch).length === 0) return { mindmap };
+      const updatedAt = new Date().toISOString();
+      let changed = false;
+      const nodes = mindmap.nodes.map((node) => {
+        if (!ids.has(node.id)) return node;
+        const nodePatch = { ...patch };
+        if (node.todoId) {
+          delete nodePatch.title;
+          delete nodePatch.text;
+        }
+        if (Object.keys(nodePatch).length === 0) return node;
+        changed = true;
+        return {
+          ...node,
+          ...nodePatch,
+          ...(patchTouchesActivity(nodePatch) ? { updatedAt } : {}),
+        };
+      });
+      return { mindmap: changed ? { ...mindmap, nodes } : mindmap };
+    }
+    case "update-tags": {
+      const ids = new Set(action.ids.filter((id) => index.nodeById.has(id)));
+      const tag = normalizeMindmapLabels([action.tag])[0];
+      if (ids.size === 0 || !tag) return { mindmap };
+      const key = tag.toLocaleLowerCase();
+      const updatedAt = new Date().toISOString();
+      let changed = false;
+      const nodes = mindmap.nodes.map((node) => {
+        if (!ids.has(node.id)) return node;
+        const current = node.tags || [];
+        const tags = action.operation === "add"
+          ? normalizeMindmapLabels([...current, tag])
+          : current.filter((item) => item.toLocaleLowerCase() !== key);
+        if (tags.length === current.length && tags.every((item, position) => item === current[position])) return node;
+        changed = true;
+        return { ...node, tags, updatedAt };
+      });
+      return { mindmap: changed ? { ...mindmap, nodes } : mindmap };
+    }
     case "reparent": {
       const node = index.nodeById.get(action.id);
       const parent = index.nodeById.get(action.parentId);
@@ -356,12 +408,31 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
 export function mindmapReducer(state: MindmapSession, action: MindmapSessionAction): MindmapSession {
   switch (action.type) {
     case "select": {
-      if (action.id === state.selectedId) return state;
       if (!indexMindmap(state.mindmap).nodeById.has(action.id)) return state;
-      return { ...state, selectedId: action.id };
+      if (!action.additive) {
+        if (action.id === state.selectedId && state.selectedIds.length === 1) return state;
+        return { ...state, selectedId: action.id, selectedIds: [action.id] };
+      }
+      if (state.selectedIds.includes(action.id)) {
+        if (state.selectedIds.length === 1) return state;
+        const selectedIds = state.selectedIds.filter((id) => id !== action.id);
+        return {
+          ...state,
+          selectedId: state.selectedId === action.id ? selectedIds.at(-1)! : state.selectedId,
+          selectedIds,
+        };
+      }
+      return { ...state, selectedId: action.id, selectedIds: [...state.selectedIds, action.id] };
     }
-    case "hydrate":
-      return { ...createMindmapSession(action.mindmap, retainSelection(action.mindmap, state.selectedId)) };
+    case "clear-selection":
+      return state.selectedIds.length === 0
+        ? state
+        : { ...state, selectedId: state.mindmap.rootId, selectedIds: [] };
+    case "hydrate": {
+      const selectedIds = retainSelections(action.mindmap, state.selectedIds, state.selectedId);
+      const next = createMindmapSession(action.mindmap, selectedIds.includes(state.selectedId) ? state.selectedId : selectedIds.at(-1));
+      return { ...next, selectedIds };
+    }
     case "ack-save": {
       const mindmap = {
         ...state.mindmap,
@@ -383,6 +454,7 @@ export function mindmapReducer(state: MindmapSession, action: MindmapSessionActi
         ...state,
         mindmap: restored,
         selectedId: retainSelection(restored, state.selectedId),
+        selectedIds: retainSelections(restored, state.selectedIds, state.selectedId),
         revision: state.revision + 1,
       };
     }
@@ -400,6 +472,7 @@ export function mindmapReducer(state: MindmapSession, action: MindmapSessionActi
       return {
         mindmap: previous,
         selectedId: retainSelection(previous, state.selectedId),
+        selectedIds: retainSelections(previous, state.selectedIds, state.selectedId),
         past: state.past.slice(0, -1),
         future: [cloneMindmap(state.mindmap), ...state.future].slice(0, HISTORY_LIMIT),
         revision: state.revision + 1,
@@ -411,6 +484,7 @@ export function mindmapReducer(state: MindmapSession, action: MindmapSessionActi
       return {
         mindmap: next,
         selectedId: retainSelection(next, state.selectedId),
+        selectedIds: retainSelections(next, state.selectedIds, state.selectedId),
         past: pushHistory(state.past, state.mindmap),
         future: state.future.slice(1),
         revision: state.revision + 1,
@@ -448,17 +522,31 @@ function retainSelection(mindmap: Mindmap, selectedId: string): string {
   return indexMindmap(mindmap).nodeById.has(selectedId) ? selectedId : mindmap.rootId;
 }
 
+function retainSelections(mindmap: Mindmap, selectedIds: string[], selectedId: string): string[] {
+  if (selectedIds.length === 0) return [];
+  const nodeById = indexMindmap(mindmap).nodeById;
+  const retained = selectedIds.filter((id, index) => nodeById.has(id) && selectedIds.indexOf(id) === index);
+  if (retained.length) return retained;
+  return [retainSelection(mindmap, selectedId)];
+}
+
+function sameSelection(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
 function pushHistory(past: Mindmap[], snapshot: Mindmap): Mindmap[] {
   return [...past.slice(-(HISTORY_LIMIT - 1)), cloneMindmap(snapshot)];
 }
 
 function withHistory(state: MindmapSession, next: Mindmap, selectedId?: string): MindmapSession {
   const nextSelected = selectedId ?? state.selectedId;
-  if (next === state.mindmap && nextSelected === state.selectedId) return state;
-  if (next === state.mindmap) return { ...state, selectedId: nextSelected };
+  const nextSelectedIds = selectedId ? [selectedId] : retainSelections(next, state.selectedIds, nextSelected);
+  if (next === state.mindmap && nextSelected === state.selectedId && sameSelection(nextSelectedIds, state.selectedIds)) return state;
+  if (next === state.mindmap) return { ...state, selectedId: nextSelected, selectedIds: nextSelectedIds };
   return {
     mindmap: next,
     selectedId: nextSelected,
+    selectedIds: nextSelectedIds,
     past: pushHistory(state.past, state.mindmap),
     future: [],
     revision: state.revision + 1,
@@ -467,7 +555,8 @@ function withHistory(state: MindmapSession, next: Mindmap, selectedId?: string):
 
 function withoutHistory(state: MindmapSession, next: Mindmap, selectedId?: string): MindmapSession {
   const nextSelected = selectedId ?? state.selectedId;
-  if (next === state.mindmap && nextSelected === state.selectedId) return state;
-  if (next === state.mindmap) return { ...state, selectedId: nextSelected };
-  return { ...state, mindmap: next, selectedId: nextSelected, revision: state.revision + 1 };
+  const nextSelectedIds = selectedId ? [selectedId] : retainSelections(next, state.selectedIds, nextSelected);
+  if (next === state.mindmap && nextSelected === state.selectedId && sameSelection(nextSelectedIds, state.selectedIds)) return state;
+  if (next === state.mindmap) return { ...state, selectedId: nextSelected, selectedIds: nextSelectedIds };
+  return { ...state, mindmap: next, selectedId: nextSelected, selectedIds: nextSelectedIds, revision: state.revision + 1 };
 }

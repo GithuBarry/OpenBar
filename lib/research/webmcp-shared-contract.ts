@@ -39,12 +39,16 @@ export type ProjectMetadataPatch = {
   color?: string;
   icon?: string;
   label?: string;
+  engine?: "pdflatex" | "xelatex" | "lualatex";
+  mainFile?: string;
+  texliveVersion?: string;
   links?: ProjectLink[];
   collaborators?: string[];
   archivedAt?: string | null;
 };
 
 export type SharedWebMcpActions = {
+  syncProject?: (project: string, args: unknown) => Promise<OperationResult<unknown>>;
   getProjectState: (project: string, current?: CurrentLocation, query?: ProjectStateQuery) => Promise<unknown>;
   searchProject: (project: string, query: string) => Promise<unknown>;
   resolveNavigation: (project: string, input: { id?: string; href?: string }) => Promise<{ href: string } | null>;
@@ -104,10 +108,11 @@ const PUBLIC_DEMO_PROJECT_TOOLS = [
 ] as const satisfies readonly SharedToolName[];
 
 const TOOL_META: Record<SharedToolName, { title: string; description: string }> = {
+  sync_project: { title: "Review and resolve Overleaf synchronization", description: "Inspect Git status, exact commit IDs and recovery refs. review_pull prepares an isolated merge and returns base/local/Overleaf contents for conflicting files. Resolve whole files, then apply_pull with its token and resolutions. Save live editor drafts before reviewing. Local edits arriving during review require a fresh review. cancel_pull closes the review." },
   get_project_state: {
     title: "Read project state",
     description:
-      "Read this first when entering an OpenBar project or after losing context. Default detail=summary returns location, paper title, section TODO counts, Primary Unplaced count, recent activity, mindmaps (id, title, primary, nodeCount, href), shared expectations, skills, and AGENTS.md path/hash. TODOs include stable source location fields when available. Pass detail=full for the full expectations block, AGENTS bodies, and every TODO. Read relevant paper context before editing, preserve unfinished scientific structures and Primary coverage, use seven independent progress states, and distinguish local save, remote sync, compile success, and research completion. Then search_project or navigate_project for detail. Does not modify files.",
+      "Read this first when entering an OpenBar project or after losing context. Default detail=summary returns location, paper title, section TODO counts, Primary Unplaced count, recent activity, mindmaps (id, title, primary, nodeCount, href), shared expectations, skills, and AGENTS.md path/hash. TODOs include stable source location fields when available. Pass detail=full for the full expectations block, AGENTS bodies, and every TODO. Read relevant paper context before editing, preserve unfinished scientific structures and Primary coverage, use seven independent progress states, and distinguish local save, remote sync, compile success, and research completion. The sync field includes Git status, commit IDs, changed paths and recovery refs. Use sync_project to review and resolve Overleaf conflicts. Then search_project or navigate_project for detail. Does not modify files.",
   },
   search_project: {
     title: "Search the project",
@@ -191,6 +196,7 @@ async function executeSharedWebMcpTool(
   if (unknown) return failResult("invalid_arguments", `Unknown argument "${unknown}".`, { retryable: false });
   try {
     switch (name) {
+      case "sync_project": return host.actions.syncProject ? host.actions.syncProject(host.project, args) : failResult("capability_unavailable", "Synchronization review is unavailable in this client.", false);
       case "get_project_state": {
         if (args.detail !== undefined && args.detail !== "summary" && args.detail !== "full") {
           return failResult("invalid_arguments", 'detail must be "summary" or "full".', { retryable: false });
@@ -288,6 +294,19 @@ async function executeSharedWebMcpTool(
           if (typeof args[key] !== "string") {
             return failResult("invalid_arguments", `${key} must be a string.`, { retryable: false });
           }
+          patch[key] = args[key];
+          hasMetadataPatch = true;
+        }
+        if (args.engine !== undefined) {
+          if (args.engine !== "pdflatex" && args.engine !== "xelatex" && args.engine !== "lualatex") {
+            return failResult("invalid_arguments", "engine must be pdflatex, xelatex, or lualatex.", { retryable: false });
+          }
+          patch.engine = args.engine;
+          hasMetadataPatch = true;
+        }
+        for (const key of ["mainFile", "texliveVersion"] as const) {
+          if (args[key] === undefined) continue;
+          if (typeof args[key] !== "string") return failResult("invalid_arguments", `${key} must be a string.`, { retryable: false });
           patch[key] = args[key];
           hasMetadataPatch = true;
         }

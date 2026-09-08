@@ -95,12 +95,11 @@ export function AnchoredPop({
       const rect = el.getBoundingClientRect();
       const gap = 6;
       const padding = 8;
-      const popRect = popRef.current?.getBoundingClientRect();
-      const popWidth = popRect?.width ?? 0;
-      const popHeight = popRect?.height ?? 0;
+      const popWidth = popRef.current?.offsetWidth ?? 0;
+      const popHeight = popRef.current?.offsetHeight ?? 0;
 
       if (origin === "br") {
-        const right = Math.max(padding, window.innerWidth - rect.right);
+        const right = Math.max(padding, Math.min(window.innerWidth - rect.right, window.innerWidth - popWidth - padding));
         const aboveTop = rect.top - gap - popHeight;
         const belowTop = rect.bottom + gap;
         const fitsAbove = popHeight > 0 && aboveTop >= padding;

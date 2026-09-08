@@ -50,10 +50,8 @@ const TEX_HEADING_CMD =
 
 const HEADING_CLASS = "ob-ed-heading";
 const FILE_BANNER_MARK = Decoration.mark({ class: "ob-cm-file-banner" });
-const INTERNAL_ENVELOPE_REPLACE = Decoration.replace({});
 const EMPTY_HEADING_COUNTS = new Map<string, number>();
 
-const INTERNAL_ENVELOPE_LINE = /^%\s*OB-(?:SECTION\b|EDIT-(?:BEGIN|END)\b)/;
 
 /** Prior heading occurrence counts so nested file editors share global keys with the preview. */
 export const headingCountSeed = Facet.define<Map<string, number>, Map<string, number>>({
@@ -259,28 +257,8 @@ function collectBraceMarkers(text: string, ranges: MarkRange[]): void {
   }
 }
 
-function collectInternalEnvelopeLines(text: string, ranges: MarkRange[]): void {
-  let lineStart = 0;
-  while (lineStart <= text.length) {
-    const newline = text.indexOf("\n", lineStart);
-    const lineEnd = newline === -1 ? text.length : newline;
-    if (INTERNAL_ENVELOPE_LINE.test(text.slice(lineStart, lineEnd))) {
-      ranges.push({
-        from: lineStart,
-        to: lineEnd,
-        decoration: INTERNAL_ENVELOPE_REPLACE,
-        rank: 3,
-        kind: "internal-envelope",
-      });
-    }
-    if (newline === -1) break;
-    lineStart = newline + 1;
-  }
-}
-
 function collectMarkRanges(text: string, counts = new Map<string, number>()): MarkRange[] {
   const ranges: MarkRange[] = [];
-  collectInternalEnvelopeLines(text, ranges);
   collectHeadings(text, ranges, counts);
   collectMacros(text, ranges);
   collectBraceMarkers(text, ranges);

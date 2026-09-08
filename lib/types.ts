@@ -30,6 +30,10 @@ export interface Project {
   archivedAt?: string;
   /** Optional free-form project label (submitted, on hold, camera ready, …). */
   label?: string;
+  /** TeX compiler settings persisted with the project metadata. */
+  engine?: "pdflatex" | "xelatex" | "lualatex";
+  mainFile?: string;
+  texliveVersion?: string;
   /** SHA-256 of the project TeX envelope. Runtime-only CAS metadata. */
   diskHash?: string;
 }
@@ -58,10 +62,14 @@ export interface MindmapNode {
   collapsed?: boolean;
   metadata?: Record<string, unknown>;
   contentFormat?: "plain" | "markdown" | "tex";
+  /** Table presentation for Markdown cards. Wide is the default. */
+  tableLayout?: "wide" | "scroll";
   color?: string;
   tags?: string[];
   /** Optional seven-state planning indicator. Zero is empty; absent is hidden. */
   progress?: MindmapProgress;
+  /** Optional map-local priority. The value has no scientific meaning. */
+  priority?: "P0" | "P1" | "P2" | "P3";
   refs?: ArtifactRef[];
   order?: number;
   createdAt?: string;
@@ -83,6 +91,8 @@ export interface Mindmap {
   createdAt?: string;
   updatedAt: string;
   revision?: number;
+  /** Map-owned Recent activity window, in calendar days. */
+  activityWindowDays?: number;
   diskHash?: string;
 }
 

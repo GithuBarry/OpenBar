@@ -1,0 +1,43 @@
+import { AGENT_GUIDANCE } from "@/lib/research/agent-guidance";
+import type { Metadata } from "next";
+import Link from "next/link";
+
+export const metadata: Metadata = { title: "Tools and agent access", description: "Start using OpenBar with the interface, browser WebMCP, or authenticated HTTP MCP." };
+
+export default function AgentAccessPage() {
+  return (
+    <main className="mx-auto max-w-3xl space-y-8 px-6 py-10 text-ink">
+      <Link href="/" className="text-sm text-accent">← OpenBar workspace</Link>
+      <header className="space-y-3">
+        <h1 className="text-3xl font-semibold">Tools and agent access</h1>
+        <p className="font-medium">{AGENT_GUIDANCE}</p>
+        <p className="text-muted">OpenBar supports people, browser agents, and headless clients. The Tools button in each project opens the current browser-tool status and this guide.</p>
+      </header>
+      <section className="space-y-3" aria-labelledby="interface-help">
+        <h2 id="interface-help" className="text-xl font-semibold">Use the interface</h2>
+        <p>Select a mindmap card and open <strong>Card</strong> for the right-hand inspector. Double-click the card, or select it and press <kbd>E</kbd>, to edit. Select text and use Bold or Italic above the card. Clicking outside saves. Escape cancels the draft.</p>
+        <p>Ordinary cards support plain text, Markdown, and TeX through the inspector’s Content format setting. Paper TODO text and completion are shared with the manuscript. Their formatting uses TeX.</p>
+        <p>The keyboard button shows navigation and editing shortcuts. Controls have accessible names, so browser automation can use role and label selectors.</p>
+      </section>
+      <section className="space-y-3" aria-labelledby="browser-help">
+        <h2 id="browser-help" className="text-xl font-semibold">Connect a browser agent</h2>
+        <p>Open the project over HTTPS or localhost in a browser integration that supports <code>document.modelContext</code> or Chrome’s <code>navigator.modelContext</code>. OpenBar registers WebMCP tools for the active page. Open <strong>Tools</strong> to inspect the registered tool names and connection diagnostics.</p>
+        <p>Use your integration’s tool discovery. Call <code>get_project_state</code> with <code>{'{"detail":"full"}'}</code> to read the project and its instructions. Use <code>search_project</code> and <code>navigate_project</code>, then the tools listed for the paper or mindmap. The active browser page supplies the project identity.</p>
+        <p>Use the labeled interface for visual verification or a capability missing from the tool catalog. Prefer WebMCP for supported operations.</p>
+      </section>
+      <section className="space-y-3" aria-labelledby="headless-help">
+        <h2 id="headless-help" className="text-xl font-semibold">Connect a headless client</h2>
+        <p>Configure a Streamable HTTP MCP connection to <code>{'<OpenBar origin>/api/mcp'}</code>. Supply <code>Authorization: Bearer &lt;access token&gt;</code> using the server’s configured <code>OPENBARRY_ACCESS_TOKEN</code>, or its allowed Cloudflare Access identity. The workspace owner supplies credentials.</p>
+        <ol className="list-decimal space-y-2 pl-5">
+          <li>Send <code>initialize</code>, retain the returned <code>Mcp-Session-Id</code>, and send <code>notifications/initialized</code>.</li>
+          <li>Call <code>tools/list</code> for the current names, descriptions, and input schemas.</li>
+          <li>Call <code>get_project_state</code> with <code>{'{"project":"<slug>","detail":"full"}'}</code>. The slug is the segment after <code>/p/</code> in a project URL.</li>
+          <li>Use the returned map IDs, revisions, and file hashes in subsequent operations. Inspect local-save and remote-sync results separately.</li>
+        </ol>
+        <p>For Overleaf conflicts, inspect the <code>sync</code> field in project state. Use <code>sync_project</code> with <code>review_pull</code> to receive the base, local, and Overleaf contents for each conflicting file. Resolve whole files and call <code>apply_pull</code> with the returned token. Changes arriving during review require a fresh review.</p>
+        <p>HTTP MCP operates saved repository state. Browser WebMCP additionally exposes the live page and editing session.</p>
+        <p><Link href="/llms.txt" className="text-accent underline">Plain-text discovery guide</Link></p>
+      </section>
+    </main>
+  );
+}

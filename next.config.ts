@@ -1,4 +1,5 @@
 import path from "node:path";
+import { agentPermissionsPolicy } from "./lib/server/agent-origins";
 import { fileURLToPath } from "node:url";
 import type { NextConfig } from "next";
 
@@ -16,6 +17,13 @@ function distDirFromEnvironment(): string {
 }
 
 const nextConfig: NextConfig = {
+  devIndicators: false,
+  async headers() {
+    return [{ source: "/:path*", headers: [
+      { key: "Origin-Agent-Cluster", value: "?1" },
+      { key: "Permissions-Policy", value: agentPermissionsPolicy() },
+    ] }];
+  },
   output: "standalone",
   distDir: distDirFromEnvironment(),
   outputFileTracingRoot: configDir,
@@ -36,6 +44,7 @@ const nextConfig: NextConfig = {
     "127.0.2.2",
     "localhost",
     "100.64.0.1",
+    "openbar.example.ts.net",
     "dev.example.ts.net",
   ],
   serverExternalPackages: [
@@ -77,6 +86,18 @@ const nextConfig: NextConfig = {
       "node:path": { browser: "./lib/empty-module.ts" },
       module: { browser: "./lib/empty-module.ts" },
     },
+  },
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        path: false,
+        module: false,
+        canvas: false,
+      };
+    }
+    return config;
   },
 };
 

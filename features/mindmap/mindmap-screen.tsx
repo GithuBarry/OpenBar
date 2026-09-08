@@ -1,4 +1,5 @@
 import Link from "next/link";
+import styles from "./mindmap-switcher.module.css";
 import { BookOpenText, Network } from "lucide-react";
 import { notFound } from "next/navigation";
 
@@ -41,7 +42,7 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
         readOnlyProject={isPublicDemoMode()}
         icon={<Network size={18} />}
         actions={
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className={styles.headerActions}>
             <MindmapSwitcher
               project={slug}
               activeId={activeId}
@@ -52,7 +53,7 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
                 createdAt: map.createdAt,
               }))}
             />
-            <Link href={`/p/${slug}/paper`} className="btn-outline text-xs"><BookOpenText size={12} /> Paper</Link>
+            <Link href={`/p/${slug}/paper`} className={styles.paperLink} aria-label="Open paper"><BookOpenText size={14} /><span>Paper</span></Link>
           </div>
         }
       />

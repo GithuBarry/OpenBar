@@ -1,6 +1,9 @@
 "use client";
 
 import "katex/dist/katex.min.css";
+import { OverleafPull } from "@/components/overleaf-pull";
+import paperStyles from "./paper-outline-rail.module.css";
+import { PaperOutlineRail } from "./paper-outline-rail";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -34,7 +37,6 @@ import {
   getEditablePaperAction,
   getPaperCompileStatusAction,
   getProjectGitStatusAction,
-  previewTableFallbacksAction,
   persistSourceBundleAction,
   placeTodoOnMindmapAction,
   removePaperTodoAction,
@@ -53,10 +55,11 @@ import type { PaperCompileStatus } from "@/lib/tex-project/compile";
 import { parseTexFileLines } from "@/lib/tex-project/tex-diagnostics";
 
 import { headingKeyForElement } from "./heading-keys";
-import { SectionMenu } from "./jump-reel";
 import { NestedBundleEditor } from "./nested-bundle-editor";
-import { type TexCodeMirrorHandle } from "./tex-codemirror";
-import { TexHastDocument } from "./tex-hast-document";
+import { type TexCodeMirrorHandle, type TexDocChange } from "./tex-codemirror";
+import { TexPreview } from "./tex-preview";
+import { usePreviewWorker } from "./use-preview-worker";
+import { PdfJsViewer } from "./pdf-viewer";
 import {
   lintLivePaper,
   liveSnapshotFromSource,
@@ -67,13 +70,11 @@ import { AnchoredPop } from "@/components/pop";
 import { composeObcomment } from "@/lib/research/paper-analysis";
 import { previewTodoAtSection, relocateTodoInBundle } from "@/lib/research/paper-todo-placement";
 import { assignMissingTodoIds, composeObtodo, rewriteObtodo, type TodoAttrPatch } from "@/lib/todo-meta";
-import { proposedTableRepair, suspiciousTexSequences } from "@/lib/tex-project/tex-repair";
-import { extractComplexTableFragments } from "@/lib/tex-project/table-fragments";
 import { applyTexLintFix, lintProsePercentages } from "@/lib/tex-project/tex-lint";
 import { PaperMetrics } from "./paper-metrics";
 import { PaperAppearance, type PaperEditorWidth, type PaperReaderFont } from "./paper-appearance";
 import { countPaperWords } from "./paper-stats";
-import { TodoPanel } from "./todo-panel";
+import { TodoPanel, type TodoUndoSnapshot } from "./todo-panel";
 import { sharedWebMcpActions } from "@/features/webmcp-actions";
 import { remoteSyncResult } from "@/lib/research/project-sync";
 import type { RemoteSyncOutcome } from "@/lib/research/operation-result";
@@ -98,14 +99,13 @@ export type { PaperEditorSection };
 type LayoutMode = "document" | "pdf" | "pdf-only";
 type RemoteSaveState = "checking" | "local" | "saving" | "saved" | "changed" | "unavailable" | "error";
 
-const AUTOSAVE_DELAY = 600;
-const COMPANION_RENDER_DELAY = 200;
-const TABLE_FALLBACK_DELAY = 2_000;
+const AUTOSAVE_IDLE_MS = 500;
+const AUTOSAVE_MAX_MS = 2_000;
 const COMPILE_POLL_MS = 400;
 const COMPILE_POLL_MAX_MS = 120_000;
 const PAGE_BUDGET_REFRESH_MS = 3 * 60_000;
-const TODO_PANEL_DEFAULT = 192;
-const TODO_PANEL_MIN = 96;
+const TODO_PANEL_DEFAULT = 360;
+const TODO_PANEL_MIN = 220;
 const SPLIT_MIN = 22;
 const SPLIT_MAX = 78;
 const HEADING_ALIGN = 0.2;
@@ -114,18 +114,55 @@ const DEFAULT_EDITOR_FONT_SCALE = 1;
 const DEFAULT_PREVIEW_LINE_HEIGHT = 1.75;
 const DEFAULT_PREVIEW_FONT: PaperReaderFont = "serif";
 
-const REPAIR_LABELS: Record<string, string> = {
-  "escaped-backslash-braces": "escaped backslash braces",
-  "escaped-hline": "escaped \\hline text",
-  "escaped-marker-braces": "escaped marker braces",
-  "lost-cell-delimiters": "lost table-cell delimiters",
-};
+function locateUndoOffset(source: string, _hint: number, snapshot: TodoUndoSnapshot): number | null {
+  const candidates: number[] = [];
+  const before = snapshot.before.slice(-192);
+  const after = snapshot.after.slice(0, 192);
+  const addCandidate = (candidate: number) => {
+    if (candidate < 0 || candidate > source.length || candidates.includes(candidate)) return;
+    candidates.push(candidate);
+  };
+
+  // Prefer an intact two-sided anchor. Looking for the snippets separately
+  // can pair a prefix from one repeated passage with a suffix from another.
+  if (before && after) {
+    let cursor = 0;
+    while (cursor <= source.length) {
+      const index = source.indexOf(after, cursor);
+      if (index < 0) break;
+      if (source.slice(Math.max(0, index - before.length), index) === before) addCandidate(index);
+      cursor = index + 1;
+    }
+  }
+  if (!candidates.length && before) {
+    let cursor = 0;
+    while (cursor <= source.length) {
+      const index = source.indexOf(before, cursor);
+      if (index < 0) break;
+      addCandidate(index + before.length);
+      cursor = index + 1;
+    }
+  }
+  if (!candidates.length && after) {
+    let cursor = 0;
+    while (cursor <= source.length) {
+      const index = source.indexOf(after, cursor);
+      if (index < 0) break;
+      addCandidate(index);
+      cursor = index + 1;
+    }
+  }
+  // A numeric hint is useful for diagnostics but must never disambiguate
+  // repeated source context. Requiring one candidate turns an uncertain undo
+  // into an explicit conflict instead of inserting the TODO into the wrong
+  // paragraph.
+  return candidates.length === 1 ? candidates[0]! : null;
+}
 
 type HydratedPaper = {
   title: string;
   sections: PaperEditorSection[];
   bundle: ClientSourceBundle;
-  pandocTables?: Record<string, string>;
   sourceContext: {
     sections: PaperSourceContextSection[];
     diagnostics: SourceDiagnostic[];
@@ -173,6 +210,12 @@ function prefsKey(project: string) {
   return `ob:paper-prefs:${project}`;
 }
 
+function recoveryKey(project: string) {
+  return `ob:paper-recovery:${project}:paper`;
+}
+
+type RecoveryDraft = { source: string; baseHash: string; savedAt: string };
+
 export function PaperEditor({
   project,
   title,
@@ -181,7 +224,6 @@ export function PaperEditor({
   sourceContext,
   bibliography,
   bibliographyRaw,
-  initialPandocTables,
   placementTargets = [],
   boundTodoIds = [],
 }: {
@@ -192,19 +234,16 @@ export function PaperEditor({
   sourceContext: HydratedPaper["sourceContext"];
   bibliography?: BibEntry[];
   bibliographyRaw?: string;
-  initialPandocTables?: Record<string, string>;
   placementTargets?: { id: string; label: string }[];
   boundTodoIds?: string[];
 }) {
   const router = useRouter();
   const initialSource = initialBundle.source;
   const [source, setSource] = useState(initialSource);
-  const [renderSource, setRenderSource] = useState(initialSource);
   const [savedSource, setSavedSource] = useState(initialSource);
   const [bundleHash, setBundleHash] = useState(initialBundle.bundleHash);
   const [bundleDiagnostics, setBundleDiagnostics] = useState(initialBundle.diagnostics);
   const [sourceContextState, setSourceContextState] = useState(sourceContext);
-  const [pandocTables, setPandocTables] = useState<Record<string, string>>(initialPandocTables || {});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveConflict, setSaveConflict] = useState(false);
@@ -231,10 +270,9 @@ export function PaperEditor({
   const [previewLineHeight, setPreviewLineHeight] = useState(DEFAULT_PREVIEW_LINE_HEIGHT);
   const [previewFont, setPreviewFont] = useState<PaperReaderFont>(DEFAULT_PREVIEW_FONT);
   const [compile, setCompile] = useState<PaperCompileStatus>({ state: "idle" });
+  const [recoveryDraft, setRecoveryDraft] = useState<RecoveryDraft | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [repairOpen, setRepairOpen] = useState(false);
-  const [repairingSectionId, setRepairingSectionId] = useState<string | null>(null);
   const [previewAnnotate, setPreviewAnnotate] = useState<{
     from: number;
     to: number;
@@ -245,6 +283,12 @@ export function PaperEditor({
   const [commentKindDraft, setCommentKindDraft] = useState("");
 
   const editorRef = useRef<TexCodeMirrorHandle>(null);
+  const sourceRef = useRef(initialSource);
+  const { result: previewResult, reset: resetPreview, applyChanges: applyPreviewChanges, workerError } = usePreviewWorker({
+    bibliography,
+    assetBaseUrl: `/api/p/${project}/asset`,
+    getLiveSource: () => editorRef.current?.getLiveSource() ?? sourceRef.current,
+  });
   const previewRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const citeBtnRef = useRef<HTMLDivElement>(null);
@@ -266,9 +310,10 @@ export function PaperEditor({
     }
   };
   const saveTimerRef = useRef<number | null>(null);
-  const tablePreviewRevisionRef = useRef(0);
-  const sourceRef = useRef(source);
-  sourceRef.current = source;
+  const burstStartRef = useRef<number | null>(null);
+  const pendingSaveRef = useRef<{ text: string; requestId: number } | null>(null);
+  const saveRequestIdRef = useRef(0);
+  const saveBusyRef = useRef(false);
   const revisionRef = useRef(0);
   const savedSourceRef = useRef(initialSource);
   const expectedSectionsRef = useRef(expectedSections);
@@ -288,8 +333,33 @@ export function PaperEditor({
   const remoteSavePendingRef = useRef(false);
   const remoteStatusRequestRef = useRef(0);
   const remoteSyncRef = useRef<RemoteSyncOutcome | undefined>(undefined);
+  const navigationPendingRef = useRef(false);
 
+  const writeRecoveryDraft = useCallback(() => {
+    const live = editorRef.current?.getLiveSource() ?? sourceRef.current;
+    if (live === savedSourceRef.current) {
+      try { window.sessionStorage.removeItem(recoveryKey(project)); } catch { /* quota or storage policy */ }
+      return;
+    }
+    try {
+      window.sessionStorage.setItem(recoveryKey(project), JSON.stringify({
+        source: live,
+        baseHash: bundleHashRef.current,
+        savedAt: new Date().toISOString(),
+      } satisfies RecoveryDraft));
+    } catch {
+      // Recovery is best-effort browser state. The editor still keeps the live draft.
+    }
+  }, [project]);
+
+  const clearRecoveryDraft = useCallback(() => {
+    try { window.sessionStorage.removeItem(recoveryKey(project)); } catch { /* storage may be disabled */ }
+    setRecoveryDraft(null);
+  }, [project]);
+
+  const reviewingRemoteRef = useRef(false);
   const pushRemote = useCallback(async (message: string) => {
+    if (reviewingRemoteRef.current) return { ok: false as const, code: "review_in_progress", message: "Local changes saved for pull review." };
     setRemoteSaveState("saving");
     setRemoteSaveError(null);
     remoteSyncRef.current = {
@@ -374,16 +444,10 @@ export function PaperEditor({
     void refreshRemoteStatus(false);
   }, [refreshRemoteStatus]);
 
-  const bookmarks = useMemo(() => listBookmarks(inlineBundleIncludes(renderSource)), [renderSource]);
-  const todos = useMemo(() => collectEditorTodos(renderSource), [renderSource]);
-  const wordCount = useMemo(() => countPaperWords(inlineBundleIncludes(renderSource)), [renderSource]);
-  const repairHits = useMemo(() => suspiciousTexSequences(renderSource), [renderSource]);
-  const repairSummary = useMemo(
-    () => repairHits.map((hit) => REPAIR_LABELS[hit] || hit.replaceAll("-", " ")).join(", "),
-    [repairHits],
-  );
-  const percentFixes = useMemo(() => lintProsePercentages(renderSource), [renderSource]);
-  const companionCurrent = source === renderSource;
+  const bookmarks = useMemo(() => listBookmarks(inlineBundleIncludes(source)), [source]);
+  const todos = useMemo(() => collectEditorTodos(source), [source]);
+  const wordCount = useMemo(() => countPaperWords(inlineBundleIncludes(source)), [source]);
+  const percentFixes = useMemo(() => lintProsePercentages(source), [source]);
   const bookmarksRef = useRef(bookmarks);
   bookmarksRef.current = bookmarks;
   const activeBookmarkRef = useRef(activeBookmark);
@@ -591,72 +655,97 @@ export function PaperEditor({
     savedSourceRef.current = next;
     revisionRef.current += 1;
     setSource(next);
-    setRenderSource(next);
     setSavedSource(next);
     setBundleHash(paper.bundle.bundleHash);
     setBundleDiagnostics(paper.bundle.diagnostics);
     setSourceContextState(paper.sourceContext);
-    if (paper.pandocTables) setPandocTables(paper.pandocTables);
     setSaveError(null);
     setSaveConflict(false);
+    clearRecoveryDraft();
     setCompile((current) => ({
       state: "idle",
       message: "Source changed. Compile to refresh the PDF.",
       pdfAvailable: current.pdfAvailable,
       pageBudget: current.pageBudget,
     }));
-  }, []);
+    resetPreview(next);
+  }, [clearRecoveryDraft, resetPreview]);
+
+  const persistOne = useCallback(async (text: string, signal?: AbortSignal) => {
+    saveFailureRef.current = null;
+    if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
+    const baseline = savedSourceRef.current;
+    if (text === baseline && !remoteSavePendingRef.current) return;
+    if (text === baseline && remoteSavePendingRef.current) {
+      void pushRemote("OpenBar: save paper").then((remote) => {
+        if (remote.ok) remoteSavePendingRef.current = false;
+      });
+      return;
+    }
+    setSaving(true);
+    if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
+    const result = await persistSourceBundleAction(project, text, bundleHashRef.current);
+    if (!result.ok) {
+      saveFailureRef.current = {
+        code: result.code,
+        message: result.message,
+        ...(result.currentHash ? { currentHash: result.currentHash } : {}),
+      };
+      setSaveConflict(result.code === "stale_disk_state");
+      throw new Error(result.message);
+    }
+    saveFailureRef.current = null;
+    bundleHashRef.current = result.value.bundleHash;
+    setBundleHash(result.value.bundleHash);
+    savedSourceRef.current = text;
+    setSavedSource(text);
+    // A newer edit may have arrived while this snapshot was being written.
+    // The CodeMirror document is the live source of truth; never feed an
+    // older completed snapshot back into it. `setSource` is only needed when
+    // the editor is still exactly at the snapshot that just became durable.
+    const live = editorRef.current?.getLiveSource();
+    if (live === undefined || live === text) {
+      sourceRef.current = text;
+      setSource(text);
+    } else {
+      sourceRef.current = live;
+      writeRecoveryDraft();
+    }
+    setCompile((current) => ({
+      state: "idle",
+      message: "Source changed. Compile to refresh the PDF.",
+      pdfAvailable: current.pdfAvailable,
+      pageBudget: current.pageBudget,
+    }));
+    setSaveError(null);
+    setSaveConflict(false);
+    remoteSavePendingRef.current = true;
+    setSaving(false);
+    if (live === text) {
+      try { window.sessionStorage.removeItem(recoveryKey(project)); } catch { /* best-effort */ }
+    }
+    void pushRemote("OpenBar: save paper").then((remote) => {
+      if (remote.ok) remoteSavePendingRef.current = false;
+    });
+  }, [project, pushRemote, writeRecoveryDraft]);
 
   const doSave = useCallback(async (text: string, signal?: AbortSignal) => {
+    const requestId = ++saveRequestIdRef.current;
+    pendingSaveRef.current = { text, requestId };
     const job = saveQueueRef.current.then(async () => {
-      saveFailureRef.current = null;
-      if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
-      const baseline = savedSourceRef.current;
-      if (text === baseline && !remoteSavePendingRef.current) return;
-      if (text === baseline && remoteSavePendingRef.current) {
-        const remote = await pushRemote("OpenBar: save paper");
-        if (!remote.ok) {
-          throw Object.assign(new Error(`Saved locally. ${remote.message}`), { code: "remote_save_failed" });
-        }
-        remoteSavePendingRef.current = false;
-        return;
+      while (pendingSaveRef.current !== null) {
+        const pending = pendingSaveRef.current;
+        pendingSaveRef.current = null;
+        // A caller's abort signal belongs only to its own target. If a newer
+        // caller has replaced the pending snapshot, that newer write must not
+        // be cancelled when the older caller goes away.
+        await persistOne(pending.text, pending.requestId === requestId ? signal : undefined);
       }
-      setSaving(true);
-      if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
-      const result = await persistSourceBundleAction(project, text, bundleHashRef.current);
-      if (!result.ok) {
-        saveFailureRef.current = {
-          code: result.code,
-          message: result.message,
-          ...(result.currentHash ? { currentHash: result.currentHash } : {}),
-        };
-        setSaveConflict(result.code === "stale_disk_state");
-        throw new Error(result.message);
-      }
-      saveFailureRef.current = null;
-      bundleHashRef.current = result.value.bundleHash;
-      setBundleHash(result.value.bundleHash);
-      savedSourceRef.current = text;
-      setSavedSource(text);
-      setCompile((current) => ({
-        state: "idle",
-        message: "Source changed. Compile to refresh the PDF.",
-        pdfAvailable: current.pdfAvailable,
-        pageBudget: current.pageBudget,
-      }));
-      setSaveError(null);
-      setSaveConflict(false);
-      remoteSavePendingRef.current = true;
-      const remote = await pushRemote("OpenBar: save paper");
-      if (!remote.ok) {
-        throw Object.assign(new Error(`Saved locally. ${remote.message}`), { code: "remote_save_failed" });
-      }
-      remoteSavePendingRef.current = false;
-      setSaving(false);
     });
     saveQueueRef.current = job.then(() => undefined, () => undefined);
     try {
       await job;
+      if (signal?.aborted) return false;
       return true;
     } catch (error) {
       const errorCode = error && typeof error === "object" && "code" in error
@@ -679,7 +768,7 @@ export function PaperEditor({
       if (failureCode !== "cancelled") setSaveError(failureMessage);
       return false;
     }
-  }, [project, pushRemote]);
+  }, [persistOne]);
 
   const reloadLatest = useCallback(async () => {
     const paper = await getEditablePaperAction(project);
@@ -690,62 +779,34 @@ export function PaperEditor({
     applyHydrated(paper);
   }, [applyHydrated, project]);
 
-  const repairSectionEnvelope = useCallback(async (section: PaperSourceContextSection) => {
-    const repair = section.diagnostic?.repair;
-    if (!repair || repair.kind !== "missing-edit-end" || !repair.filePath) return;
-    setRepairingSectionId(section.id);
-    try {
-      const result = await repairPaperSectionEnvelopeAction(project, repair.filePath, section.id, section.sourceHash);
-      if (!result.ok) {
-        setSaveError(result.message);
-        return;
-      }
-      const paper = await getEditablePaperAction(project);
-      if (paper) {
-        applyHydrated(paper);
-        remoteSavePendingRef.current = true;
-        await pushRemote("OpenBar: repair paper source envelope");
-        setAgentNotice(result.value.changed ? `Repaired ${section.file}` : `${section.file} is already repaired`);
-        window.setTimeout(() => setAgentNotice(null), 4000);
-      }
-    } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Could not repair the section envelope.");
-    } finally {
-      setRepairingSectionId(null);
-    }
-  }, [applyHydrated, project, pushRemote]);
+  const liveSource = useCallback(() => editorRef.current?.getLiveSource() ?? sourceRef.current, []);
 
-  const runStructure = useCallback(async (op: () => Promise<HydratedPaper | null>) => {
-    if (sourceRef.current !== savedSourceRef.current) {
-      const saved = await doSave(sourceRef.current);
-      if (!saved) return;
-    }
-    try {
-      const next = await op();
-      if (!next) throw new Error("Could not update section structure.");
-      applyHydrated(next);
-      remoteSavePendingRef.current = true;
-      const remote = await pushRemote("OpenBar: update paper structure");
-      if (remote.ok) remoteSavePendingRef.current = false;
-    } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Could not update section structure.");
-    }
-  }, [applyHydrated, doSave, pushRemote]);
-
-  const scheduleSave = useCallback((nextSource: string, immediate = false) => {
-    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+  const scheduleSave = useCallback((immediate = false) => {
     if (saveConflictRef.current && !immediate) return;
+    const flush = () => {
+      burstStartRef.current = null;
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      const text = liveSource();
+      sourceRef.current = text;
+      setSource(text);
+      writeRecoveryDraft();
+      void doSave(text);
+    };
     if (immediate) {
-      void doSave(nextSource);
+      flush();
       return;
     }
-    saveTimerRef.current = window.setTimeout(() => {
-      if (saveConflictRef.current) return;
-      void doSave(nextSource);
-    }, AUTOSAVE_DELAY);
-  }, [doSave]);
+    if (burstStartRef.current == null) burstStartRef.current = Date.now();
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    const maxWait = Math.max(0, AUTOSAVE_MAX_MS - (Date.now() - burstStartRef.current));
+    saveTimerRef.current = window.setTimeout(flush, Math.min(AUTOSAVE_IDLE_MS, maxWait));
+  }, [doSave, liveSource, writeRecoveryDraft]);
 
   const saveNow = useCallback(async (nextSource: string, signal?: AbortSignal) => {
+    burstStartRef.current = null;
     if (saveTimerRef.current) {
       window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
@@ -753,39 +814,15 @@ export function PaperEditor({
     return doSave(nextSource, signal);
   }, [doSave]);
 
-  const onChangeSource = useCallback((text: string) => {
+  const onDocChanges = useCallback((changes: TexDocChange[], length: number) => {
     revisionRef.current += 1;
-    sourceRef.current = text;
-    setSource(text);
-    scheduleSave(text);
-  }, [scheduleSave]);
+    applyPreviewChanges(changes, length);
+    scheduleSave();
+  }, [applyPreviewChanges, scheduleSave]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setRenderSource(source), COMPANION_RENDER_DELAY);
-    return () => window.clearTimeout(timer);
-  }, [source]);
-
-  useEffect(() => {
-    const requestRevision = ++tablePreviewRevisionRef.current;
-    let active = true;
-    const timer = window.setTimeout(() => {
-      if (extractComplexTableFragments(source).length === 0) {
-        if (active && requestRevision === tablePreviewRevisionRef.current) setPandocTables({});
-        return;
-      }
-      void previewTableFallbacksAction(project, source)
-        .then((tables) => {
-          if (active && requestRevision === tablePreviewRevisionRef.current) setPandocTables(tables);
-        })
-        .catch(() => {
-          // The regular HAST preview remains available when the optional table fallback is unavailable.
-        });
-    }, TABLE_FALLBACK_DELAY);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [project, source]);
+    resetPreview(initialSource);
+  }, [initialSource, resetPreview]);
 
   useEffect(() => {
     let active = true;
@@ -808,29 +845,77 @@ export function PaperEditor({
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+      const live = liveSource();
+      writeRecoveryDraft();
+      // Client-side route changes unmount this editor without firing
+      // beforeunload. Start the same serialized save queue during cleanup so
+      // a just-typed snapshot is durable before the user leaves the page.
+      if (live !== savedSourceRef.current) {
+        sourceRef.current = live;
+        void doSave(live);
+      }
     };
-  }, []);
+  }, [doSave, liveSource, writeRecoveryDraft]);
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (sourceRef.current !== savedSourceRef.current) {
+      const live = editorRef.current?.getLiveSource() ?? sourceRef.current;
+      if (live !== savedSourceRef.current) {
+        writeRecoveryDraft();
         event.preventDefault();
         event.returnValue = "";
       }
     };
+    const handlePageHide = () => writeRecoveryDraft();
     const handleKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
-        scheduleSave(sourceRef.current, true);
+        scheduleSave(true);
       }
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
+    window.addEventListener("pagehide", handlePageHide);
     window.addEventListener("keydown", handleKey);
     return () => {
       window.removeEventListener("beforeunload", handleBeforeUnload);
+      window.removeEventListener("pagehide", handlePageHide);
       window.removeEventListener("keydown", handleKey);
     };
-  }, [scheduleSave]);
+  }, [scheduleSave, writeRecoveryDraft]);
+
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem(recoveryKey(project));
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<RecoveryDraft>;
+      if (typeof parsed.source === "string" && typeof parsed.baseHash === "string" && typeof parsed.savedAt === "string") {
+        if (parsed.source !== initialSource) setRecoveryDraft({ source: parsed.source, baseHash: parsed.baseHash, savedAt: parsed.savedAt });
+        else window.sessionStorage.removeItem(recoveryKey(project));
+      }
+    } catch {
+      // Ignore malformed or unavailable recovery storage.
+    }
+  }, [initialSource, project]);
+
+  useEffect(() => {
+    const onCaptureNavigation = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const target = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
+      if (!target || target.target === "_blank" || target.hasAttribute("download")) return;
+      let url: URL;
+      try { url = new URL(target.href, window.location.href); } catch { return; }
+      if (url.origin !== window.location.origin || url.href === window.location.href) return;
+      const live = editorRef.current?.getLiveSource() ?? sourceRef.current;
+      if (live === savedSourceRef.current || navigationPendingRef.current) return;
+      event.preventDefault();
+      navigationPendingRef.current = true;
+      void saveNow(live).then((ok) => {
+        if (ok) router.push(`${url.pathname}${url.search}${url.hash}`);
+      }).finally(() => { navigationPendingRef.current = false; });
+    };
+    window.addEventListener("click", onCaptureNavigation, true);
+    return () => window.removeEventListener("click", onCaptureNavigation, true);
+  }, [router, saveNow]);
 
   useEffect(() => {
     try {
@@ -849,10 +934,10 @@ export function PaperEditor({
           setTodoPanelHeight(Math.max(TODO_PANEL_MIN, prefs.todoPanelHeight));
         }
         if (typeof prefs.previewFontScale === "number" && Number.isFinite(prefs.previewFontScale)) {
-          setPreviewFontScale(Math.max(0.8, Math.min(1.2, prefs.previewFontScale)));
+          setPreviewFontScale(Math.max(0.72, Math.min(1.35, prefs.previewFontScale)));
         }
         if (typeof prefs.editorFontScale === "number" && Number.isFinite(prefs.editorFontScale)) {
-          setEditorFontScale(Math.max(0.8, Math.min(1.2, prefs.editorFontScale)));
+          setEditorFontScale(Math.max(0.8, Math.min(1.5, prefs.editorFontScale)));
         }
         if (typeof prefs.previewLineHeight === "number" && Number.isFinite(prefs.previewLineHeight)) {
           setPreviewLineHeight(Math.max(1.45, Math.min(1.85, prefs.previewLineHeight)));
@@ -1056,26 +1141,43 @@ export function PaperEditor({
     if (!result.ok) throw Object.assign(new Error(result.message), { code: result.code });
     remoteSavePendingRef.current = true;
     const remote = await pushRemote("OpenBar: remove paper TODO");
-    if (!remote.ok) throw Object.assign(new Error(`Saved locally. ${remote.message}`), { code: "remote_save_failed" });
-    remoteSavePendingRef.current = false;
+    if (!remote.ok) setSaveError(`Saved locally. ${remote.message}`);
     await reloadLatest();
   }, [project, pushRemote, reloadLatest, saveNow]);
 
-  const resolveTodo = useCallback((todo: EditorTodo) => {
-    void removeTodoEverywhere(todo.id || "")
-      .catch((error) => setSaveError(error instanceof Error ? error.message : "Could not remove the paper TODO."));
+  const resolveTodo = useCallback(async (todo: EditorTodo) => {
+    try {
+      await removeTodoEverywhere(todo.id || "");
+      return true;
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not remove the paper TODO.");
+      return false;
+    }
   }, [removeTodoEverywhere]);
 
-  const patchTodo = useCallback((todo: EditorTodo, patch: TodoAttrPatch) => {
+  const patchTodo = useCallback(async (todo: EditorTodo, patch: TodoAttrPatch): Promise<boolean> => {
     const current = editorRef.current?.getLiveSource() ?? sourceRef.current;
-    if (todo.kind !== "obtodo") return;
+    if (todo.kind !== "obtodo") return false;
     const live = currentTodo(todo, current);
-    if (!live) return;
+    if (!live) {
+      setSaveError(`TODO "${todo.id || todo.text.slice(0, 40)}" is no longer in the live source.`);
+      return false;
+    }
     const nextMacro = rewriteObtodo(current.slice(live.from, live.to), patch);
-    editorRef.current?.applyVirtualChange(live.from, live.to, nextMacro);
-  }, [currentTodo]);
-
-  const liveSource = () => editorRef.current?.getLiveSource() ?? sourceRef.current;
+    const applied = editorRef.current?.applyVirtualChange(live.from, live.to, nextMacro);
+    const next = editorRef.current?.getLiveSource() ?? current;
+    if (!applied || next === current) {
+      setSaveError("The TODO could not be changed in the live editor.");
+      return false;
+    }
+    const saved = await saveNow(next);
+    if (!saved) {
+      const failure = saveFailureRef.current;
+      setSaveError(failure?.message || "Could not save the TODO.");
+      return false;
+    }
+    return true;
+  }, [currentTodo, saveNow]);
 
   const applyAndSave = useCallback(async (from: number, to: number, insert: string, signal?: AbortSignal) => {
     if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
@@ -1202,7 +1304,10 @@ export function PaperEditor({
       await applyAndSave(preview.from, preview.from, `${proposedText}${nextChar === "\n" ? "" : "\n"}`, signal);
       return {
         todoId: preview.id,
-        sectionId: preview.sectionId,
+        // The live paper operation always receives a concrete section id.
+        // Keep the host contract concrete while the shared placement helper
+        // also supports neutral root placement for card conversion.
+        sectionId: preview.sectionId || sectionId,
         filePath: preview.filePath,
         from: preview.from,
         to: preview.to,
@@ -1222,7 +1327,7 @@ export function PaperEditor({
       sourceRef.current = moved.source;
       revisionRef.current += 1;
       setSource(moved.source);
-      setRenderSource(moved.source);
+      resetPreview(moved.source);
       const saved = await saveNow(moved.source, signal);
       if (!saved) {
         const failure = saveFailureRef.current;
@@ -1353,12 +1458,7 @@ export function PaperEditor({
   );
   const pdfCurrent = isSaved && compile.state === "success";
   const pdfVisible = layout === "pdf" || layout === "pdf-only";
-  const widthClass =
-    editorWidth === "compact"
-      ? "max-w-5xl mx-auto"
-      : editorWidth === "wide"
-        ? "w-full max-w-[calc(100%_-_8rem)] mx-auto"
-        : "w-full max-w-none px-0";
+  const widthClass = editorWidth === "compact" ? paperStyles.widthCompact : editorWidth === "wide" ? paperStyles.widthWide : paperStyles.widthFull;
   const previewStyle = {
     "--paper-preview-font-scale": previewFontScale,
     "--paper-preview-line-height": previewLineHeight,
@@ -1369,8 +1469,8 @@ export function PaperEditor({
   } as CSSProperties;
 
   return (
-    <div className={cn("flex h-[calc(100vh-85px)] w-full flex-col gap-2", widthClass)}>
-      <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-2 rounded-xl border border-line bg-surface px-3 py-2 shadow-xs [grid-template-areas:'switch_actions'_'title_title'] md:h-11 md:grid-cols-[auto_minmax(min-content,1fr)_minmax(0,max-content)_minmax(0,auto)] md:grid-rows-1 md:gap-3 md:overflow-visible md:py-0 md:[grid-template-areas:'switch_title_status_actions']">
+    <div className={cn("relative flex h-[calc(100vh-85px)] w-full flex-col gap-2", widthClass)}>
+      <div className={paperStyles.toolbar}>
         <div className="flex h-8 min-w-0 items-center overflow-x-auto rounded-lg border border-line bg-surface-2 p-0.5 [grid-area:switch]">
           <ToolbarSeg active={layout === "document"} onClick={() => setLayout("document")}>
             <Eye size={12} /> Document
@@ -1397,26 +1497,7 @@ export function PaperEditor({
 
         <div className="flex min-w-0 items-center gap-3 overflow-hidden [grid-area:title]">
           <PaperMetrics wordCount={wordCount} pageBudget={compile.pageBudget} />
-          <SectionMenu
-            sections={expectedSections}
-            onJump={jumpToExpectedSection}
-            onRename={(id, nextTitle) => void runStructure(() => renamePaperSectionAction(project, id, nextTitle))}
-            onSetLevel={(id, level) => void runStructure(() => setPaperSectionHeadingAction(project, id, { level }))}
-            onToggleAppendix={(id) => {
-              const current = expectedSections.find((section) => section.id === id);
-              void runStructure(() => setPaperSectionHeadingAction(project, id, { appendix: !current?.appendix }));
-            }}
-            onAddAfter={(id, nextTitle) => {
-              const current = expectedSections.find((section) => section.id === id);
-              void runStructure(() => addPaperSectionAction(project, {
-                title: nextTitle,
-                afterId: id,
-                level: current?.level,
-                appendix: current?.appendix,
-              }));
-            }}
-            onRemove={(id) => void runStructure(() => removePaperSectionAction(project, id))}
-          />
+
         </div>
 
         <div
@@ -1439,12 +1520,8 @@ export function PaperEditor({
           </span>
         </div>
 
-        <div className="flex h-8 min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto [grid-area:actions]">
-          {pdfVisible && compile.pdfAvailable && (
-            <span className={cn("hidden shrink-0 text-[11px] font-medium xl:inline", pdfCurrent ? "text-ok" : "text-warn")}>
-              {pdfCurrent ? "PDF current" : "PDF stale"}
-            </span>
-          )}
+        <div className={paperStyles.toolbarActions}>
+
 
           <PaperAppearance
             readerFontScale={previewFontScale}
@@ -1496,7 +1573,7 @@ export function PaperEditor({
             </button>
           )}
 
-          {compile.stale && (
+          {compile.pdfAvailable && (compile.stale || (pdfVisible && !pdfCurrent)) && (
             <span
               className="inline-flex h-7 shrink-0 items-center rounded-md border border-warn/40 bg-warn/10 px-1.5 text-[11px] font-medium text-warn"
               title="The PDF was built from an older manuscript source revision. Recompile to refresh it."
@@ -1524,6 +1601,28 @@ export function PaperEditor({
           {agentNotice}
         </div>
       )}
+      {recoveryDraft && (
+        <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-xs" role="status">
+          <p className="min-w-0 text-ink">
+            A browser recovery draft from {new Date(recoveryDraft.savedAt).toLocaleString()} is available.
+            {recoveryDraft.baseHash !== bundleHash && <span className="text-warn"> It was based on an older source revision.</span>}
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              className="btn-primary px-2 py-0.5 text-[11px]"
+              onClick={() => {
+                const current = liveSource();
+                editorRef.current?.applyVirtualChange(0, current.length, recoveryDraft.source);
+                clearRecoveryDraft();
+              }}
+            >
+              Restore draft
+            </button>
+            <button type="button" className="btn-ghost px-2 py-0.5 text-[11px]" onClick={clearRecoveryDraft}>Keep saved source</button>
+          </div>
+        </div>
+      )}
       {saveConflict ? (
         <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-danger/40 bg-danger/15 px-3 py-2 text-xs text-danger" role="alert">
           <div>
@@ -1538,24 +1637,31 @@ export function PaperEditor({
         <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-1.5 text-xs text-danger">
           <p>{saveError}</p>
         </div>
-      ) : remoteSaveError ? (
-        <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-1.5 text-xs text-danger" role="alert">
-          <p>Overleaf: {remoteSaveError}</p>
-          <button
-            type="button"
-            className="btn-outline shrink-0 px-2 py-0.5 text-[11px]"
-            onClick={() => {
-              if (remoteSaveState === "changed" || remoteSaveState === "unavailable") void refreshRemoteStatus();
-              else void pushRemote("OpenBar: save paper");
-            }}
-          >
-            {remoteSaveState === "changed" || remoteSaveState === "unavailable" ? "Check Overleaf" : "Retry Overleaf push"}
-          </button>
-        </div>
       ) : null}
+      {remoteSaveError && <div className={paperStyles.syncBar} aria-label="Overleaf synchronization">
+        <p role="status">{remoteSaveError || remoteStatusLabel}</p>
+        <div className={paperStyles.syncActions}>
+          <OverleafPull project={project} disabled={saving || uploading || saveConflict}
+            beforeReview={async () => {
+              reviewingRemoteRef.current = true;
+              await saveQueueRef.current;
+              return doSave(liveSource());
+            }}
+            onApplied={async () => { await reloadLatest(); await refreshRemoteStatus(false); router.refresh(); }}
+            onClosed={() => { reviewingRemoteRef.current = false; void refreshRemoteStatus(false); }} />
+          <button type="button" disabled={saving || remoteSaveState === "saving" || remoteSaveState === "checking"} onClick={() => void refreshRemoteStatus()}>Check updates</button>
+          <button type="button" disabled={saving || saveConflict || remoteSaveState === "saving" || remoteSaveState === "changed"} onClick={async () => { if (await doSave(liveSource())) await pushRemote("OpenBar: save paper"); }}>Save to Overleaf</button>
+        </div>
+      </div>}
       {bundleDiagnostics.length > 0 && (
         <div className="shrink-0 rounded-lg border border-warn/30 bg-warn/10 px-3 py-1.5 text-xs text-ink">
           Include graph: {bundleDiagnostics.map((item) => item.message).join(" · ")}
+        </div>
+      )}
+      {workerError && (
+        <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg border border-warn/30 bg-warn/10 px-3 py-1.5 text-xs text-ink" role="status">
+          <span>{workerError}</span>
+          <button type="button" className="btn-outline px-2 py-0.5 text-[11px]" onClick={() => resetPreview(liveSource())}>Retry preview</button>
         </div>
       )}
       {sourceRepairSections.length > 0 && (
@@ -1568,76 +1674,37 @@ export function PaperEditor({
           </summary>
           <div className="mt-2 grid gap-1.5">
             {sourceRepairSections.map((section) => {
-              const diagnostic = section.diagnostic;
-              const repairable = diagnostic?.repair?.kind === "missing-edit-end" && Boolean(diagnostic.repair.filePath);
-              const messages = section.diagnostics.length ? section.diagnostics.map((item) => item.message).join(" · ") : section.excerpt;
-              return (
-                <div key={`${section.file}:${section.id}`} className="flex flex-wrap items-start justify-between gap-2 rounded-md border border-line/70 bg-surface-2/40 px-2 py-1.5">
-                  <div className="min-w-0">
-                    <p className="font-medium text-ink">
-                      <span className={cn("mr-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle", diagnostic ? "bg-danger" : "bg-ok")} />
-                      {section.title} <span className="font-normal text-muted">· {section.file}</span>
-                    </p>
-                    <p className="mt-0.5 text-muted">{messages}</p>
-                  </div>
-                  {repairable && (
-                    <button
-                      type="button"
-                      className="btn-outline shrink-0 px-2 py-0.5 text-[11px]"
-                      disabled={repairingSectionId === section.id}
-                      onClick={() => { void repairSectionEnvelope(section); }}
-                    >
-                      {repairingSectionId === section.id ? "Repairing…" : "Repair envelope"}
-                    </button>
-                  )}
-                </div>
-              );
+                  const diagnostic = section.diagnostic;
+                  const messages = section.diagnostics.length ? section.diagnostics.map((item) => item.message).join(" · ") : section.excerpt;
+                  return (
+                    <div key={`${section.file}:${section.id}`} className="flex flex-wrap items-start justify-between gap-2 rounded-md border border-line/70 bg-surface-2/40 px-2 py-1.5">
+                      <div className="min-w-0">
+                        <p className="font-medium text-ink">
+                          <span className={cn("mr-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle", diagnostic ? "bg-danger" : "bg-ok")} />
+                          {section.title} <span className="font-normal text-muted">· {section.file}</span>
+                        </p>
+                        <p className="mt-0.5 text-muted">{messages}</p>
+                      </div>
+                    </div>
+                  );
             })}
           </div>
         </details>
       )}
-      {companionCurrent && (repairHits.length > 0 || percentFixes.length > 0) && (
+      {percentFixes.length > 0 && (
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-warn/30 bg-warn/10 px-3 py-1.5 text-xs text-ink">
-          <p>
-            {percentFixes.length ? `${percentFixes.length} prose percentage${percentFixes.length === 1 ? "" : "s"} should use \\%.` : ""}
-            {percentFixes.length && repairHits.length ? " " : ""}
-            {repairHits.length ? `Potential table syntax issue: ${repairSummary}. Review the proposed source change before applying it.` : ""}
-          </p>
-          <div className="flex gap-1">
-            {percentFixes.length > 0 && (
-              <button
-                type="button"
-                className="btn-outline px-2 py-0.5 text-[11px]"
-                onClick={() => {
-                  let next = renderSource;
-                  for (const fix of [...percentFixes].reverse()) next = applyTexLintFix(next, fix);
-                  onChangeSource(next);
-                }}
-              >
-                Fix percentages
-              </button>
-            )}
-            {repairHits.length > 0 && (
-              <button type="button" className="btn-outline px-2 py-0.5 text-[11px]" onClick={() => setRepairOpen((open) => !open)}>
-                {repairOpen ? "Hide repair" : "Review repair"}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-      {companionCurrent && repairOpen && repairHits.length > 0 && (
-        <div className="grid shrink-0 gap-2 rounded-lg border border-line bg-surface p-3 text-xs md:grid-cols-2">
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap text-muted">{renderSource}</pre>
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap">{proposedTableRepair(renderSource)}</pre>
+          <p>{percentFixes.length} prose percentage{percentFixes.length === 1 ? "" : "s"} should use \\%.</p>
           <button
             type="button"
-            className="btn-outline justify-self-start px-2 py-0.5 text-[11px]"
+            className="btn-outline px-2 py-0.5 text-[11px]"
             onClick={() => {
-              onChangeSource(proposedTableRepair(renderSource));
-              setRepairOpen(false);
+              let next = liveSource();
+              for (const fix of [...percentFixes].reverse()) next = applyTexLintFix(next, fix);
+              const current = liveSource();
+              editorRef.current?.applyVirtualChange(0, current.length, next);
             }}
           >
-            Apply repair to live source
+            Fix percentages
           </button>
         </div>
       )}
@@ -1650,6 +1717,8 @@ export function PaperEditor({
         >
           <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-surface">
             {layout === "document" && (
+              <div className={paperStyles.documentLayout}>
+              <PaperOutlineRail bookmarks={bookmarks} activeSlug={activeBookmark} onJump={jumpToSection} previewRef={previewRef} />
               <div
                 ref={previewRef}
                 data-ob-scroll="paper-preview"
@@ -1667,7 +1736,13 @@ export function PaperEditor({
                   }
                   const paragraph = target.closest("p");
                   if (!paragraph || !previewRef.current?.contains(paragraph) || !paragraph.textContent) return;
-                  const located = locatePreviewSnippet(renderSource, paragraph.textContent.slice(0, 160));
+                  const block = paragraph.closest<HTMLElement>("[data-preview-from]");
+                  const blockFrom = block ? Number(block.dataset.previewFrom) : NaN;
+                  const blockTo = block ? Number(block.dataset.previewTo) : NaN;
+                  const range = Number.isFinite(blockFrom) && Number.isFinite(blockTo)
+                    ? { from: blockFrom, to: blockTo }
+                    : undefined;
+                  const located = locatePreviewSnippet(liveSource(), paragraph.textContent.slice(0, 160), range?.from || 0, range);
                   if (located) editorRef.current?.setSelection(located.from, located.from);
                 }}
                 onMouseUp={() => {
@@ -1679,9 +1754,17 @@ export function PaperEditor({
                   }
                   if (!pane.contains(sel.anchorNode)) return;
                   const snippet = sel.toString();
-                  const hintBookmark = listBookmarks(renderSource).find((item) => item.slug === activeBookmark);
-                  const hint = hintBookmark ? offsetForBookmarkLine(renderSource, hintBookmark.line) : 0;
-                  const located = locatePreviewSnippet(renderSource, snippet, hint);
+                  const current = liveSource();
+                  const hintBookmark = listBookmarks(current).find((item) => item.slug === activeBookmark);
+                  const hint = hintBookmark ? offsetForBookmarkLine(current, hintBookmark.line) : 0;
+                  const blockHost = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode?.parentElement;
+                  const block = blockHost?.closest<HTMLElement>("[data-preview-from]");
+                  const blockFrom = block ? Number(block.dataset.previewFrom) : NaN;
+                  const blockTo = block ? Number(block.dataset.previewTo) : NaN;
+                  const range = Number.isFinite(blockFrom) && Number.isFinite(blockTo)
+                    ? { from: blockFrom, to: blockTo }
+                    : undefined;
+                  const located = locatePreviewSnippet(current, snippet, hint, range);
                   if (!located) {
                     setPreviewAnnotate(null);
                     return;
@@ -1695,17 +1778,11 @@ export function PaperEditor({
                     y: rect.bottom - paneRect.top + pane.scrollTop + 8,
                   });
                 }}
-                className="ob-split-pane paper-view overflow-y-auto overflow-x-hidden p-8"
+                className={cn("paper-view", paperStyles.documentScroller)}
                 style={previewStyle}
               >
                 <div className="prose-ob max-w-full relative">
-                  <TexHastDocument
-                    assetBaseUrl={`/api/p/${project}/asset`}
-                    bibliography={bibliography}
-                    source={renderSource}
-                    pandocTables={pandocTables}
-                    requireHeadingKeys
-                  />
+                  <TexPreview project={project} blocks={previewResult?.blocks || []} />
                   {previewAnnotate && (
                     <div
                       className="absolute z-20 flex gap-1 rounded-md border border-line bg-surface px-1.5 py-1 text-[11px] shadow-lg"
@@ -1742,10 +1819,16 @@ export function PaperEditor({
                   )}
                 </div>
               </div>
+              </div>
             )}
             {layout === "pdf" && (
               <div className="ob-split-pane overflow-hidden">
-                <PdfPreview project={project} compile={compile} onJumpToSource={jumpToSourceLine} />
+                <PdfPreview
+                  project={project}
+                  compile={compile}
+                  sourceTarget={null}
+                  onJumpToSource={jumpToSourceLine}
+                />
               </div>
             )}
           </div>
@@ -1775,20 +1858,20 @@ export function PaperEditor({
           <div className="relative flex min-h-0 min-w-0 flex-col overflow-hidden">
             <div className="relative min-h-0 flex-1">
             <div
-              className="ob-editor-container overflow-hidden"
+              className={cn("ob-editor-container overflow-hidden", paperStyles.sourceStack)}
               style={{ position: "absolute", inset: 0, ...editorStyle }}
               onWheelCapture={() => claimScrollSource("editor")}
             >
             <NestedBundleEditor
               ref={editorRef}
               value={source}
-              onChange={onChangeSource}
+              onDocChanges={onDocChanges}
               onScroll={handleEditorScroll}
               placeholder="Write TeX…"
               className="h-full"
             />
 
-            <div className="ob-format-bar absolute bottom-4 right-6 z-20 flex items-center gap-0.5 rounded-full border border-line bg-surface/92 px-2 py-1 shadow-lg backdrop-blur-md">
+            <div role="toolbar" aria-label="Paper editing" className={paperStyles.editingToolbar}>
               <Tool title="Bold (⌘B)" onClick={() => surround("\\textbf{", "}", "bold")}><Bold size={12} /></Tool>
               <Tool title="Italic (⌘I)" onClick={() => surround("\\emph{", "}", "italic")}><Italic size={12} /></Tool>
               <Tool title="Inline Code" onClick={() => surround("\\texttt{", "}", "code")}><Code2 size={12} /></Tool>
@@ -1829,12 +1912,13 @@ export function PaperEditor({
               />
               <Tool title="Comment" accent onClick={() => insertAtSelection(composeHumanComment, composeHumanComment("Add a comment for collaborators"))}><MessageSquareText size={12} /></Tool>
               <Tool
-                title="New TODO"
+                title="+ TODO"
                 accent
                 className="ob-new-todo-tool"
                 onClick={() => insertAtSelection((selected) => composeObtodo({ text: selected || "Next actionable experiment or writing item" }), composeObtodo({ text: "Next actionable experiment or writing item" }))}
               >
                 <ListTodo size={11} />
+                <span className="text-[10px] font-medium">+ TODO</span>
               </Tool>
               <div ref={citeBtnRef} className="relative">
                 <Tool title="Insert Citation" accent onClick={() => setCiteOpen((o) => !o)}>
@@ -1894,19 +1978,25 @@ export function PaperEditor({
       )}
 
       <div
-        className={cn("ob-todo-slot", todoOpen && "is-open", todoDragging && "is-drag")}
+        className={paperStyles.todoDrawer}
+        data-open={todoOpen}
+        data-dragging={todoDragging}
+        aria-label="Paper TODOs"
+        role="region"
+        aria-hidden={!todoOpen}
+        inert={!todoOpen}
       >
-        <div className="ob-todo-clip">
+        <div className={paperStyles.todoClip}>
         <div
-          className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-transparent bg-surface shadow-card"
+          className={paperStyles.todoSurface}
           style={{ height: todoPanelHeight }}
         >
-          <div className="relative flex h-5 shrink-0 items-center border-b border-line">
+          <div className="relative flex h-8 shrink-0 items-center">
             <div
               role="separator"
               aria-orientation="horizontal"
-              aria-label="Resize open items"
-              title="Drag to resize Open items"
+              aria-label="Resize TODO drawer"
+              title="Drag to resize TODO drawer"
               className="flex h-full flex-1 cursor-ns-resize items-center justify-center text-faint hover:bg-surface-2 hover:text-muted"
               onMouseDown={(event) => {
                 event.preventDefault();
@@ -1924,7 +2014,7 @@ export function PaperEditor({
             <button
               type="button"
               title="Hide"
-              aria-label="Hide open items"
+              aria-label="Close TODO drawer"
               className="ob-press absolute right-1 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted hover:bg-surface-2 hover:text-ink"
               onPointerDown={(event) => event.stopPropagation()}
               onMouseDown={(event) => event.stopPropagation()}
@@ -1945,6 +2035,44 @@ export function PaperEditor({
             onResolve={resolveTodo}
             onPatch={patchTodo}
             onInsert={insertBlock}
+            getTodoSource={(todo): TodoUndoSnapshot => {
+              const current = liveSource();
+              return {
+                tex: current.slice(todo.from, todo.to),
+                before: current.slice(Math.max(0, todo.from - 192), todo.from),
+                after: current.slice(todo.to, Math.min(current.length, todo.to + 192)),
+                baseHash: bundleHashRef.current,
+                ...(todo.id ? { todoId: todo.id } : {}),
+                from: todo.from,
+                to: todo.to,
+              };
+            }}
+            onRestore={async (todo, snapshot) => {
+              if (!snapshot.tex) return false;
+              const current = liveSource();
+              if (todo.id && collectEditorTodos(current).some((entry) => entry.id === todo.id)) {
+                setSaveError("This TODO already exists in the current manuscript; undo was not applied.");
+                return false;
+              }
+              const offset = locateUndoOffset(current, todo.from, snapshot);
+              if (offset === null) {
+                setSaveError("The TODO's surrounding source changed; reload the paper before using Undo.");
+                return false;
+              }
+              const applied = editorRef.current?.applyVirtualChange(offset, offset, snapshot.tex);
+              const next = liveSource();
+              if (!applied || next === current) {
+                setSaveError("The TODO could not be restored in the live editor.");
+                return false;
+              }
+              const saved = await saveNow(next);
+              if (!saved) {
+                const failure = saveFailureRef.current;
+                setSaveError(failure?.message || "Could not save the restored TODO.");
+                return false;
+              }
+              return true;
+            }}
             onPlace={(todoId, parentId) => {
               void placeTodoOnMindmapAction(project, todoId, parentId)
                 .then(() => pushRemote("OpenBar: place paper TODO on mindmap"))
@@ -1959,8 +2087,9 @@ export function PaperEditor({
                 type="button"
                 className="text-accent hover:underline"
                 onClick={() => {
-                  const next = assignMissingTodoIds(sourceRef.current);
-                  onChangeSource(next.source);
+                  const next = assignMissingTodoIds(liveSource());
+                  const current = liveSource();
+                  editorRef.current?.applyVirtualChange(0, current.length, next.source);
                 }}
               >
                 Assign stable IDs to {todos.filter((todo) => !todo.id).length} TODOs
@@ -1973,7 +2102,12 @@ export function PaperEditor({
 
       {layout === "pdf-only" && (
         <div className="flex-1 min-h-0 overflow-hidden rounded-xl border border-transparent bg-surface shadow-card">
-          <PdfPreview project={project} compile={compile} onJumpToSource={jumpToSourceLine} />
+          <PdfPreview
+            project={project}
+            compile={compile}
+            sourceTarget={null}
+            onJumpToSource={jumpToSourceLine}
+          />
         </div>
       )}
     </div>
@@ -1983,20 +2117,27 @@ export function PaperEditor({
 function PdfPreview({
   project,
   compile,
+  sourceTarget,
   onJumpToSource,
 }: {
   project: string;
   compile: PaperCompileStatus;
+  sourceTarget?: { page: number; x: number; y: number; width?: number; height?: number } | null;
   onJumpToSource?: (file: string, line: number) => void;
 }) {
-  if (compile.state === "unavailable") {
+  const pdfSrc = compile.pdfAvailable && compile.artifactId
+    ? `/api/p/${project}/paper/pdf?artifact=${encodeURIComponent(compile.artifactId)}`
+    : null;
+  const stale = Boolean(compile.stale || (compile.pdfAvailable && compile.state !== "success"));
+
+  if (compile.state === "unavailable" && !pdfSrc) {
     return <div className="p-12 text-center text-sm text-muted">LaTeX compilation is not available on this server.</div>;
   }
   if (compile.state === "error") {
     const fileHits = parseTexFileLines(compile.diagnostics || []);
     const first = fileHits[0];
     return (
-      <div className="flex flex-col gap-3 p-6 text-xs text-danger">
+      <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-6 text-xs text-danger">
         <div>
           <p className="font-semibold mb-2">Compile failed</p>
           {first && (
@@ -2008,7 +2149,7 @@ function PdfPreview({
               {first.file}:{first.line} — {first.message}
             </button>
           )}
-          <div className="max-h-96 overflow-auto rounded bg-surface-2 p-3 font-mono leading-relaxed">
+          <div className="max-h-48 overflow-auto rounded bg-surface-2 p-3 font-mono leading-relaxed">
             {(compile.diagnostics || []).map((line, index) => {
               const hit = parseTexFileLines([line])[0];
               if (!hit || !onJumpToSource) {
@@ -2027,16 +2168,20 @@ function PdfPreview({
             })}
           </div>
         </div>
-        {compile.pdfAvailable && <LastGoodPdf project={project} />}
+        {pdfSrc && (
+          <div className="min-h-0 flex-1">
+            <PdfJsViewer project={project} src={pdfSrc} artifactId={compile.artifactId} stale sourceTarget={sourceTarget} onJumpToSource={onJumpToSource} />
+          </div>
+        )}
       </div>
     );
   }
-  if (compile.state !== "success") {
+  if (compile.state === "running" && !pdfSrc) {
     return (
       <div className="p-8 flex flex-col items-center justify-center gap-3 text-sm text-muted">
         <div className="flex items-center gap-2 font-medium text-ink">
           <LoaderCircle size={15} className="animate-spin text-accent" />
-          Compiling TeX with {compile.compiler || "the available compiler"}…
+          Compiling TeX with {compile.compiler || "latexmk"}…
         </div>
         {compile.lastLines && compile.lastLines.length > 0 && (
           <div className="w-full max-w-xl rounded-lg border border-line bg-canvas p-3 font-mono text-[11px] leading-relaxed shadow-xs">
@@ -2051,19 +2196,25 @@ function PdfPreview({
             </div>
           </div>
         )}
-        {compile.pdfAvailable && <LastGoodPdf project={project} />}
       </div>
     );
   }
-  return <iframe className="h-full min-h-0 w-full border-0" title="Compiled paper PDF" src={`/api/p/${project}/paper/pdf?v=${compile.sourceHash || "latest"}`} />;
-}
-
-function LastGoodPdf({ project }: { project: string }) {
+  if (!pdfSrc) {
+    return (
+      <div className="p-12 text-center text-sm text-muted">
+        {compile.message || "Compile to generate a PDF."}
+      </div>
+    );
+  }
   return (
-    <div className="w-full">
-      <p className="mb-2 text-[11px] font-medium text-muted">Last successful PDF</p>
-      <iframe className="h-[calc(100vh-320px)] min-h-96 w-full border-0 rounded-xl" title="Last successful compiled paper PDF" src={`/api/p/${project}/paper/pdf?v=last-good`} />
-    </div>
+    <PdfJsViewer
+      project={project}
+      src={pdfSrc}
+      artifactId={compile.artifactId}
+      stale={stale}
+      sourceTarget={sourceTarget}
+      onJumpToSource={onJumpToSource}
+    />
   );
 }
 

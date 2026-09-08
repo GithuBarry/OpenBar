@@ -7,6 +7,7 @@
  * draft role / id is the persisted Primary map.
  */
 
+import { startsWithMarkdownTable } from "@/lib/mindmap/markdown-table";
 import type { ArtifactRef, Mindmap, MindmapNode } from "@/lib/types";
 import { todoIsComplete, todoMetaFromAttrs } from "@/lib/todo-meta";
 import type { PaperTodo } from "@/lib/research/paper-analysis";
@@ -90,6 +91,9 @@ export function mindmapCardContentForTodo(todo: { text: string; title?: string }
 
 /** Read the map-owned title and body, with a first-line fallback for older maps. */
 export function ordinaryMindmapCardContent(node: MindmapNode): MindmapCardContent {
+  const combined = node.title !== undefined ? `${node.title}
+${node.text}` : node.text;
+  if (node.contentFormat === "markdown" && startsWithMarkdownTable(combined)) return { title: "", body: combined.trimStart() };
   if (node.title !== undefined) return { title: node.title.trim(), body: node.text };
   const newline = node.text.indexOf("\n");
   if (newline < 0) return { title: node.text.trim(), body: "" };

@@ -1,5 +1,7 @@
 "use client";
 
+import { ChoiceButtons } from "@/components/choice-buttons";
+
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { LoaderCircle, Plus, Save, Trash2 } from "lucide-react";
@@ -279,14 +281,7 @@ function SkillForm({
         <Plus size={12} /> {draft.id ? "Edit skill" : "New skill"}
       </p>
       <div className="flex gap-2">
-        <select
-          className="input h-8 w-36 text-xs"
-          value={draft.source}
-          onChange={(event) => onChange({ ...draft, source: event.target.value as SkillDraft["source"] })}
-        >
-          <option value="project">Project</option>
-          <option value="workspace">Workspace</option>
-        </select>
+        <ChoiceButtons label="Skill scope" value={draft.source} options={[{value:"project",label:"Project"},{value:"workspace",label:"Workspace"}]} onChange={(value) => onChange({ ...draft, source: value as SkillDraft["source"] })} />
         <input className="input h-8 flex-1 text-xs" placeholder="id" value={draft.id} onChange={(event) => onChange({ ...draft, id: event.target.value })} />
       </div>
       <input className="input h-8 text-xs" placeholder="name" value={draft.name} onChange={(event) => onChange({ ...draft, name: event.target.value })} />

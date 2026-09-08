@@ -57,6 +57,34 @@ export type OverleafGitPushResult = {
   code?: string;
 };
 
+export type GitFileReceipt = {
+  path: string;
+  beforeHash?: string;
+  afterHash?: string;
+};
+
+export type OverleafGitLocalCommitResult = {
+  ok: boolean;
+  status: "committed" | "no_changes" | "blocked" | "failed";
+  message: string;
+  commitHash?: string;
+  branch?: string;
+  paths: GitFileReceipt[];
+  code?: string;
+};
+
+export type OverleafGitRemoteSyncResult = {
+  ok: boolean;
+  status: "synchronized" | "pending" | "failed" | "unconfigured";
+  message: string;
+  commitHash?: string;
+  branch?: string;
+  ahead?: number;
+  behind?: number;
+  code?: string;
+  retryable: boolean;
+};
+
 interface GitIndexSnapshot {
   path: string;
   data: Buffer | null;
@@ -180,6 +208,26 @@ function texGitPathspec(projectDir: string, cwd: string): string[] {
     ":(glob)images/**",
     ":(glob)assets/**",
   ];
+}
+
+function gitPathspec(projectDir: string, cwd: string): string[] {
+  const paths = texPaths(projectDir);
+  const pathspec = [...texGitPathspec(projectDir, cwd)];
+  const metadata = path.relative(cwd, paths.openBarDir).split(path.sep).join("/");
+  if (metadata && metadata !== ".." && !metadata.startsWith("../")) {
+    pathspec.push(
+      `${metadata}/project.tex`,
+      `${metadata}/mindmap.tex`,
+      `${metadata}/references.tex`,
+      `:(glob)${metadata}/mindmaps/**`,
+      `:(glob)${metadata}/wiki/**`,
+      `:(exclude,glob)${metadata}/build/**`,
+      `:(exclude,glob)${metadata}/activity.jsonl`,
+      `:(exclude,glob)${metadata}/request-replay.json`,
+      `:(exclude,glob)${metadata}/recovery/**`,
+    );
+  }
+  return pathspec;
 }
 
 function hasEmbeddedCredentials(remoteUrl: string): boolean {
@@ -333,7 +381,7 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("git", args, {
     cwd,
     encoding: "utf8",
-    timeout: 30_000,
+    timeout: 120_000,
     maxBuffer: 10 * 1024 * 1024,
     env: gitProcessEnv(process.env),
   });
@@ -349,7 +397,7 @@ export async function getOverleafGitStatus(projectDir: string): Promise<Overleaf
   try {
     const branch = (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "main")).trim() || "main";
     const remoteUrl = await runGit(cwd, ["config", "--get", "remote.origin.url"]).then((value) => value.trim()).catch(() => undefined);
-    const statusOutput = await runGit(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+    const statusOutput = await runGit(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...gitPathspec(projectDir, cwd)]);
     const changedFiles = porcelainPaths(parsePorcelainZ(statusOutput));
     const isClean = changedFiles.length === 0;
 
@@ -395,7 +443,7 @@ export async function getOverleafGitStatus(projectDir: string): Promise<Overleaf
 }
 
 /** Return a bounded, credential-free commit summary for the Changes view. */
-export async function getOverleafGitHistory(
+export async function getProjectGitHistory(
   projectDir: string,
   since?: string,
   limit = 40,
@@ -405,10 +453,6 @@ export async function getOverleafGitHistory(
     return { ok: false, commits: [], message: "Directory is not a git repository." };
   }
   try {
-    const remoteUrl = await runGit(cwd, ["config", "--get", "remote.origin.url"]).then((value) => value.trim()).catch(() => "");
-    if (!isOverleafGitRemote(remoteUrl)) {
-      return { ok: false, commits: [], message: "Overleaf Git history is unavailable because origin is not an Overleaf Git remote." };
-    }
     const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
     const args = [
       "log",
@@ -418,7 +462,7 @@ export async function getOverleafGitHistory(
       "--name-only",
       ...(since ? [`--since=${since}T00:00:00`] : []),
       "--",
-      ...texGitPathspec(projectDir, cwd),
+      ...gitPathspec(projectDir, cwd),
     ];
     const output = await runGit(cwd, args);
     const commits: OverleafGitCommit[] = [];
@@ -479,152 +523,169 @@ export async function pullOverleafGit(projectDir: string): Promise<{ ok: boolean
     return { ok: false, message: "Directory is not a git repository." };
   }
 
-  try {
-    const remoteUrl = (await runGit(cwd, ["config", "--get", "remote.origin.url"])).trim();
-    if (!isOverleafGitRemote(remoteUrl)) {
-      return { ok: false, message: "Overleaf Git remote unavailable: origin is not git.overleaf.com." };
+  return withWriteLockAsync(path.join(cwd, ".git", "openbar-sync"), async () => {
+    try {
+      const remoteUrl = (await runGit(cwd, ["config", "--get", "remote.origin.url"])).trim();
+      if (!isOverleafGitRemote(remoteUrl)) {
+        return { ok: false, message: "Connect this project to Overleaf before pulling updates." };
+      }
+      const branch = (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+      if (!branch || branch === "HEAD") return { ok: false, message: "Select a named Git branch before pulling updates." };
+      const pending = (await runGit(cwd, ["status", "--porcelain=v1", "--untracked-files=all"])).trim();
+      if (pending) return { ok: false, message: "Save or commit the local project changes before pulling Overleaf updates." };
+      const output = (await runGit(cwd, ["pull", "--ff-only", "origin", branch])).trim();
+      return { ok: true, message: output || "Already up to date." };
+    } catch (error) {
+      return { ok: false, message: `Could not pull Overleaf updates: ${gitErrorMessage(error)}` };
     }
-    const output = (await runGit(cwd, ["pull", "--ff-only"])).trim();
-    return { ok: true, message: output || "Already up to date." };
-  } catch (error) {
-    return {
-      ok: false,
-      message: `Failed to pull from Overleaf Git: ${gitErrorMessage(error)}`,
-    };
+  });
+}
+
+async function worktreeHash(cwd: string, file: string): Promise<string | undefined> {
+  try {
+    const absolute = path.resolve(cwd, file);
+    if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) return undefined;
+    return (await runGit(cwd, ["hash-object", "--", file])).trim() || undefined;
+  } catch {
+    return undefined;
   }
 }
 
-export async function pushOverleafGit(
+async function commitHashForPath(cwd: string, commit: string, file: string): Promise<string | undefined> {
+  try {
+    return (await runGit(cwd, ["rev-parse", `${commit}:${file}`])).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function preStagedPaths(entries: PorcelainEntry[]): string[] {
+  return entries
+    .filter((entry) => entry.xy[0] !== " " && entry.xy[0] !== "?")
+    .flatMap((entry) => [entry.path, entry.origPath].filter((file): file is string => Boolean(file)));
+}
+
+function isSafeCommittedPath(file: string): boolean {
+  const normalized = file.replaceAll("\\", "/");
+  return !normalized.startsWith(".git/")
+    && !normalized.includes("/.git/")
+    && !/(^|\/)(?:\.OpenBar|\.openbarry)\/(?:build|recovery)(?:\/|$)/.test(normalized)
+    && !/(^|\/)(?:activity\.jsonl|request-replay\.json)$/.test(normalized)
+    && !isSensitivePath(normalized);
+}
+
+async function fileReceipts(cwd: string, commit: string, paths: string[], before: Map<string, string | undefined>): Promise<GitFileReceipt[]> {
+  return Promise.all(paths.filter(isSafeCommittedPath).map(async (file) => {
+    const afterHash = await commitHashForPath(cwd, commit, file);
+    return {
+      path: file,
+      ...(before.get(file) ? { beforeHash: before.get(file) } : {}),
+      ...(afterHash ? { afterHash } : {}),
+    };
+  }));
+}
+
+/** Create one local commit from the accepted TeX/OpenBar paths. Network is not consulted. */
+export async function commitOverleafGit(
   projectDir: string,
   message = "OpenBar: update manuscript and structured records",
-): Promise<OverleafGitPushResult> {
+): Promise<OverleafGitLocalCommitResult> {
   const cwd = resolveGitDir(projectDir);
-  if (!fs.existsSync(path.join(cwd, ".git"))) {
-    return { ok: false, code: "not_git_repo", message: "Directory is not a git repository." };
-  }
-
-  // Serialize Git index and remote operations for simultaneous paper/map tabs.
-  // The lock lives inside .git and leaves the working tree unchanged.
+  if (!fs.existsSync(path.join(cwd, ".git"))) return { ok: false, status: "failed", code: "not_git_repo", message: "Directory is not a git repository.", paths: [] };
   return withWriteLockAsync(path.join(cwd, ".git", "openbar-sync"), async () => {
     let indexSnapshot: GitIndexSnapshot | undefined;
     let committed = false;
     try {
       const branch = (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
-      const remoteUrl = await runGit(cwd, ["config", "--get", "remote.origin.url"]).then((value) => value.trim()).catch(() => "");
-      if (!remoteUrl) {
-        return {
-          ok: false,
-          code: "remote_unconfigured",
-          message: "No origin remote is configured. The edit remains local until a Git remote is configured.",
-        };
-      }
-      if (!isOverleafGitRemote(remoteUrl)) {
-        return {
-          ok: false,
-          code: "remote_not_overleaf",
-          message: "Origin is not the Overleaf Git remote (git.overleaf.com). The edit remains local; no non-Overleaf push was attempted.",
-        };
-      }
-
-      let remoteCheck: { configured: boolean; ahead: number; behind: number; error?: string };
-      try {
-        await runGit(cwd, ["fetch", "--prune", "origin"]);
-        let ahead = 0;
-        let behind = 0;
-        if (branch && branch !== "HEAD") {
-          try {
-            const counts = (await runGit(cwd, ["rev-list", "--left-right", "--count", "HEAD...origin/" + branch])).trim();
-            const [localAhead, remoteAhead] = counts.split(/\s+/).map(Number);
-            if (Number.isFinite(localAhead)) ahead = localAhead;
-            if (Number.isFinite(remoteAhead)) behind = remoteAhead;
-          } catch {
-            // A remote branch may not exist yet on a newly connected repository.
-          }
-        }
-        remoteCheck = { configured: true, ahead, behind };
-      } catch (error) {
-        remoteCheck = { configured: true, ahead: 0, behind: 0, error: gitErrorMessage(error) };
-      }
-      if (remoteCheck.error) {
-        return {
-          ok: false,
-          code: "remote_check_failed",
-          message: "Could not check Overleaf before saving: " + remoteCheck.error,
-        };
-      }
-      if (remoteCheck.behind > 0) {
-        const diverged = remoteCheck.ahead > 0;
-        return {
-          ok: false,
-          code: diverged ? "remote_conflict" : "remote_ahead",
-          message: diverged
-            ? "Overleaf and this checkout both have new commits. Pull and resolve the Git conflict before saving to Overleaf."
-            : "Overleaf has newer commits. Pull the latest paper, resolve any conflict, then retry the Overleaf save.",
-        };
-      }
-
-      const pathspec = texGitPathspec(projectDir, cwd);
-      const existingChanges = await runGit(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...pathspec]);
-      const existingSensitive = sensitiveAmong(porcelainPaths(parsePorcelainZ(existingChanges)));
-      if (existingSensitive.length) {
-        return {
-          ok: false,
-          code: "sensitive_path",
-          message: "Refusing to push while sensitive paths are present: " + existingSensitive.join(", ") + ". Store credentials in the OS credential helper and remove these files from the repository first.",
-        };
-      }
-
+      if (!branch || branch === "HEAD") return { ok: false, status: "failed", code: "detached_head", message: "Checkout a named branch before creating an OpenBar commit.", paths: [] };
+      const pathspec = gitPathspec(projectDir, cwd);
+      const existingOutput = await runGit(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...pathspec]);
+      const existingEntries = parsePorcelainZ(existingOutput);
+      const existingPaths = porcelainPaths(existingEntries);
+      const sensitive = sensitiveAmong(existingPaths);
+      if (sensitive.length) return { ok: false, status: "blocked", code: "sensitive_path", message: "Sensitive paths require cleanup before a local OpenBar commit: " + sensitive.join(", ") + ".", paths: [] };
+      const staged = preStagedPaths(existingEntries);
+      if (staged.length) return { ok: false, status: "blocked", code: "pre_staged_work", message: "Affected paths contain pre-staged work. Review or commit the existing index before automatic synchronization: " + [...new Set(staged)].join(", ") + ".", paths: [] };
+      if (!existingPaths.length) return { ok: true, status: "no_changes", message: "No local changes to commit.", branch, paths: [] };
+      const before = new Map<string, string | undefined>();
+      for (const file of existingPaths) before.set(file, await worktreeHash(cwd, file));
       indexSnapshot = await snapshotGitIndex(cwd);
-      await runGit(cwd, ["add", "-A", "--", ...pathspec]);
+      await runGit(cwd, ["add", "-A", "--", ...existingPaths.map((file) => `:(literal)${file}`)]);
       const stagedStatus = await runGit(cwd, ["diff", "--cached", "--name-status", "-z", "--", ...pathspec]);
       const stagedNameOnly = await runGit(cwd, ["diff", "--cached", "--name-only", "-z", "--", ...pathspec]);
-      const stagedPaths = [...new Set([
-        ...parseNameStatusZ(stagedStatus),
-        ...parseNulTerminatedPaths(stagedNameOnly),
-      ])];
-      if (!stagedPaths.length) {
-        return { ok: true, message: "No local changes to commit." };
-      }
-
-      const stagedSensitive = sensitiveAmong(stagedPaths);
-      if (stagedSensitive.length) {
+      const stagedPaths = [...new Set([...parseNameStatusZ(stagedStatus), ...parseNulTerminatedPaths(stagedNameOnly)])].filter(isSafeCommittedPath);
+      if (!stagedPaths.length) return { ok: true, status: "no_changes", message: "No local changes to commit.", branch, paths: [] };
+      const beforeAfterStage = new Map<string, string | undefined>();
+      for (const file of stagedPaths) beforeAfterStage.set(file, await worktreeHash(cwd, file));
+      const changedDuringStage = stagedPaths.filter((file) => before.get(file) !== beforeAfterStage.get(file));
+      if (changedDuringStage.length) {
         restoreGitIndex(indexSnapshot);
-        return {
-          ok: false,
-          code: "sensitive_path",
-          message: "Refusing to push sensitive paths: " + stagedSensitive.join(", ") + ". Store credentials in the OS credential helper and keep secrets out of git.",
-        };
+        return { ok: false, status: "blocked", code: "concurrent_save", message: "A save arrived while Git was preparing the commit. Retry after the current save finishes.", paths: changedDuringStage.map((file) => ({ path: file })) };
       }
-
-      // --only commits the TeX paths while preserving unrelated work
-      // that was already staged by the user.
-      await runGit(cwd, ["commit", "--only", "-m", message, "--", ...pathspec]);
+      // Commit the concrete changed paths. Optional metadata directories may
+      // have zero matches, which `git commit --only` treats as an error.
+      await runGit(cwd, ["commit", "--only", "-m", message, "--", ...stagedPaths.map((file) => `:(literal)${file}`)]);
       committed = true;
       const commitHash = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
-      try {
-        const pushOutput = (await runGit(cwd, ["push"])).trim();
-        return {
-          ok: true,
-          commitHash,
-          message: pushOutput || "Committed " + commitHash.slice(0, 8) + " and pushed to Overleaf.",
-        };
-      } catch (error) {
-        return {
-          ok: false,
-          code: "push_failed",
-          commitHash,
-          message: "Committed " + commitHash + " locally. Overleaf push failed: " + gitErrorMessage(error) + ". The local commit exists.",
-        };
-      }
+      const paths = await fileReceipts(cwd, commitHash, stagedPaths, before);
+      return { ok: true, status: "committed", message: `Created local commit ${commitHash}.`, commitHash, branch, paths };
     } catch (error) {
       if (!committed) restoreGitIndex(indexSnapshot);
-      return {
-        ok: false,
-        code: "commit_failed",
-        message: "Failed to save to Overleaf: " + gitErrorMessage(error),
-      };
+      return { ok: false, status: "failed", code: "commit_failed", message: "Local commit failed: " + gitErrorMessage(error), paths: [] };
     }
   });
+}
+
+/** Push existing local commits to the validated Overleaf branch. */
+export async function syncOverleafGit(projectDir: string, expectedCommitHash?: string): Promise<OverleafGitRemoteSyncResult> {
+  const cwd = resolveGitDir(projectDir);
+  if (!fs.existsSync(path.join(cwd, ".git"))) return { ok: false, status: "failed", code: "not_git_repo", message: "Directory is not a git repository.", retryable: false };
+  return withWriteLockAsync(path.join(cwd, ".git", "openbar-sync"), async () => {
+    try {
+      const branch = (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+      const head = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
+      if (!branch || branch === "HEAD") return { ok: false, status: "failed", code: "detached_head", message: "Checkout a named branch before synchronizing OpenBar.", retryable: false };
+      if (expectedCommitHash && expectedCommitHash !== head) return { ok: false, status: "pending", code: "commit_changed", message: "A newer local commit exists. Read status and synchronize the latest commit.", commitHash: head, branch, retryable: true };
+      const remoteUrl = await runGit(cwd, ["config", "--get", "remote.origin.url"]).then((value) => value.trim()).catch(() => "");
+      if (!remoteUrl) return { ok: false, status: "unconfigured", code: "remote_unconfigured", message: "No origin remote is configured. Local commits remain available until an Overleaf remote is configured.", commitHash: head, branch, retryable: false };
+      if (!isOverleafGitRemote(remoteUrl)) return { ok: false, status: "unconfigured", code: "remote_not_overleaf", message: "Origin is not the validated Overleaf Git remote. No non-Overleaf push was attempted.", commitHash: head, branch, retryable: false };
+      await runGit(cwd, ["fetch", "--prune", "origin"]);
+      let ahead = 0;
+      let behind = 0;
+      let remoteBranchExists = true;
+      try {
+        await runGit(cwd, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`]);
+        const counts = (await runGit(cwd, ["rev-list", "--left-right", "--count", `HEAD...origin/${branch}`])).trim();
+        const [localAhead, remoteAhead] = counts.split(/\s+/).map(Number);
+        ahead = Number.isFinite(localAhead) ? localAhead : 0;
+        behind = Number.isFinite(remoteAhead) ? remoteAhead : 0;
+      } catch {
+        remoteBranchExists = false;
+        ahead = 1;
+      }
+      if (behind > 0) {
+        const diverged = ahead > 0;
+        return { ok: false, status: "pending", code: diverged ? "remote_conflict" : "remote_ahead", message: diverged ? "Overleaf and this checkout have diverged. Reconcile both histories before pushing." : "Overleaf has newer commits. Pull and reconcile before pushing.", commitHash: head, branch, ahead, behind, retryable: true };
+      }
+      if (ahead === 0 && remoteBranchExists) return { ok: true, status: "synchronized", message: "The intended local commit is present on the Overleaf branch.", commitHash: head, branch, ahead, behind, retryable: false };
+      const pushOutput = (await runGit(cwd, ["push", "origin", `HEAD:refs/heads/${branch}`])).trim();
+      return { ok: true, status: "synchronized", message: pushOutput || `Pushed ${head} to origin/${branch}.`, commitHash: head, branch, ahead, behind, retryable: false };
+    } catch (error) {
+      return { ok: false, status: "pending", code: "push_failed", message: "Local commits remain intact. Overleaf synchronization failed: " + gitErrorMessage(error), retryable: true };
+    }
+  });
+}
+
+/** Compatibility wrapper for the existing UI while it migrates to separate buttons. */
+export async function pushOverleafGit(
+  projectDir: string,
+  message = "OpenBar: update manuscript and structured records",
+): Promise<OverleafGitPushResult> {
+  const local = await commitOverleafGit(projectDir, message);
+  if (!local.ok) return { ok: false, code: local.code, message: local.message };
+  const remote = await syncOverleafGit(projectDir, local.commitHash);
+  if (remote.ok) return { ok: true, commitHash: remote.commitHash || local.commitHash, message: remote.message };
+  return { ok: false, code: remote.code, commitHash: remote.commitHash || local.commitHash, message: remote.message };
 }
 
 export async function initOverleafGit(
@@ -661,4 +722,241 @@ export async function initOverleafGit(
       message: `Failed to configure Overleaf git remote: ${gitErrorMessage(error)}`,
     };
   }
+}
+
+export type OverleafConflictChoice = { path: string; choice: "local" | "remote" | "merged"; text?: string };
+export type OverleafPullReview = {
+  token: string;
+  localCommit: string;
+  remoteCommit: string;
+  files: string[];
+  conflicts: { path: string; local: string | null; remote: string | null; base: string | null; editable: boolean }[];
+};
+type PullSession = { worktree: string; localCommit: string; remoteCommit: string; branch: string; conflicts: string[] };
+
+function pullSessionPath(cwd: string, token: string) {
+  if (!/^[a-f0-9-]{36}$/.test(token)) throw new Error("Invalid pull review.");
+  return path.join(cwd, ".git", "openbar-pull-reviews", `${token}.json`);
+}
+
+async function removePullSession(cwd: string, token: string, session: PullSession) {
+  await runGit(cwd, ["worktree", "remove", "--force", session.worktree]);
+  fs.rmSync(path.dirname(session.worktree), { recursive: true, force: true });
+  fs.rmSync(pullSessionPath(cwd, token), { force: true });
+}
+
+/** Prepare Git's three-way merge in a disposable worktree for human review. */
+export async function prepareOverleafPull(projectDir: string): Promise<{ ok: true; review: OverleafPullReview } | { ok: false; message: string }> {
+  const cwd = resolveGitDir(projectDir);
+  const initial = await getOverleafGitStatus(projectDir);
+  if (!initial.isOverleafRemote) return { ok: false, message: "Connect this project to Overleaf before pulling updates." };
+  // Preserve accepted local manuscript changes in history before merging.
+  const checkpoint = await commitOverleafGit(projectDir, "OpenBar: checkpoint before Overleaf pull");
+  if (!checkpoint.ok) return { ok: false, message: checkpoint.message };
+  return withWriteLockAsync(path.join(cwd, ".git", "openbar-sync"), async () => {
+    let worktree: string | undefined;
+    try {
+      if ((await runGit(cwd, ["status", "--porcelain=v1", "--untracked-files=no"])).trim()) {
+        throw new Error("Additional repository changes need a local commit before review. Your project checkpoint is preserved.");
+      }
+      const branch = (await runGit(cwd, ["symbolic-ref", "--short", "HEAD"])).trim();
+      await runGit(cwd, ["fetch", "origin", branch]);
+      const localCommit = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
+      const remoteCommit = (await runGit(cwd, ["rev-parse", "FETCH_HEAD"])).trim();
+      const { tmpdir } = await import("node:os");
+      const { randomUUID } = await import("node:crypto");
+      const token = randomUUID();
+      worktree = path.join(fs.mkdtempSync(path.join(tmpdir(), "openbar-pull-")), "review");
+      await runGit(cwd, ["worktree", "add", "--detach", worktree, localCommit]);
+      let mergeError: unknown;
+      try { await runGit(worktree, ["merge", "--no-commit", remoteCommit]); } catch (error) { mergeError = error; }
+      const unmerged = await runGit(worktree, ["ls-files", "--unmerged", "-z"]);
+      const entries = new Map<string, Map<number, { oid: string; mode: string }>>();
+      for (const entry of unmerged.split("\0").filter(Boolean)) {
+        const match = /^(\d+) ([a-f0-9]+) ([123])\t([\s\S]+)$/.exec(entry);
+        if (!match) throw new Error("Could not read the Git conflict index.");
+        const stages = entries.get(match[4]) || new Map();
+        stages.set(Number(match[3]), { oid: match[2], mode: match[1] });
+        entries.set(match[4], stages);
+      }
+      if (mergeError && !entries.size) throw mergeError;
+      const conflicts: OverleafPullReview["conflicts"] = [];
+      for (const [file, stages] of entries) {
+        const contents: (string | null)[] = [];
+        let editable = true;
+        for (const stage of [1, 2, 3]) {
+          const blob = stages.get(stage);
+          if (!blob) { contents.push(null); continue; }
+          const size = Number((await runGit(worktree, ["cat-file", "-s", blob.oid])).trim());
+          if (size > 1_000_000 || !["100644", "100755"].includes(blob.mode)) { editable = false; contents.push(null); continue; }
+          const content = await runGit(worktree, ["cat-file", "blob", blob.oid]);
+          if (content.includes("\0") || Buffer.byteLength(content) !== size) { editable = false; contents.push(null); } else contents.push(content);
+        }
+        conflicts.push({ path: file, base: contents[0], local: contents[1], remote: contents[2], editable });
+      }
+      const files = [...new Set((await runGit(worktree, ["diff", "--name-only", "-z", localCommit])).split("\0").filter(Boolean))];
+      const session: PullSession = { worktree, localCommit, remoteCommit, branch, conflicts: [...entries.keys()] };
+      const sessionFile = pullSessionPath(cwd, token);
+      fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+      fs.writeFileSync(sessionFile, JSON.stringify(session), { mode: 0o600 });
+      return { ok: true as const, review: { token, localCommit, remoteCommit, files, conflicts } };
+    } catch (error) {
+      if (worktree) {
+        await runGit(cwd, ["worktree", "remove", "--force", worktree]).catch(() => undefined);
+        fs.rmSync(path.dirname(worktree), { recursive: true, force: true });
+      }
+      return { ok: false as const, message: gitErrorMessage(error) };
+    }
+  });
+}
+
+export async function finishOverleafPull(projectDir: string, token: string, choices: OverleafConflictChoice[], cancel = false): Promise<{ ok: boolean; message: string }> {
+  const cwd = resolveGitDir(projectDir);
+  return withWriteLockAsync(path.join(cwd, ".git", "openbar-sync"), async () => {
+    try {
+      const session = JSON.parse(fs.readFileSync(pullSessionPath(cwd, token), "utf8")) as PullSession;
+      if (cancel) {
+        await removePullSession(cwd, token, session);
+        return { ok: true, message: "Review closed. Your local checkpoint is preserved." };
+      }
+      const currentHead = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
+      const currentBranch = (await runGit(cwd, ["symbolic-ref", "--short", "HEAD"])).trim();
+      if (currentHead !== session.localCommit || currentBranch !== session.branch || (await runGit(cwd, ["status", "--porcelain=v1", "--untracked-files=no"])).trim()) {
+        return { ok: false, message: "The local project changed during review. Close this review and pull again to include those edits." };
+      }
+      const selected = new Map(choices.map((choice) => [choice.path, choice]));
+      if (selected.size !== session.conflicts.length || session.conflicts.some((file) => !selected.has(file))) {
+        return { ok: false, message: "Choose a resolution for each conflicting file." };
+      }
+      // Rebuild the disposable merge so retries always start from the reviewed versions.
+      await runGit(session.worktree, ["merge", "--abort"]).catch(() => undefined);
+      await runGit(session.worktree, ["reset", "--hard", session.localCommit]);
+      try { await runGit(session.worktree, ["merge", "--no-commit", session.remoteCommit]); }
+      catch (error) { if (!(await runGit(session.worktree, ["ls-files", "--unmerged"])).trim()) throw error; }
+      for (const file of session.conflicts) {
+        const choice = selected.get(file)!;
+        if (!["local", "remote", "merged"].includes(choice.choice)) throw new Error("Invalid conflict resolution.");
+        const target = path.resolve(session.worktree, file);
+        if (!target.startsWith(session.worktree + path.sep) || file.split("/").includes(".git")) throw new Error("Invalid conflict path.");
+        if (choice.choice === "merged") {
+          if (typeof choice.text !== "string" || Buffer.byteLength(choice.text) > 1_000_000) throw new Error("Merged text must fit within 1 MB.");
+          if (/^(<<<<<<< |=======\s*$|>>>>>>> )/m.test(choice.text)) throw new Error("Resolve the remaining conflict markers before applying.");
+          // Refuse links and special entries before writing human-authored text.
+          const modes = await runGit(session.worktree, ["ls-files", "--stage", "--", `:(literal)${file}`]);
+          if (modes.split("\n").filter(Boolean).some((line) => !/^100(644|755) /.test(line))) throw new Error("Choose a saved version for this non-text entry.");
+          let parent = path.dirname(target);
+          while (parent !== session.worktree) {
+            if (fs.existsSync(parent) && fs.lstatSync(parent).isSymbolicLink()) throw new Error("Choose a saved version for a linked path.");
+            parent = path.dirname(parent);
+          }
+          if (fs.existsSync(target) && fs.lstatSync(target).isSymbolicLink()) throw new Error("Choose a saved version for this linked entry.");
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.writeFileSync(target, choice.text);
+          await runGit(session.worktree, ["add", "--", `:(literal)${file}`]);
+        } else {
+          const stage = choice.choice === "local" ? "2" : "3";
+          const stages = await runGit(session.worktree, ["ls-files", "--unmerged", "--", `:(literal)${file}`]);
+          if (stages.split("\n").some((line) => line.includes(` ${stage}\t`))) {
+            await runGit(session.worktree, ["checkout", choice.choice === "local" ? "--ours" : "--theirs", "--", `:(literal)${file}`]);
+            await runGit(session.worktree, ["add", "--", `:(literal)${file}`]);
+          } else await runGit(session.worktree, ["rm", "-f", "--ignore-unmatch", "--", `:(literal)${file}`]);
+        }
+      }
+      if ((await runGit(session.worktree, ["ls-files", "--unmerged"])).trim()) throw new Error("Some files still need a resolution.");
+      const mergeHead = await runGit(session.worktree, ["rev-parse", "--verify", "MERGE_HEAD"]).catch(() => "");
+      if (mergeHead.trim()) await runGit(session.worktree, ["commit", "-m", "OpenBar: merge reviewed Overleaf updates"]);
+      const resultHead = (await runGit(session.worktree, ["rev-parse", "HEAD"])).trim();
+      await runGit(cwd, ["merge", "--ff-only", resultHead]);
+      await removePullSession(cwd, token, session);
+      return { ok: true, message: "Overleaf updates applied locally. Use Save to Overleaf to publish the combined version." };
+    } catch (error) {
+      return { ok: false, message: gitErrorMessage(error) };
+    }
+  });
+}
+
+export type ForceSyncDirection = "pull" | "push";
+export type ForceSyncReview = { token: string; direction: ForceSyncDirection; branch: string; localCommit: string; remoteCommit: string; files: string[]; ahead: number; behind: number };
+type ForceSyncSession = ForceSyncReview & { confirmation?: string };
+function forceSyncPath(cwd: string, token: string) {
+  if (!/^[a-f0-9-]{36}$/.test(token)) throw new Error("Invalid force synchronization review.");
+  return path.join(cwd, ".git", "openbar-force-reviews", `${token}.json`);
+}
+export async function prepareForceSync(projectDir: string, direction: ForceSyncDirection): Promise<{ ok: true; review: ForceSyncReview } | { ok: false; message: string }> {
+  if (direction !== "pull" && direction !== "push") return { ok: false, message: "Choose force pull or force push." };
+  const initial = await getOverleafGitStatus(projectDir);
+  if (!initial.isOverleafRemote) return { ok: false, message: "Connect this project to Overleaf first." };
+  const checkpoint = await commitOverleafGit(projectDir, `OpenBar: checkpoint before force ${direction}`);
+  if (!checkpoint.ok) return { ok: false, message: checkpoint.message };
+  const cwd = resolveGitDir(projectDir);
+  return withWriteLockAsync(path.join(cwd, ".git", "openbar-sync"), async () => {
+    try {
+      if ((await runGit(cwd, ["status", "--porcelain=v1", "--untracked-files=no"])).trim()) throw new Error("Commit the remaining tracked changes before forcing synchronization.");
+      const branch = (await runGit(cwd, ["symbolic-ref", "--short", "HEAD"])).trim();
+      await runGit(cwd, ["fetch", "origin", branch]);
+      const localCommit = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
+      const remoteCommit = (await runGit(cwd, ["rev-parse", "FETCH_HEAD"])).trim();
+      const [ahead, behind] = (await runGit(cwd, ["rev-list", "--left-right", "--count", `${localCommit}...${remoteCommit}`])).trim().split(/\s+/).map(Number);
+      const files = (await runGit(cwd, ["diff", "--name-only", "-z", localCommit, remoteCommit])).split("\0").filter(Boolean);
+      const { randomUUID } = await import("node:crypto");
+      const review: ForceSyncReview = { token: randomUUID(), direction, branch, localCommit, remoteCommit, files, ahead, behind };
+      const file = forceSyncPath(cwd, review.token);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(review), { mode: 0o600 });
+      return { ok: true as const, review };
+    } catch (error) { return { ok: false as const, message: gitErrorMessage(error) }; }
+  });
+}
+
+/** First explicit confirmation creates a separate receipt required by the final confirmation. */
+export async function confirmForceSync(projectDir: string, token: string): Promise<{ ok: true; confirmation: string } | { ok: false; message: string }> {
+  try {
+    const file = forceSyncPath(resolveGitDir(projectDir), token);
+    const session = JSON.parse(fs.readFileSync(file, "utf8")) as ForceSyncSession;
+    const { randomUUID } = await import("node:crypto");
+    session.confirmation = randomUUID();
+    fs.writeFileSync(file, JSON.stringify(session), { mode: 0o600 });
+    return { ok: true, confirmation: session.confirmation };
+  } catch (error) { return { ok: false, message: gitErrorMessage(error) }; }
+}
+
+export async function finishForceSync(projectDir: string, token: string, confirmation: string, phrase: string, cancel = false): Promise<{ ok: boolean; message: string; recoveryRefs?: string[] }> {
+  const cwd = resolveGitDir(projectDir);
+  return withWriteLockAsync(path.join(cwd, ".git", "openbar-sync"), async () => {
+    try {
+      const file = forceSyncPath(cwd, token);
+      const session = JSON.parse(fs.readFileSync(file, "utf8")) as ForceSyncSession;
+      if (cancel) { fs.rmSync(file); return { ok: true, message: "Force synchronization cancelled." }; }
+      if (!session.confirmation || confirmation !== session.confirmation || phrase !== `FORCE ${session.direction.toUpperCase()}`) throw new Error("Both confirmations are required before forcing synchronization.");
+      const status = await getOverleafGitStatus(projectDir);
+      if (!status.isOverleafRemote || status.branch !== session.branch || status.lastCommit?.hash !== session.localCommit || (await runGit(cwd, ["status", "--porcelain=v1", "--untracked-files=no"])).trim()) throw new Error("The local project changed. Start a fresh force synchronization review.");
+      const remoteHead = (await runGit(cwd, ["ls-remote", "--heads", "origin", `refs/heads/${session.branch}`])).trim().split(/\s+/)[0];
+      if (remoteHead !== session.remoteCommit) throw new Error("Overleaf changed after your review. Start again to review its newest version.");
+      const refs = [`refs/openbar/recovery/${token}/local`, `refs/openbar/recovery/${token}/overleaf`];
+      await runGit(cwd, ["update-ref", refs[0], session.localCommit]);
+      await runGit(cwd, ["update-ref", refs[1], session.remoteCommit]);
+      if (session.direction === "pull") {
+        // --keep aligns history and preserves unrelated untracked runtime files.
+        // Git refuses an overlapping untracked file or an edit arriving at reset time.
+        await runGit(cwd, ["reset", "--keep", session.remoteCommit]);
+      } else {
+        await runGit(cwd, ["push", `--force-with-lease=refs/heads/${session.branch}:${session.remoteCommit}`, "origin", `${session.localCommit}:refs/heads/${session.branch}`]);
+      }
+      fs.rmSync(file);
+      return { ok: true, message: session.direction === "pull" ? "Local project now matches the reviewed Overleaf commit." : "Overleaf now matches the reviewed local commit.", recoveryRefs: refs };
+    } catch (error) { return { ok: false, message: gitErrorMessage(error) }; }
+  });
+}
+
+/** Agent diagnostics include exact merge inputs and recovery pointers. Full conflict contents are returned by prepareOverleafPull. */
+export async function getOverleafSyncDetails(projectDir: string, refresh = false) {
+  const status = refresh ? await refreshOverleafGitStatus(projectDir) : await getOverleafGitStatus(projectDir);
+  if (!status.isGitRepo || !status.branch) return { status };
+  const cwd = resolveGitDir(projectDir);
+  const remoteCommit = (await runGit(cwd, ["rev-parse", `refs/remotes/origin/${status.branch}`]).catch(() => "")).trim();
+  const baseCommit = remoteCommit ? (await runGit(cwd, ["merge-base", "HEAD", remoteCommit]).catch(() => "")).trim() : "";
+  const incomingFiles = baseCommit && remoteCommit ? (await runGit(cwd, ["diff", "--name-status", "-z", baseCommit, remoteCommit])).split("\0").filter(Boolean) : [];
+  const outgoingFiles = baseCommit ? (await runGit(cwd, ["diff", "--name-status", "-z", baseCommit, "HEAD"])).split("\0").filter(Boolean) : [];
+  const recovery = (await runGit(cwd, ["for-each-ref", "--count=40", "--sort=-creatordate", "--format=%(refname) %(objectname)", "refs/openbar/recovery/"]).catch(() => "")).trim().split("\n").filter(Boolean);
+  return { status, localCommit: status.lastCommit?.hash, remoteCommit: remoteCommit || null, baseCommit: baseCommit || null, incomingFiles, outgoingFiles, recovery, nextStep: (status.behind || 0) > 0 ? "Call sync_project with action=review_pull to obtain base/local/remote text for each conflict. Resolve every file and apply_pull with the returned token. Each choice selects an entire file. A changed local HEAD or tracked working tree requires a fresh review." : "Local and remote commit counts are in status. Use the existing project save operation to publish local commits." };
 }

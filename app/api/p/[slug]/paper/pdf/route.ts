@@ -1,18 +1,22 @@
 import { ProjectAccessError, requireProjectAccess } from "@/lib/server/project-access";
 import { projectContentDir } from "@/lib/store";
-import { getCompiledPdf } from "@/lib/tex-project/compile";
+import { currentArtifactId, getCompiledPdf, markDisplayedArtifact } from "@/lib/tex-project/compile";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ slug: string }> },
 ) {
   const { slug } = await params;
   try {
     await requireProjectAccess(slug);
-    const pdf = getCompiledPdf(projectContentDir(slug));
+    const projectDir = projectContentDir(slug);
+    const artifactId = new URL(request.url).searchParams.get("artifact") || undefined;
+    const resolvedArtifactId = artifactId || currentArtifactId(projectDir);
+    const pdf = getCompiledPdf(projectDir, resolvedArtifactId);
     if (!pdf) return new Response("No compiled PDF is available yet.", { status: 404 });
+    if (resolvedArtifactId) markDisplayedArtifact(projectDir, resolvedArtifactId);
     return new Response(new Uint8Array(pdf), {
       headers: {
         "Cache-Control": "no-store",

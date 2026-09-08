@@ -1,7 +1,7 @@
 /**
  * Map-owned progress is a small presentation state, independent of TeX TODO
- * completion. Zero is the visible empty state; one through six are the six
- * filled circles.
+ * completion. Zero is ready to start. One through five fill a pie in sixths,
+ * and six shows the completed checkmark.
  */
 export type MindmapProgress = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 

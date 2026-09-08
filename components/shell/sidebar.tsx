@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { PanelLeft, PanelLeftClose } from "lucide-react";
+import styles from "./sidebar.module.css";
+import { BookOpenText, Network, PanelLeft, PanelLeftClose } from "lucide-react";
 
 import { Project } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -37,17 +38,24 @@ export function Sidebar({
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored === "0") setOpen(false);
-    else if (stored === "1") setOpen(true);
-    else setOpen(window.innerWidth >= 768);
-    setReady(true);
+    const narrow = window.matchMedia("(max-width: 767px)");
+    const applyViewport = () => {
+      let desktopOpen = true;
+      try { desktopOpen = window.localStorage.getItem(STORAGE_KEY) !== "0"; } catch { /* Keep navigation available when storage is restricted. */ }
+      setOpen(narrow.matches ? false : desktopOpen);
+      setReady(true);
+    };
+    applyViewport();
+    narrow.addEventListener("change", applyViewport);
+    return () => narrow.removeEventListener("change", applyViewport);
   }, []);
 
-  useEffect(() => {
-    if (!ready) return;
-    window.localStorage.setItem(STORAGE_KEY, open ? "1" : "0");
-  }, [open, ready]);
+  const changeOpen = (next: boolean) => {
+    setOpen(next);
+    if (!window.matchMedia("(max-width: 767px)").matches) {
+      try { window.localStorage.setItem(STORAGE_KEY, next ? "1" : "0"); } catch { /* The sidebar still works without persistent storage. */ }
+    }
+  };
 
   const nav = active
     ? [
@@ -62,20 +70,21 @@ export function Sidebar({
   return (
     <>
       {ready && !open && (
-        <button
-          type="button"
-          className="ob-press fixed left-2 top-3 z-30 grid h-8 w-8 place-items-center rounded-lg border border-line bg-surface text-muted shadow-xs hover:text-ink"
-          aria-label="Show sidebar"
-          title="Show sidebar"
-          onClick={() => setOpen(true)}
-        >
-          <PanelLeft size={16} />
-        </button>
+        <nav className={styles.collapsedRail} aria-label="Project navigation">
+          <button type="button" aria-label="Show sidebar" title="Show sidebar" onClick={() => changeOpen(true)}><PanelLeft size={18} /></button>
+          {active && <>
+            <Link href={`${base}/paper`} aria-label="Paper" title="Paper"><BookOpenText size={18} /></Link>
+            <Link href={`${base}/mindmap`} aria-label="Mindmap" title="Mindmap"><Network size={18} /></Link>
+          </>}
+        </nav>
       )}
+      {ready && open && <button type="button" className={styles.backdrop} aria-label="Close sidebar" onClick={() => changeOpen(false)} />}
       <aside
+        onKeyDown={(event) => { if (event.key === "Escape") changeOpen(false); }}
+        onClickCapture={(event) => { if (window.matchMedia("(max-width: 767px)").matches && (event.target as HTMLElement).closest("a")) changeOpen(false); }}
         className={cn(
-          "ob-sidebar h-screen w-[248px] shrink-0 flex-col",
-          ready ? (open ? "flex" : "hidden") : "hidden md:flex",
+          "ob-sidebar", styles.sidebar,
+          ready ? (open ? styles.open : styles.closed) : styles.initial,
         )}
       >
         <div className="flex min-h-16 items-center gap-2 px-3 py-3">
@@ -91,7 +100,7 @@ export function Sidebar({
             className="ob-press grid h-7 w-7 shrink-0 place-items-center rounded-md text-muted hover:bg-surface-3 hover:text-ink"
             aria-label="Hide sidebar"
             title="Hide sidebar"
-            onClick={() => setOpen(false)}
+            onClick={() => changeOpen(false)}
           >
             <PanelLeftClose size={16} />
           </button>

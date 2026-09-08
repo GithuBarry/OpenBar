@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import * as Popover from "@radix-ui/react-popover";
 
 import {
   getWebMcpCatalog,
@@ -9,6 +11,7 @@ import {
   type WebMcpDiagnostic,
   type WebMcpSurface,
 } from "@/lib/research/webmcp-register";
+import { AGENT_GUIDANCE } from "@/lib/research/agent-guidance";
 import { cn } from "@/lib/utils";
 
 const SURFACE_LABEL: Partial<Record<WebMcpSurface, string>> = {
@@ -26,7 +29,7 @@ export function AgentReadyIndicator() {
   const [catalog, setCatalog] = useState<WebMcpCatalogEntry[]>([]);
   const [diagnostics, setDiagnostics] = useState<WebMcpDiagnostic[]>([]);
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const [hostStatus, setHostStatus] = useState("Checking browser WebMCP support…");
 
   useEffect(() => {
     let disposed = false;
@@ -49,17 +52,24 @@ export function AgentReadyIndicator() {
 
   useEffect(() => {
     if (!open) return;
-    const onPointer = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    const inspectHost = () => {
+      const legacyContext = (navigator as Navigator & {
+        modelContext?: { registerTool?: unknown };
+      }).modelContext;
+      setHostStatus(
+        !window.isSecureContext
+          ? "WebMCP requires a secure browser context. Open this page over HTTPS or localhost."
+          : typeof document.modelContext?.registerTool === "function"
+            ? "The browser provides document.modelContext. If no tools appear, registration has not completed; reload this page and check for registration errors below."
+            : typeof legacyContext?.registerTool === "function"
+              ? "This browser provides navigator.modelContext. OpenBar supports this native API and registers tools automatically. Registration diagnostics appear below."
+              : "This browser does not expose the WebMCP registration API. Enable WebMCP support in the browser or its agent integration, then reload this page. HTTPS is working, but it does not enable WebMCP by itself.",
+      );
     };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("pointerdown", onPointer);
-    window.addEventListener("keydown", onKey);
+    inspectHost();
+    const hostTimer = window.setInterval(inspectHost, 1000);
     return () => {
-      window.removeEventListener("pointerdown", onPointer);
-      window.removeEventListener("keydown", onKey);
+      window.clearInterval(hostTimer);
     };
   }, [open]);
 
@@ -85,34 +95,44 @@ export function AgentReadyIndicator() {
       : "Agent waiting";
 
   return (
-    <div ref={rootRef} className="relative">
+    <>
+    <aside className="sr-only" aria-label="Agent instructions" data-agent-instructions>{AGENT_GUIDANCE}</aside>
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
       <button
         type="button"
         className={cn("ob-agent-ready", ready && "ob-agent-ready-on")}
-        onClick={() => setOpen((value) => !value)}
+        aria-label="Tools and agent access"
         aria-expanded={open}
         title={issueCount ? "WebMCP registration issues" : ready ? "WebMCP tools on this page" : "Waiting for WebMCP"}
       >
         <span className="ob-agent-ready-dot" aria-hidden="true" />
-        {statusText}
+        Agent tools
       </button>
+      </Popover.Trigger>
       {open && (
-        <div className="ob-agent-ready-panel" role="dialog" aria-label="Available WebMCP tools">
-          <p className="ob-agent-ready-heading">{ready ? "Available here" : "No tools registered yet"}</p>
+        <Popover.Portal>
+        <Popover.Content className="ob-agent-ready-panel" align="end" sideOffset={8} collisionPadding={12} aria-label="Tools and agent access">
+          <p className="ob-agent-ready-heading">Tools and agent access</p>
+          <Link href="/agents" className="text-xs text-accent underline">How to connect a browser or headless agent</Link>
+          <p className="ob-agent-ready-heading mt-3">{statusText}</p>
           {ready ? (
             grouped.map(({ surface, tools }) => (
               <div key={surface} className="ob-agent-ready-group">
                 <p>{SURFACE_LABEL[surface] || surface}</p>
                 <ul>
                   {tools.map((tool) => (
-                    <li key={tool.name} title={tool.description}>{tool.title}</li>
+                    <li key={tool.name} title={tool.description}><code>{tool.name}</code> · {tool.title}</li>
                   ))}
                 </ul>
               </div>
             ))
           ) : issueCount === 0 ? (
-            <p className="ob-agent-ready-empty">No WebMCP host is attached. That is normal in Cursor preview.</p>
+            <p className="ob-agent-ready-empty">{hostStatus}</p>
           ) : null}
+          {ready && (
+            <p className="ob-agent-ready-empty">Tools are registered in this page. Agent discovery must be provided by your browser integration; registration does not confirm that an agent is attached.</p>
+          )}
           {issueCount > 0 && (
             <div className="ob-agent-ready-group">
               <p>Registration issues</p>
@@ -125,8 +145,11 @@ export function AgentReadyIndicator() {
               </ul>
             </div>
           )}
-        </div>
+          <p className="ob-agent-ready-empty">Headless clients connect to <code>/api/mcp</code> with the configured authentication, then call <code>tools/list</code>. Start with <code>get_project_state</code>.</p>
+        </Popover.Content>
+        </Popover.Portal>
       )}
-    </div>
+    </Popover.Root>
+    </>
   );
 }

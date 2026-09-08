@@ -135,7 +135,6 @@ export async function convertWithPandoc(input: {
   }
 }
 
-export { proposedTableRepair, suspiciousTexSequences } from "./tex-repair";
 
 export type ConversionPlan = {
   id: string;

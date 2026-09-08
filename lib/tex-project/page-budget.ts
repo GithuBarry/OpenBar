@@ -35,8 +35,11 @@ function plainTitle(value: string): string {
  * Reads LaTeX's compiled auxiliary file. The managed section labels give an
  * exact page for each numbered manuscript section without parsing PDF text.
  */
-export function inspectPaperPageBudget(projectDir: string): PaperPageBudget | undefined {
-  const auxFile = path.join(texPaths(projectDir).buildDir, "paper.aux");
+export function inspectPaperPageBudget(projectDir: string, artifactId?: string): PaperPageBudget | undefined {
+  const safeArtifactId = artifactId && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(artifactId) ? artifactId : undefined;
+  const auxFile = safeArtifactId
+    ? path.join(texPaths(projectDir).buildDir, "artifacts", safeArtifactId, "paper.aux")
+    : path.join(texPaths(projectDir).buildDir, "paper.aux");
   let aux: string;
   let measuredAt: string;
   try {

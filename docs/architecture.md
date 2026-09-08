@@ -71,7 +71,9 @@ subset of paper TODOs. The same `todoId` across maps is valid. The same
 Unplaced.
 
 Creating a TODO from a secondary map writes `\obtodo` in TeX, binds the
-current card, and leaves the new TODO in Primary Unplaced until placed.
+current card, and leaves the new TODO in Primary Unplaced until placed. A
+conversion may target a stable paper section or use a neutral insertion in the
+manuscript root.
 Deleting a secondary TODO card removes that view only. Deleting a Primary
 TODO card returns the TeX TODO to Primary Unplaced. Removing the TeX TODO
 leaves missing-source cards for repair.

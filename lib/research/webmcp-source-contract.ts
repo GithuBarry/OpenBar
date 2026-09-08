@@ -127,6 +127,7 @@ export const PAPER_SOURCE_WEBMCP_SCHEMAS: Record<PaperSourceWebMcpToolName, Json
       to: { type: "integer", minimum: 0 },
       title: { type: "string", description: "Optional TeX-owned TODO title." },
       text: { type: "string" },
+      textFormat: { type: "string", enum: ["plain", "tex"], description: "Use tex for an authored TeX body. Plain text is escaped for TeX and is the default." },
       expectedRevision: expectedRevisionSchema,
       dryRun: { type: "boolean", description: "Return patches without mutating the live buffer." },
     },
@@ -137,6 +138,7 @@ export const PAPER_SOURCE_WEBMCP_SCHEMAS: Record<PaperSourceWebMcpToolName, Json
       id: { type: "string" },
       title: { type: "string", description: "Optional TeX-owned TODO title. Use an empty string to clear it." },
       text: { type: "string" },
+      textFormat: { type: "string", enum: ["plain", "tex"], description: "Use tex when editing the existing TeX body or supplying formatting commands. Plain text is escaped for TeX and is the default." },
       completed: { type: "boolean" },
       expectedRevision: expectedRevisionSchema,
       dryRun: { type: "boolean", description: "Return patches without mutating the live buffer." },
@@ -277,6 +279,7 @@ export async function executePaperSourceTool(
       if (!rev.ok) return rev;
       if (args.title !== undefined && typeof args.title !== "string") return failResult("invalid_arguments", "title must be a string.", false);
       if (typeof args.text !== "string") return failResult("invalid_arguments", "text must be a string.", false);
+      if (args.textFormat !== undefined && args.textFormat !== "plain" && args.textFormat !== "tex") return failResult("invalid_arguments", "textFormat must be plain or tex.", false);
       if (args.dryRun !== undefined && typeof args.dryRun !== "boolean") return failResult("invalid_arguments", "dryRun must be a boolean.", false);
       const range = sourceRange(args, source);
       if ("ok" in range) return range;
@@ -289,6 +292,7 @@ export async function executePaperSourceTool(
         to: range.to,
         title: typeof args.title === "string" ? args.title : undefined,
         text: args.text,
+        textFormat: args.textFormat as "plain" | "tex" | undefined,
       });
       if (!result.ok) return result;
       const insert = result.value.patches[0]!.next;
@@ -306,6 +310,7 @@ export async function executePaperSourceTool(
       if (typeof args.id !== "string") return failResult("invalid_arguments", "id must be a string.", false);
       if (args.title !== undefined && typeof args.title !== "string") return failResult("invalid_arguments", "title must be a string.", false);
       if (args.text !== undefined && typeof args.text !== "string") return failResult("invalid_arguments", "text must be a string.", false);
+      if (args.textFormat !== undefined && args.textFormat !== "plain" && args.textFormat !== "tex") return failResult("invalid_arguments", "textFormat must be plain or tex.", false);
       if (args.completed !== undefined && typeof args.completed !== "boolean") return failResult("invalid_arguments", "completed must be a boolean.", false);
       if (args.dryRun !== undefined && typeof args.dryRun !== "boolean") return failResult("invalid_arguments", "dryRun must be a boolean.", false);
       const result = applySourceOperation(source, {
@@ -313,6 +318,7 @@ export async function executePaperSourceTool(
         id: args.id,
         title: typeof args.title === "string" ? args.title : undefined,
         text: typeof args.text === "string" ? args.text : undefined,
+        textFormat: args.textFormat as "plain" | "tex" | undefined,
         completed: typeof args.completed === "boolean" ? args.completed : undefined,
       });
       if (!result.ok) return result;

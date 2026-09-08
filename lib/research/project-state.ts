@@ -1,3 +1,4 @@
+import { AGENT_GUIDANCE } from "./agent-guidance";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -29,6 +30,7 @@ import {
   type TodoReconciliation,
 } from "@/lib/research/todo-map";
 import { openBarExpectations, type OpenBarExpectations } from "@/lib/research/expectations";
+import { compactActivityChanges, compactActivityResources, readActivity, type ActivityEvent } from "@/lib/research/activity-log";
 
 export type { CurrentLocation };
 
@@ -96,6 +98,11 @@ export type RecentActivityItem = {
   mapId?: string;
   at: string;
   href: string;
+  actor?: ActivityEvent["actor"];
+  operation?: string;
+  resources?: ActivityEvent["resources"];
+  changes?: ActivityEvent["changes"];
+  deleted?: boolean;
 };
 
 export type SearchHit = {
@@ -123,6 +130,9 @@ export type ProjectState = {
     collaborators?: string[];
     archivedAt?: string;
     label?: string;
+    engine?: Project["engine"];
+    mainFile?: string;
+    texliveVersion?: string;
   };
   current?: CurrentLocation;
   paper: {
@@ -424,8 +434,52 @@ export function deriveRecentActivity(input: {
   mindmaps: Mindmap[];
   paperTodos?: PaperTodo[];
   primaryReconciliation?: TodoReconciliation;
+  activity?: ActivityEvent[];
+  activityWindowDays?: number;
   limit?: number;
 }): RecentActivityItem[] {
+  if (input.activity?.length) {
+    const mapById = new Map(input.mindmaps.map((map) => [map.id || DRAFT_MINDMAP_ID, map]));
+    const defaultDays = Math.max(1, Math.min(365, input.activityWindowDays || 7));
+    const items: RecentActivityItem[] = [];
+    for (const event of input.activity) {
+      const resource = event.resources.find((item) => item.kind === "paper-todo" || item.kind === "paper-section" || item.kind === "mindmap-node")
+        || event.resources[0];
+      const todo = event.resources.find((item) => item.kind === "paper-todo");
+      const eventMapId = event.resources.find((item) => item.mapId)?.mapId;
+      const map = eventMapId ? mapById.get(eventMapId) : undefined;
+      const days = map?.activityWindowDays || defaultDays;
+      const since = Date.now() - days * 24 * 60 * 60 * 1000;
+      if (!Number.isFinite(Date.parse(event.at)) || Date.parse(event.at) < since) continue;
+      const kind: RecentActivityItem["kind"] = todo || resource?.kind === "paper-todo"
+        ? "todo"
+        : resource?.kind === "paper-section" || resource?.kind === "paper"
+          ? "section_edit"
+          : "card";
+      const mapId = resource?.mapId || event.resources.find((item) => item.mapId)?.mapId;
+      const nodeId = resource?.kind === "mindmap-node" ? resource.id : undefined;
+      const sectionId = resource?.kind === "paper-section" ? resource.id : undefined;
+      const todoId = todo?.id || (resource?.kind === "paper-todo" ? resource.id : undefined);
+      const href = event.href
+        || (todoId ? paperHref(input.slug, todoId) : nodeId ? mindmapHref(input.slug, mapId, nodeId) : sectionId ? paperHref(input.slug, sectionId) : paperHref(input.slug));
+      items.push({
+        kind,
+        title: event.title || resource?.id || event.operation,
+        ...(sectionId ? { sectionId } : {}),
+        ...(nodeId ? { nodeId } : {}),
+        ...(mapId ? { mapId } : {}),
+        at: event.at,
+        href,
+        actor: event.actor,
+        operation: event.operation,
+        resources: compactActivityResources(event.resources),
+        changes: compactActivityChanges(event.changes),
+        ...(event.deleted ? { deleted: true } : {}),
+      });
+    }
+    return items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, input.limit ?? 40);
+  }
+
   const items: RecentActivityItem[] = [];
   const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const texTodos = input.paperTodos || [];
@@ -486,6 +540,7 @@ export function buildProjectState(input: {
   skills: ProjectSkill[];
   agentsMd?: { path: string; body: string; updatedAt?: string };
   workspaceAgentsMd?: { path: string; body: string; updatedAt?: string };
+  activity?: ActivityEvent[];
   current?: CurrentLocation;
 }): ProjectState {
   const slug = input.project.slug;
@@ -534,6 +589,9 @@ export function buildProjectState(input: {
       ...(input.project.collaborators?.length ? { collaborators: input.project.collaborators } : {}),
       ...(input.project.archivedAt ? { archivedAt: input.project.archivedAt } : {}),
       ...(input.project.label ? { label: input.project.label } : {}),
+      ...(input.project.engine ? { engine: input.project.engine } : {}),
+      ...(input.project.mainFile ? { mainFile: input.project.mainFile } : {}),
+      ...(input.project.texliveVersion ? { texliveVersion: input.project.texliveVersion } : {}),
     },
     ...(input.current ? { current: input.current } : {}),
     paper,
@@ -554,6 +612,8 @@ export function buildProjectState(input: {
       mindmaps: input.mindmaps,
       paperTodos,
       primaryReconciliation: reconciliation,
+      activity: input.activity,
+      activityWindowDays: primary?.activityWindowDays,
     }),
     skills: input.skills,
     expectations: openBarExpectations(),
@@ -611,6 +671,7 @@ export function getProjectState(slug: string, current?: CurrentLocation): Projec
     skills,
     agentsMd: findAgentsMd(dir),
     workspaceAgentsMd: findAgentsMd(workspaceRoot()),
+    activity: readActivity(dir, 2_000),
     current,
   });
 }
@@ -655,10 +716,29 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
     missing: state.todoSync.missing,
     warnings: state.todoSync.warnings,
   };
+  const recentForAgent = state.recent.slice(0, 6).map((item) => {
+    const resources = compactActivityResources(item.resources);
+    const changes = compactActivityChanges(item.changes);
+    return {
+      kind: item.kind,
+      title: item.title,
+      at: item.at,
+      href: item.href,
+      ...(item.sectionId ? { sectionId: item.sectionId } : {}),
+      ...(item.nodeId ? { nodeId: item.nodeId } : {}),
+      ...(item.mapId ? { mapId: item.mapId } : {}),
+      ...(item.actor ? { actor: item.actor } : {}),
+      ...(item.operation ? { operation: item.operation } : {}),
+      ...(resources.length ? { resources } : {}),
+      ...(changes.length ? { changes } : {}),
+      ...(item.deleted ? { deleted: true } : {}),
+    };
+  });
 
   if (detail === "full") {
     return {
       detail,
+      agentInstructions: AGENT_GUIDANCE,
       project: state.project,
       current: state.current,
       paper: paper && {
@@ -679,6 +759,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
 
   return {
     detail,
+    agentInstructions: AGENT_GUIDANCE,
     project: state.project,
     current: state.current,
     paper: paper && {
@@ -701,13 +782,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
       })),
     },
     todos: todoLimit > 0 ? todoRows([...unplaced, ...openTodos.filter((todo) => !primaryUnplaced(todo))]) : undefined,
-    recent: state.recent.slice(0, 6).map((item) => ({
-      kind: item.kind,
-      title: item.title,
-      at: item.at,
-      href: item.href,
-      mapId: item.mapId,
-    })),
+    recent: recentForAgent,
     mindmaps: maps,
     wiki: [],
     skills: state.skills.map((skill) => ({ id: skill.id, name: skill.name, source: skill.source })),

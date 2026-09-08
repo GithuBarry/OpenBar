@@ -34,7 +34,7 @@ export default async function ProjectLayout({
           workspaceTagline={workspace.tagline}
           publicDemo={publicDemo}
         />
-        <main className="flex-1 overflow-y-auto bg-canvas">
+        <main className="min-w-0 flex-1 overflow-y-auto bg-canvas">
           {children}
         </main>
       </div>

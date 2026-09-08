@@ -10,7 +10,7 @@
 import { fetchWithRetry } from "./smoke-http";
 
 const base = process.env.OB_SMOKE_BASE || "http://127.0.0.1:3000";
-const slugs = (process.env.OB_SMOKE_SLUGS || process.env.OB_SMOKE_SLUG || "command-v,noveltybench")
+const slugs = (process.env.OB_SMOKE_SLUGS || process.env.OB_SMOKE_SLUG || "private-project-a,private-project-b")
   .split(",")
   .map((slug) => slug.trim())
   .filter(Boolean);

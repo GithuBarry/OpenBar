@@ -4,6 +4,8 @@
  * stripped of executable and embedded content.
  */
 
+import createDOMPurify from "dompurify";
+
 export type HtmlMode = "static" | "interactive";
 
 const STATIC_CSP = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; sandbox";
@@ -15,6 +17,17 @@ export function htmlFrameSandbox(mode: HtmlMode): string {
 
 /** Synchronous sanitizer for SSR and parent-document fragments. */
 export function sanitizeHtmlFragmentSync(html: string): string {
+  if (typeof window !== "undefined" && typeof document !== "undefined") {
+    const purifier = createDOMPurify(window);
+    return purifier.sanitize(html, {
+      ALLOW_DATA_ATTR: true,
+      ADD_TAGS: ["math", "mi", "mn", "mo", "mrow", "ms", "mspace", "msup", "msub", "mover", "munder", "munderover", "annotation", "semantics"],
+      ADD_ATTR: ["data-ob-heading-key", "data-cite-keys", "aria-label", "aria-hidden"],
+      USE_PROFILES: { html: true, mathMl: true, svg: true, svgFilters: true },
+    });
+  }
+  // Server rendering has no DOM to hand to DOMPurify. Keep the conservative
+  // fallback for that path; browser previews always use the library above.
   return stripScripts(html).replace(/<\/?(?:iframe|object|embed|link|meta|base)[^>]*>/gi, "");
 }
 

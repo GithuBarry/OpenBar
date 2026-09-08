@@ -10,6 +10,7 @@ import {
   defaultKeymap,
   history,
   historyKeymap,
+  isolateHistory,
   indentWithTab,
 } from "@codemirror/commands";
 import { codeFolding, foldEffect, foldGutter, foldKeymap, foldService, HighlightStyle, indentUnit, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
@@ -35,9 +36,11 @@ import {
 import { stex } from "@codemirror/legacy-modes/mode/stex";
 import { tags } from "@lezer/highlight";
 
+import { metadataMarkers } from "./metadata-markers";
 import { obMarkerDecorations, headingCountSeed } from "./ob-cm-decorations";
-import { splitBundleSource } from "@/lib/tex-project/source-bundle-format";
+import { bannerRanges } from "@/lib/tex-project/source-bundle-format";
 import { cn } from "@/lib/utils";
+import { formatInlineSelection, type InlineFormat, type InlineSyntax } from "@/lib/mindmap/text-formatting";
 
 export type { EditorView } from "@codemirror/view";
 
@@ -269,7 +272,7 @@ const obEditorTheme = EditorView.theme({
   },
 });
 
-const obNestedTheme = EditorView.theme({
+const obCompactTheme = EditorView.theme({
   "&": {
     height: "auto !important",
     backgroundColor: "transparent",
@@ -387,6 +390,21 @@ function surroundSelection(view: EditorView, open: string, close: string, placeh
   view.focus();
 }
 
+function applyInlineFormat(view: EditorView, syntax: InlineSyntax, kind: InlineFormat): boolean {
+  const selection = view.state.selection.main;
+  const change = formatInlineSelection(view.state.doc.toString(), selection.from, selection.to, syntax, kind);
+  if (!change) return false;
+  view.dispatch({
+    changes: { from: change.from, to: change.to, insert: change.insert },
+    selection: { anchor: change.selFrom, head: change.selTo },
+    annotations: isolateHistory.of("full"),
+    userEvent: "input.format",
+    scrollIntoView: true,
+  });
+  view.focus();
+  return true;
+}
+
 function insertAtCursor(view: EditorView, text: string, asBlock: boolean): void {
   const sel = view.state.selection.main;
   const doc = view.state.doc;
@@ -421,23 +439,47 @@ export type TexCodeMirrorHandle = {
   getSelection: () => { from: number; to: number } | null;
   setSelection: (from: number, to: number) => void;
   surround: (open: string, close: string, placeholder?: string) => void;
+  format: (syntax: InlineSyntax, kind: InlineFormat) => boolean;
   insertAtCursor: (text: string, asBlock?: boolean) => void;
   getLiveSource: () => string;
   getVirtualSelection: () => { from: number; to: number } | null;
   applyVirtualChange: (from: number, to: number, insert: string) => boolean;
 };
 
+export type TexDocChange = { from: number; to: number; insert: string };
+
 export type TexCodeMirrorProps = {
   value: string;
-  onChange: (value: string) => void;
+  onChange?: (value: string) => void;
+  onDocChanges?: (changes: TexDocChange[], length: number) => void;
   onScroll?: () => void;
   onFocus?: () => void;
+  onCommit?: () => void;
+  onCancel?: () => void;
   placeholder?: string;
   className?: string;
-  variant?: "pane" | "nested";
+  variant?: "pane" | "compact" | "nested";
+  texHighlighting?: boolean;
+  lineOffset?: number;
   headingCounts?: Map<string, number>;
   focusContext?: TexFocusContext | null;
 };
+
+const bannerField = StateField.define<Array<{ from: number; to: number }>>({
+  create: (state) => bannerRanges(state.doc.toString()),
+  update: (ranges, tr) => {
+    if (!tr.docChanged) return ranges;
+    let next = ranges;
+    tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+      const delta = inserted.length - (toA - fromA);
+      next = next.map((range) => {
+        if (toA <= range.from) return { from: range.from + delta, to: range.to + delta };
+        return range;
+      });
+    });
+    return next;
+  },
+});
 
 function seedKeyOf(counts?: Map<string, number>): string {
   if (!counts?.size) return "";
@@ -448,11 +490,16 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
   function TexCodeMirror({
     value,
     onChange,
+    onDocChanges,
     onScroll,
     onFocus,
+    onCommit,
+    onCancel,
     placeholder,
     className,
     variant = "pane",
+    texHighlighting = true,
+    lineOffset = 0,
     headingCounts,
     focusContext = null,
   }, ref) {
@@ -460,17 +507,25 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
     const viewRef = useRef<EditorView | null>(null);
     const placeholderCompRef = useRef(new Compartment());
     const seedCompRef = useRef(new Compartment());
+    const lineCompRef = useRef(new Compartment());
+    const languageCompRef = useRef(new Compartment());
     const onChangeRef = useRef(onChange);
+    const onDocChangesRef = useRef(onDocChanges);
     const onScrollRef = useRef(onScroll);
     const onFocusRef = useRef(onFocus);
+    const onCommitRef = useRef(onCommit);
+    const onCancelRef = useRef(onCancel);
     const valueRef = useRef(value);
     const placeholderRef = useRef(placeholder);
     const headingCountsRef = useRef(headingCounts);
     const variantRef = useRef(variant);
     const focusContextRef = useRef(focusContext);
     onChangeRef.current = onChange;
+    onDocChangesRef.current = onDocChanges;
     onScrollRef.current = onScroll;
     onFocusRef.current = onFocus;
+    onCommitRef.current = onCommit;
+    onCancelRef.current = onCancel;
     valueRef.current = value;
     placeholderRef.current = placeholder;
     headingCountsRef.current = headingCounts;
@@ -522,6 +577,10 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
         if (!view) return;
         surroundSelection(view, open, close, ph);
       },
+      format: (syntax, kind) => {
+        const view = viewRef.current;
+        return view ? applyInlineFormat(view, syntax, kind) : false;
+      },
       insertAtCursor: (text, asBlock = false) => {
         const view = viewRef.current;
         if (!view) return;
@@ -545,70 +604,97 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
 
       const placeholderComp = placeholderCompRef.current;
       const seedComp = seedCompRef.current;
-      const nested = variantRef.current === "nested";
+      const compact = variantRef.current === "compact";
       const focusField = focusContextField(focusContextRef.current);
       const view = new EditorView({
         parent: host,
         state: EditorState.create({
           doc: valueRef.current,
           extensions: [
-            StreamLanguage.define(stex),
+            languageCompRef.current.of(texHighlighting ? StreamLanguage.define(stex) : []),
             syntaxHighlighting(obHighlightStyle),
             history(),
             drawSelection(),
-            codeFolding({ placeholderText: "⋯" }),
-            lineNumbers(),
-            foldGutter(),
-            foldService.of(packageFoldService),
-            foldService.of(headingFoldService),
+            ...(compact ? [] : [
+              codeFolding({ placeholderText: "⋯" }),
+              lineCompRef.current.of(lineNumbers({ formatNumber: (number) => String(number + lineOffset) })),
+              foldGutter(),
+              foldService.of(packageFoldService),
+              foldService.of(headingFoldService),
+            ]),
             EditorView.lineWrapping,
             EditorState.tabSize.of(2),
             indentUnit.of("  "),
             keymap.of([
               {
+                key: "Mod-Enter",
+                run: () => {
+                  onCommitRef.current?.();
+                  return Boolean(onCommitRef.current);
+                },
+              },
+              {
+                key: "Escape",
+                run: () => {
+                  onCancelRef.current?.();
+                  return Boolean(onCancelRef.current);
+                },
+              },
+              {
                 key: "Mod-b",
                 run: (ed) => {
-                  surroundSelection(ed, "\\textbf{", "}", "bold");
+                  applyInlineFormat(ed, "tex", "bold");
                   return true;
                 },
               },
               {
                 key: "Mod-i",
                 run: (ed) => {
-                  surroundSelection(ed, "\\emph{", "}", "italic");
+                  applyInlineFormat(ed, "tex", "italic");
                   return true;
                 },
               },
-              indentWithTab,
-              ...foldKeymap,
-              ...searchKeymap,
+              ...(compact ? [] : [indentWithTab, ...foldKeymap, ...searchKeymap]),
               ...historyKeymap,
               ...defaultKeymap,
             ]),
-            search(),
+            ...(compact ? [] : [search()]),
             seedComp.of(headingCountSeed.of(new Map(headingCountsRef.current))),
             obMarkerDecorations,
+            ...(variantRef.current === "nested" ? [metadataMarkers] : []),
             focusField,
+            bannerField,
             EditorState.transactionFilter.of((tr) => {
-              if (nested || !tr.docChanged) return tr;
-              const text = tr.startState.doc.toString();
-              const blocked = { hit: false };
+              if (compact || !tr.docChanged) return tr;
+              const banners = tr.startState.field(bannerField);
+              let blocked = false;
               tr.changes.iterChanges((fromA, toA) => {
-                for (const part of splitBundleSource(text)) {
-                  if (fromA < part.bodyFrom && toA > part.bannerFrom) blocked.hit = true;
+                for (const range of banners) {
+                  if (fromA < range.to && toA > range.from) blocked = true;
                 }
               });
-              return blocked.hit ? [] : tr;
+              return blocked ? [] : tr;
             }),
-            nested ? obNestedTheme : obEditorTheme,
-            EditorView.editorAttributes.of({ class: nested ? "ob-cm-editor ob-cm-nested" : "ob-cm-editor" }),
+            compact ? obCompactTheme : obEditorTheme,
+            EditorView.editorAttributes.of({
+              class: compact ? "ob-cm-editor ob-cm-compact" : "ob-cm-editor",
+            }),
             EditorView.contentAttributes.of({ spellcheck: "true" }),
             placeholderComp.of(placeholderRef.current ? cmPlaceholder(placeholderRef.current) : []),
             EditorView.updateListener.of((update) => {
               if (update.focusChanged && update.view.hasFocus) onFocusRef.current?.();
               if (!update.docChanged) return;
               if (update.transactions.some((tr) => tr.annotation(fromPropSync))) return;
-              onChangeRef.current(update.state.doc.toString());
+              const notify = onDocChangesRef.current;
+              if (notify) {
+                const changes: TexDocChange[] = [];
+                update.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+                  changes.push({ from: fromA, to: toA, insert: inserted.toString() });
+                });
+                notify(changes, update.state.doc.length);
+                return;
+              }
+              onChangeRef.current?.(update.state.doc.toString());
             }),
           ],
         }),
@@ -665,6 +751,14 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
       });
     }, [placeholder]);
 
+    useEffect(() => {
+      viewRef.current?.dispatch({
+        effects: languageCompRef.current.reconfigure(texHighlighting ? StreamLanguage.define(stex) : []),
+      });
+    }, [texHighlighting]);
+
+    useEffect(() => { if (variantRef.current === "compact") return; viewRef.current?.dispatch({ effects: lineCompRef.current.reconfigure(lineNumbers({ formatNumber: (number) => String(number + lineOffset) })) }); }, [lineOffset]);
+
     const seedKey = seedKeyOf(headingCounts);
     useEffect(() => {
       const view = viewRef.current;
@@ -674,7 +768,17 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
       });
     }, [seedKey]);
 
-    return <div ref={hostRef} className={cn("ob-cm-root", variant === "nested" && "ob-cm-root-nested", className)} />;
+    return (
+      <div
+        ref={hostRef}
+        className={cn(
+          "ob-cm-root",
+          variant === "compact" && "ob-cm-root-compact",
+          variant === "nested" && "ob-cm-root-nested",
+          className,
+        )}
+      />
+    );
   },
 );
 

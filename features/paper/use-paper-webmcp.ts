@@ -98,7 +98,7 @@ export function liveSnapshotFromSource(input: {
   activeHeadingKey?: string;
   compileState?: {
     state: string;
-    compiler?: "latexmk" | "tectonic";
+    compiler?: "latexmk";
     jobId?: string;
     sourceHash?: string;
     stale?: boolean;

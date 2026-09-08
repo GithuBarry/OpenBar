@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 
 import "./globals.css";
+import { agentOrigins } from "@/lib/server/agent-origins";
 import { ThemeScript } from "@/components/theme";
 import { Providers } from "./providers";
 import { getWorkspaceSettings } from "@/lib/workspace";
@@ -43,6 +44,9 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
+        <meta name="openbar-agent-origins" content={JSON.stringify(agentOrigins())} />
+        <link rel="help" href="/agents" title="Tools and agent access" />
+        <link rel="alternate" type="text/plain" href="/llms.txt" title="OpenBar agent guide" />
         <ThemeScript />
       </head>
       <body className="min-h-screen antialiased">

@@ -1,13 +1,31 @@
 "use client";
 
-import { Plus } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { AnchoredPop } from "@/components/pop";
+import { RichText } from "@/components/rich-text";
+import { ArrowUpRight, Check, MoreHorizontal, Pencil, Plus, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { EditorTodo } from "@/features/paper/tex-source";
 import { composeObtodo, generateTodoId, type TodoAttrPatch } from "@/lib/todo-meta";
-import { formatWorkspaceDate } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+
+import { TexCodeMirror } from "./tex-codemirror";
 
 export type PlacementTarget = { id: string; label: string };
+
+type TodoFilter = "open" | "completed";
+export type TodoUndoSnapshot = {
+  tex: string;
+  before: string;
+  after: string;
+  baseHash?: string;
+  todoId?: string;
+  from?: number;
+  to?: number;
+};
+type UndoAction =
+  | { kind: "complete"; todo: EditorTodo }
+  | { kind: "remove"; todo: EditorTodo; snapshot: TodoUndoSnapshot };
 
 export function TodoPanel({
   todos,
@@ -18,102 +36,166 @@ export function TodoPanel({
   onPatch,
   onInsert,
   onPlace,
+  getTodoSource,
+  onRestore,
 }: {
   todos: EditorTodo[];
   placementTargets?: PlacementTarget[];
   boundTodoIds?: string[];
   onJump: (todo: EditorTodo) => void;
-  onResolve: (todo: EditorTodo) => void;
-  onPatch: (todo: EditorTodo, patch: TodoAttrPatch) => void;
+  onResolve: (todo: EditorTodo) => Promise<boolean>;
+  onPatch: (todo: EditorTodo, patch: TodoAttrPatch) => Promise<boolean>;
   onInsert: (tex: string) => void;
   onPlace?: (todoId: string, parentId: string) => void;
+  getTodoSource?: (todo: EditorTodo) => TodoUndoSnapshot;
+  onRestore?: (todo: EditorTodo, snapshot: TodoUndoSnapshot) => Promise<boolean>;
 }) {
-  const [title, setTitle] = useState("");
-  const [text, setText] = useState("");
-  const [newTodoOpen, setNewTodoOpen] = useState(false);
-  const [showDone, setShowDone] = useState(false);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<TodoFilter>("open");
+  const [undo, setUndo] = useState<UndoAction | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createTitle, setCreateTitle] = useState("");
+  const [createBody, setCreateBody] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [pendingTodoId, setPendingTodoId] = useState<string | null>(null);
+  const [undoBusy, setUndoBusy] = useState(false);
   const bound = useMemo(() => new Set(boundTodoIds), [boundTodoIds]);
-  const sorted = useMemo(
-    () => [...todos].sort((a, b) => Number(a.completed) - Number(b.completed) || a.from - b.from),
-    [todos],
-  );
-  const visible = showDone ? sorted : sorted.filter((todo) => !todo.completed);
+  const needle = query.trim().toLowerCase();
+  const searched = useMemo(() => {
+    const sorted = [...todos].sort((a, b) => Number(a.completed) - Number(b.completed) || a.from - b.from);
+    if (!needle) return sorted;
+    return sorted.filter((todo) => {
+      const hay = `${todo.title || ""} ${todo.text} ${todo.section}`.toLowerCase();
+      return hay.includes(needle);
+    });
+  }, [needle, todos]);
+  const visible = searched.filter((todo) => (filter === "completed" ? todo.completed : !todo.completed));
   const openCount = todos.filter((todo) => !todo.completed).length;
+  const emptyCopy = !todos.length
+    ? "No TODOs in this paper."
+    : !searched.length
+      ? "No TODOs match this search."
+      : filter === "completed"
+        ? "No completed TODOs."
+        : "No open TODOs.";
 
   return (
     <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col overflow-hidden px-3 pb-3 pt-2 sm:px-4">
-      <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
-        <div className="flex min-w-0 items-baseline gap-2">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">Open items</p>
-          <span className="text-[10px] text-faint">{openCount} open · {todos.length} total</span>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
+      <div className="mb-2 flex shrink-0 flex-wrap items-center gap-2">
+        <label className="relative min-w-0 basis-full sm:flex-1 sm:basis-40">
+          <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-faint" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search TODOs"
+            aria-label="Search TODOs"
+            className="input h-7 w-full pl-7 pr-2 text-xs"
+          />
+        </label>
+        <div className="flex rounded-md border border-line p-0.5 text-[11px]">
           <button
             type="button"
-            className="ob-press inline-flex h-5 w-5 items-center justify-center rounded border border-line text-accent hover:border-accent/50 hover:bg-accent/10"
-            title={newTodoOpen ? "Hide new TODO" : "New TODO"}
-            aria-label="New TODO"
-            aria-expanded={newTodoOpen}
-            onClick={() => setNewTodoOpen((value) => !value)}
+            className={cn("rounded px-2 py-0.5", filter === "open" ? "bg-accent/15 text-accent" : "text-muted")}
+            onClick={() => setFilter("open")}
           >
-            <Plus size={11} />
+            Open {openCount}
           </button>
           <button
             type="button"
-            className="text-[10px] text-accent hover:underline"
-            onClick={() => setShowDone((value) => !value)}
+            className={cn("rounded px-2 py-0.5", filter === "completed" ? "bg-accent/15 text-accent" : "text-muted")}
+            onClick={() => setFilter("completed")}
           >
-            {showDone ? "Hide complete" : "Show complete"}
+            Completed
           </button>
         </div>
-      </div>
-      {newTodoOpen && (
-        <form
-          className="mb-2 shrink-0 rounded-lg border border-line/70 bg-canvas/35 p-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!title.trim() && !text.trim()) return;
-            const id = generateTodoId();
-            onInsert(composeObtodo({ id, title: title.trim() || undefined, text: text.trim() }));
-            setTitle("");
-            setText("");
+        <button
+          type="button"
+          className="ob-press inline-flex h-7 items-center gap-1 rounded-md border border-line px-2 text-[11px] font-medium text-accent hover:border-accent/50 hover:bg-accent/10"
+          onClick={() => {
+            setCreating(true);
+            setCreateTitle("");
+            setCreateBody("");
+            setCreateError(null);
           }}
         >
-          <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-ink">New TODO</p>
-            <span className="text-[10px] text-faint">Saved to TeX · Unplaced on Primary</span>
+          <Plus size={11} />
+          TODO
+        </button>
+      </div>
+      {creating && (
+        <div className="mb-2 shrink-0 rounded-lg border border-accent/30 bg-accent/5 p-2">
+          <div className="mb-1 text-[11px] font-medium text-ink">New TODO at the current paper cursor</div>
+          <input
+            value={createTitle}
+            onChange={(event) => setCreateTitle(event.target.value)}
+            placeholder="Title (optional when body is filled)"
+            aria-label="New TODO title"
+            className="input mb-1.5 h-7 w-full px-2 text-xs"
+          />
+          <TexCodeMirror
+            variant="compact"
+            value={createBody}
+            onChange={setCreateBody}
+            onCommit={() => {
+              const title = createTitle.trim();
+              const text = createBody.trim();
+              if (!title && !text) {
+                setCreateError("Add a title or body before saving the TODO.");
+                return;
+              }
+              onInsert(composeObtodo({ id: generateTodoId(), title: title || undefined, text, textFormat: "tex" }));
+              setCreating(false);
+            }}
+            onCancel={() => setCreating(false)}
+            placeholder="TODO body"
+            className="min-h-16 overflow-hidden rounded border border-line"
+          />
+          <div className="mt-1.5 flex items-center gap-1">
+            <button
+              type="button"
+              className="btn-primary px-2 py-0.5 text-[11px]"
+              onClick={() => {
+                const title = createTitle.trim();
+                const text = createBody.trim();
+                if (!title && !text) {
+                  setCreateError("Add a title or body before saving the TODO.");
+                  return;
+                }
+                onInsert(composeObtodo({ id: generateTodoId(), title: title || undefined, text, textFormat: "tex" }));
+                setCreating(false);
+              }}
+            >Save TODO</button>
+            <button type="button" className="btn-ghost px-2 py-0.5 text-[11px]" onClick={() => setCreating(false)}>Cancel</button>
+            {createError && <span className="text-[11px] text-danger" role="alert">{createError}</span>}
           </div>
-          <div className="grid min-w-0 items-end gap-1.5 sm:grid-cols-[minmax(0,0.42fr)_minmax(0,1fr)_auto]">
-            <label className="block min-w-0 text-[10px] font-medium uppercase tracking-wide text-faint">
-              Title <span className="normal-case font-normal tracking-normal">(optional)</span>
-              <input
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="Short TODO title"
-                aria-label="New TODO title"
-                className="input mt-1 h-7 min-w-0 !w-full px-2 py-1 text-xs font-normal normal-case tracking-normal"
-              />
-            </label>
-            <label className="block min-w-0 text-[10px] font-medium uppercase tracking-wide text-faint">
-              Content
-              <textarea
-                rows={2}
-                value={text}
-                onChange={(event) => setText(event.target.value)}
-                placeholder="TODO content"
-                aria-label="New TODO content"
-                className="input mt-1 min-h-14 min-w-0 !w-full resize-y px-2 py-1 text-xs font-normal normal-case tracking-normal leading-snug"
-              />
-            </label>
-            <button type="submit" className="btn-outline px-2 py-0.5 text-[11px]" disabled={!title.trim() && !text.trim()}>
-              Add
-            </button>
-          </div>
-        </form>
+        </div>
+      )}
+      {undo && (
+        <div className="mb-2 flex shrink-0 items-center justify-between gap-2 rounded-md border border-line bg-canvas/50 px-2 py-1 text-[11px]">
+          <span className="text-muted">{undo.kind === "complete" ? "Marked complete" : "Removed TODO"}</span>
+          <button
+            type="button"
+            className="text-accent hover:underline"
+            disabled={undoBusy}
+            onClick={() => {
+              if (undoBusy) return;
+              setUndoBusy(true);
+              const operation = undo.kind === "complete"
+                ? onPatch(undo.todo, { completed: false })
+                : onRestore?.(undo.todo, undo.snapshot) || Promise.resolve(false);
+              void operation
+                .then((ok) => { if (ok) setUndo(null); })
+                .finally(() => setUndoBusy(false));
+            }}
+          >
+            Undo
+          </button>
+        </div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {visible.length === 0 ? (
-          <p className="text-xs text-faint">No \\obtodo anchors in this paper.</p>
+          <p className="text-xs text-faint">{emptyCopy}</p>
         ) : (
           <ul className="space-y-1">
             {visible.map((todo, index) => (
@@ -123,9 +205,32 @@ export function TodoPanel({
                 unplaced={Boolean(todo.id && !bound.has(todo.id))}
                 placementTargets={placementTargets}
                 onJump={onJump}
-                onResolve={onResolve}
+                onComplete={() => {
+                  const key = todo.id || `${todo.from}:${todo.to}`;
+                  if (pendingTodoId) return;
+                  setPendingTodoId(key);
+                  void onPatch(todo, { completed: true })
+                    .then((ok) => { if (ok) setUndo({ kind: "complete", todo }); })
+                    .finally(() => setPendingTodoId(null));
+                }}
+                onReopen={() => {
+                  const key = todo.id || `${todo.from}:${todo.to}`;
+                  if (pendingTodoId) return;
+                  setPendingTodoId(key);
+                  void onPatch(todo, { completed: false }).finally(() => setPendingTodoId(null));
+                }}
                 onPatch={onPatch}
                 onPlace={onPlace}
+                onRemove={() => {
+                  const key = todo.id || `${todo.from}:${todo.to}`;
+                  const snapshot = getTodoSource?.(todo) || { tex: "", before: "", after: "" };
+                  setRemovingId(key);
+                  void onResolve(todo).then((ok) => {
+                    if (ok) setUndo({ kind: "remove", todo, snapshot });
+                  }).finally(() => setRemovingId(null));
+                }}
+                removing={removingId === (todo.id || `${todo.from}:${todo.to}`)}
+                pending={pendingTodoId === (todo.id || `${todo.from}:${todo.to}`)}
               />
             ))}
           </ul>
@@ -140,136 +245,182 @@ function TodoRow({
   unplaced,
   placementTargets,
   onJump,
-  onResolve,
+  onComplete,
+  onReopen,
   onPatch,
   onPlace,
+  onRemove,
+  removing,
+  pending,
 }: {
   todo: EditorTodo;
   unplaced: boolean;
   placementTargets: PlacementTarget[];
   onJump: (todo: EditorTodo) => void;
-  onResolve: (todo: EditorTodo) => void;
-  onPatch: (todo: EditorTodo, patch: TodoAttrPatch) => void;
+  onComplete: () => void;
+  onReopen: () => void;
+  onPatch: (todo: EditorTodo, patch: TodoAttrPatch) => Promise<boolean>;
   onPlace?: (todoId: string, parentId: string) => void;
+  onRemove: () => void;
+  removing?: boolean;
+  pending?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const actionsRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (editing) titleInputRef.current?.focus(); }, [editing]);
+  const [details, setDetails] = useState(false);
   const [placing, setPlacing] = useState(false);
-  const [draftTitle, setDraftTitle] = useState(todo.title || "");
-  const [draftText, setDraftText] = useState(todo.text);
+  const [titleDraft, setTitleDraft] = useState(todo.title || "");
+  const [bodyDraft, setBodyDraft] = useState(todo.text);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
   useEffect(() => {
     if (!editing) {
-      setDraftTitle(todo.title || "");
-      setDraftText(todo.text);
+      setTitleDraft(todo.title || "");
+      setBodyDraft(todo.text);
+      setEditError(null);
     }
-  }, [editing, todo.title, todo.text]);
-
+  }, [editing, todo.id, todo.text, todo.title]);
   const done = todo.completed;
-  const title = todo.title?.trim() || "";
-  const meta = [todo.section, todo.id, done ? "complete" : unplaced ? "primary unplaced" : null].filter(Boolean).join(" · ");
+  const title = todo.title?.trim() || todo.text.split(/\n/)[0]?.slice(0, 80) || "Untitled TODO";
+  const detail = todo.title ? todo.text : todo.text.split(/\n/).slice(1).join("\n").trim();
+  const cancelDraft = () => {
+    setTitleDraft(todo.title || "");
+    setBodyDraft(todo.text);
+    setEditError(null);
+    setEditing(false);
+  };
+  const startEditing = () => {
+    setTitleDraft(todo.title || "");
+    setBodyDraft(todo.text);
+    setEditError(null);
+    setEditing(true);
+  };
+  const commitDraft = async () => {
+    const nextTitle = titleDraft.trim();
+    const nextText = bodyDraft.trim();
+    // An empty body is valid when a title carries the TODO's meaning.
+    if (!nextTitle && !nextText) {
+      setEditError("Add a title or body before saving the TODO.");
+      return;
+    }
+    if (editBusy) return;
+    if (nextTitle === (todo.title || "") && nextText === todo.text) { setEditing(false); return; }
+    setEditBusy(true);
+    setEditError(null);
+    try {
+      const saved = await onPatch(todo, { title: nextTitle || null, text: nextText, textFormat: "tex" });
+      if (saved) setEditing(false);
+      else setEditError("The TODO could not be saved. Your draft is still open.");
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : "The TODO could not be saved. Your draft is still open.");
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
   return (
-    <li className="group min-w-0 rounded-lg border border-line/70 bg-canvas/25 p-2 hover:bg-surface-2/70">
+    <li data-paper-todo={todo.id} className={cn("group min-w-0 rounded-lg border px-2 py-2", editing ? "border-accent/40 bg-surface" : "border-line/60 bg-surface hover:border-line")}>
       <div className="flex min-w-0 items-start gap-2">
+        <button
+          type="button"
+          className={cn(
+            "mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
+            done ? "border-ok bg-ok text-white" : "border-line bg-surface hover:border-accent",
+          )}
+          aria-label={done ? "Reopen TODO" : "Complete TODO"}
+          disabled={pending || removing || editing}
+          onClick={() => (done ? onReopen() : onComplete())}
+        >
+          {done && <Check size={10} />}
+        </button>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] uppercase tracking-wide text-faint">
-            <span>{meta}</span>
-            {todo.createdAt && <span className="normal-case tracking-normal">created {formatWorkspaceDate(todo.createdAt)}</span>}
-          </div>
           {editing ? (
-            <form
-              className="mt-1.5 space-y-1.5"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const text = draftText.trim();
-                const title = draftTitle.trim();
-                if (!title && !text) return;
-                onPatch(todo, { title: title || null, text });
-                setEditing(false);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setEditing(false);
-                } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                  event.preventDefault();
-                  event.currentTarget.requestSubmit();
-                }
-              }}
-            >
-              <label className="block text-[10px] font-medium uppercase tracking-wide text-faint">
-                Title <span className="normal-case font-normal tracking-normal">(optional)</span>
-                <input
-                  autoFocus
-                  value={draftTitle}
-                  onChange={(event) => setDraftTitle(event.target.value)}
-                  className="input mt-1 h-7 !w-full px-2 py-1 text-xs font-normal normal-case tracking-normal"
-                  aria-label="TODO title"
-                />
-              </label>
-              <label className="block text-[10px] font-medium uppercase tracking-wide text-faint">
-                Content
-                <textarea
-                  rows={3}
-                  value={draftText}
-                  onChange={(event) => setDraftText(event.target.value)}
-                  className="input mt-1 min-h-16 !w-full resize-y px-2 py-1 text-xs font-normal normal-case tracking-normal leading-snug"
-                  placeholder="TODO content"
-                  aria-label="TODO content"
-                />
-              </label>
+            <div className="space-y-1.5">
+              <input
+                ref={titleInputRef}
+                value={titleDraft}
+                onChange={(event) => setTitleDraft(event.target.value)}
+                placeholder="TODO title (optional)"
+                aria-label="TODO title"
+                className="w-full rounded border-0 bg-transparent px-0 py-0.5 text-xs font-semibold text-ink outline-none focus:ring-0"
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelDraft(); }
+                  else if (event.key === "Enter") { event.preventDefault(); void commitDraft(); }
+                }}
+              />
+              <TexCodeMirror
+                variant="compact"
+                value={bodyDraft}
+                onChange={setBodyDraft}
+                onCommit={() => { void commitDraft(); }}
+                onCancel={cancelDraft}
+                placeholder="TODO body (optional when a title is present)"
+                className="min-h-10 overflow-hidden rounded border border-line/50"
+              />
               <div className="flex gap-1">
                 <button
-                  type="submit"
+                  type="button"
                   className="btn-outline px-2 py-0.5 text-[11px]"
-                  disabled={!draftText.trim()}
+                  disabled={editBusy}
+                  onClick={() => { void commitDraft(); }}
                 >
-                  Save TODO
+                  {editBusy ? "Saving…" : "Save"}
                 </button>
-                <button type="button" className="btn-outline px-2 py-0.5 text-[11px]" onClick={() => setEditing(false)}>
+                <button
+                  type="button"
+                  className="btn-outline px-2 py-0.5 text-[11px]"
+                  disabled={editBusy}
+                  onClick={cancelDraft}
+                >
                   Cancel
                 </button>
+                <span className="ml-auto hidden self-center text-[10px] text-faint sm:inline">Ctrl/⌘ Enter to save · Esc to cancel</span>
               </div>
-            </form>
+              {editError && <p className="text-[11px] text-danger" role="alert">{editError}</p>}
+            </div>
           ) : (
-            <button
-              type="button"
-              className="mt-1 block min-w-0 max-w-[75ch] text-left"
-              onClick={() => onJump(todo)}
-              title={[title, todo.text].filter(Boolean).join("\n\n")}
-            >
-              <span className="block max-h-20 overflow-y-auto whitespace-pre-wrap break-words leading-snug">
-                {title ? (
-                  <span className="block">
-                    <span className="mr-1 text-[9px] font-medium uppercase tracking-wide text-faint">Title</span>
-                    <span className={`text-xs font-semibold ${done ? "text-faint line-through" : "text-ink"}`}>{title}</span>
-                  </span>
-                ) : (
-                  <span className="block text-[9px] font-medium uppercase tracking-wide text-faint">Untitled TODO</span>
-                )}
-                <span className={`block text-xs ${title ? "mt-0.5" : "mt-1"} ${done ? "text-faint line-through" : "text-ink"}`}>
-                  <span className="mr-1 text-[9px] font-medium uppercase tracking-wide text-faint">Content</span>
-                  {todo.text || "(empty)"}
+            <button type="button" className="block w-full min-w-0 text-left" aria-label={`Edit TODO: ${title}`} title="Click to edit TODO" disabled={pending || removing} onClick={startEditing}>
+              <span className={cn("block text-xs font-semibold", done ? "text-faint line-through" : "text-ink")}><TodoTexText text={title} /></span>
+              {detail && (
+                <span className={cn("mt-0.5 block text-xs leading-snug", done ? "text-faint" : "text-muted")}>
+                  <TodoTexText text={detail} />
                 </span>
-              </span>
+              )}
+              <span className="mt-0.5 block text-[10px] text-faint">{todo.section}{unplaced ? " · Unplaced" : ""}</span>
             </button>
           )}
+          {details && (
+            <p className="mt-1 font-mono text-[10px] text-faint">
+              {todo.id || "no id"}
+              {todo.createdAt ? ` · ${todo.createdAt}` : ""}
+            </p>
+          )}
         </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-0.5">
-          {unplaced && todo.id && placementTargets.length > 0 && onPlace && (
-            <div className="relative">
-              <button
-                type="button"
-                className="text-[11px] text-accent hover:underline"
-                aria-expanded={placing}
-                onClick={() => setPlacing((value) => !value)}
-              >
-                Place
-              </button>
-              {placing && (
-                <div className="absolute right-0 top-full z-20 mt-1 w-56 rounded-md border border-line bg-canvas p-2 shadow-lg">
-                  <label className="block text-[10px] font-medium uppercase tracking-wide text-faint">
-                    Place under
+        <div className="flex shrink-0 items-center gap-1">
+          <button type="button" className="inline-flex h-6 w-6 items-center justify-center rounded text-faint hover:bg-surface-2 hover:text-ink" aria-label="Reveal TODO in paper" title="Reveal in paper" onClick={() => onJump(todo)}><ArrowUpRight size={13} /></button>
+          {!editing && <button type="button" className="inline-flex h-6 w-6 items-center justify-center rounded text-faint hover:bg-surface-2 hover:text-ink" aria-label="Edit TODO" title="Edit TODO" disabled={pending || removing} onClick={startEditing}><Pencil size={12} /></button>}
+          <div className="relative">
+            <button
+              type="button"
+              className="inline-flex h-5 w-5 items-center justify-center rounded text-faint hover:bg-surface-2 hover:text-ink"
+              ref={actionsRef}
+              aria-label="More TODO actions"
+              aria-expanded={placing}
+              disabled={pending || removing || editing}
+              onClick={() => setPlacing((value) => !value)}
+            >
+              <MoreHorizontal size={12} />
+            </button>
+            <AnchoredPop open={placing} anchorRef={actionsRef} origin="br" onDismiss={() => setPlacing(false)} className="w-56 max-w-[calc(100vw-16px)] p-2">
+                <button type="button" className="ob-menu-item w-full text-left" onClick={() => { onJump(todo); setPlacing(false); }}>
+                  Reveal in paper
+                </button>
+                {unplaced && todo.id && placementTargets.length > 0 && onPlace && (
+                  <label className="mt-1 block text-[10px] font-medium uppercase tracking-wide text-faint">
+                    Place on map
                     <select
-                      autoFocus
                       defaultValue=""
                       aria-label="Primary map parent"
                       className="input mt-1 h-7 w-full px-1.5 py-0 text-[11px] normal-case tracking-normal"
@@ -287,28 +438,29 @@ function TodoRow({
                       ))}
                     </select>
                   </label>
-                  <button type="button" className="mt-1 text-[10px] text-faint hover:underline" onClick={() => setPlacing(false)}>
-                    Cancel
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-          <button
-            type="button"
-            className="text-[11px] text-accent hover:underline"
-            onClick={() => onPatch(todo, done ? { completed: false } : { completed: true })}
-          >
-            {done ? "Reopen" : "Complete"}
-          </button>
-          <button type="button" className="text-[11px] text-accent hover:underline" onClick={() => setEditing((value) => !value)}>
-            {editing ? "Close" : "Edit"}
-          </button>
-          <button type="button" className="text-[11px] text-faint hover:underline" onClick={() => onResolve(todo)}>
-            Remove
-          </button>
+                )}
+                <button type="button" className="ob-menu-item w-full text-left" onClick={() => setDetails((value) => !value)}>
+                  {details ? "Hide details" : "Show id and timestamps"}
+                </button>
+                <button
+                  type="button"
+                  className="ob-menu-item w-full text-left text-danger"
+                  disabled={pending || removing}
+                  onClick={() => {
+                    onRemove();
+                    setPlacing(false);
+                  }}
+                >
+                  Remove
+                </button>
+            </AnchoredPop>
+          </div>
         </div>
       </div>
     </li>
   );
+}
+
+function TodoTexText({ text }: { text: string }): ReactNode {
+  return <RichText text={text} format="tex" />;
 }

@@ -1,16 +1,19 @@
 # Browser WebMCP
 
-OpenBar uses browser WebMCP as its sole agent interface. A compatible browser
-registers tools from the active page, and those tools operate the same
-repository-backed state that the researcher sees.
+OpenBar provides two agent surfaces over the same repository-backed state.
+Browser WebMCP operates the live page and editor session. Authenticated
+Streamable HTTP MCP operates saved project state when a browser page is
+unavailable.
 
 The home page at `/` registers workspace tools. Every open project page
 registers four project context tools. Paper, mindmap, wiki, and instructions
 pages register the actions owned by their active page. Registration follows
 the page lifecycle, so page-local tools leave when the page unmounts.
 
-On an open project page, Agent Ready reports the current browser WebMCP
-catalog. It groups the tools by the page that owns their live state.
+On an open project page, **Tools** opens the browser WebMCP catalog and
+connection diagnostics. It links to `/agents` for browser and authenticated
+headless setup. `/llms.txt` provides plain-text starting points. Page headers
+link both discovery documents.
 
 ## Navigation journey
 
@@ -67,6 +70,19 @@ Call `get_project_state` after `open_project`, then search or navigate to the
 specific work. `read_project_skill` is registered on the instructions page
 and reads a project, workspace, or bundled skill by id from project state.
 
+## Authenticated Streamable HTTP MCP
+
+The `/api/mcp` endpoint requires a bearer token from `OPENBARRY_ACCESS_TOKEN`
+or a verified Cloudflare Access identity allowed by the deployment. Public
+demo access and same-origin browser access do not grant MCP access. The
+endpoint supports `initialize`, `tools/list`, `tools/call`, bounded JSON
+requests, session ids, and JSON-RPC errors.
+
+Use the authenticated endpoint for saved-state work such as bounded reads,
+paper and map edits, batch previews and applies, activity, compilation, and
+Git status or synchronization. Every write supplies project identity and a
+revision or disk hash where the resource supports compare-and-swap.
+
 ## Page-local tools
 
 ### Paper
@@ -103,19 +119,20 @@ The mindmap page registers:
   `reopen_todo`, and `focus_todo_in_paper`
 
 TeX owns each TODO id, title, text, and completion. A map owns card
-placement, labels, refs, progress, and appearance. Primary covers every
+placement, labels, refs, progress, optional P0–P3 priority, table layout,
+and appearance. Primary covers every
 paper TODO through its tree or Primary Unplaced. Secondary maps reuse selected
 TODOs, and the same TODO can appear once on each map.
 
+`convert_card_to_todo` accepts an optional stable paper section id. Omit it to
+insert the new TODO at a neutral location in the manuscript root. The result
+reports the resolved section when one was supplied.
+
 ### Wiki
 
-An open wiki page registers `read_document`, `patch_document`, and
-`render_preview`. The wiki index provides `create_wiki_page`. An open page
-also provides `update_wiki_page`, `rename_wiki_page`, and
-`delete_wiki_page`.
-
-Wiki pages hold optional Markdown memory. Paper TODOs remain the operational
-work.
+An open wiki page registers bounded reads and preview. Wiki mutation tools
+return `capability_unavailable` in this release. Existing wiki files remain
+readable supporting memory, and paper TODOs remain the operational work.
 
 ### Instructions and setup
 
@@ -163,13 +180,51 @@ Ready is the visible check for the registered tools on an open project page.
 
 ## Journeys
 
-Contract checks live in `scripts/webmcp-evals.ts` and run with
-`pnpm evals`:
+Use the manual browser and MCP acceptance checklist in
+[docs/release-acceptance.md](release-acceptance.md). The checklist exercises
+navigation, live WebMCP registration, authenticated MCP initialization,
+revision conflicts, shared TODOs, batch previews, compilation, artifact
+retention, and Git receipts.
 
-| Prompt | Expected path |
-| --- | --- |
-| Where do we discuss the converter limits in Command-V? | `search_project` → `navigate_project` |
-| Which paper TODOs are still Unplaced on Primary? | `get_project_state` → `navigate_project` → `get_mindmap` |
-| Add a paper TODO and place it on this map. | paper `add_todo` → mindmap `place_todo_card` |
-| Mark a Command-V TODO complete. | `complete_todo` writes TeX and updates every bound card |
-| Record one new result while keeping the table structure. | `read_paper_section` → smallest `replace_paper_section` or source-range patch → `compile_paper` |
+## Resolve Overleaf conflicts
+
+`get_project_state.sync` includes branch status, local/base/remote commit IDs,
+changed paths, and recovery refs. `sync_project` is available in both HTTP MCP
+and browser WebMCP. HTTP MCP takes `project`, and browser WebMCP uses the current
+project.
+
+1. Save live browser drafts, then call `sync_project` with `action: "inspect"`
+   and `refresh: true`.
+2. Call `action: "review_pull"`. This checkpoints saved local files and prepares
+   Git's merge in a disposable checkout. The result includes a review token,
+   changed files, and base/local/remote text for each conflicting file.
+3. Review each whole file. `choice: "local"` and `choice: "remote"` choose a
+   complete saved version. `choice: "merged"` requires the complete resolved
+   file in `text`. Binary, linked, and large files use saved-version choices.
+4. Call `action: "apply_pull"` with the token and one resolution per conflicting
+   path. The operation verifies the local branch, HEAD, and tracked working
+   state before applying the merge. Concurrent changes require a fresh review.
+5. Use `action: "cancel_pull"` to remove a review checkout while preserving the
+   local checkpoint. Applying a pull preserves the merged result locally.
+
+The human interface also offers force pull and force push with two explicit
+confirmations. Both versions receive Git recovery refs. Force push includes an
+expected-remote-commit lease, and force pull preserves unrelated untracked files.
+
+## Browser origins and proxies
+
+OpenBar sends `Origin-Agent-Cluster: ?1` and `Permissions-Policy: tools=(self)`.
+Open the project through HTTPS, such as `https://openbar.example.ts.net`, for native
+browser WebMCP. A future HTTPS Cloudflare tunnel uses the same origin policy.
+`http://100.64.0.1:3000` can serve the human UI and authenticated HTTP MCP
+when reachable. Native WebMCP requires a browser secure context, provided by
+HTTPS or loopback localhost.
+
+For a separately hosted browser agent, set `OPENBARRY_AGENT_ORIGINS` to its exact
+HTTPS origin. Multiple origins use commas. Loopback HTTP origins support local
+testing. Restart the server after changing this setting. The setting configures
+HTTP MCP preflight and response CORS, the tools permissions policy, and WebMCP
+`exposedTo` registration. An embedding page must also delegate `tools` using its
+iframe `allow` attribute and its own permissions policy. HTTP MCP continues to
+require `OPENBARRY_ACCESS_TOKEN`. Approved browser callers can read the MCP session
+header and send authorization and protocol headers.

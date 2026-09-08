@@ -16,10 +16,10 @@ import {
   serializeSectionMeta,
   sha256,
   TexEnvelopeError,
-  withWriteLock,
   writeTextAtomic,
   type SectionMeta,
 } from "./codec";
+import { withProjectWriteLock } from "@/lib/research/project-lock";
 import { sectionCommandForLevel } from "./paper-compose";
 
 export function requireManagedManuscript(manuscriptDir: string): OperationResult<{ ok: true }> {
@@ -208,7 +208,7 @@ export function hashFile(file: string): string | null {
 }
 
 export function withPaperStructureLock<T>(lockFile: string, operation: () => T): T {
-  return withWriteLock(lockFile, operation);
+  return withProjectWriteLock(lockFile, operation);
 }
 
 export function safeSectionFilename(title: string, fallback: string): string {

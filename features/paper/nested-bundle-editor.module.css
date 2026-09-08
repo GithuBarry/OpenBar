@@ -1,0 +1,90 @@
+.editor {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 0 3rem;
+  background: rgb(var(--surface));
+}
+.editor :global(.ob-nested-tex-slice) {
+  margin: 0;
+  min-width: 0;
+  max-width: 100%;
+}
+.editor :global(.ob-nested-tex-card) {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgb(var(--surface));
+  overflow: visible;
+  min-width: 0;
+  max-width: 100%;
+}
+.editor :global(.ob-nested-tex-card-label) {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  font-size: 10px;
+  color: rgb(var(--muted));
+  padding: 0.08rem 0.4rem;
+  border-top: 1px solid rgb(var(--line) / .6);
+  background: rgb(var(--accent) / 0.06);
+}
+.editor :global(.ob-nested-tex-card-label) code {
+  font-family: var(--font-mono);
+  color: rgb(var(--ink));
+  font-size: 10px;
+}
+/* File buffers share the outer document scroller. */
+.editor :global(.ob-cm-root-nested),
+.editor :global(.ob-cm-root-nested) :global(.cm-editor) {
+  height: auto !important;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}
+.editor :global(.ob-cm-root-nested) :global(.cm-scroller) {
+  height: auto !important;
+  padding: 4px 12px !important;
+  overflow-x: clip !important;
+  overflow-y: visible !important;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}
+.editor :global(.ob-cm-root-nested) :global(.cm-content) {
+  flex-shrink: 1 !important;
+  min-height: 0 !important;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  white-space: break-spaces;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.editor :global(.ob-nested-tex-card-label) {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 0.3rem 0.5rem;
+  background: rgb(var(--surface));
+}
+
+.editor :global(.ob-cm-metadata-marker) {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 0;
+  color: rgb(var(--faint));
+  background: transparent;
+  opacity: .6;
+  font: 9px/14px var(--font-sans);
+  vertical-align: middle;
+  cursor: pointer;
+}
+.editor :global(.ob-cm-metadata-marker):hover,
+.editor :global(.ob-cm-metadata-marker):focus-visible {
+  color: rgb(var(--ink));
+  opacity: 1;
+}

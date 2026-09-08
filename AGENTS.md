@@ -26,5 +26,7 @@ OpenBar edits an Overleaf-style research-paper repository.
 - Project skills are listed, then read by the agent when useful.
 - Every durable field is editable in the human UI and through WebMCP.
 - Storage `role=draft` is the Primary map; `role=planning` is a secondary map. The visible product name is OpenBar.
+- Card priority uses optional map-local values P0 through P3 and carries no scientific meaning.
+- Labels, colors, progress, table layout, refs, and metadata are map-owned presentation fields. TeX remains the source of truth for TODO text and completion.
 - Delete stale architecture instead of preserving compatibility branches.
-- There is no maturity, claim/evidence workflow, or P0–P3 TODO priority system.
+- Research meaning has no built-in maturity, claim/evidence, or priority workflow.

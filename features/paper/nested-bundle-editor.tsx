@@ -5,6 +5,8 @@ import {
   useCallback,
   useImperativeHandle,
   useMemo,
+  useState,
+  useEffect,
   useRef,
 } from "react";
 
@@ -16,9 +18,10 @@ import {
   sliceRootByIncludes,
   splitBundleSource,
 } from "@/lib/tex-project/source-bundle-format";
+import styles from "./nested-bundle-editor.module.css";
 import { cn } from "@/lib/utils";
 
-import { TexCodeMirror, type TexCodeMirrorHandle, type TexFocusContext } from "./tex-codemirror";
+import { TexCodeMirror, type TexCodeMirrorHandle, type TexDocChange, type TexFocusContext } from "./tex-codemirror";
 import { accumulateHeadingCounts } from "./tex-source";
 
 type NestedItem =
@@ -33,6 +36,7 @@ type NestedItem =
     localFrom: number;
     localTo: number;
     showLabel: boolean;
+    lineOffset: number;
   }
   | {
     kind: "label";
@@ -52,7 +56,7 @@ function buildNestedItems(source: string): NestedItem[] {
     if (showLabel) {
       items.push({
         kind: "label",
-        key: `label:${part.filePath}`,
+        key: `label:${[...ancestry].join(":")}:${part.filePath}`,
         filePath: part.filePath,
         label: part.filePath,
         virtualFrom: part.bodyFrom,
@@ -68,15 +72,16 @@ function buildNestedItems(source: string): NestedItem[] {
         if (slice.text.length) {
           items.push({
             kind: "file",
-            key: `file:${part.filePath}:text:${index}`,
+            key: `file:${[...ancestry].join(":")}:${part.filePath}:text:${index}`,
             filePath: part.filePath,
-            text: slice.text,
+            text: part.body.slice(slice.from, slice.to),
             headingCounts: seed,
             virtualFrom: part.bodyFrom + slice.from,
             virtualTo: part.bodyFrom + slice.to,
             localFrom: slice.from,
             localTo: slice.to,
-            showLabel: false,
+            showLabel: true,
+            lineOffset: part.body.slice(0, slice.from).split("\n").length - 1,
           });
           emitted = true;
         }
@@ -85,7 +90,12 @@ function buildNestedItems(source: string): NestedItem[] {
       }
       const child = lookupBundlePartFrom(parts, slice.raw, part.filePath);
       if (child && !ancestry.has(child.filePath)) {
-        addFile(child, new Set([...ancestry, child.filePath]), true);
+        items.push({ kind: "file", key: `include:${[...ancestry].join(":")}:${index}`, filePath: part.filePath,
+          text: part.body.slice(slice.from, slice.to), headingCounts: seed,
+          virtualFrom: part.bodyFrom + slice.from, virtualTo: part.bodyFrom + slice.to,
+          localFrom: slice.from, localTo: slice.to, showLabel: true,
+          lineOffset: part.body.slice(0, slice.from).split("\n").length - 1 });
+        addFile(child, new Set([...ancestry, child.filePath]), false);
         emitted = true;
         continue;
       }
@@ -93,22 +103,23 @@ function buildNestedItems(source: string): NestedItem[] {
       // the one-scroll view never hides source that the graph could not enter.
       items.push({
         kind: "file",
-        key: `file:${part.filePath}:include:${index}`,
+        key: `file:${[...ancestry].join(":")}:${part.filePath}:include:${index}`,
         filePath: part.filePath,
-        text: slice.line,
+        text: part.body.slice(slice.from, slice.to),
         headingCounts: seed,
         virtualFrom: part.bodyFrom + slice.from,
         virtualTo: part.bodyFrom + slice.to,
         localFrom: slice.from,
         localTo: slice.to,
-        showLabel: false,
+        showLabel: true,
+            lineOffset: part.body.slice(0, slice.from).split("\n").length - 1,
       });
       emitted = true;
     }
-    if (showLabel && !emitted) {
+    if (!emitted) {
       items.push({
         kind: "file",
-        key: `file:${part.filePath}:empty`,
+        key: `file:${[...ancestry].join(":")}:${part.filePath}:empty`,
         filePath: part.filePath,
         text: "",
         headingCounts: new Map(counts),
@@ -116,13 +127,32 @@ function buildNestedItems(source: string): NestedItem[] {
         virtualTo: part.bodyFrom,
         localFrom: 0,
         localTo: 0,
-        showLabel: false,
+        showLabel: true,
+        lineOffset: 0,
       });
     }
   };
   const root = parts[0]!;
   addFile(root, new Set([root.filePath]), false);
-  return items;
+  const joined: NestedItem[] = [];
+  for (const item of items) {
+    const previous = joined.at(-1);
+    if (previous?.kind === "file" && item.kind === "file" && previous.filePath === item.filePath
+      && previous.virtualTo === item.virtualFrom && previous.localTo === item.localFrom) {
+      previous.text += item.text;
+      previous.virtualTo = item.virtualTo;
+      previous.localTo = item.localTo;
+    } else {
+      joined.push(item);
+    }
+  }
+  const occurrences = new Map<string, number>();
+  for (const item of joined) {
+    const count = occurrences.get(item.key) ?? 0;
+    occurrences.set(item.key, count + 1);
+    item.key += `:occurrence:${count}`;
+  }
+  return joined;
 }
 
 function replaceFileSlice(source: string, filePath: string, localFrom: number, localTo: number, nextText: string): string {
@@ -148,20 +178,21 @@ function localFocusContext(
 
 export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
   value: string;
-  onChange: (value: string) => void;
+  onDocChanges: (changes: TexDocChange[], length: number) => void;
   onScroll?: () => void;
   placeholder?: string;
   className?: string;
   focusContext?: TexFocusContext | null;
-}>(function NestedBundleEditor({ value, onChange, onScroll, placeholder, className, focusContext = null }, ref) {
+}>(function NestedBundleEditor({ value, onDocChanges, onScroll, placeholder, className, focusContext = null }, ref) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const sourceRef = useRef(value);
-  sourceRef.current = value;
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+  const [live, setLive] = useState(value);
+  useEffect(() => { sourceRef.current = value; setLive(value); }, [value]);
+  const onChangeRef = useRef(onDocChanges);
+  onChangeRef.current = onDocChanges;
   const handlesRef = useRef(new Map<string, TexCodeMirrorHandle>());
   const focusedKeyRef = useRef<string | null>(null);
-  const items = useMemo(() => buildNestedItems(value), [value]);
+  const items = useMemo(() => buildNestedItems(live), [live]);
   const itemsRef = useRef(items);
   itemsRef.current = items;
 
@@ -182,11 +213,20 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
   };
 
   const commit = (next: string) => {
+    const previous = sourceRef.current;
+    if (previous === next) return;
+    let from = 0;
+    while (from < previous.length && from < next.length && previous[from] === next[from]) from += 1;
+    let to = previous.length, end = next.length;
+    while (to > from && end > from && previous[to - 1] === next[end - 1]) { to -= 1; end -= 1; }
     sourceRef.current = next;
-    onChangeRef.current(next);
+    itemsRef.current = buildNestedItems(next);
+    setLive(next);
+    onChangeRef.current([{ from, to, insert: next.slice(from, end) }], next.length);
   };
 
   const applyVirtualChange = useCallback((from: number, to: number, insert: string): boolean => {
+    if (from === 0 && to === sourceRef.current.length) { commit(insert); return true; }
     const start = slotForVirtual(from);
     const end = slotForVirtual(Math.max(from, to - 1));
     if (start && end && start.key === end.key) {
@@ -232,6 +272,7 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
     surround: (open, close, placeholderText) => {
       focusedHandle()?.surround(open, close, placeholderText);
     },
+    format: (syntax, kind) => focusedHandle()?.format(syntax, kind) ?? false,
     insertAtCursor: (text, asBlock) => {
       focusedHandle()?.insertAtCursor(text, asBlock);
     },
@@ -250,8 +291,8 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
     return (
       <TexCodeMirror
         ref={(handle) => bindHandle("pane")(handle)}
-        value={value}
-        onChange={onChange}
+        value={live}
+        onChange={commit}
         onScroll={onScroll}
         onFocus={() => {
           focusedKeyRef.current = "pane";
@@ -267,7 +308,7 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
     <div
       ref={scrollerRef}
       data-ob-scroll="paper-editor"
-      className={cn("ob-nested-bundle", className)}
+      className={cn(styles.editor, className)}
       onScroll={() => {
         for (const handle of handlesRef.current.values()) handle.getView()?.requestMeasure();
         onScroll?.();
@@ -284,16 +325,16 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
         }
         if (!item.text.length && !item.showLabel) return null;
         return (
-          <div key={item.key} data-ob-nested-key={item.key} className={cn("ob-nested-tex-slice", item.showLabel && "ob-nested-tex-card")}>
+          <div key={item.key} data-ob-file={item.filePath} data-ob-line-start={item.lineOffset + 1} data-ob-nested-key={item.key} className={cn("ob-nested-tex-slice", item.showLabel && "ob-nested-tex-card")}>
             {item.showLabel && (
               <div className="ob-nested-tex-card-label">
-                <span>\input</span>
                 <code>{item.filePath}</code>
               </div>
             )}
             <TexCodeMirror
               ref={bindHandle(item.key)}
               variant="nested"
+              lineOffset={item.lineOffset}
               value={item.text}
               headingCounts={item.headingCounts}
               placeholder={placeholder}
@@ -301,7 +342,7 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
                 focusedKeyRef.current = item.key;
               }}
               focusContext={localFocusContext(item, focusContext)}
-              onChange={(text) => commit(replaceFileSlice(sourceRef.current, item.filePath, item.localFrom, item.localTo, text))}
+              onChange={(text) => { const current = itemsRef.current.find((entry) => entry.kind === "file" && entry.key === item.key); if (current?.kind === "file") commit(replaceFileSlice(sourceRef.current, current.filePath, current.localFrom, current.localTo, text)); }}
             />
           </div>
         );

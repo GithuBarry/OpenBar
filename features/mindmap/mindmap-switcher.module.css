@@ -1,0 +1,23 @@
+.headerActions { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.trigger, .paperLink { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border: 1px solid rgb(var(--line)); border-radius: 7px; background: rgb(var(--surface)); color: rgb(var(--muted)); font-size: 11px; cursor: pointer; }
+.trigger { max-width: 200px; }
+.trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trigger > svg { flex-shrink: 0; }
+.trigger:hover, .paperLink:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); }
+.menu { z-index: 90; width: min(300px, calc(100vw - 24px)); border: 1px solid rgb(var(--line)); border-radius: 12px; padding: 8px; background: rgb(var(--surface)); color: rgb(var(--ink)); box-shadow: 0 12px 36px rgb(0 0 0 / .12); font-family: var(--font-sans); }
+.heading { padding: 7px 8px; font-size: 10px; color: rgb(var(--faint)); }
+.maps { max-height: 280px; overflow-y: auto; padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid rgb(var(--line)); }
+.row { display: flex; width: 100%; align-items: center; gap: 9px; padding: 10px 8px; border-radius: 6px; font-size: 12px; text-align: left; cursor: pointer; }
+.row > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row > small { font-size: 9px; color: rgb(var(--faint)); }
+.row:hover, .row[aria-current="page"] { background: rgb(var(--surface-2)); }
+.row > svg { flex-shrink: 0; color: rgb(var(--muted)); }
+.create { padding: 8px; }
+.create input { width: 100%; padding: 8px; border: 1px solid rgb(var(--line)); border-radius: 6px; font-size: 12px; background: rgb(var(--surface)); }
+.create > div { display: flex; gap: 12px; margin-top: 8px; font-size: 11px; }
+.create button { cursor: pointer; padding: 5px 0; }
+.create button:first-child { color: rgb(var(--accent)); }
+.create button:disabled { opacity: .4; cursor: default; }
+.delete { display: flex; gap: 8px; padding: 10px 8px; color: rgb(var(--danger)); font-size: 11px; cursor: pointer; }
+.error { padding: 8px; font-size: 11px; line-height: 1.5; color: rgb(var(--danger)); }
+@media (max-width: 600px) { .headerActions { gap: 4px; } .trigger { max-width: 98px; height: 29px; padding-inline: 7px; } .paperLink { height: 29px; width: 29px; padding: 0; justify-content: center; } .paperLink > span { display: none; } }

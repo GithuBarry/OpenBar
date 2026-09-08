@@ -280,11 +280,20 @@ export function resolveEditorTodo(source: string, todo: EditorTodo): string {
   return `${source.slice(0, todo.from)}${source.slice(todo.to)}`;
 }
 
-export function locatePreviewSnippet(source: string, snippet: string, hintFrom = 0): { from: number; to: number } | null {
+export function locatePreviewSnippet(
+  source: string,
+  snippet: string,
+  hintFrom = 0,
+  range?: { from: number; to: number },
+): { from: number; to: number } | null {
   const exact = snippet.trim();
   if (exact.length < 2) return null;
-  let from = source.indexOf(exact, Math.max(0, hintFrom));
+  const lower = Math.max(0, range?.from ?? hintFrom);
+  const upper = Math.min(source.length, range?.to ?? source.length);
+  let from = source.indexOf(exact, lower);
+  if (from >= 0 && from + exact.length > upper) from = -1;
   if (from < 0) from = source.indexOf(exact);
+  if (from >= 0 && range && (from < range.from || from + exact.length > range.to)) return null;
   if (from < 0) return null;
   return { from, to: from + exact.length };
 }

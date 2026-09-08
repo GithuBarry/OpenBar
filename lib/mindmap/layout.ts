@@ -3,6 +3,7 @@
  * Card size hugs wrapped text up to NODE_WIDTH / ROOT_WIDTH.
  */
 
+import { markdownTableColumns, markdownTableWidth } from "./markdown-table";
 import { hierarchy, tree } from "d3-hierarchy";
 
 import { indexMindmap } from "@/lib/mindmap-index";
@@ -20,28 +21,26 @@ type SeparableTree = {
 };
 
 /** Max card width for readable dense topics and TODOs. */
-export const NODE_WIDTH = 248;
+export const NODE_WIDTH = 264;
 /** Min one-line card height. */
 export const NODE_HEIGHT = 36;
-export const ROOT_WIDTH = 280;
+export const ROOT_WIDTH = 300;
 export const ROOT_HEIGHT = 42;
 export const HORIZONTAL_GAP = 72;
-export const VERTICAL_GAP = 12;
+export const VERTICAL_GAP = 20;
 
-const PAD_X = 20;
-const PAD_Y = 14;
-const MIN_WIDTH = 96;
-const MIN_ROOT_WIDTH = 96;
-const TITLE_PX = 13.5;
-const TITLE_LH = 17;
-const TODO_TITLE_PX = 13.5;
-const TODO_TITLE_LH = 17;
-const TODO_BODY_PX = 11.6;
-const TODO_BODY_LH = 15;
-const ROOT_TITLE_PX = 15.7;
-const ROOT_TITLE_LH = 20;
-const DETAIL_PX = 11.6;
-const DETAIL_LH = 15;
+const PAD_X = 31;
+const PAD_Y = 26;
+const TITLE_PX = 14;
+const TITLE_LH = 19;
+const TODO_TITLE_PX = 14;
+const TODO_TITLE_LH = 19;
+const TODO_BODY_PX = 12;
+const TODO_BODY_LH = 17;
+const ROOT_TITLE_PX = 16;
+const ROOT_TITLE_LH = 21;
+const DETAIL_PX = 12;
+const DETAIL_LH = 17;
 const META_H = 16;
 // ponytail: naive em-width wrap; canvas measureText if cards clip or look loose.
 const CHAR = 0.62;
@@ -60,10 +59,19 @@ function wrappedSize(text: string, maxInner: number, fontPx: number, linePx: num
   return { width, height };
 }
 
-export function nodeDimensions(node: MindmapNode, displayText?: string, forcedWidth?: number): Dimensions {
+export function nodeDimensions(node: MindmapNode, displayText?: string): Dimensions {
   const isRoot = node.parentId === null;
-  const maxW = isRoot ? ROOT_WIDTH : NODE_WIDTH;
-  const maxInner = maxW - PAD_X;
+  const tableColumns = node.contentFormat === "markdown" ? markdownTableColumns(node.text) : 0;
+  const baseMaxW = isRoot ? ROOT_WIDTH : NODE_WIDTH;
+  const wideTable = tableColumns > 0 && node.tableLayout !== "scroll";
+  const imageCard = node.refs?.some((ref) => ref.kind === "figure") ?? false;
+  const maxW = wideTable
+    ? Math.max(baseMaxW, Math.min(900, markdownTableWidth(node.text)))
+    : imageCard ? Math.max(baseMaxW, 320) : baseMaxW;
+  const padX = node.todoId ? 28 : PAD_X;
+  const padY = node.todoId ? 24 : PAD_Y;
+  const headingHeight = node.todoId ? 24 : 0;
+  const maxInner = maxW - padX;
   const titlePx = isRoot ? ROOT_TITLE_PX : node.todoId ? TODO_TITLE_PX : TITLE_PX;
   const titleLh = isRoot ? ROOT_TITLE_LH : node.todoId ? TODO_TITLE_LH : TITLE_LH;
   // ponytail: TODO display text lives in TeX; empty map text would hug "Untitled"
@@ -82,19 +90,20 @@ export function nodeDimensions(node: MindmapNode, displayText?: string, forcedWi
     ? wrappedSize(detailText, maxInner, node.todoId ? TODO_BODY_PX : DETAIL_PX, node.todoId ? TODO_BODY_LH : DETAIL_LH)
     : { width: 0, height: 0 };
   const naturalInnerW = Math.max(title.width, naturalDetail.width);
-  const minimumWidth = isRoot ? MIN_ROOT_WIDTH : MIN_WIDTH;
-  const width = forcedWidth === undefined
-    ? Math.min(maxW, Math.max(minimumWidth, Math.ceil(naturalInnerW + PAD_X)))
-    : Math.min(maxW, Math.max(minimumWidth, Math.ceil(forcedWidth)));
-  const actualInner = Math.max(titlePx * CHAR, width - PAD_X);
+  const width = wideTable || imageCard
+    ? Math.min(maxW, Math.max(baseMaxW, Math.ceil(naturalInnerW + padX)))
+    : baseMaxW;
+  const actualInner = Math.max(titlePx * CHAR, width - padX);
   const actualTitle = wrappedSize(titleLine || "Untitled topic", actualInner, titlePx, titleLh);
   const detail = detailText
     ? wrappedSize(detailText, actualInner, node.todoId ? TODO_BODY_PX : DETAIL_PX, node.todoId ? TODO_BODY_LH : DETAIL_LH)
     : { width: 0, height: 0 };
-  const meta = node.tags?.length || node.progress !== undefined ? META_H : 0;
+  const meta = node.tags?.length || node.progress !== undefined || node.priority
+    ? node.todoId ? 32 : META_H
+    : 0;
   const height = Math.max(
     isRoot ? ROOT_HEIGHT : NODE_HEIGHT,
-    Math.ceil(PAD_Y + actualTitle.height + (detail.height ? 4 + detail.height : 0) + meta),
+    Math.ceil(padY + headingHeight + actualTitle.height + (detail.height ? (node.todoId ? 6 : 4) + detail.height : 0) + meta),
   );
   return { width, height };
 }
@@ -116,12 +125,7 @@ export function layoutMindmapTree(
     ? mindmap.rootId
     : ([...nodeById.values()].find((node) => node.parentId === null)?.id || mindmap.nodes[0]?.id || "root");
   const root = hierarchy(toDatum(rootId), (d) => d.children);
-  const columnPitch = Math.max(
-    NODE_WIDTH,
-    ROOT_WIDTH,
-    ...[...sizes.values()].map((size) => size.width),
-  ) + HORIZONTAL_GAP;
-  const layout = tree<Datum>().nodeSize([1, columnPitch]) as unknown as SeparableTree;
+  const layout = tree<Datum>().nodeSize([1, 1]) as unknown as SeparableTree;
   layout.separation((a, b) => {
     const ha = sizes.get(a.data.id)?.height ?? NODE_HEIGHT;
     const hb = sizes.get(b.data.id)?.height ?? NODE_HEIGHT;
@@ -130,15 +134,24 @@ export function layoutMindmapTree(
   layout(root);
   const positions = new Map<string, Point>();
   const reachable = new Set<string>();
-  root.each((node) => {
+  const alignedX = new Map<number, number>([[0, 80]]);
+  for (let depth = 1; depth <= root.height; depth += 1) {
+    const previousWidth = depth === 1 ? ROOT_WIDTH : NODE_WIDTH;
+    alignedX.set(depth, (alignedX.get(depth - 1) || 80) + previousWidth + HORIZONTAL_GAP);
+  }
+  root.eachBefore((node) => {
     const size = sizes.get(node.data.id) || { width: NODE_WIDTH, height: NODE_HEIGHT };
+    const parentPosition = node.parent ? positions.get(node.parent.data.id) : undefined;
+    const parentWidth = node.parent ? sizes.get(node.parent.data.id)?.width ?? NODE_WIDTH : 0;
     positions.set(node.data.id, {
-      x: Math.max(24, Math.round(node.y + 80)),
+      x: Math.max(24, Math.round(parentPosition
+        ? Math.max(alignedX.get(node.depth) || 80, parentPosition.x + parentWidth + HORIZONTAL_GAP)
+        : 80)),
       y: Math.round(node.x - size.height / 2 + 88),
     });
     reachable.add(node.data.id);
   });
-  separateOverlappingColumns(positions, sizes);
+  separateOverlappingBranchesVertically(root, positions, sizes);
   const minimumY = Math.min(...[...positions.values()].map((point) => point.y), 24);
   if (minimumY < 24) {
     for (const [id, point] of positions) positions.set(id, { ...point, y: point.y + 24 - minimumY });
@@ -155,25 +168,43 @@ export function layoutMindmapTree(
   return { positions, reachable, connected };
 }
 
-function separateOverlappingColumns(positions: Map<string, Point>, sizes: Map<string, Dimensions>): void {
-  const columns = new Map<number, string[]>();
-  for (const [id, point] of positions) {
-    const column = columns.get(point.x);
-    if (column) column.push(id);
-    else columns.set(point.x, [id]);
-  }
-  for (const ids of columns.values()) {
-    ids.sort((a, b) => (positions.get(a)?.y ?? 0) - (positions.get(b)?.y ?? 0));
-    for (let index = 1; index < ids.length; index += 1) {
-      const previousId = ids[index - 1]!;
-      const currentId = ids[index]!;
-      const previous = positions.get(previousId);
-      const current = positions.get(currentId);
-      const previousSize = sizes.get(previousId) || { width: NODE_WIDTH, height: NODE_HEIGHT };
-      if (!previous || !current) continue;
-      const minimumY = previous.y + previousSize.height + VERTICAL_GAP;
-      if (current.y < minimumY) positions.set(currentId, { ...current, y: minimumY });
+function separateOverlappingBranchesVertically(
+  root: ReturnType<typeof hierarchy<Datum>>,
+  positions: Map<string, Point>,
+  sizes: Map<string, Dimensions>,
+): void {
+  const nodes = root.descendants();
+  const clearance = 12;
+  for (let pass = 0; pass < nodes.length * nodes.length; pass += 1) {
+    let moved = false;
+    for (let firstIndex = 0; firstIndex < nodes.length && !moved; firstIndex += 1) {
+      for (let secondIndex = firstIndex + 1; secondIndex < nodes.length; secondIndex += 1) {
+        const first = nodes[firstIndex]!;
+        const second = nodes[secondIndex]!;
+        const firstPoint = positions.get(first.data.id);
+        const secondPoint = positions.get(second.data.id);
+        if (!firstPoint || !secondPoint) continue;
+        const firstSize = sizes.get(first.data.id) || { width: NODE_WIDTH, height: NODE_HEIGHT };
+        const secondSize = sizes.get(second.data.id) || { width: NODE_WIDTH, height: NODE_HEIGHT };
+        const verticalOverlap = firstPoint.y < secondPoint.y + secondSize.height + clearance
+          && secondPoint.y < firstPoint.y + firstSize.height + clearance;
+        const horizontalOverlap = firstPoint.x < secondPoint.x + secondSize.width + clearance
+          && secondPoint.x < firstPoint.x + firstSize.width + clearance;
+        if (!verticalOverlap || !horizontalOverlap) continue;
+        const [upper, lower] = firstPoint.y <= secondPoint.y ? [first, second] : [second, first];
+        const upperPoint = positions.get(upper.data.id)!;
+        const lowerPoint = positions.get(lower.data.id)!;
+        const upperSize = sizes.get(upper.data.id) || { width: NODE_WIDTH, height: NODE_HEIGHT };
+        const shift = upperPoint.y + upperSize.height + clearance - lowerPoint.y;
+        for (const descendant of lower.descendants()) {
+          const point = positions.get(descendant.data.id);
+          if (point) point.y += shift;
+        }
+        moved = true;
+        break;
+      }
     }
+    if (!moved) return;
   }
 }
 
@@ -182,10 +213,10 @@ function checkNodeDimensions(): void {
   const long = nodeDimensions({ id: "l", text: "Long topic ".repeat(12), parentId: "r" });
   const root = nodeDimensions({ id: "r", text: "Paper", parentId: null });
   const todo = nodeDimensions({ id: "t", text: "", parentId: "r", todoId: "x" });
-  if (!(short.width < NODE_WIDTH && short.width >= MIN_WIDTH)) throw new Error("nodeDimensions should hug short text");
+  if (short.width !== NODE_WIDTH) throw new Error("standard cards should use the default width");
   if (long.width !== NODE_WIDTH) throw new Error("nodeDimensions should cap at NODE_WIDTH");
   if (!(long.height > short.height)) throw new Error("nodeDimensions should grow for wrapped text");
-  if (!(root.width >= short.width && root.width <= ROOT_WIDTH)) throw new Error("root should stay slightly distinct");
+  if (root.width !== ROOT_WIDTH) throw new Error("root should use the root width");
   if (!(todo.width === NODE_WIDTH && todo.height > NODE_HEIGHT)) throw new Error("empty TODOs should use wrapped max-width");
 }
 

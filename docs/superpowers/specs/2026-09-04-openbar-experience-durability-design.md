@@ -17,9 +17,10 @@ the same operations and the same evidence.
   Primary Unplaced. Secondary maps may reuse a TODO once per map.
 - A map owns placement, labels, references, progress, presentation, and map
   history. It never stores a second authoritative copy of TODO text or status.
-- A paper location is identified by source graph file and stable section ID,
-  with source range and source hash captured at read time. Section titles are
-  display text, never write addresses.
+- A targeted paper location is identified by source graph file and stable
+  section ID, with source range and source hash captured at read time. Section
+  titles are display text, never write addresses. Operations that omit a
+  section target use the manuscript root insertion point.
 - Local persistence and remote Git synchronization are separate outcomes. A
   failed push never rolls back a successful local save and never deletes a
   newly created TODO.
@@ -50,16 +51,17 @@ contains:
 
 The composed paper view may still provide an editable normalized source, but
 the project state, TODO locations, navigation, and diagnostics are built from
-this index rather than a title-based reconstruction. Writes resolve the
-descriptor by section ID, verify the expected source hash, and reject stale
-or ambiguous requests with an actionable conflict.
+this index rather than a title-based reconstruction. Writes with an explicit
+paper destination resolve the descriptor by section ID and verify the expected
+source hash. Root-targeted writes use the manuscript root insertion point.
 
 ### 2. Coordinated paper and map operations
 
 Paper operations are implemented as pure source transformations followed by a
 single persisted transaction. A conversion operation owns its request ID,
-stable destination section ID, expected paper hash, expected map hash, and
-resolved map storage identity. It performs:
+optional destination section ID, expected paper hash, expected map hash, and
+resolved map storage identity. An omitted destination uses the manuscript root
+insertion point. It performs:
 
 1. request replay lookup;
 2. map/card and source-context validation;

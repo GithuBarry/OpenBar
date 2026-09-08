@@ -107,16 +107,3 @@ export function patchSectionTableCell(
     tex: `${sectionTex.slice(0, table.from)}${patched.source}${sectionTex.slice(table.to)}`,
   };
 }
-
-export function wrapComplexTablesForPreview(
-  source: string,
-  tables: Record<string, string> | undefined,
-): string {
-  if (!tables || !Object.keys(tables).length) return source;
-  const fragments = extractComplexTableFragments(source).filter((item) => tables[item.key]);
-  let next = source;
-  for (const fragment of [...fragments].sort((a, b) => b.from - a.from)) {
-    next = `${next.slice(0, fragment.from)}\\obpandocTable{${fragment.key}}${next.slice(fragment.to)}`;
-  }
-  return next;
-}

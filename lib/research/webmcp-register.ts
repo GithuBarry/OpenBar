@@ -35,7 +35,7 @@ type NativeWebMcpTool = {
 };
 
 export type WebMcpModelContext = {
-  registerTool: (tool: WebMcpTool, options?: { signal?: AbortSignal }) => Promise<void>;
+  registerTool: (tool: WebMcpTool, options?: { signal?: AbortSignal; exposedTo?: string[] }) => Promise<void>;
   getTools?: () => Promise<readonly NativeWebMcpTool[]>;
 };
 
@@ -43,6 +43,32 @@ declare global {
   interface Document {
     readonly modelContext?: WebMcpModelContext;
   }
+}
+
+let navigatorHost: WebMcpModelContext | undefined;
+let navigatorAdapter: WebMcpModelContext | undefined;
+
+/** Normalize the native registration API exposed by the current browser. */
+export function getBrowserModelContext(): WebMcpModelContext | undefined {
+  if (typeof document === "undefined") return undefined;
+  if (document.modelContext?.registerTool) return document.modelContext;
+  const native = (navigator as Navigator & { modelContext?: WebMcpModelContext }).modelContext;
+  if (!native?.registerTool) return undefined;
+  if (native === navigatorHost && navigatorAdapter) return navigatorAdapter;
+  navigatorHost = native;
+  navigatorAdapter = {
+    async registerTool(tool, options) {
+      await native.registerTool({
+        ...tool,
+        execute: async (args, executionOptions) => {
+          const result = await tool.execute(args, executionOptions);
+          return typeof result === "string" ? result : JSON.stringify(result);
+        },
+      }, options);
+    },
+    ...(native.getTools ? { getTools: () => native.getTools!() } : {}),
+  };
+  return navigatorAdapter;
 }
 
 type RegistrationOwner = {
@@ -85,7 +111,7 @@ export function listWebMcpDiagnostics(): WebMcpDiagnostic[] {
 
 export async function getWebMcpCatalog(): Promise<WebMcpCatalogEntry[]> {
   if (typeof document === "undefined") return [];
-  const modelContext = document.modelContext;
+  const modelContext = getBrowserModelContext();
   if (!modelContext?.getTools) return listWebMcpCatalog();
   try {
     const tools = await modelContext.getTools();
@@ -144,6 +170,7 @@ export async function registerWebMcpToolsIndependent(
   if (signal.aborted) release();
   else signal.addEventListener("abort", release, { once: true });
 
+  const exposedTo: string[] = JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="openbar-agent-origins"]')?.content || "[]");
   const diagnostics = await Promise.all(
     dedupedTools.map(async (tool): Promise<WebMcpRegistration> => {
       if (signal.aborted) return { name: tool.name, ok: false, error: "aborted" };
@@ -154,7 +181,7 @@ export async function registerWebMcpToolsIndependent(
             if (!owner.active || signal.aborted) return unavailableToolResult(tool.name);
             return tool.execute(args, options);
           },
-        }, { signal });
+        }, { signal, ...(exposedTo.length ? { exposedTo } : {}) });
         if (!owner.active || signal.aborted) return { name: tool.name, ok: false, error: "aborted" };
         localCatalog.set(tool.name, {
           name: tool.name,
@@ -191,7 +218,8 @@ export function waitForModelContext(
   signal?: AbortSignal,
 ): Promise<NonNullable<Document["modelContext"]> | null> {
   if (typeof document === "undefined") return Promise.resolve(null);
-  if (document.modelContext?.registerTool) return Promise.resolve(document.modelContext);
+  const available = getBrowserModelContext();
+  if (available) return Promise.resolve(available);
   return new Promise((resolve) => {
     const started = Date.now();
     let settled = false;
@@ -205,8 +233,9 @@ export function waitForModelContext(
       resolve(value);
     };
     const check = () => {
-      if (document.modelContext?.registerTool) {
-        finish(document.modelContext);
+      const available = getBrowserModelContext();
+      if (available) {
+        finish(available);
         return;
       }
       if (Date.now() - started >= timeoutMs) {

@@ -23,7 +23,8 @@ import {
   readMindmapRecord,
   texPaths,
 } from "@/lib/tex-project/project";
-import { sha256, withWriteLockAsync, writeTextAtomic } from "@/lib/tex-project/codec";
+import { sha256, writeTextAtomic } from "@/lib/tex-project/codec";
+import { withProjectWriteLockAsync } from "@/lib/research/project-lock";
 import { clearSourceTransactionJournal, recoverSourceTransaction, writeSourceTransactionJournal } from "@/lib/tex-project/source-transaction";
 
 export type ConversionLocalStatus = {
@@ -36,7 +37,7 @@ export type MindmapTodoConversionLocal = {
   todoId: string;
   mindmap: Mindmap;
   local: ConversionLocalStatus;
-  sectionId: string;
+  sectionId?: string;
   file?: string;
   sourceHash?: string;
 };
@@ -48,7 +49,7 @@ export type MindmapTodoConversionInput = {
   slug: string;
   mindmap: Mindmap;
   cardId: string;
-  sectionId: string;
+  sectionId?: string;
   expectedMapDiskHash?: string;
   expectedBundleHash?: string;
   requestId?: string;
@@ -108,7 +109,7 @@ function currentMap(projectDir: string, id: string): Mindmap | null {
 function success(
   todoId: string,
   map: Mindmap,
-  sectionId: string,
+  sectionId?: string,
   file?: string,
   sourceHash?: string,
 ): MindmapTodoConversionServiceResult {
@@ -118,7 +119,7 @@ function success(
       todoId,
       mindmap: { ...map, diskHash: mindmapDiskHash(map) },
       local: { paper: "saved", map: "saved" },
-      sectionId,
+      ...(sectionId ? { sectionId } : {}),
       ...(file ? { file } : {}),
       ...(sourceHash ? { sourceHash } : {}),
     },
@@ -131,6 +132,7 @@ export async function convertMindmapCardToTodo(input: MindmapTodoConversionInput
   const paths = texPaths(input.projectDir);
   const mapId = input.mindmap.id || DRAFT_MINDMAP_ID;
   const requestId = requestIdFor(input);
+  const sectionId = input.sectionId?.trim() || undefined;
   const submittedIdentity = resolveMindmapStorageIdentity(input.projectDir, mapId);
   if (input.mindmap.role && input.mindmap.role !== submittedIdentity.role) {
     return conversionFailure(
@@ -144,12 +146,12 @@ export async function convertMindmapCardToTodo(input: MindmapTodoConversionInput
     slug: input.slug,
     mapId,
     cardId: input.cardId,
-    sectionId: input.sectionId,
+    ...(sectionId ? { sectionId } : {}),
   });
-  // Acquire the map lock first, matching saveMindmap, then the paper lock,
-  // matching paper persistence. This serializes conversion with either kind
-  // of concurrent local edit without relying on a third lock name.
-  return withWriteLockAsync(submittedIdentity.file, () => withWriteLockAsync(paths.paperFile, async () => {
+  // A conversion edits the paper and one map in one transaction. The project
+  // lock gives both resources one ordering boundary and prevents deadlocks
+  // between concurrent paper, map, and conversion saves.
+  return withProjectWriteLockAsync(input.projectDir, async () => {
     const map = currentMap(input.projectDir, mapId);
     if (!map) return conversionFailure("unknown_map", `Unknown mindmap "${mapId}".`);
     const replay = readRequestReplay(input.projectDir, requestId);
@@ -159,25 +161,25 @@ export async function convertMindmapCardToTodo(input: MindmapTodoConversionInput
       }
       const replayTodoId = typeof replay.result.todoId === "string" ? replay.result.todoId : "";
       const replayNode = map.nodes.find((node) => node.id === input.cardId);
-      if (replayTodoId && replayNode?.todoId === replayTodoId) return success(replayTodoId, map, input.sectionId);
+      if (replayTodoId && replayNode?.todoId === replayTodoId) return success(replayTodoId, map, sectionId);
     }
     if (input.expectedMapDiskHash && mindmapDiskHash(map) !== input.expectedMapDiskHash) {
       return conversionFailure("stale_disk_state", "The mindmap changed on disk. Reload before converting this card.", true, mindmapDiskHash(map));
     }
     const node = map.nodes.find((item) => item.id === input.cardId);
     if (!node) return conversionFailure("unknown_card", `Unknown mindmap card "${input.cardId}".`);
-    if (node.todoId?.trim()) return success(node.todoId.trim(), map, input.sectionId);
+    if (node.todoId?.trim()) return success(node.todoId.trim(), map, sectionId);
     const content = ordinaryMindmapCardContent(node);
     const title = content.title.trim();
     const text = content.body.trim();
     if (!title && !text) return conversionFailure("invalid_arguments", "The card needs a title or details before it can become a TODO.");
 
-    const bundle = buildSourceBundle(paths.manuscriptDir);
+    const bundle = buildSourceBundle(paths.manuscriptDir, undefined, 0, true);
     if (input.expectedBundleHash && bundle.bundleHash !== input.expectedBundleHash) {
       return conversionFailure("stale_disk_state", "The paper changed on disk. Reload before converting this card.", true, bundle.bundleHash);
     }
-    const inserted = insertTodoAtSection(bundle.source, input.sectionId, text, undefined, title || undefined);
-    if (!inserted.sectionFound) return conversionFailure("unknown_section", `Unknown paper section id "${input.sectionId}".`);
+    const inserted = insertTodoAtSection(bundle.source, sectionId, text, undefined, title || undefined);
+    if (!inserted.sectionFound) return conversionFailure(sectionId ? "unknown_section" : "invalid_tex", inserted.error || "The paper has no writable source location.");
     if (inserted.error) return conversionFailure("invalid_tex", inserted.error);
 
     const bound = applyMindmapAction(map, { type: "bind-todo", id: input.cardId, todoId: inserted.id }).mindmap;
@@ -199,9 +201,9 @@ export async function convertMindmapCardToTodo(input: MindmapTodoConversionInput
         writes: writes.map((write) => ({ filePath: write.filePath, previous: write.previous, next: write.next })),
       });
       for (const write of writes) writeTextAtomic(path.join(paths.manuscriptDir, write.filePath), write.next);
-      clearSourceTransactionJournal(paths.manuscriptDir);
+      clearSourceTransactionJournal(paths.manuscriptDir, true);
     } catch (error) {
-      const recovery = recoverSourceTransaction(paths.manuscriptDir);
+      const recovery = recoverSourceTransaction(paths.manuscriptDir, true);
       const affected = [...new Set([...writes.map((write) => write.filePath), ...recovery.affectedPaths])];
       return conversionFailure(
         recovery.ok ? "local_save_failed" : "source_transaction_recovery_failed",
@@ -213,18 +215,22 @@ export async function convertMindmapCardToTodo(input: MindmapTodoConversionInput
     }
 
     try {
+      // The conversion holds the project lock while committing the paper and
+      // map. Replay metadata uses its own lock path, so this is a distinct
+      // lock acquisition rather than a reentrant project-lock attempt. Other
+      // MCP writers follow the same project-write then replay-write ordering.
       recordRequestReplay(input.projectDir, {
         requestId,
         operation: "convert_card_to_todo",
         fingerprint,
-        result: { todoId: inserted.id, mapId, cardId: input.cardId, sectionId: input.sectionId },
+        result: { todoId: inserted.id, mapId, cardId: input.cardId, ...(inserted.sectionId ? { sectionId: inserted.sectionId } : {}) },
       });
     } catch {
       // The source transaction is already durable; a later retry still sees
       // the bound card and is therefore idempotent even if replay metadata is
       // temporarily unavailable.
     }
-    const after = buildSourceBundle(paths.manuscriptDir);
-    return success(inserted.id, nextMap, input.sectionId, mapFilePath, after.bundleHash);
-  }));
+    const after = buildSourceBundle(paths.manuscriptDir, undefined, 0, true);
+    return success(inserted.id, nextMap, inserted.sectionId, mapFilePath, after.bundleHash);
+  });
 }

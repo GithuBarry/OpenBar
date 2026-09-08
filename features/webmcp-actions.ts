@@ -7,6 +7,7 @@
  * into callable server references when a page registers its tools.
  */
 import {
+  syncProjectReviewAction,
   applyConversionAction,
   deleteProjectSkillAction,
   deleteWikiPageAction,
@@ -35,6 +36,7 @@ import {
 } from "@/app/actions";
 
 export const sharedWebMcpActions = {
+  syncProject: syncProjectReviewAction,
   getProjectState: getProjectStateAction,
   searchProject: searchProjectAction,
   resolveNavigation: resolveProjectNavigationAction,

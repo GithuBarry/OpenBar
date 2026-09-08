@@ -12,6 +12,7 @@ export type TodoAttrPatch = {
   id?: string;
   title?: string | null;
   text?: string;
+  textFormat?: "plain" | "tex";
   completed?: boolean | null;
   createdAt?: string | null;
   updatedAt?: string | null;
@@ -74,6 +75,7 @@ export function composeObtodo(spec: {
   id?: string;
   title?: string;
   text: string;
+  textFormat?: "plain" | "tex";
   createdAt?: string;
   updatedAt?: string;
   completedAt?: string;
@@ -91,7 +93,7 @@ export function composeObtodo(spec: {
   if (updated) attrs.updated = updated;
   const completed = parseTodoTimestamp(spec.completedAt);
   if (completed) attrs.completed = completed;
-  return `\\obtodo[${serializeAnchorAttrs(attrs)}]{${escapeTexText(spec.text)}}`;
+  return `\\obtodo[${serializeAnchorAttrs(attrs)}]{${spec.textFormat === "tex" ? spec.text : escapeTexText(spec.text)}}`;
 }
 
 function applyPatch(attrs: Record<string, string>, patch: TodoAttrPatch, now: Date): void {
@@ -158,7 +160,7 @@ export function rewriteObtodo(tex: string, patch: TodoAttrPatch, now = new Date(
   if (!match) return tex;
   const attrs = parseAnchorAttrs(match.attrs);
   applyPatch(attrs, patch, now);
-  const body = patch.text !== undefined ? escapeTexText(patch.text) : match.body;
+  const body = patch.text !== undefined ? patch.textFormat === "tex" ? patch.text : escapeTexText(patch.text) : match.body;
   const serialized = serializeAnchorAttrs(attrs);
   return `\\obtodo${serialized ? `[${serialized}]` : ""}{${body}}`;
 }

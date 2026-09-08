@@ -32,6 +32,7 @@ export type AddTodoOperation = {
   to: number;
   title?: string;
   text: string;
+  textFormat?: "plain" | "tex";
   id?: string;
 };
 
@@ -41,6 +42,7 @@ export type UpdateTodoOperation = {
   expectedSourceHash?: string;
   title?: string;
   text?: string;
+  textFormat?: "plain" | "tex";
   completed?: boolean;
 };
 

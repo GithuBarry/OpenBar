@@ -76,10 +76,8 @@ the project identity.
   `highlight_mindmap_activity`, `place_todo_card`,
   `convert_card_to_todo`, `complete_todo`, `reopen_todo`,
   `focus_todo_in_paper`, and `rename_mindmap`.
-- **Wiki** — `read_document`, `patch_document`, and
-  `render_preview` for the open page, plus `create_wiki_page`,
-  `update_wiki_page`, `rename_wiki_page`, and `delete_wiki_page`
-  where the page owns those actions.
+- **Wiki** — bounded page reads and `render_preview` for the open page.
+  Wiki mutation capabilities report `capability_unavailable` in this release.
 - **Instructions** — `read_project_skill`,
   `write_agents_md`, `write_project_skill`, `delete_project_skill`,
   `write_workspace_agents_md`, `write_workspace_skill`, and
@@ -92,17 +90,17 @@ the visible actions of their page. Their project and document identity comes
 from the active page. TeX owns TODO identity, text, and completion. Each map
 owns its card placement, labels, refs, progress, and appearance.
 
-## Private published-paper demo
+## Private project demo
 
-The release package contains two real published papers from this workspace:
-Command-V and NoveltyBench. The private demo allowlist exposes those two
-projects with their real manuscript source, figures, maps, annotations, and
-project notes. Other workspace projects remain outside the demo image.
+The private demo allowlist comes from `OPENBAR_DEMO_SLUGS`. It exposes the
+configured project fixtures with their manuscript source, figures, maps,
+annotations, and project notes. Other workspace projects remain outside the
+demo image.
 
 The demo banner identifies shared disposable state. The `Reset demo` control
-restores both paper projects from their checked-in copies. The server also
-enforces the two-project allowlist and disables workspace administration,
-imports, uploads, instruction writes, and skill writes in demo mode.
+restores configured projects from the fixture source. The server also enforces
+the allowlist and disables workspace administration, imports, uploads,
+instruction writes, and skill writes in demo mode.
 
 ## Main routes
 
@@ -129,23 +127,29 @@ pnpm dev
 Set `OPENBARRY_CONTENT` to the mounted content directory when the repository
 content lives elsewhere. The local workspace runs against that directory.
 
-To seed the two published-paper projects into a disposable content directory:
+To seed configured project fixtures into a disposable content directory:
 
 ```bash
-OPENBARRY_CONTENT=/tmp/openbar-content pnpm seed:demo
+OPENBARRY_CONTENT=/tmp/openbar-content \
+OPENBAR_DEMO_SLUGS=private-project-a,private-project-b \
+OPENBAR_DEMO_FIXTURE=/path/to/project-fixtures \
+pnpm seed:demo
 ```
 
 ## Release checks
 
 ```bash
 pnpm typecheck
-pnpm test
 pnpm check:domain
-pnpm evals
 pnpm build
-OB_SMOKE_SLUGS=command-v,noveltybench pnpm smoke
+OB_SMOKE_SLUGS=private-project-a,private-project-b pnpm smoke
 git diff --check
 ```
+
+The release surface keeps type checking, the production build, domain
+invariants, operational doctor checks, and connection smoke diagnostics.
+Manual durability and browser WebMCP acceptance steps live in
+[docs/release-acceptance.md](docs/release-acceptance.md).
 
 For the private Cloudflare Worker plus Container package, use the build,
 Workers Builds, optional local Container, Access, and custom-hostname steps in

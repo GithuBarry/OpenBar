@@ -93,11 +93,14 @@ export function WikiIndex({ slug, pages }: { slug: string; pages: WikiPage[] }) 
             <button type="button" className="btn-ghost text-xs" onClick={() => setOpen(false)}>Cancel</button>
           </form>
         ) : (
-          <button type="button" className="btn-outline text-xs" onClick={() => setOpen(true)}>
+          <button type="button" className="btn-outline text-xs" disabled title="Wiki editing is currently unavailable">
             <Plus size={12} /> New page
           </button>
         )}
       </div>
+      <p className="text-xs text-muted" role="status">
+        Wiki pages are readable supporting notes. Editing is currently unavailable. Use paper TODOs for actionable work.
+      </p>
       {error && <p className="text-xs text-danger">{error}</p>}
       {!pages.length && !open && (
         <div className="rounded-card border border-dashed border-line bg-surface/60 px-4 py-8 text-center text-sm text-faint">

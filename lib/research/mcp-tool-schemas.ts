@@ -2,12 +2,14 @@
  * Shared Zod + JSON Schema for browser WebMCP tools.
  */
 
+import { syncProjectProperties } from "./sync-project-contract";
 import { z } from "zod";
 
 import type { JsonSchemaObject } from "./webmcp-paper-contract";
 
 export const PROJECT_WEBMCP_TOOL_NAMES = [
   "get_project_state",
+  "sync_project",
   "search_project",
   "navigate_project",
   "update_project",
@@ -81,6 +83,9 @@ export const updateProjectZod = z.object({
   color: z.string().optional(),
   icon: z.string().optional(),
   label: z.string().optional(),
+  engine: z.enum(["pdflatex", "xelatex", "lualatex"]).optional(),
+  mainFile: z.string().optional(),
+  texliveVersion: z.string().optional(),
   links: z.array(z.object({
     label: z.string(),
     url: z.string(),
@@ -91,6 +96,7 @@ export const updateProjectZod = z.object({
 });
 
 export const SHARED_WEBMCP_SCHEMAS: Record<string, JsonSchemaObject> = {
+  sync_project: objectSchema(syncProjectProperties, ["action"]),
   get_project_state: objectSchema({
     detail: {
       type: "string",
@@ -143,6 +149,9 @@ export const SHARED_WEBMCP_SCHEMAS: Record<string, JsonSchemaObject> = {
     },
     collaborators: { type: "array", maxItems: 100, items: { type: "string" } },
     archivedAt: { type: ["string", "null"] },
+    engine: { type: "string", enum: ["pdflatex", "xelatex", "lualatex"] },
+    mainFile: { type: "string" },
+    texliveVersion: { type: "string" },
   }, ["expectedHash"]),
 };
 

@@ -7,7 +7,8 @@ import path from "node:path";
 
 import { failResult, okResult, type OperationResult } from "@/lib/research/operation-result";
 import type { SourcePatch } from "@/lib/research/operations";
-import { parseSectionMeta, repairMissingEditEnd, sha256, withWriteLock, withWriteLockAsync, writeTextAtomic } from "./codec";
+import { parseSectionMeta, repairMissingEditEnd, sha256, writeTextAtomic } from "./codec";
+import { withProjectWriteLock, withProjectWriteLockAsync } from "@/lib/research/project-lock";
 import { expandProjectForConversion } from "./latexpand";
 import { conversionSourceHash, manuscriptFilePath } from "./pandoc";
 import { buildSourceBundle, mapVirtualRange } from "./source-bundle";
@@ -28,9 +29,7 @@ export function repairPaperSectionEnvelope(input: {
   previous?: string;
   next?: string;
 }> {
-  const initial = buildSourceBundle(input.manuscriptDir);
-  const lockTarget = path.resolve(input.manuscriptDir, initial.rootFile || "paper.tex");
-  return withWriteLock(lockTarget, () => {
+  return withProjectWriteLock(input.manuscriptDir, () => {
     const target = manuscriptFilePath(input.manuscriptDir, input.filePath);
     if (!target.ok) return failResult("invalid_path", target.message, false);
     if (!fs.existsSync(target.abs)) {
@@ -51,7 +50,7 @@ export function repairPaperSectionEnvelope(input: {
       }
       const repaired = repairMissingEditEnd(current, input.sectionId);
       if (!repaired.changed) {
-        const bundle = buildSourceBundle(input.manuscriptDir);
+        const bundle = buildSourceBundle(input.manuscriptDir, undefined, 0, true);
         return okResult(
           {
             filePath: input.filePath,
@@ -64,7 +63,7 @@ export function repairPaperSectionEnvelope(input: {
         );
       }
       writeTextAtomic(target.abs, repaired.source);
-      const bundle = buildSourceBundle(input.manuscriptDir);
+      const bundle = buildSourceBundle(input.manuscriptDir, undefined, 0, true);
       return okResult(
         {
           filePath: input.filePath,
@@ -91,10 +90,8 @@ export function persistVirtualRange(input: {
   expectedBundleHash?: string;
   dryRun?: boolean;
 }): OperationResult<{ filePath: string; bundleHash: string; dryRun?: boolean; patches?: SourcePatch[] }> {
-  const initial = buildSourceBundle(input.manuscriptDir);
-  const lockTarget = path.resolve(input.manuscriptDir, initial.rootFile || "paper.tex");
-  return withWriteLock(lockTarget, () => {
-    const bundle = buildSourceBundle(input.manuscriptDir);
+  return withProjectWriteLock(input.manuscriptDir, () => {
+    const bundle = buildSourceBundle(input.manuscriptDir, undefined, 0, true);
     const recoveryFailure = bundle.diagnostics.find((diagnostic) => diagnostic.code.startsWith("source_transaction_") && diagnostic.severity === "error");
     if (recoveryFailure) {
       return failResult("source_transaction_recovery_failed", recoveryFailure.message, {
@@ -149,7 +146,7 @@ export function persistVirtualRange(input: {
       );
     }
     writeTextAtomic(abs, next);
-    const after = buildSourceBundle(input.manuscriptDir);
+    const after = buildSourceBundle(input.manuscriptDir, undefined, 0, true);
     return okResult({ filePath: mapped.segment!.filePath, bundleHash: after.bundleHash }, { diskHash: after.bundleHash, revision: after.revision });
   });
 }
@@ -162,10 +159,8 @@ export function persistSourceBundle(input: {
   requestId?: string;
 }): OperationResult<{ bundleHash: string; written: string[]; dryRun?: boolean; patches?: SourcePatch[] }> {
   const parts = splitBundleSource(input.nextSource);
-  const initial = buildSourceBundle(input.manuscriptDir);
-  const lockTarget = path.resolve(input.manuscriptDir, initial.rootFile || "paper.tex");
-  return withWriteLock(lockTarget, () => {
-    const bundle = buildSourceBundle(input.manuscriptDir);
+  return withProjectWriteLock(input.manuscriptDir, () => {
+    const bundle = buildSourceBundle(input.manuscriptDir, undefined, 0, true);
     const recoveryFailure = bundle.diagnostics.find((diagnostic) => diagnostic.code.startsWith("source_transaction_") && diagnostic.severity === "error");
     if (recoveryFailure) {
       return failResult("source_transaction_recovery_failed", recoveryFailure.message, {
@@ -263,15 +258,15 @@ export function persistSourceBundle(input: {
         committed.push(write);
       }
     } catch (error) {
-      const recovery = recoverSourceTransaction(input.manuscriptDir);
+      const recovery = recoverSourceTransaction(input.manuscriptDir, true);
       if (!recovery.ok) {
         const affected = [...new Set([...committed.map((write) => write.filePath), ...recovery.affectedPaths])];
         throw new Error(`Source batch write failed: ${error instanceof Error ? error.message : String(error)} Recovery failed for: ${affected.join(", ") || "the transaction journal"}.`);
       }
       throw error;
     }
-    clearSourceTransactionJournal(input.manuscriptDir);
-    const after = buildSourceBundle(input.manuscriptDir);
+    clearSourceTransactionJournal(input.manuscriptDir, true);
+    const after = buildSourceBundle(input.manuscriptDir, undefined, 0, true);
     return okResult(
       { bundleHash: after.bundleHash, written: writes.map((item) => item.filePath) },
       { diskHash: after.bundleHash, revision: after.revision },
@@ -300,9 +295,7 @@ export async function applyConversionWrite(input: {
   const output = manuscriptFilePath(input.manuscriptDir, `${rel}.converted.html`);
   if (!output.ok) return failResult("invalid_path", output.message, false);
   const root = fs.realpathSync.native(path.resolve(input.manuscriptDir));
-  const initialBundle = buildSourceBundle(input.manuscriptDir);
-  const lockTarget = path.resolve(input.manuscriptDir, initialBundle.rootFile || rel);
-  return withWriteLockAsync(lockTarget, async () => {
+  return withProjectWriteLockAsync(input.manuscriptDir, async () => {
     const sourceAtLock = manuscriptFilePath(input.manuscriptDir, rel);
     if (!sourceAtLock.ok) return failResult("invalid_path", sourceAtLock.message, false);
     const outputAtLock = manuscriptFilePath(input.manuscriptDir, `${rel}.converted.html`);
@@ -326,7 +319,7 @@ export async function applyConversionWrite(input: {
       }
     }
     if (input.expectedSourceBundleHash) {
-      const currentHash = buildSourceBundle(input.manuscriptDir).bundleHash;
+      const currentHash = buildSourceBundle(input.manuscriptDir, undefined, 0, true).bundleHash;
       if (currentHash !== input.expectedSourceBundleHash) {
         return failResult("stale_disk_state", "The source bundle changed after preview.", {
           retryable: true,

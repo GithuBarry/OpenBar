@@ -53,13 +53,14 @@ export function persistPaperTodoOperation(input: {
   });
 }
 
-export function insertTodoAtSection(source: string, sectionId: string, text: string, id?: string, title?: string): {
+export function insertTodoAtSection(source: string, sectionId: string | undefined, text: string, id?: string, title?: string): {
   source: string;
   id: string;
   from: number;
   to: number;
   sectionFound: boolean;
   filePath?: string;
+  sectionId?: string;
   before?: string;
   after?: string;
   error?: string;
@@ -72,6 +73,7 @@ export function insertTodoAtSection(source: string, sectionId: string, text: str
     to: placement.to,
     sectionFound: placement.sectionFound,
     ...(placement.filePath ? { filePath: placement.filePath } : {}),
+    ...(placement.sectionId ? { sectionId: placement.sectionId } : {}),
     before: placement.before,
     after: placement.after,
     ...(placement.error ? { error: placement.error } : {}),
@@ -80,7 +82,7 @@ export function insertTodoAtSection(source: string, sectionId: string, text: str
 
 export function previewPaperTodoPlacement(input: {
   manuscriptDir: string;
-  sectionId: string;
+  sectionId?: string;
   text: string;
   title?: string;
   id?: string;
@@ -94,7 +96,7 @@ export function previewPaperTodoPlacement(input: {
 
 export function persistPaperTodoPlacement(input: {
   manuscriptDir: string;
-  sectionId: string;
+  sectionId?: string;
   text: string;
   title?: string;
   id?: string;
@@ -102,7 +104,7 @@ export function persistPaperTodoPlacement(input: {
 }) {
   const preview = previewPaperTodoPlacement(input);
   if (!preview.sectionFound || preview.error) {
-    return failResult(preview.sectionFound ? "invalid_tex" : "unknown_section", preview.error || `Unknown paper section id "${input.sectionId}".`, {
+    return failResult(preview.sectionFound ? "invalid_tex" : "unknown_section", preview.error || (input.sectionId ? `Unknown paper section id "${input.sectionId}".` : "The paper has no writable source location."), {
       retryable: false,
     });
   }
@@ -117,7 +119,7 @@ export function persistPaperTodoPlacement(input: {
     value: {
       ...result.value,
       id: preview.id,
-      sectionId: preview.sectionId,
+      ...(preview.sectionId ? { sectionId: preview.sectionId } : {}),
       filePath: preview.filePath,
       from: preview.from,
       to: preview.to,

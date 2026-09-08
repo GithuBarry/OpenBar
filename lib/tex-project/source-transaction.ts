@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { sha256, withWriteLock, writeTextAtomic } from "./codec";
+import { sha256, writeTextAtomic } from "./codec";
+import { withProjectWriteLock } from "@/lib/research/project-lock";
 
 const JOURNAL_VERSION = 1 as const;
 const JOURNAL_NAME = "source-transaction.json";
@@ -209,22 +210,25 @@ function recoverUnderLock(manuscriptDir: string, journalPath: string): SourceTra
   return { ok: true, journalPath, recovered: true, affectedPaths: [], diagnostics: [] };
 }
 
-export function recoverSourceTransaction(manuscriptDir: string): SourceTransactionRecovery {
+export function recoverSourceTransaction(manuscriptDir: string, projectLockHeld = false): SourceTransactionRecovery {
   const journalPath = journalPathFor(manuscriptDir);
   if (!fs.existsSync(journalPath)) {
     return { ok: true, journalPath, recovered: false, affectedPaths: [], diagnostics: [] };
   }
-  return withWriteLock(journalPath, () => recoverUnderLock(manuscriptDir, journalPath));
+  if (projectLockHeld) return recoverUnderLock(manuscriptDir, journalPath);
+  return withProjectWriteLock(manuscriptDir, () => recoverUnderLock(manuscriptDir, journalPath));
 }
 
-export function clearSourceTransactionJournal(manuscriptDir: string): void {
+export function clearSourceTransactionJournal(manuscriptDir: string, projectLockHeld = false): void {
   const journalPath = journalPathFor(manuscriptDir);
   if (!fs.existsSync(journalPath)) return;
-  withWriteLock(journalPath, () => {
+  const clear = () => {
     try {
       fs.unlinkSync(journalPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-  });
+  };
+  if (projectLockHeld) clear();
+  else withProjectWriteLock(manuscriptDir, clear);
 }

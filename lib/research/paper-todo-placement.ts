@@ -9,7 +9,7 @@ export type TodoPlacementResult = {
   id: string;
   sectionFound: boolean;
   filePath?: string;
-  sectionId: string;
+  sectionId?: string;
   from: number;
   to: number;
   before: string;
@@ -40,10 +40,31 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function targetPart(source: string, sectionId: string): TargetPart | null {
-  const part = splitBundleSource(source).find((candidate) => sectionIdFromBody(candidate.body) === sectionId.trim());
+function rootTargetPart(source: string): TargetPart | null {
+  const part = splitBundleSource(source)[0] || (source ? {
+    filePath: "",
+    bodyFrom: 0,
+    body: source,
+    bodyTo: source.length,
+  } : null);
   if (!part) return null;
-  const marker = new RegExp(`^%\\s*OB-EDIT-END\\s+id=${escapeRegExp(sectionId.trim())}\\s*$`, "m").exec(part.body);
+  const documentEnd = findMacroMatches(part.body, ["end"])
+    .filter((match) => match.body.trim() === "document")
+    .at(-1);
+  return {
+    filePath: part.filePath,
+    bodyFrom: part.bodyFrom,
+    body: part.body,
+    endOffset: documentEnd?.index ?? part.body.length,
+  };
+}
+
+function targetPart(source: string, sectionId?: string): TargetPart | null {
+  const normalizedSectionId = sectionId?.trim();
+  if (!normalizedSectionId) return rootTargetPart(source);
+  const part = splitBundleSource(source).find((candidate) => sectionIdFromBody(candidate.body) === normalizedSectionId);
+  if (!part) return null;
+  const marker = new RegExp(`^%\\s*OB-EDIT-END\\s+id=${escapeRegExp(normalizedSectionId)}\\s*$`, "m").exec(part.body);
   if (marker && marker.index !== undefined) {
     return { filePath: part.filePath, bodyFrom: part.bodyFrom, body: part.body, endOffset: marker.index };
   }
@@ -51,14 +72,11 @@ function targetPart(source: string, sectionId: string): TargetPart | null {
   // without an editable envelope. They remain valid insertion targets: append
   // at the end of that file. A present BEGIN marker with no matching END is
   // different—it is a damaged envelope and must be repaired explicitly.
-  const begin = new RegExp(`^%\\s*OB-EDIT-BEGIN\\s+[^\\n]+\\s+id=${escapeRegExp(sectionId.trim())}\\s*$`, "m").test(part.body);
-  if (!begin) {
-    return { filePath: part.filePath, bodyFrom: part.bodyFrom, body: part.body, endOffset: part.body.length };
-  }
-  if (!marker || marker.index === undefined) {
+  const begin = new RegExp(`^%\\s*OB-EDIT-BEGIN\\s+[^\\n]+\\s+id=${escapeRegExp(normalizedSectionId)}\\s*$`, "m").test(part.body);
+  if (begin) {
     return { filePath: part.filePath, bodyFrom: part.bodyFrom, body: part.body, endOffset: -1 };
   }
-  return { filePath: part.filePath, bodyFrom: part.bodyFrom, body: part.body, endOffset: marker.index };
+  return { filePath: part.filePath, bodyFrom: part.bodyFrom, body: part.body, endOffset: part.body.length };
 }
 
 function insertAtTarget(source: string, target: TargetPart, text: string): {
@@ -86,12 +104,13 @@ function insertAtTarget(source: string, target: TargetPart, text: string): {
 
 export function previewTodoAtSection(
   source: string,
-  sectionId: string,
+  sectionId: string | undefined,
   text: string,
   title?: string,
   id?: string,
 ): TodoPlacementResult {
-  const target = targetPart(source, sectionId);
+  const normalizedSectionId = sectionId?.trim() || undefined;
+  const target = targetPart(source, normalizedSectionId);
   const composed = composeObtodo({ id, title, text });
   const idMatch = /\bid=([A-Za-z0-9._-]+)/.exec(composed);
   const todoId = id || idMatch?.[1] || "";
@@ -100,13 +119,13 @@ export function previewTodoAtSection(
       source,
       id: todoId,
       sectionFound: false,
-      sectionId,
+      ...(normalizedSectionId ? { sectionId: normalizedSectionId } : {}),
       from: source.length,
       to: source.length,
       before: "",
       after: "",
       nextSource: source,
-      error: `Unknown paper section id "${sectionId}".`,
+      error: normalizedSectionId ? `Unknown paper section id "${normalizedSectionId}".` : "The paper has no writable source location.",
     };
   }
   if (target.endOffset < 0) {
@@ -114,14 +133,14 @@ export function previewTodoAtSection(
       source,
       id: todoId,
       sectionFound: true,
+      sectionId: normalizedSectionId,
       filePath: target.filePath,
-      sectionId,
       from: target.bodyFrom + target.body.length,
       to: target.bodyFrom + target.body.length,
       before: target.body.slice(Math.max(0, target.body.length - 320)),
       after: "",
       nextSource: source,
-      error: `Section "${sectionId}" has no complete OB-EDIT-END marker. Repair the envelope before inserting a TODO.`,
+      error: `Section "${normalizedSectionId}" has no complete OB-EDIT-END marker. Repair the envelope before inserting a TODO.`,
     };
   }
   const inserted = insertAtTarget(source, target, composed);
@@ -130,7 +149,7 @@ export function previewTodoAtSection(
     id: todoId,
     sectionFound: true,
     filePath: target.filePath,
-    sectionId,
+    ...(normalizedSectionId ? { sectionId: normalizedSectionId } : {}),
     from: inserted.from,
     to: inserted.to,
     before: inserted.before,

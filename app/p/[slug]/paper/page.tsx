@@ -3,9 +3,7 @@ import { BookOpenText } from "lucide-react";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { PaperEditor } from "@/features/paper/paper-editor";
-import { DRAFT_MINDMAP_ID, getBibliography, getBibliographyRaw, getMindmap, getPaperEditorState, getProject, projectContentDir } from "@/lib/store";
-import { convertComplexTables } from "@/lib/tex-project/pandoc-tables";
-import { texPaths } from "@/lib/tex-project/project";
+import { DRAFT_MINDMAP_ID, getBibliography, getBibliographyRaw, getMindmap, getPaperEditorState, getProject } from "@/lib/store";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
 import { requireProjectPage } from "@/lib/server/project-access";
 
@@ -32,12 +30,6 @@ export default async function PaperPage({
   }));
   const boundTodoIds = (map?.nodes || []).flatMap((node) => (node.todoId ? [node.todoId] : []));
   const bibliography = getBibliography(slug);
-  const pandocTables = paper
-    ? await convertComplexTables({
-      source: paper.bundle.source,
-      cwd: texPaths(projectContentDir(slug)).manuscriptDir,
-    })
-    : {};
 
   return (
     <>
@@ -59,7 +51,6 @@ export default async function PaperPage({
             sourceContext={paper.sourceContext}
             bibliography={bibliography}
             bibliographyRaw={getBibliographyRaw(slug)}
-            initialPandocTables={pandocTables}
             placementTargets={placementTargets}
             boundTodoIds={boundTodoIds}
           />

@@ -46,7 +46,7 @@ export default async function Home() {
             </div>
             <ThemeToggle />
             <AgentReadyIndicator />
-            {publicDemo ? <ResetDemoButton slug={projects[0]?.slug || "command-v"} /> : <CreateProjectButton />}
+            {publicDemo ? <ResetDemoButton slug={projects[0]?.slug || "private-project-a"} /> : <CreateProjectButton />}
           </div>
         </div>
       </header>

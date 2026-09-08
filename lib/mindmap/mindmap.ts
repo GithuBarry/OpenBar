@@ -19,7 +19,14 @@ export function normalizeMindmap(mindmap: Mindmap): Mindmap {
       order: siblingIndex >= 0 ? siblingIndex : node.order ?? 0,
     };
   });
-  return { ...cleaned, nodes };
+  const activityWindowDays = Number.isInteger(cleaned.activityWindowDays)
+    ? Math.max(1, Math.min(365, cleaned.activityWindowDays as number))
+    : undefined;
+  return {
+    ...cleaned,
+    nodes,
+    ...(activityWindowDays === undefined ? { activityWindowDays: undefined } : { activityWindowDays }),
+  };
 }
 
 export function mindmapDiskHash(mindmap: Mindmap): string {

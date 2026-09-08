@@ -35,9 +35,11 @@ export function persistableMindmapNode(node: MindmapNode): MindmapNode {
   if (node.collapsed) next.collapsed = node.collapsed;
   if (node.metadata) next.metadata = node.metadata;
   if (node.contentFormat) next.contentFormat = node.contentFormat;
+  if (node.tableLayout) next.tableLayout = node.tableLayout;
   if (node.color) next.color = node.color;
   if (node.tags?.length) next.tags = node.tags;
   if (node.progress !== undefined) next.progress = node.progress;
+  if (node.priority) next.priority = node.priority;
   if (node.refs?.length) next.refs = node.refs;
   if (node.order !== undefined) next.order = node.order;
   if (node.createdAt) next.createdAt = node.createdAt;

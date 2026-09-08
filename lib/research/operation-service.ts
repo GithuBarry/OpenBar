@@ -75,9 +75,13 @@ export function applySourceOperation(
         id: operation.id,
         title,
         text,
+        textFormat: operation.textFormat,
         createdAt: nowStamp(now),
         now,
       });
+      if (operation.textFormat === "tex" && findMacroMatches(insert, ["obtodo"])[0]?.length !== insert.length) {
+        return failResult("invalid_tex", "TODO formatting needs balanced TeX braces.", false);
+      }
       const applied = replaceSlice(source, operation.from, operation.to, insert);
       return okResult({ source: applied.source, patches: [applied.patch], diagnostics: [] });
     }
@@ -87,8 +91,12 @@ export function applySourceOperation(
       const next = rewriteObtodo(source.slice(found.from, found.to), {
         title: operation.title,
         text: operation.text,
+        textFormat: operation.textFormat,
         completed: operation.completed,
       }, now);
+      if (operation.textFormat === "tex" && findMacroMatches(next, ["obtodo"])[0]?.length !== next.length) {
+        return failResult("invalid_tex", "TODO formatting needs balanced TeX braces.", false);
+      }
       const applied = replaceSlice(source, found.from, found.to, next);
       return okResult({ source: applied.source, patches: [applied.patch], diagnostics: [] });
     }

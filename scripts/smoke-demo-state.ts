@@ -3,8 +3,8 @@
 import { fetchWithRetry } from "./smoke-http";
 
 const base = process.env.OB_SMOKE_BASE || "http://127.0.0.1:3000";
-const slugs = (process.env.OB_SMOKE_SLUGS || "command-v,noveltybench").split(",").map((slug) => slug.trim()).filter(Boolean);
-if (slugs.length !== 2) throw new Error("Public demo state smoke expects Command-V and NoveltyBench.");
+const slugs = (process.env.OB_SMOKE_SLUGS || "private-project-a,private-project-b").split(",").map((slug) => slug.trim()).filter(Boolean);
+if (slugs.length !== 2) throw new Error("Public demo state smoke expects two configured projects.");
 
 async function get(pathname: string): Promise<{ response: Response; body: string }> {
   const response = await fetchWithRetry(`${base}${pathname}`);
@@ -25,11 +25,11 @@ async function main() {
   for (const slug of slugs) {
     try {
       const paper = await get(`/p/${slug}/paper`);
-      if (!paper.response.ok || !paper.body.includes(slug === "command-v" ? "Command-V" : "NoveltyBench")) {
+      if (!paper.response.ok || !paper.body.includes(`/p/${slug}/mindmap`)) {
         failures.push(`${slug} paper did not load the real paper`);
       }
       const map = await get(`/p/${slug}/mindmap`);
-      if (!map.response.ok || !map.body.includes(slug === "command-v" ? "Command-V" : "NoveltyBench")) {
+      if (!map.response.ok || !map.body.includes(`/p/${slug}/paper`)) {
         failures.push(`${slug} mindmap did not load the real map`);
       }
     } catch (error) {
@@ -43,7 +43,7 @@ async function main() {
     const demoSlugs = json.demoSlugs as unknown;
     if (!health.response.ok || json.mode !== "public-demo" || !Array.isArray(demoSlugs)
       || slugs.some((slug) => !demoSlugs.includes(slug))) {
-      failures.push("health did not describe the two-paper private demo");
+      failures.push("health did not describe the configured two-project private demo");
     }
   } catch (error) {
     failures.push(`health → ${error instanceof Error ? error.message : String(error)}`);
@@ -82,8 +82,8 @@ async function main() {
 
   try {
     const home = await get("/");
-    if (!home.response.ok || !home.body.includes("Command-V") || !home.body.includes("NoveltyBench") || home.body.includes("New project")) {
-      failures.push("home did not show both papers with administration hidden");
+    if (!home.response.ok || slugs.some((slug) => !home.body.includes(`/p/${slug}/paper`)) || home.body.includes("New project")) {
+      failures.push("home did not show both projects with administration hidden");
     }
   } catch (error) {
     failures.push(`home → ${error instanceof Error ? error.message : String(error)}`);

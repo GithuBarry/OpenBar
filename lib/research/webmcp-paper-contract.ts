@@ -178,7 +178,7 @@ export type LivePaperSnapshot = {
   sourceSegments?: Array<{ filePath: string; editable: boolean }>;
   compileState?: {
     state: string;
-    compiler?: "latexmk" | "tectonic";
+    compiler?: "latexmk";
     jobId?: string;
     sourceHash?: string;
     stale?: boolean;

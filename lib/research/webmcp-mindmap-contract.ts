@@ -21,10 +21,10 @@ export { MAX_MINDMAP_LABELS, MAX_MINDMAP_LABEL_CHARS } from "@/lib/mindmap/node-
 
 export type LiveMindmapNode = Pick<
   MindmapNode,
-  "id" | "parentId" | "title" | "text" | "todoId" | "collapsed" | "contentFormat" | "shape" | "color" | "tags" | "progress" | "refs" | "metadata" | "createdAt" | "updatedAt"
+  "id" | "parentId" | "title" | "text" | "todoId" | "collapsed" | "contentFormat" | "tableLayout" | "shape" | "color" | "tags" | "progress" | "priority" | "refs" | "metadata" | "createdAt" | "updatedAt"
 > & { completed?: boolean };
 
-export type MindmapPresentationPatch = Pick<MindmapNode, "contentFormat" | "shape" | "color"> & {
+export type MindmapPresentationPatch = Pick<MindmapNode, "contentFormat" | "tableLayout" | "shape" | "color"> & {
   progress?: MindmapNode["progress"] | null;
 };
 
@@ -34,6 +34,7 @@ export type MindmapNodeContentPatch = {
   labels?: string[];
   refs?: ArtifactRef[];
   metadata?: Record<string, unknown> | null;
+  priority?: MindmapNode["priority"];
   presentation?: MindmapPresentationPatch;
 };
 
@@ -56,6 +57,9 @@ export type MindmapTodoConversion = {
   todoId: string;
   mindmap: Mindmap;
   local: MindmapTodoConversionLocal;
+  sectionId?: string;
+  /** Source bundle hash after the local paper transaction. */
+  sourceHash?: string;
   remote: MindmapTodoConversionRemote;
 };
 
@@ -99,7 +103,7 @@ export type MindmapWebMcpHost = {
   setActivityHighlight: (since?: string) => void;
   placeTodoCard?: (todoId: string, parentId: string, expectedRevision?: number) => string | Promise<string>;
   hasTodo?: (todoId: string) => boolean;
-  convertCardToTodo?: (id: string, sectionId: string, expectedRevision?: number, requestId?: string) => MindmapTodoConversionResult | Promise<MindmapTodoConversionResult>;
+  convertCardToTodo?: (id: string, sectionId?: string, expectedRevision?: number, requestId?: string) => MindmapTodoConversionResult | Promise<MindmapTodoConversionResult>;
   completeTodo?: (todoId: string) => void | Promise<void>;
   reopenTodo?: (todoId: string) => void | Promise<void>;
   focusTodoInPaper?: (todoId: string) => void;
@@ -172,12 +176,14 @@ export const MINDMAP_WEBMCP_TOOL_SCHEMAS: Record<MindmapWebMcpToolName, JsonSche
         type: "object",
         properties: {
           contentFormat: { type: "string", enum: ["plain", "markdown", "tex"] },
+          tableLayout: { type: "string", enum: ["wide", "scroll"] },
           shape: { type: "string", enum: ["branch", "leaf", "note", "callout"] },
           color: { type: "string" },
           progress: { type: ["integer", "null"], minimum: 0, maximum: 6 },
         },
         additionalProperties: false,
       },
+      priority: { type: ["string", "null"], enum: ["P0", "P1", "P2", "P3", null] },
     },
     ["id", "expectedRevision"],
   ),
@@ -218,11 +224,11 @@ export const MINDMAP_WEBMCP_TOOL_SCHEMAS: Record<MindmapWebMcpToolName, JsonSche
   convert_card_to_todo: objectSchema(
     {
       id: { type: "string" },
-      sectionId: { type: "string", description: "Stable section id from the paper outline." },
+      sectionId: { type: "string", description: "Optional stable section id from the paper outline. Omit to place the TODO at a neutral location in the manuscript root." },
       expectedRevision: { type: "integer", minimum: 0 },
       requestId: { type: "string", description: "Stable retry key. Reusing it returns the original local result." },
     },
-    ["id", "sectionId", "expectedRevision"],
+    ["id", "expectedRevision"],
   ),
   complete_todo: objectSchema({ todoId: { type: "string" } }, ["todoId"]),
   reopen_todo: objectSchema({ todoId: { type: "string" } }, ["todoId"]),
@@ -339,7 +345,7 @@ function parsePresentationArg(
 ): OperationResult<MindmapNodeContentPatch["presentation"]> {
   if (!value || typeof value !== "object") return failResult("invalid_arguments", "presentation must be an object.", false);
   const rec = value as Record<string, unknown>;
-  const extra = Object.keys(rec).find((key) => !["contentFormat", "shape", "color", "progress"].includes(key));
+  const extra = Object.keys(rec).find((key) => !["contentFormat", "tableLayout", "shape", "color", "progress"].includes(key));
   if (extra) return failResult("invalid_arguments", `Unknown presentation property "${extra}".`, false);
   const patch: NonNullable<MindmapNodeContentPatch["presentation"]> = {};
   if (rec.contentFormat !== undefined) {
@@ -347,6 +353,12 @@ function parsePresentationArg(
       return failResult("invalid_arguments", "contentFormat must be plain, markdown, or tex.", false);
     }
     patch.contentFormat = rec.contentFormat;
+  }
+  if (rec.tableLayout !== undefined) {
+    if (rec.tableLayout !== "wide" && rec.tableLayout !== "scroll") {
+      return failResult("invalid_arguments", "tableLayout must be wide or scroll.", false);
+    }
+    patch.tableLayout = rec.tableLayout;
   }
   if (rec.shape !== undefined) {
     if (nodeId === rootId) return failResult("invalid_arguments", "The root topic keeps the root style.", false);
@@ -519,13 +531,19 @@ export async function executeMindmapWebMcpTool(
         if (!metadata.ok) return metadata;
         patch.metadata = metadata.value;
       }
+      if (args.priority !== undefined) {
+        if (args.priority !== null && !["P0", "P1", "P2", "P3"].includes(String(args.priority))) {
+          return failResult("invalid_arguments", "priority must be P0, P1, P2, P3, or null.", false);
+        }
+        patch.priority = args.priority === null ? undefined : args.priority as MindmapNode["priority"];
+      }
       if (args.presentation !== undefined) {
         const presentation = parsePresentationArg(args.presentation, snapshot.rootId, String(args.id));
         if (!presentation.ok) return presentation;
         patch.presentation = presentation.value;
       }
-      if (patch.title === undefined && patch.text === undefined && !patch.labels && !patch.refs && patch.metadata === undefined && !patch.presentation) {
-        return failResult("invalid_arguments", "Provide title, text, labels, refs, metadata, or presentation.", false);
+      if (patch.title === undefined && patch.text === undefined && !patch.labels && !patch.refs && patch.metadata === undefined && !Object.prototype.hasOwnProperty.call(patch, "priority") && !patch.presentation) {
+        return failResult("invalid_arguments", "Provide title, text, labels, refs, metadata, priority, or presentation.", false);
       }
       const result = await runPersistedMutation(host, () => host.patchNode(String(args.id ?? ""), patch, snapshot.revision));
       return result.ok ? okResult({ id: args.id, patch }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
@@ -616,17 +634,26 @@ export async function executeMindmapWebMcpTool(
       const rev = assertRevision(args.expectedRevision, snapshot.revision);
       if (!rev.ok) return rev;
       if (!hasNode(args.id)) return failResult("invalid_arguments", `Unknown mindmap node "${String(args.id ?? "")}".`, false);
-      if (typeof args.sectionId !== "string" || !args.sectionId.trim()) return failResult("invalid_arguments", "sectionId is required.", false);
+      if (args.sectionId !== undefined && (typeof args.sectionId !== "string" || !args.sectionId.trim())) {
+        return failResult("invalid_arguments", "sectionId must be a non-empty string when provided.", false);
+      }
       if (!host.convertCardToTodo) return failResult("capability_unavailable", "This map cannot convert cards to TODOs.", false);
       let result: MindmapTodoConversionResult;
       try {
-        result = await host.convertCardToTodo!(String(args.id), String(args.sectionId), snapshot.revision, typeof args.requestId === "string" ? args.requestId : undefined);
+        const sectionId = typeof args.sectionId === "string" ? args.sectionId.trim() : undefined;
+        result = await host.convertCardToTodo!(String(args.id), sectionId, snapshot.revision, typeof args.requestId === "string" ? args.requestId : undefined);
       } catch (error) {
         return mutationFailure(host, error);
       }
       if (!result.ok) return result;
       return okResult(
-        { id: args.id, todoId: result.value.todoId, local: result.value.local, remote: result.value.remote },
+        {
+          id: args.id,
+          todoId: result.value.todoId,
+          local: result.value.local,
+          ...(result.value.sectionId ? { sectionId: result.value.sectionId } : {}),
+          remote: result.value.remote,
+        },
         {
           revision: result.value.mindmap.revision ?? result.revision ?? snapshot.revision,
           diskHash: result.value.mindmap.diskHash ?? result.diskHash,
@@ -708,7 +735,7 @@ function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Visually highlight cards whose meaningful content changed since a date. Omit since for the past seven days. Pan, zoom, and collapse do not count.";
   }
   if (name === "patch_mindmap_node") {
-    return "Patch authored card fields: title and text (ordinary cards only), labels, refs, metadata, and presentation (shape, color, contentFormat, progress). TODO title and text come from TeX.";
+    return "Patch authored card fields: title and text (ordinary cards only), labels, refs, metadata, priority, and presentation (shape, color, contentFormat, tableLayout, progress). TODO title and text come from TeX.";
   }
   if (name === "attach_mindmap_image") return "Attach an existing project image asset to exactly one card. Use read_mindmap_image to inspect it; this changes only this map's reference list.";
   if (name === "detach_mindmap_image") return "Detach one image reference from this card without deleting the shared project asset.";
@@ -722,7 +749,7 @@ function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Add a card for an existing TeX TODO to the currently open map. Use this after the paper page add_todo tool returns todoId, choose the intended parentId, and place the card in the Primary or selected secondary map. Each map may contain one card for a TODO. The same TODO may appear on Primary and multiple secondary maps. All cards share TeX-owned text and completion. This is a shared card, not a move from another map. If the TODO is already on this map, the existing card is returned unchanged.";
   }
   if (name === "convert_card_to_todo") {
-    return "Insert a pending TeX \\obtodo in the paper section identified by sectionId using this card's title and main text, then bind the card to that id. Hierarchy is preserved and completion is left unset. The result separates durable local saves from Overleaf Git sync: status is pushed, pending, failed, or unconfigured. Reuse requestId to retry safely.";
+    return "Convert this ordinary card into a paper TODO using its title and main text, then bind the card to that TeX-owned id. Pass sectionId to target a stable paper section, or omit it for a neutral insertion in the manuscript root. Hierarchy is preserved and completion is left unset. The result separates durable local saves from Overleaf Git sync: status is pushed, pending, failed, or unconfigured. Reuse requestId to retry safely.";
   }
   if (name === "complete_todo") {
     return "Set the TeX completed timestamp. Completing does not require new manuscript prose.";
@@ -834,8 +861,10 @@ export function createMindmapWebMcpHarness(init: {
       if (patch.labels) node.tags = patch.labels;
       if (patch.refs) node.refs = patch.refs;
       if (patch.metadata !== undefined) node.metadata = patch.metadata || undefined;
+      if (patch.priority !== undefined || Object.prototype.hasOwnProperty.call(patch, "priority")) node.priority = patch.priority;
       if (patch.presentation) {
         if (patch.presentation.contentFormat !== undefined) node.contentFormat = patch.presentation.contentFormat;
+        if (patch.presentation.tableLayout !== undefined) node.tableLayout = patch.presentation.tableLayout;
         if (patch.presentation.shape !== undefined) node.shape = patch.presentation.shape;
         if (patch.presentation.color !== undefined) node.color = patch.presentation.color;
         if (patch.presentation.progress === null) node.progress = undefined;

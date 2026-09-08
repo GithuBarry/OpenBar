@@ -57,6 +57,9 @@ export const projectSchema = z
     collaborators: z.array(z.string()).optional(),
     archivedAt: isoDateTime.optional(),
     label: z.string().optional(),
+    engine: z.enum(["pdflatex", "xelatex", "lualatex"]).optional(),
+    mainFile: z.string().regex(/^[A-Za-z0-9._/-]+$/).optional(),
+    texliveVersion: z.string().max(120).optional(),
   })
   .strip();
 
@@ -86,9 +89,11 @@ export const mindmapNodeSchema = z
     collapsed: z.boolean().optional(),
     metadata: z.record(z.unknown()).optional(),
     contentFormat: z.enum(["plain", "markdown", "tex"]).optional(),
+    tableLayout: z.enum(["wide", "scroll"]).optional(),
     color: z.string().optional(),
     tags: z.array(z.string()).optional(),
     progress: z.number().int().min(0).max(6).optional(),
+    priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
     refs: z.array(artifactRefSchema).optional(),
     order: z.number().optional(),
     createdAt: z.string().optional(),

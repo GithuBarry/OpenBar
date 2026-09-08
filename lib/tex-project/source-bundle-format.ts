@@ -193,23 +193,119 @@ export function replaceBundlePart(source: string, filePath: string, nextBody: st
  * and heading order follow paper.tex instead of dumping includes after `\end{document}`.
  */
 export function inlineBundleIncludes(source: string): string {
-  const parts = splitBundleSource(source);
-  if (!parts.length) return source;
-  const root = parts[0]!;
-  const inlineBody = (body: string, ownerFilePath: string, seen: Set<string>): string => {
-    const lines = body.split("\n");
-    return lines.map((line) => {
-      const match = INCLUDE_LINE.exec(line);
-      const raw = match?.[3] || "";
-      if (!match || !raw || isPassthroughInclude(raw)) return line;
-      const part = lookupBundlePartFrom(parts, raw, ownerFilePath);
-      if (!part || seen.has(part.filePath)) return line;
+  return inlineBundleIncludesMapped(source).source;
+}
+
+export type InlineBundleSource = {
+  source: string;
+  /** Map an offset in the rendered/inlined source back to the bundle source. */
+  mapOffset: (offset: number) => number;
+  /** Identify which bundled file owns an inlined offset. */
+  mapFilePath?: (offset: number) => string | undefined;
+};
+
+type MappedText = { text: string; offsets: number[] };
+
+function mappedSlice(text: string, offsets: number[], from: number, to: number): MappedText {
+  return { text: text.slice(from, to), offsets: offsets.slice(from, to) };
+}
+
+function appendMapped(target: MappedText, next: MappedText): void {
+  target.text += next.text;
+  target.offsets.push(...next.offsets);
+}
+
+function dropOneTrailingNewline(value: MappedText): MappedText {
+  if (!value.text.endsWith("\n")) return value;
+  return {
+    text: value.text.slice(0, -1),
+    offsets: value.offsets.slice(0, -1),
+  };
+}
+
+function stripPreviewEnvelopeMapped(body: string, baseOffset: number): MappedText {
+  const result: MappedText = { text: "", offsets: [] };
+  const lines = body.split("\n");
+  let cursor = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    const hasNewline = index < lines.length - 1;
+    const lineEnd = cursor + line.length + (hasNewline ? 1 : 0);
+    const removed = /^%\s*OB-SECTION\s+\{.*\}\s*\n?$/.test(`${line}${hasNewline ? "\n" : ""}`)
+      || /^%\s*OB-EDIT-(?:BEGIN|END)[^\n]*\n?$/.test(`${line}${hasNewline ? "\n" : ""}`);
+    if (!removed) {
+      appendMapped(result, {
+        text: body.slice(cursor, lineEnd),
+        offsets: Array.from({ length: lineEnd - cursor }, (_, offset) => baseOffset + cursor + offset),
+      });
+    }
+    cursor = lineEnd;
+  }
+  return result;
+}
+
+function inlineMappedBody(
+  body: MappedText,
+  ownerFilePath: string,
+  parts: ReturnType<typeof splitBundleSource>,
+  seen: Set<string>,
+): MappedText {
+  const result: MappedText = { text: "", offsets: [] };
+  const lines = body.text.split("\n");
+  let cursor = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    const hasNewline = index < lines.length - 1;
+    const lineEnd = cursor + line.length + (hasNewline ? 1 : 0);
+    const match = INCLUDE_LINE.exec(line);
+    const raw = match?.[3] || "";
+    const part = match && raw && !isPassthroughInclude(raw)
+      ? lookupBundlePartFrom(parts, raw, ownerFilePath)
+      : undefined;
+    if (!part || seen.has(part.filePath)) {
+      appendMapped(result, mappedSlice(body.text, body.offsets, cursor, lineEnd));
+    } else {
       const nextSeen = new Set(seen);
       nextSeen.add(part.filePath);
-      return inlineBody(stripPreviewEnvelope(part.body).replace(/\n$/, ""), part.filePath, nextSeen);
-    }).join("\n");
+      const included = stripPreviewEnvelopeMapped(part.body, part.bodyFrom);
+      const nested = inlineMappedBody(included, part.filePath, parts, nextSeen);
+      // The old line-based inliner removed one trailing newline from the
+      // included body before joining it at the include site. Preserve that
+      // exact behavior while keeping the source offset map aligned.
+      appendMapped(result, dropOneTrailingNewline(nested));
+      if (hasNewline) {
+        const newlineOffset = body.offsets[cursor + line.length] ?? body.offsets[cursor] ?? 0;
+        appendMapped(result, { text: "\n", offsets: [newlineOffset] });
+      }
+    }
+    cursor = lineEnd;
+  }
+  return result;
+}
+
+export function inlineBundleIncludesMapped(source: string): InlineBundleSource {
+  const parts = splitBundleSource(source);
+  if (!parts.length) return { source, mapOffset: (offset) => Math.max(0, Math.min(source.length, offset)) };
+  const root = parts[0]!;
+  const rootMapped: MappedText = {
+    text: root.body,
+    offsets: Array.from({ length: root.body.length }, (_, offset) => root.bodyFrom + offset),
   };
-  return inlineBody(root.body, root.filePath, new Set([root.filePath]));
+  const mapped = inlineMappedBody(rootMapped, root.filePath, parts, new Set([root.filePath]));
+  return {
+    source: mapped.text,
+    mapOffset: (offset) => {
+      if (offset <= 0) return mapped.offsets[0] ?? 0;
+      if (offset >= mapped.text.length) return source.length;
+      return mapped.offsets[offset] ?? source.length;
+    },
+    mapFilePath: (offset) => {
+      if (offset < 0 || offset >= mapped.offsets.length) return undefined;
+      const origin = mapped.offsets[offset];
+      const owner = parts.find((part) => origin >= part.bodyFrom && origin < part.bodyTo);
+      return owner?.filePath;
+    },
+  };
 }
 
 export type ClientSourceSegment = {

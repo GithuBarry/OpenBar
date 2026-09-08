@@ -113,6 +113,7 @@ export function WikiPageClient({ page, pages = [] }: { page: WikiPage; pages?: W
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-end gap-2">
+        <span className="text-xs text-muted" role="status">Read-only supporting notes</span>
         {saved && <span className="text-xs text-ok">Saved</span>}
         {editing ? (
           <>
@@ -126,11 +127,11 @@ export function WikiPageClient({ page, pages = [] }: { page: WikiPage; pages?: W
           </>
         ) : (
           <>
-            <button type="button" className="btn-outline text-xs" onClick={rename} disabled={pending}>Rename</button>
-            <button type="button" className="btn-outline text-xs" onClick={remove} disabled={pending}>
+            <button type="button" className="btn-outline text-xs" onClick={rename} disabled title="Wiki editing is currently unavailable">Rename</button>
+            <button type="button" className="btn-outline text-xs" onClick={remove} disabled title="Wiki editing is currently unavailable">
               <Trash2 size={13} /> Delete
             </button>
-            <button type="button" className="btn-outline text-xs" onClick={() => setEditing(true)}>
+            <button type="button" className="btn-outline text-xs" onClick={() => setEditing(true)} disabled title="Wiki editing is currently unavailable">
               <Edit3 size={13} /> Edit
             </button>
           </>

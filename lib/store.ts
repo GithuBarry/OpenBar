@@ -43,6 +43,7 @@ import {
   resolveMindmapStorageIdentity,
 } from "./tex-project/project";
 import { TexEnvelopeError, sha256, withWriteLock } from "./tex-project/codec";
+import { withProjectWriteLock } from "./research/project-lock";
 import { mindmapDiskHash } from "./mindmap/mindmap";
 import { readPaper } from "./research/paper-service";
 import { buildSourceBundle } from "./tex-project/source-bundle";
@@ -224,14 +225,16 @@ function persistableProject(project: Project): Project {
   if (project.researchKind?.trim()) next.researchKind = project.researchKind.trim();
   if (project.archivedAt) next.archivedAt = project.archivedAt;
   if (project.label?.trim()) next.label = project.label.trim();
+  if (project.engine) next.engine = project.engine;
+  if (project.mainFile?.trim()) next.mainFile = project.mainFile.trim();
+  if (project.texliveVersion?.trim()) next.texliveVersion = project.texliveVersion.trim();
   return next;
 }
 
 export function saveProject(project: Project, expectedHash?: string): void {
   const dir = projectDir(project.slug);
   const persisted = projectSchema.parse(persistableProject(project));
-  const file = texPaths(dir).projectFile;
-  withWriteLock(file, () => {
+  withProjectWriteLock(dir, () => {
     if (expectedHash) {
       const currentHash = projectFileHash(dir);
       if (!currentHash || currentHash !== expectedHash) {
@@ -324,7 +327,7 @@ export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: s
   if (mindmap.role && mindmap.role !== requested.role) {
     throw new TexEnvelopeError(`Mindmap "${requested.id}" has role "${mindmap.role}" but its storage role is "${requested.role}".`);
   }
-  withWriteLock(requested.file, () => {
+  withProjectWriteLock(dir, () => {
     const identity = resolveMindmapStorageIdentity(dir, requestedId);
     if (expectedDiskHash) {
       const current = readMindmapRecord(dir, identity.id);

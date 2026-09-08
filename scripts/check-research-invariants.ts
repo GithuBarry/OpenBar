@@ -65,7 +65,7 @@ function node(spec: Omit<MindmapNode, "text"> & { text?: string }): MindmapNode 
 
 function map(id: string, nodes: MindmapNode[]): Mindmap {
   return {
-    projectId: "command-v",
+    projectId: "private-project-a",
     id,
     role: id === "draft" || id === "mindmap" ? "draft" : "planning",
     rootId: "root",
@@ -81,7 +81,7 @@ const paperTodos = todosFromPaperState([
 ]);
 
 const primaryNodes: MindmapNode[] = [
-  node({ id: "root", parentId: null, text: "Command-V" }),
+  node({ id: "root", parentId: null, text: "Private Project A" }),
   node({
     id: "claim-robustness",
     parentId: "root",
@@ -102,7 +102,7 @@ const secondary = map("planning", [
 
 function commentSourcePaper() {
   const source = [
-    "\\title{Command-V}",
+    "\\title{Private Project A}",
     "\\section{Transfer Results}",
     "Performance survives transfer behavior.",
     composeObtodo({
@@ -127,8 +127,8 @@ function commentSourcePaper() {
     "\\obcomment[id=c-transfer, kind=result]{transfer queries look stronger.}",
   ].join("\n");
   const paper: TexPaper = {
-    projectId: "command-v",
-    title: "Command-V",
+    projectId: "private-project-a",
+    title: "Private Project A",
     source,
     sourceHash: "h",
     sections: [
@@ -196,7 +196,7 @@ function runCommentIdsAndHref() {
   check("analyzePaper keeps \\obcomment[id=…]", note?.id === "c-transfer" || note?.attrs.id === "c-transfer");
 
   const summary = buildPaperSummary(
-    "command-v",
+    "private-project-a",
     paper,
     analysis,
     { rootFile: "paper.tex", revision: 1, bundleHash: "h" },
@@ -217,7 +217,7 @@ function runCommentIdsAndHref() {
     );
   }
 
-  const expectedHref = artifactHref("command-v", { kind: "paper-comment", id: "c-transfer" });
+  const expectedHref = artifactHref("private-project-a", { kind: "paper-comment", id: "c-transfer" });
   check("artifactHref(paper-comment) is /paper#c-transfer", expectedHref.endsWith("/paper#c-transfer"));
   if (row.href.includes("c-transfer")) {
     check("paper-comment href uses the comment id", true);
@@ -232,7 +232,7 @@ function runCommentIdsAndHref() {
 
 function runSearchLabels(summary: NonNullable<ProjectState["paper"]>, source: string) {
   const hits = searchProjectContent({
-    slug: "command-v",
+    slug: "private-project-a",
     query: "transfer behavior",
     paper: summary,
     paperSource: source,
@@ -240,14 +240,14 @@ function runSearchLabels(summary: NonNullable<ProjectState["paper"]>, source: st
   });
   const paperHit = hits.find((hit) => hit.kind === "paper" && /transfer/i.test(`${hit.title} ${hit.snippet}`));
   const todoHits = searchProjectContent({
-    slug: "command-v",
+    slug: "private-project-a",
     query: "20n sampling",
     paper: summary,
     paperSource: source,
     mindmaps: [primary],
   });
   const commentHits = searchProjectContent({
-    slug: "command-v",
+    slug: "private-project-a",
     query: "look stronger",
     paper: summary,
     paperSource: source,
@@ -256,7 +256,7 @@ function runSearchLabels(summary: NonNullable<ProjectState["paper"]>, source: st
   const todoHit = todoHits.find((hit) => hit.kind === "todo");
   const commentHit = commentHits.find((hit) => hit.kind === "comment");
 
-  check("search labels: section hits keep the heading title", Boolean(paperHit?.title) && paperHit!.href.startsWith("/p/command-v/"));
+  check("search labels: section hits keep the heading title", Boolean(paperHit?.title) && paperHit!.href.startsWith("/p/private-project-a/"));
   check(
     "search labels: TODO hits use the todo id and text",
     todoHit?.id === "paper:todo:sampling-sweep" && Boolean(todoHit.title) && /sampling/i.test(todoHit.snippet),

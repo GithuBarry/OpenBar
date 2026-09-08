@@ -1,0 +1,52 @@
+# OpenBar agent instructions
+
+Use WebMCP or authenticated HTTP MCP for project reads and edits.
+Strongly prefer structured tools over DOM scraping, clicking controls, or typing
+into editors. Start with get_project_state (detail="full"). Reserve UI automation
+for visual verification or capabilities missing from the tool catalog.
+Report unavailable tools or authentication failures before switching to the UI.
+
+OpenBar edits repository-backed research papers and their mindmaps.
+
+Human and agent guide: /agents
+Project URLs: /p/<project-slug>/mindmap and /p/<project-slug>/paper
+Visible discovery: the "Tools and agent access" button on project pages.
+
+Browser agents: use a WebMCP integration supporting document.modelContext or navigator.modelContext on
+HTTPS or localhost. Discover the active page's registered tools through the
+integration. Start with get_project_state, detail="full", then search_project
+and navigate_project. The current page supplies the project identity.
+
+Headless MCP clients: use Streamable HTTP at /api/mcp on this origin.
+Authentication is required: Authorization: Bearer <OPENBARRY_ACCESS_TOKEN>,
+or an allowed Cloudflare Access identity. Ask the workspace owner for credentials.
+Initialize, retain Mcp-Session-Id, send notifications/initialized, then tools/list.
+Call get_project_state with {"project":"<project-slug>","detail":"full"}.
+Read AGENTS.md and useful project skills returned by project state.
+Use returned IDs, revisions, and hashes for writes. Check local persistence and
+remote synchronization receipts separately.
+
+Human interface and visual-verification reference: controls expose roles and accessible names. Select a
+card and open "Open selected card actions" for the right-hand inspector.
+Double-click a card or press E to edit. Select text and use Bold/Italic above
+the card. Click outside to save, Escape to cancel. The keyboard button explains
+navigation. The inspector's Content format setting controls ordinary cards.
+Paper TODOs use TeX, which owns their text and completion.
+
+Overleaf conflicts: get_project_state includes sync status, local/base/remote
+commit IDs, changed paths, and Git recovery refs. Call sync_project with
+{"action":"inspect","refresh":true}, then {"action":"review_pull"} to prepare
+a review. HTTP MCP also requires project="<slug>". The review returns its token
+and the base, local, and remote contents for every conflicting file. Apply with
+{"action":"apply_pull","token":"...","resolutions":[{"path":"main.tex","choice":"merged","text":"<complete file>"}]}.
+Choices local and remote select the entire saved file. cancel_pull closes a
+review. A changed local HEAD or tracked working tree requires a fresh review.
+Reviews operate on saved repository files. Save live browser drafts first.
+Force pull and force push in the human interface require two confirmations and
+preserve both Git versions under refs/openbar/recovery. Force push checks the
+reviewed remote commit with a lease.
+
+The canvas stays visible while Unplaced TODOs are dragged from the side tray
+onto a parent card. Priority uses Clear/P0/P1/P2/P3 buttons. Progress uses Clear
+and seven pie states. Ordinary cards support Plain, Markdown (including tables),
+and TeX. Directly paste an image into the selected card or its editor to attach it.

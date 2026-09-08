@@ -8,6 +8,8 @@ declare module "d3-hierarchy" {
     x: number;
     y: number;
     each(callback: (node: HierarchyNode<Datum>) => void): this;
+    eachBefore(callback: (node: HierarchyNode<Datum>) => void): this;
+    descendants(): HierarchyNode<Datum>[];
   }
 
   export interface HierarchyLayout<Datum> {

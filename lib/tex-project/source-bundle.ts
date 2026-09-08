@@ -31,8 +31,8 @@ export type SourceBundle = {
   diagnostics: SourceDiagnostic[];
 };
 
-export function buildSourceBundle(manuscriptDir: string, rootFile?: string, revision = 0): SourceBundle {
-  const recovery = recoverSourceTransaction(manuscriptDir);
+export function buildSourceBundle(manuscriptDir: string, rootFile?: string, revision = 0, projectLockHeld = false): SourceBundle {
+  const recovery = recoverSourceTransaction(manuscriptDir, projectLockHeld);
   const graph = traverseInputGraph(manuscriptDir, rootFile);
   const parts: string[] = [];
   const segments: VirtualSourceSegment[] = [];
