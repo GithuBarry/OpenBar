@@ -151,7 +151,7 @@ export function layoutMindmapTree(
     });
     reachable.add(node.data.id);
   });
-  separateOverlappingBranchesVertically(root, positions, sizes);
+  groupSiblingBranchesVertically(root, positions, sizes);
   const minimumY = Math.min(...[...positions.values()].map((point) => point.y), 24);
   if (minimumY < 24) {
     for (const [id, point] of positions) positions.set(id, { ...point, y: point.y + 24 - minimumY });
@@ -168,44 +168,57 @@ export function layoutMindmapTree(
   return { positions, reachable, connected };
 }
 
-function separateOverlappingBranchesVertically(
+type VerticalExtent = { top: number; bottom: number };
+
+/**
+ * Give every sibling subtree its own vertical band in saved sibling order.
+ * This keeps every parent's cards visually grouped even when neighboring
+ * branches contain cards with very different measured heights.
+ */
+function groupSiblingBranchesVertically(
   root: ReturnType<typeof hierarchy<Datum>>,
   positions: Map<string, Point>,
   sizes: Map<string, Dimensions>,
 ): void {
-  const nodes = root.descendants();
-  const clearance = 12;
-  for (let pass = 0; pass < nodes.length * nodes.length; pass += 1) {
-    let moved = false;
-    for (let firstIndex = 0; firstIndex < nodes.length && !moved; firstIndex += 1) {
-      for (let secondIndex = firstIndex + 1; secondIndex < nodes.length; secondIndex += 1) {
-        const first = nodes[firstIndex]!;
-        const second = nodes[secondIndex]!;
-        const firstPoint = positions.get(first.data.id);
-        const secondPoint = positions.get(second.data.id);
-        if (!firstPoint || !secondPoint) continue;
-        const firstSize = sizes.get(first.data.id) || { width: NODE_WIDTH, height: NODE_HEIGHT };
-        const secondSize = sizes.get(second.data.id) || { width: NODE_WIDTH, height: NODE_HEIGHT };
-        const verticalOverlap = firstPoint.y < secondPoint.y + secondSize.height + clearance
-          && secondPoint.y < firstPoint.y + firstSize.height + clearance;
-        const horizontalOverlap = firstPoint.x < secondPoint.x + secondSize.width + clearance
-          && secondPoint.x < firstPoint.x + firstSize.width + clearance;
-        if (!verticalOverlap || !horizontalOverlap) continue;
-        const [upper, lower] = firstPoint.y <= secondPoint.y ? [first, second] : [second, first];
-        const upperPoint = positions.get(upper.data.id)!;
-        const lowerPoint = positions.get(lower.data.id)!;
-        const upperSize = sizes.get(upper.data.id) || { width: NODE_WIDTH, height: NODE_HEIGHT };
-        const shift = upperPoint.y + upperSize.height + clearance - lowerPoint.y;
-        for (const descendant of lower.descendants()) {
-          const point = positions.get(descendant.data.id);
-          if (point) point.y += shift;
-        }
-        moved = true;
-        break;
-      }
+  const shiftBranch = (node: typeof root, amount: number) => {
+    for (const descendant of node.descendants()) {
+      const point = positions.get(descendant.data.id);
+      if (point) point.y += amount;
     }
-    if (!moved) return;
-  }
+  };
+
+  const placeBranch = (node: typeof root): VerticalExtent => {
+    const point = positions.get(node.data.id)!;
+    const size = sizes.get(node.data.id) || { width: NODE_WIDTH, height: NODE_HEIGHT };
+    const children = node.children || [];
+    let previousBottom: number | undefined;
+    let childrenTop = Number.POSITIVE_INFINITY;
+    let childrenBottom = Number.NEGATIVE_INFINITY;
+
+    for (const child of children) {
+      let extent = placeBranch(child);
+      const shift = previousBottom === undefined
+        ? 0
+        : Math.max(0, previousBottom + VERTICAL_GAP - extent.top);
+      if (shift > 0) {
+        shiftBranch(child, shift);
+        extent = { top: extent.top + shift, bottom: extent.bottom + shift };
+      }
+      previousBottom = extent.bottom;
+      childrenTop = Math.min(childrenTop, extent.top);
+      childrenBottom = Math.max(childrenBottom, extent.bottom);
+    }
+
+    if (children.length > 0) {
+      point.y = Math.round((childrenTop + childrenBottom - size.height) / 2);
+    }
+    return {
+      top: Math.min(point.y, childrenTop),
+      bottom: Math.max(point.y + size.height, childrenBottom),
+    };
+  };
+
+  placeBranch(root);
 }
 
 function checkNodeDimensions(): void {

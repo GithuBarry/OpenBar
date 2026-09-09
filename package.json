@@ -17,6 +17,7 @@
     "smoke:http": "tsx scripts/smoke-http.ts",
     "smoke:demo-state": "tsx scripts/smoke-demo-state.ts",
     "check:domain": "tsx scripts/check-research-invariants.ts",
+    "check:mindmap-layout": "tsx scripts/check-mindmap-layout.ts",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "docker:build": "docker build --platform linux/amd64 -f deploy/openbar.Dockerfile -t openbar-demo:local .",
     "cf:types": "wrangler types",
