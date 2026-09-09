@@ -49,7 +49,6 @@ export const PAPER_WEBMCP_TOOL_NAMES = [
   "add_paper_todo_at_section",
   "relocate_paper_todo",
   "navigate_paper_section",
-  "repair_paper_section",
   "set_paper_reader_mode",
   "replace_paper_section",
   "patch_paper_table",
@@ -204,12 +203,6 @@ export type PaperWebMcpHost = {
   getSnapshot: () => LivePaperSnapshot;
   navigateSection: (sectionId: string) => void;
   setReaderMode: (mode: WebMcpReaderMode) => void;
-  repairSection?: (
-    sectionId: string,
-    filePath: string,
-    expectedSourceHash: string | undefined,
-    signal?: AbortSignal,
-  ) => { changed: boolean; filePath: string; sourceHash: string } | Promise<{ changed: boolean; filePath: string; sourceHash: string }>;
   addTodoAtSection?: (
     sectionId: string,
     text: string,
@@ -254,7 +247,7 @@ function objectSchema(properties: Record<string, unknown> = {}, required: string
 const sectionIdSchema = {
   type: "string",
   pattern: SECTION_ID_PATTERN,
-  description: "Stable section id from get_paper_outline. The open page supplies the project; do not pass project.",
+  description: "Current section id from get_paper_outline. The open page supplies the project; do not pass project.",
 };
 
 const expectedRevisionSchema = {
@@ -300,14 +293,6 @@ export const PAPER_WEBMCP_TOOL_SCHEMAS: Record<PaperWebMcpToolName, JsonSchemaOb
     ["todoId", "sectionId", "expectedRevision"],
   ),
   navigate_paper_section: objectSchema({ sectionId: sectionIdSchema }, ["sectionId"]),
-  repair_paper_section: objectSchema(
-    {
-      sectionId: sectionIdSchema,
-      filePath: { type: "string", minLength: 1, description: "Exact included TeX file from get_paper_state.sourceContext." },
-      expectedSourceHash: { type: "string", minLength: 1, description: "File hash from the source-context diagnostic." },
-    },
-    ["sectionId", "filePath"],
-  ),
   set_paper_reader_mode: objectSchema(
     {
       mode: {
@@ -352,7 +337,7 @@ const TOOL_META: Record<PaperWebMcpToolName, { title: string; description: strin
   },
   get_paper_outline: {
     title: "Read paper outline",
-    description: "Return stable section ids, titles, levels, TODO counts, and marker counts for the live paper.",
+    description: "Return current section ids, titles, levels, TODO counts, and marker counts for the live paper.",
     readOnly: true,
   },
   read_paper_section: {
@@ -367,24 +352,18 @@ const TOOL_META: Record<PaperWebMcpToolName, { title: string; description: strin
   },
   add_paper_todo_at_section: {
     title: "Add a paper TODO at a section",
-    description: "Insert a TeX-owned TODO at the selected stable section's end after previewing it. Reuse the preview todoId on retry; the result separates the local save from Git synchronization.",
+    description: "Insert a TeX-owned TODO at the selected current section's end after previewing it. Reuse the preview todoId on retry; the result separates the local save from Git synchronization.",
     readOnly: false,
   },
   relocate_paper_todo: {
     title: "Relocate one paper TODO",
-    description: "Move an existing TeX TODO to another stable section without changing its id, title, text, completion, or map references. Read the target context first and pass the live revision.",
+    description: "Move an existing TeX TODO to another current section without changing its id, title, text, completion, or map references. Read the target context first and pass the live revision.",
     readOnly: false,
   },
   navigate_paper_section: {
     title: "Navigate to a paper section",
-    description: "Move the live document and editor to a stable section id from get_paper_outline. The paper page must already be open.",
+    description: "Move the live document and editor to a current section id from get_paper_outline. The paper page must already be open.",
     readOnly: true,
-  },
-  repair_paper_section: {
-    title: "Repair one paper section envelope",
-    description:
-      "Append only a missing OB-EDIT-END marker to the exact included source file. Read get_paper_state first, pass the diagnostic filePath and expectedSourceHash, and preserve all manuscript content. This does not mark a TODO complete or claim a compile/research result.",
-    readOnly: false,
   },
   set_paper_reader_mode: {
     title: "Switch paper reader",
@@ -585,7 +564,7 @@ export function liveMarkers(snapshot: LivePaperSnapshot): LivePaperMarker[] {
 
 export function findLiveSection(snapshot: LivePaperSnapshot, sectionId: string): OperationResult<LivePaperSection> {
   if (typeof sectionId !== "string" || !SECTION_ID_RE.test(sectionId)) {
-    return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "sectionId must be a stable section id.", {
+    return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "sectionId must be a current section id.", {
       retryable: false,
       currentRevision: snapshot.revision,
     });
@@ -870,55 +849,6 @@ async function executeNamed(
       if (!found.ok) return found;
       host.navigateSection(found.value.id);
       return okResult({ sectionId: found.value.id }, { revision: snapshot.revision });
-    }
-    case "repair_paper_section": {
-      if (typeof args.sectionId !== "string" || typeof args.filePath !== "string") {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "sectionId and filePath are required.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      const context = snapshot.sourceContext?.sections.find((section) => section.id === args.sectionId && section.file === args.filePath);
-      if (!context) {
-        return failResult(WEBMCP_ERROR_CODES.unknown_section, `Unknown source section "${args.sectionId}" in "${args.filePath}".`, {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      if (context.diagnostic?.repair?.kind !== "missing-edit-end") {
-        return failResult(WEBMCP_ERROR_CODES.capability_unavailable, `Section "${args.sectionId}" has no supported envelope repair.`, {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      if (args.expectedSourceHash !== undefined && typeof args.expectedSourceHash !== "string") {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "expectedSourceHash must be a string.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      if (!host.repairSection) {
-        return failResult(WEBMCP_ERROR_CODES.capability_unavailable, "The live paper page cannot repair source envelopes.", {
-          retryable: true,
-          currentRevision: snapshot.revision,
-        });
-      }
-      try {
-        const repaired = await host.repairSection(
-          context.id,
-          context.file,
-          typeof args.expectedSourceHash === "string" ? args.expectedSourceHash : context.sourceHash,
-          options?.signal,
-        );
-        return paperMutationSuccess(host, repaired);
-      } catch (error) {
-        const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code || "") : "";
-        const message = error instanceof Error ? error.message : String(error);
-        return failResult(code || WEBMCP_ERROR_CODES.invalid_tex, message, {
-          retryable: code === WEBMCP_ERROR_CODES.stale_disk_state,
-          currentRevision: snapshot.revision,
-        });
-      }
     }
     case "set_paper_reader_mode": {
       const mode = args.mode;

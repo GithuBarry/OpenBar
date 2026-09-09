@@ -2,7 +2,7 @@ import "server-only";
 import { artifactRefSchema } from "@/lib/schemas";
 import { inspectRepository } from "@/lib/tex-project/source-graph";
 import { getConversionPlan, previewManuscriptConversion } from "@/lib/tex-project/pandoc";
-import { applyConversionWrite, repairPaperSectionEnvelope } from "@/lib/tex-project/source-persist";
+import { applyConversionWrite } from "@/lib/tex-project/source-persist";
 import { previewPaperTodoPlacement, relocatePaperTodo } from "./paper-todo-persist";
 import { lintBrokenTex } from "@/lib/tex-project/tex-lint";
 import { patchSectionTableCell } from "@/lib/tex-project/table-fragments";
@@ -989,11 +989,11 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
     const bundle = buildSourceBundle(texPaths(projectContentDir(projectArg(asObject(raw)!))).manuscriptDir);
     return okResult({ diagnostics: lintBrokenTex(bundle.source), todoCount: analyzePaper(bundle.source).todos.length, bundleHash: bundle.bundleHash });
   }, { readOnlyHint: true }),
-  tool("preview_paper_todo", "Preview paper TODO", "Preview exact TODO placement in a stable section or the manuscript root.", objectSchema({ project: projectIdSchema, sectionId: { type: "string" }, text: { type: "string" }, title: { type: "string" }, id: { type: "string" } }, ["project", "text"]), async raw => {
+  tool("preview_paper_todo", "Preview paper TODO", "Preview exact TODO placement in a current section or the manuscript root.", objectSchema({ project: projectIdSchema, sectionId: { type: "string" }, text: { type: "string" }, title: { type: "string" }, id: { type: "string" } }, ["project", "text"]), async raw => {
     const args = asObject(raw)!;
     return okResult(previewPaperTodoPlacement({ manuscriptDir: texPaths(projectContentDir(projectArg(args))).manuscriptDir, sectionId: stringArg(args, "sectionId", false), text: String(args.text), title: stringArg(args, "title", false), id: stringArg(args, "id", false) }));
   }, { readOnlyHint: true }),
-  tool("relocate_paper_todo", "Relocate paper TODO", "Move a TeX TODO to a stable section with the current source-bundle hash.", objectSchema({ project: projectIdSchema, todoId: { type: "string", minLength: 1 }, sectionId: { type: "string", minLength: 1 }, expectedBundleHash: diskHashSchema, requestId: { type: "string" } }, ["project", "todoId", "sectionId", "expectedBundleHash"]), async (raw, context) => {
+  tool("relocate_paper_todo", "Relocate paper TODO", "Move a TeX TODO to a current section with the current source-bundle hash.", objectSchema({ project: projectIdSchema, todoId: { type: "string", minLength: 1 }, sectionId: { type: "string", minLength: 1 }, expectedBundleHash: diskHashSchema, requestId: { type: "string" } }, ["project", "todoId", "sectionId", "expectedBundleHash"]), async (raw, context) => {
     const args = asObject(raw)!;
     const project = projectArg(args);
     assertAdministrativeWriteAllowed("MCP TODO relocation");
@@ -1024,12 +1024,7 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
     if (args.dryRun === true) return okResult({ sectionId: args.sectionId, tex: patch.tex, baseHash: section.hash, dryRun: true });
     return executePaperPatch({ project, sectionId: args.sectionId, baseHash: args.baseHash, tex: patch.tex, requestId: args.requestId }, context);
   }),
-  tool("repair_paper_section", "Repair section envelope", "Repair a missing OpenBar section end marker using the expected file hash.", objectSchema({ project: projectIdSchema, filePath: { type: "string" }, sectionId: { type: "string" }, expectedSourceHash: diskHashSchema, requestId: { type: "string" } }, ["project", "filePath", "sectionId", "expectedSourceHash"]), async (raw, context) => {
-    const args = asObject(raw)!;
-    const project = projectArg(args);
-    assertAdministrativeWriteAllowed("MCP section repair");
-    return idempotentWrite<unknown>(project, "repair_paper_section", args, context, () => repairPaperSectionEnvelope({ manuscriptDir: texPaths(projectContentDir(project)).manuscriptDir, filePath: String(args.filePath), sectionId: String(args.sectionId), expectedSourceHash: String(args.expectedSourceHash) }));
-  }),
+
   tool("preview_conversion", "Preview document conversion", "Create a bounded Pandoc conversion preview and source-bound plan. Review losses before applying.", objectSchema({ project: projectIdSchema, filePath: { type: "string" }, to: { type: "string" }, expandProject: { type: "boolean" } }, ["project", "filePath"]), async raw => {
     const args = asObject(raw)!;
     const project = projectArg(args);
@@ -1145,7 +1140,7 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
   tool("get_source_bundle", "Read saved source bundle", "Read bounded saved TeX source, segments and hashes. Browser calls read live editor state.", objectSchema(sourceSchema, ["project"]), executeReadPaperSource, { readOnlyHint: true }),
   tool("get_paper_compile", "Read compile status", "Read latest attempted build and latest successful artifact state.", objectSchema({ project: projectIdSchema }, ["project"]), executeCompileStatus, { readOnlyHint: true }),
   tool("get_bibliography", "Read bibliography", "Read bibliography entries or raw BibTeX.", objectSchema({ project: projectIdSchema, raw: { type: "boolean" } }, ["project"]), executeBibliography, { readOnlyHint: true }),
-  tool("get_paper_outline", "Read paper outline", "Read saved manuscript headings and stable section identities.", objectSchema({ project: projectIdSchema }, ["project"]), async raw => okResult(getProjectState(projectArg(asObject(raw)!))?.paper?.outline || []), { readOnlyHint: true }),
+  tool("get_paper_outline", "Read paper outline", "Read saved manuscript headings and current section identities.", objectSchema({ project: projectIdSchema }, ["project"]), async raw => okResult(getProjectState(projectArg(asObject(raw)!))?.paper?.outline || []), { readOnlyHint: true }),
   tool("replace_source_range", "Replace saved source range", "Replace one editable source-file range using the source bundle hash. Use dryRun to preview exact patches.", objectSchema({ project: projectIdSchema, from: { type: "integer", minimum: 0 }, to: { type: "integer", minimum: 0 }, text: { type: "string", maxLength: 1000000 }, expectedBundleHash: diskHashSchema, dryRun: { type: "boolean" }, requestId: { type: "string" } }, ["project", "from", "to", "text", "expectedBundleHash"]), async (raw, context) => {
     const args = asObject(raw)!;
     const project = projectArg(args);
@@ -1190,8 +1185,8 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
   tool("apply_mindmap_batch", "Apply map batch", "Apply one validated atomic batch for card fields, selected-branch movement, or deletion. Deletion requires a current preview token.", objectSchema(BATCH_SCHEMA, ["project", "mapId", "selectedIds", "expectedRevision", "previewToken"]), executeApplyMindmapBatch, { destructiveHint: true }),
   tool("delete_mindmap_node", "Delete selected cards", "Delete selected cards and promote surviving children to the nearest surviving ancestor. Use a preview token.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, id: { type: "string" }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, previewToken: { type: "string" }, requestId: { type: "string" } }, ["project", "mapId", "id", "expectedRevision", "previewToken"]), (args, context) => executeDeleteMindmap(args, context, "cards"), { destructiveHint: true }),
   tool("delete_mindmap_branch", "Delete selected branches", "Delete selected cards and all descendants, including collapsed descendants. Use a preview token.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, id: { type: "string" }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, previewToken: { type: "string" }, requestId: { type: "string" } }, ["project", "mapId", "id", "expectedRevision", "previewToken"]), (args, context) => executeDeleteMindmap(args, context, "branches"), { destructiveHint: true }),
-  tool("add_paper_todo", "Add paper TODO", "Insert a TeX-owned TODO at a stable section using the current source-bundle hash. Reuse todoId and requestId for retries.", objectSchema({ project: projectIdSchema, sectionId: { type: "string" }, title: { type: "string" }, text: { type: "string" }, todoId: { type: "string" }, expectedBundleHash: diskHashSchema, requestId: { type: "string" } }, ["project", "sectionId", "text", "expectedBundleHash"]), executeAddTodo),
-  tool("convert_card_to_todo", "Convert card to paper TODO", "Convert an ordinary map card into a TeX-owned TODO and bind the card atomically. Pass sectionId for an explicit stable paper section, or omit it for a neutral insertion in the manuscript root. Use expectedRevision plus optional map and paper hashes for conflict checks, and requestId for retries.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, id: { type: "string" }, sectionId: { type: "string", description: "Optional stable section id from get_project_state. Omit for neutral insertion in the manuscript root." }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, expectedBundleHash: diskHashSchema, requestId: { type: "string" } }, ["project", "mapId", "id", "expectedRevision"]), executeConvertCardToTodo),
+  tool("add_paper_todo", "Add paper TODO", "Insert a TeX-owned TODO at a current section using the current source-bundle hash. Reuse todoId and requestId for retries.", objectSchema({ project: projectIdSchema, sectionId: { type: "string" }, title: { type: "string" }, text: { type: "string" }, todoId: { type: "string" }, expectedBundleHash: diskHashSchema, requestId: { type: "string" } }, ["project", "sectionId", "text", "expectedBundleHash"]), executeAddTodo),
+  tool("convert_card_to_todo", "Convert card to paper TODO", "Convert an ordinary map card into a TeX-owned TODO and bind the card atomically. Pass sectionId for an explicit current paper section, or omit it for a neutral insertion in the manuscript root. Use expectedRevision plus optional map and paper hashes for conflict checks, and requestId for retries.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, id: { type: "string" }, sectionId: { type: "string", description: "Optional current section id from get_project_state. Omit for neutral insertion in the manuscript root." }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, expectedBundleHash: diskHashSchema, requestId: { type: "string" } }, ["project", "mapId", "id", "expectedRevision"]), executeConvertCardToTodo),
   tool("patch_paper_section", "Patch paper section", "Replace one section body using its exact section hash. Preserve other sections, TODOs, comments, markers, tables, and figures.", objectSchema({ project: projectIdSchema, sectionId: { type: "string" }, baseHash: diskHashSchema, tex: { type: "string", maxLength: 1_000_000 }, level: { type: "integer", minimum: 1, maximum: 6 }, appendix: { type: "boolean" }, requestId: { type: "string" } }, ["project", "sectionId", "baseHash", "tex"]), executePaperPatch),
   tool("complete_todo", "Complete paper TODO", "Set a TeX TODO completion timestamp while retaining its text and map cards.", objectSchema({ project: projectIdSchema, todoId: { type: "string" }, expectedBundleHash: diskHashSchema, requestId: { type: "string" } }, ["project", "todoId", "expectedBundleHash"]), (args, context) => executeTodoState(args, context, true)),
   tool("reopen_todo", "Reopen paper TODO", "Clear a TeX TODO completion timestamp while retaining its text and map cards.", objectSchema({ project: projectIdSchema, todoId: { type: "string" }, expectedBundleHash: diskHashSchema, requestId: { type: "string" } }, ["project", "todoId", "expectedBundleHash"]), (args, context) => executeTodoState(args, context, false)),
@@ -1238,7 +1233,7 @@ export async function executeMcpTool(name: string, args: unknown, context: McpCo
       if (typeof value === "string" && ((schema.minLength !== undefined && value.length < schema.minLength) || (schema.maxLength !== undefined && value.length > schema.maxLength) || (schema.pattern && !new RegExp(schema.pattern).test(value)))) return failResult("invalid_arguments", `${key} has an invalid length or format.`, false);
     }
     const result = await entry.execute(args, context);
-    if (result.ok && record.dryRun !== true && ["relocate_paper_todo", "remove_paper_todo", "repair_paper_section", "apply_conversion"].includes(name)) {
+    if (result.ok && record.dryRun !== true && ["relocate_paper_todo", "remove_paper_todo", "apply_conversion"].includes(name)) {
       recordWebMcpActivity(projectArg(record), context, { operation: name, resources: [{ kind: "paper", id: String(record.todoId || record.sectionId || record.filePath || "source") }] });
     }
     if (context.signal?.aborted && result.ok) return result;

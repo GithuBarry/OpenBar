@@ -1,5 +1,7 @@
 "use client";
 
+import { bundleSections } from "@/lib/tex-project/section-ranges";
+
 import "katex/dist/katex.min.css";
 import { useGitAutoSync } from "@/components/use-git-auto-sync";
 import { OverleafSyncNotice } from "@/components/overleaf-sync-notice";
@@ -45,7 +47,6 @@ import {
   removePaperSectionAction,
   renamePaperSectionAction,
   requestPaperCompileAction,
-  repairPaperSectionEnvelopeAction,
   setPaperSectionHeadingAction,
   uploadPaperFigureAction,
 } from "@/app/actions";
@@ -1127,6 +1128,11 @@ export function PaperEditor({
       jumpToExpectedSection(hash);
       return true;
     }
+    const labeled = bundleSections(sourceRef.current).filter(section => section.label === hash);
+    if (labeled.length === 1) {
+      editorRef.current?.setSelection(labeled[0]!.from, labeled[0]!.from);
+      return true;
+    }
     const todo = collectEditorTodos(sourceRef.current).find((item) => item.id === hash);
     if (todo) {
       jumpToTodo(todo);
@@ -1303,24 +1309,6 @@ export function PaperEditor({
     },
     setReaderMode: (mode) => {
       setLayout(mode);
-    },
-    repairSection: async (sectionId, filePath, expectedSourceHash, signal) => {
-      if (remoteOutOfSyncRef.current) throw Object.assign(new Error("Synchronize Git to resume editing."), { code: "remote_conflict" });
-      if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
-      const result = await repairPaperSectionEnvelopeAction(project, filePath, sectionId, expectedSourceHash);
-      if (!result.ok) {
-        throw Object.assign(new Error(result.message), {
-          code: result.code,
-          ...(result.currentHash ? { currentHash: result.currentHash } : {}),
-        });
-      }
-      const paper = await getEditablePaperAction(project);
-      if (paper) {
-        applyHydrated(paper);
-        remoteSavePendingRef.current = true;
-        await pushRemote("OpenBar: repair paper source envelope");
-      }
-      return result.value;
     },
     addTodoAtSection: async (sectionId, text, todoTitle, todoId, signal) => {
       const before = liveSource();

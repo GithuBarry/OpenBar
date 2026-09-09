@@ -1,8 +1,6 @@
-% OB-SECTION {"id":"experiments","label":"sec-experiments","level":2,"order":4,"title":"Command-V in Practice"}
 
 \section{Command-V in Practice}
 \label{sec-experiments}
-% OB-EDIT-BEGIN openbarry/markdown@1 id=experiments
 We port three behaviors chosen for large pre/post-finetuning gaps, easy verification, and practical utility: refusal enhancement, refusal suppression (jailbreak), and default chain-of-thought.
 
 \paragraph{Adapter training.}
@@ -103,4 +101,3 @@ Tracking shuffled objects is a smaller but real lift, especially on larger model
 Reasoning quality improved uniformly; instruction following sometimes collapsed, with up to $28.8\%$ of responses failing the JSON format, plus occasional language drift on Qwen.
 
 \obcomment[kind=result]{CoT paste works as more characters and higher task accuracy, with a format-collapse tax. Do not bury the 28.8 percent JSON failure --- it is the honest limitation next to the +50 percent Qwen 3B lift.}
-% OB-EDIT-END id=experiments

@@ -38,7 +38,7 @@ import {
 import { getPaperCompileStatus, requestPaperCompile } from "@/lib/tex-project/compile";
 import { synctexEdit, synctexView } from "@/lib/tex-project/synctex";
 import { FIGURE_MAX_BYTES, uploadFigureAsset, texPaths, readDocument, DRAFT_MINDMAP_ID, resolveMindmapStorageIdentity } from "@/lib/tex-project/project";
-import { persistSourceBundle, applyConversionWrite, repairPaperSectionEnvelope } from "@/lib/tex-project/source-persist";
+import { persistSourceBundle, applyConversionWrite } from "@/lib/tex-project/source-persist";
 import { syncProjectCommand } from "@/lib/research/sync-project-command";
 import { getOverleafSyncDetails, prepareForceSync, confirmForceSync, finishForceSync, type ForceSyncDirection, prepareOverleafPull, finishOverleafPull, type OverleafConflictChoice, commitOverleafGit, getProjectGitHistory, getOverleafGitStatus, pullOverleafGit, pushOverleafGit, refreshOverleafGitStatus, syncOverleafGit } from "@/lib/tex-project/overleaf-git";
 import { inspectRepository } from "@/lib/tex-project/source-graph";
@@ -441,31 +441,6 @@ export async function deleteMindmapAction(slug: string, id: string): Promise<voi
 export async function getEditablePaperAction(slug: string) {
   await requireProjectAccess(slug);
   return getPaperEditorState(slug);
-}
-
-export async function repairPaperSectionEnvelopeAction(
-  slug: string,
-  filePath: string,
-  sectionId: string,
-  expectedSourceHash?: string,
-) {
-  await requireProjectAccess(slug);
-  const result = repairPaperSectionEnvelope({
-    manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
-    filePath,
-    sectionId,
-    expectedSourceHash,
-  });
-  if (result.ok) {
-    recordActivity(slug, {
-      operation: "repair_source_envelope",
-      resources: [{ kind: "paper-section", id: sectionId }],
-      title: sectionId,
-      href: `/p/${encodeURIComponent(slug)}/paper#${encodeURIComponent(sectionId)}`,
-    });
-    bust(slug);
-  }
-  return result;
 }
 
 export async function persistSourceBundleAction(

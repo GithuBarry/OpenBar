@@ -1,8 +1,6 @@
-% OB-SECTION {"id":"benchmark","label":"sec-benchmark","level":2,"order":3,"title":"Benchmark"}
 
 \section{Benchmark}
 \label{sec-benchmark}
-% OB-EDIT-BEGIN openbarry/markdown@1 id=benchmark
 Our benchmark evaluates language model diversity using two distinct datasets: \textbf{NB-Curated}, which contains 100 prompts manually curated by the authors, and \textbf{NB-WildChat}, which consists of 1,000 prompts automatically curated from real user interactions with ChatGPT.
 LLM performance is evaluated based on the quality and novelty of the set of generations produced by the LLM.
 
@@ -80,4 +78,3 @@ We use the Skywork-Reward-Gemma-2-27B-v0.2 model~\cite{liu2024skywork} to score 
 Reward scores are mapped into $\{1,2,\ldots,10\}$ by calibrating against GPT-4 quality scores on 2,400 MT-Bench~\cite{zheng2023mtbench} generations.
 
 \obtodo[id=nb-utility-calibrate, created=2025-02-12T10:05:00.000Z, updated=2025-02-20T18:44:12.000Z, completed=2025-02-20T18:44:12.000Z]{Calibrate Skywork-Reward scores to a 1-10 utility using MT-Bench GPT-4 judgments.}
-% OB-EDIT-END id=benchmark

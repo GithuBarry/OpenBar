@@ -7,10 +7,9 @@ import { ASSET_ROOTS, normalizeAssetRequest } from "./asset-resolver";
 /**
  * OpenBar's TeX envelope codec.
  *
- * Structured data is JSON inside TeX comments, and editable paper prose is
- * TeX inside a marked source range. Native Markdown and HTML bodies keep their
- * own files beside the TeX envelope. Keeping both envelopes explicit makes
- * writes local, inspectable, and safe against stale browser state.
+ * Structured records use JSON comments. Supporting documents can hold marked
+ * TeX bodies or adjacent Markdown and HTML files. Paper sections are derived
+ * directly from LaTeX by section-ranges.ts.
  */
 
 /** Leading alnum, then alnum / `.` / `_` / `-`. Shared by envelope ids, labels, and figure names. */
@@ -21,7 +20,6 @@ const DATA_BEGIN = /^%\s*OB-DATA-BEGIN\s+([^\s]+)\s+id=([^\s]+)\s*$/;
 const DATA_END = /^%\s*OB-DATA-END\s+id=([^\s]+)\s*$/;
 const EDIT_BEGIN = /^%\s*OB-EDIT-BEGIN\s+([^\s]+)\s+id=([^\s]+)\s*$/;
 const EDIT_END = /^%\s*OB-EDIT-END\s+id=([^\s]+)\s*$/;
-const SECTION_META = /^%\s*OB-SECTION\s+(\{.*\})\s*$/;
 
 export interface DataBlock<T = unknown> {
   schema: string;
@@ -218,64 +216,6 @@ export function parseEditBlocks(source: string): EditBlock[] {
   return blocks;
 }
 
-export type EditEnvelopeRepair = {
-  id: string;
-  changed: boolean;
-  source: string;
-  previousHash: string;
-  nextHash: string;
-};
-
-/**
- * Repair only a missing end marker for one otherwise identifiable edit block.
- *
- * This intentionally refuses nested blocks, mismatched markers, and any other
- * malformed envelope shape. The safe repair is an idempotent append at EOF;
- * callers still perform their normal source-hash compare-and-swap before
- * writing it to disk.
- */
-export function repairMissingEditEnd(source: string, id: string): EditEnvelopeRepair {
-  const safeId = safeFileSegment(id, "envelope id");
-  let open: { id: string; start: number } | null = null;
-  let found = false;
-  let closed = false;
-
-  for (const entry of linesWithOffsets(source)) {
-    const begin = entry.line.match(EDIT_BEGIN);
-    const end = entry.line.match(EDIT_END);
-    if (begin) {
-      const beginId = safeFileSegment(begin[2]!, "envelope id");
-      if (open) throw new TexEnvelopeError(`Nested OB-EDIT block "${beginId}" is not allowed.`);
-      open = { id: beginId, start: entry.start };
-      if (beginId === safeId) found = true;
-      continue;
-    }
-    if (!end) continue;
-    const endId = safeFileSegment(end[1]!, "envelope id");
-    if (!open) throw new TexEnvelopeError(`OB-EDIT block "${endId}" has no begin marker.`);
-    if (endId !== open.id) throw new TexEnvelopeError(`OB-EDIT end id "${endId}" does not match "${open.id}".`);
-    if (open.id === safeId) closed = true;
-    open = null;
-  }
-
-  if (!found) throw new TexEnvelopeError(`OB-EDIT block "${safeId}" has no begin marker.`);
-  const previousHash = sha256(source);
-  if (closed) {
-    // Validate the complete structure before reporting an idempotent repair.
-    parseEditBlocks(source);
-    return { id: safeId, changed: false, source, previousHash, nextHash: previousHash };
-  }
-  if (!open || open.id !== safeId) {
-    throw new TexEnvelopeError(`OB-EDIT block "${safeId}" has no end marker.`);
-  }
-
-  const prefix = source.endsWith("\n") ? source : `${source}\n`;
-  const repaired = `${prefix}% OB-EDIT-END id=${safeId}\n`;
-  // Ensure the result is parseable before any caller is allowed to persist it.
-  parseEditBlocks(repaired);
-  return { id: safeId, changed: true, source: repaired, previousHash, nextHash: sha256(repaired) };
-}
-
 export function getEditBlock(source: string, id: string): EditBlock | null {
   return parseEditBlocks(source).find((block) => block.id === id) ?? null;
 }
@@ -322,38 +262,6 @@ export function serializeEditBlock(schema: string, id: string, body: string): st
 export function normalizeTexBody(value: string): string {
   const normalized = value.replace(/\r\n/g, "\n").replace(/\s+$/u, "");
   return normalized ? `${normalized}\n` : "";
-}
-
-export function parseSectionMeta(source: string): SectionMeta {
-  const match = source.split(/\r?\n/).find((line) => SECTION_META.test(line));
-  if (!match) throw new TexEnvelopeError("Section file is missing a % OB-SECTION metadata line.");
-  const json = match.match(SECTION_META)?.[1];
-  try {
-    const data = JSON.parse(json || "") as Partial<SectionMeta>;
-    const level = data.level;
-    if (typeof data.id !== "string" || typeof data.title !== "string" || typeof data.label !== "string" || typeof data.order !== "number" || !Number.isInteger(data.order) || typeof level !== "number" || !Number.isInteger(level)) {
-      throw new Error("id, title, label, integer order, and integer level are required");
-    }
-    if (!data.title.trim()) throw new Error("title must be a non-empty string");
-    if (level < 1 || level > 6) throw new Error("level must be between 1 and 6");
-    if (data.appendix !== undefined && typeof data.appendix !== "boolean") throw new Error("appendix must be boolean");
-    return {
-      id: safeFileSegment(data.id, "section id"),
-      title: data.title,
-      level: level as SectionMeta["level"],
-      order: data.order,
-      label: safeFileSegment(data.label, "section label"),
-      ...(data.appendix ? { appendix: true as const } : {}),
-    };
-  } catch (error) {
-    throw new TexEnvelopeError(`Invalid OB-SECTION metadata: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-export function serializeSectionMeta(meta: SectionMeta): string {
-  assertEnvelopeId(meta.id);
-  safeFileSegment(meta.label, "section label");
-  return `% OB-SECTION ${JSON.stringify({ id: meta.id, label: meta.label, level: meta.level, order: meta.order, title: meta.title, ...(meta.appendix ? { appendix: true } : {}) })}\n`;
 }
 
 export function withWriteLock<T>(file: string, operation: () => T): T {

@@ -1,8 +1,6 @@
-% OB-SECTION {"id":"related-work","label":"sec-related","level":2,"order":2,"title":"Related Work"}
 
 \section{Related Work}
 \label{sec-related}
-% OB-EDIT-BEGIN openbarry/markdown@1 id=related-work
 Prior work has established that language model outputs often exhibit biases towards specific demographic groups~\cite{santurkar2023}, genders~\cite{delarco2024}, countries~\cite{durmus2023}, or personas~\cite{giorgi2024}.
 This homogenization can limit LLM utility on downstream tasks~\cite{agarwal2024,song2024}.
 Research into diversifying language model outputs has seen several promising directions, including adjusting decoding methods such as increasing temperature~\cite{shurofry2024,peeperkorn2024}, or modifying training objectives~\cite{li2016diversity,zhang2024diffuse,li2024preserving,lanchantin2025}.
@@ -16,4 +14,3 @@ However, existing metrics often correlate poorly with human judgments of content
 \obtodo[id=nb-related-metrics, created=2024-11-03T13:40:00.000Z, updated=2025-03-02T10:18:44.000Z, completed=2025-03-02T10:18:44.000Z]{Position NoveltyBench against n-gram, embedding, and entropy diversity metrics.}
 
 In contrast to prior work, \textsc{NoveltyBench} uniquely evaluates an LLM's capacity to generate a set of outputs that are simultaneously diverse and high-quality.
-% OB-EDIT-END id=related-work

@@ -226,7 +226,7 @@ export const MINDMAP_WEBMCP_TOOL_SCHEMAS: Record<MindmapWebMcpToolName, JsonSche
   convert_card_to_todo: objectSchema(
     {
       id: { type: "string" },
-      sectionId: { type: "string", description: "Optional stable section id from the paper outline. Omit to place the TODO at a neutral location in the manuscript root." },
+      sectionId: { type: "string", description: "Optional current section id from the paper outline. Omit to place the TODO at a neutral location in the manuscript root." },
       expectedRevision: { type: "integer", minimum: 0 },
       requestId: { type: "string", description: "Stable retry key. Reusing it returns the original local result." },
     },
@@ -754,7 +754,7 @@ function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Add a card for an existing TeX TODO to the currently open map. Use this after the paper page add_todo tool returns todoId, choose the intended parentId, and place the card in the Primary or selected secondary map. Each map may contain one card for a TODO. The same TODO may appear on Primary and multiple secondary maps. All cards share TeX-owned text and completion. This is a shared card, not a move from another map. If the TODO is already on this map, the existing card is returned unchanged.";
   }
   if (name === "convert_card_to_todo") {
-    return "Convert this ordinary card into a paper TODO using its title and main text, then bind the card to that TeX-owned id. Pass sectionId to target a stable paper section, or omit it for a neutral insertion in the manuscript root. Hierarchy is preserved and completion is left unset. The result separates durable local saves from Git sync: status is pushed, pending, failed, or unconfigured. Reuse requestId to retry safely.";
+    return "Convert this ordinary card into a paper TODO using its title and main text, then bind the card to that TeX-owned id. Pass sectionId to target a current paper section, or omit it for a neutral insertion in the manuscript root. Hierarchy is preserved and completion is left unset. The result separates durable local saves from Git sync: status is pushed, pending, failed, or unconfigured. Reuse requestId to retry safely.";
   }
   if (name === "complete_todo") {
     return "Set the TeX completed timestamp. Completing does not require new manuscript prose.";

@@ -1,8 +1,6 @@
-% OB-SECTION {"id":"evaluation","label":"sec-evaluation","level":2,"order":4,"title":"Evaluation"}
 
 \section{Evaluation}
 \label{sec-evaluation}
-% OB-EDIT-BEGIN openbarry/markdown@1 id=evaluation
 We evaluate 20 aligned, instruction-following models from Anthropic, OpenAI, Google, Cohere, Gemma~2, and Llama~3 (Table~\ref{tab:models}).
 Where applicable, we disable retrieval-augmented generation and tool-use.
 We independently sample 10 generations with temperature $1.0$---a best-case setting for diversity, as most APIs default to lower temperatures or nucleus sampling.
@@ -154,4 +152,3 @@ We evaluate 1B, 7B, 13B, and 32B after SFT, DPO, and RLVR.
 Across model sizes, each alignment stage progressively reduces model diversity, with significant drops during DPO (Figure~\ref{fig:olmo-analysis}).
 Quality improvements compensate: we observe utility gains when transitioning from SFT to DPO.
 Alignment algorithms should be designed with output diversity in mind.
-% OB-EDIT-END id=evaluation

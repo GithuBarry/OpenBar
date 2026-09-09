@@ -1,5 +1,6 @@
 /** Browser-safe TODO placement and relocation helpers over a bundled source. */
 
+import { deriveSections } from "@/lib/tex-project/section-ranges";
 import { findMacroMatches, parseAnchorAttrs } from "@/lib/marker-codec";
 import { composeObtodo } from "@/lib/todo-meta";
 import { splitBundleSource } from "@/lib/tex-project/source-bundle-format";
@@ -25,21 +26,6 @@ type TargetPart = {
   endOffset: number;
 };
 
-function sectionIdFromBody(body: string): string | undefined {
-  const line = body.match(/^%\s*OB-SECTION\s+(\{.*\})\s*$/m)?.[1];
-  if (!line) return undefined;
-  try {
-    const parsed = JSON.parse(line) as { id?: unknown };
-    return typeof parsed.id === "string" ? parsed.id.trim() : undefined;
-  } catch {
-    return /"id"\s*:\s*"([^"\\]+)"/.exec(line)?.[1]?.trim();
-  }
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function rootTargetPart(source: string): TargetPart | null {
   const part = splitBundleSource(source)[0] || (source ? {
     filePath: "",
@@ -62,21 +48,11 @@ function rootTargetPart(source: string): TargetPart | null {
 function targetPart(source: string, sectionId?: string): TargetPart | null {
   const normalizedSectionId = sectionId?.trim();
   if (!normalizedSectionId) return rootTargetPart(source);
-  const part = splitBundleSource(source).find((candidate) => sectionIdFromBody(candidate.body) === normalizedSectionId);
-  if (!part) return null;
-  const marker = new RegExp(`^%\\s*OB-EDIT-END\\s+id=${escapeRegExp(normalizedSectionId)}\\s*$`, "m").exec(part.body);
-  if (marker && marker.index !== undefined) {
-    return { filePath: part.filePath, bodyFrom: part.bodyFrom, body: part.body, endOffset: marker.index };
+  for (const part of splitBundleSource(source)) {
+    const section = deriveSections(part.body, part.filePath).find(section => section.id === normalizedSectionId);
+    if (section) return { filePath: part.filePath, bodyFrom: part.bodyFrom, body: part.body, endOffset: section.to };
   }
-  // Some older or minimal section fixtures have stable OB-SECTION metadata
-  // without an editable envelope. They remain valid insertion targets: append
-  // at the end of that file. A present BEGIN marker with no matching END is
-  // different—it is a damaged envelope and must be repaired explicitly.
-  const begin = new RegExp(`^%\\s*OB-EDIT-BEGIN\\s+[^\\n]+\\s+id=${escapeRegExp(normalizedSectionId)}\\s*$`, "m").test(part.body);
-  if (begin) {
-    return { filePath: part.filePath, bodyFrom: part.bodyFrom, body: part.body, endOffset: -1 };
-  }
-  return { filePath: part.filePath, bodyFrom: part.bodyFrom, body: part.body, endOffset: part.body.length };
+  return null;
 }
 
 function insertAtTarget(source: string, target: TargetPart, text: string): {

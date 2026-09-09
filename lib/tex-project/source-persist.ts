@@ -7,80 +7,13 @@ import path from "node:path";
 
 import { failResult, okResult, type OperationResult } from "@/lib/research/operation-result";
 import type { SourcePatch } from "@/lib/research/operations";
-import { parseSectionMeta, repairMissingEditEnd, sha256, writeTextAtomic } from "./codec";
+import { sha256, writeTextAtomic } from "./codec";
 import { withProjectWriteLock, withProjectWriteLockAsync } from "@/lib/research/project-lock";
 import { expandProjectForConversion } from "./latexpand";
 import { conversionSourceHash, manuscriptFilePath } from "./pandoc";
 import { buildSourceBundle, mapVirtualRange } from "./source-bundle";
 import { clearSourceTransactionJournal, recoverSourceTransaction, writeSourceTransactionJournal } from "./source-transaction";
 import { bannerRanges, fileBanner, fileBytesUnchanged, splitBundleSource } from "./source-bundle-format";
-
-export function repairPaperSectionEnvelope(input: {
-  manuscriptDir: string;
-  filePath: string;
-  sectionId: string;
-  expectedSourceHash?: string;
-}): OperationResult<{
-  filePath: string;
-  sectionId: string;
-  changed: boolean;
-  sourceHash: string;
-  bundleHash: string;
-  previous?: string;
-  next?: string;
-}> {
-  return withProjectWriteLock(input.manuscriptDir, () => {
-    const target = manuscriptFilePath(input.manuscriptDir, input.filePath);
-    if (!target.ok) return failResult("invalid_path", target.message, false);
-    if (!fs.existsSync(target.abs)) {
-      return failResult("invalid_path", `Source file "${input.filePath}" does not exist.`, false);
-    }
-    const current = fs.readFileSync(target.abs, "utf8");
-    const currentHash = sha256(current);
-    if (input.expectedSourceHash && currentHash !== input.expectedSourceHash) {
-      return failResult("stale_disk_state", `Source file "${input.filePath}" changed after the repair preview.`, {
-        retryable: true,
-        currentHash,
-      });
-    }
-    try {
-      const meta = parseSectionMeta(current);
-      if (meta.id !== input.sectionId) {
-        return failResult("unknown_section", `Section "${input.sectionId}" is not in "${input.filePath}".`, false);
-      }
-      const repaired = repairMissingEditEnd(current, input.sectionId);
-      if (!repaired.changed) {
-        const bundle = buildSourceBundle(input.manuscriptDir, undefined, 0, true);
-        return okResult(
-          {
-            filePath: input.filePath,
-            sectionId: input.sectionId,
-            changed: false,
-            sourceHash: currentHash,
-            bundleHash: bundle.bundleHash,
-          },
-          { diskHash: bundle.bundleHash, revision: bundle.revision },
-        );
-      }
-      writeTextAtomic(target.abs, repaired.source);
-      const bundle = buildSourceBundle(input.manuscriptDir, undefined, 0, true);
-      return okResult(
-        {
-          filePath: input.filePath,
-          sectionId: input.sectionId,
-          changed: true,
-          sourceHash: repaired.nextHash,
-          bundleHash: bundle.bundleHash,
-          previous: current,
-          next: repaired.source,
-        },
-        { diskHash: bundle.bundleHash, revision: bundle.revision },
-      );
-    } catch (error) {
-      return failResult("invalid_tex", error instanceof Error ? error.message : String(error), false);
-    }
-  });
-}
 
 export function persistVirtualRange(input: {
   manuscriptDir: string;

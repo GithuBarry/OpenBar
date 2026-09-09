@@ -21,6 +21,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 OpenBar edits an Overleaf-style research-paper repository.
 
+- Paper sections are derived from current LaTeX headings and include order. Section addresses are revision-local. Keep manuscripts free of OB-SECTION and section OB-EDIT comments and use current hashes or revisions for edits.
 - Paper owns the scientific argument, every TODO, comments, and intentionally incomplete structures (tables, figures, plots, `\obmarker` cells).
 - The Primary mindmap covers every stable paper TODO: placed in its tree, or visible in Primary Unplaced. Unplaced counts as coverage.
 - Secondary mindmaps may reuse any subset of paper TODOs. The same `todoId` may appear once per map, including on Primary and several secondary maps. Two cards for one `todoId` inside a single map are invalid.

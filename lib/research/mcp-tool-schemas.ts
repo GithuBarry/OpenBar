@@ -193,7 +193,7 @@ export const patchPaperTableZod = z.object({
 export const PAPER_MUTATION_SCHEMAS: Record<(typeof PAPER_MUTATION_TOOL_NAMES)[number], JsonSchemaObject> = {
   patch_paper_table: objectSchema(
     {
-      sectionId: { type: "string", description: "Stable section id from get_paper_outline." },
+      sectionId: { type: "string", description: "Current section id from get_paper_outline." },
       tableIndex: { type: "integer", minimum: 0, description: "0-based tabular in this section." },
       expectedRevision: { type: "integer", minimum: 0, description: "Live editor revision from get_paper_state." },
       updates: {

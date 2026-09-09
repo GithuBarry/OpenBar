@@ -1,5 +1,6 @@
 "use client";
 
+import { bundleSections, deriveSections } from "@/lib/tex-project/section-ranges";
 import { useEffect, useRef } from "react";
 import { Annotation } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
@@ -24,64 +25,14 @@ import {
 
 export const webmcpOrigin = Annotation.define<"human" | "webmcp">();
 
-function isChromeLine(line: string): boolean {
-  const t = line.trim();
-  return /^\\appendix\b/.test(t) || /^\\input\s*\{openbarry\/references(?:\.tex)?\}(?:\s*%.*)?$/.test(t);
-}
-
-function offsetAtLine(source: string, line: number): number {
-  if (line <= 0) return 0;
-  let seen = 0;
-  for (let i = 0; i < source.length; i++) {
-    if (source[i] === "\n") {
-      seen += 1;
-      if (seen === line) return i + 1;
-    }
-  }
-  return source.length;
-}
-
-function matchHeading(
-  bookmarks: ReturnType<typeof listBookmarks>,
-  sections: LivePaperSection[],
-  sectionId: string,
-) {
-  const section = sections.find((item) => item.id === sectionId);
-  if (!section) return undefined;
-  const prior = sections.filter((item) => item.id !== sectionId && sections.indexOf(item) < sections.indexOf(section) && item.title.toLowerCase() === section.title.toLowerCase()).length;
-  let seen = 0;
-  for (const bookmark of bookmarks) {
-    if (bookmark.title.toLowerCase() !== section.title.toLowerCase()) continue;
-    if (seen === prior) return bookmark;
-    seen += 1;
-  }
-  return undefined;
-}
-
 export function sectionBodyRange(
   source: string,
   expected: PaperEditorSection[],
   sectionId: string,
 ): { from: number; to: number } | null {
-  const parsed = parseEditorSections(source, expected);
-  if (parsed.error || !parsed.sections.length) return null;
-  const sections = parsed.sections.map((section) => ({
-    id: section.id,
-    title: section.title,
-    level: section.level,
-    tex: section.tex,
-  }));
-  const heading = matchHeading(listBookmarks(source), sections, sectionId);
-  if (!heading) return null;
-  const endHeading = listBookmarks(source).find((bookmark) => bookmark.line > heading.line && bookmark.level <= heading.level);
-  const from = offsetAtLine(source, heading.line + 1);
-  let to = endHeading ? offsetAtLine(source, endHeading.line) : source.length;
-  const body = source.slice(from, to);
-  const lines = body.split("\n");
-  while (lines.length && isChromeLine(lines[lines.length - 1]!)) lines.pop();
-  while (lines.length && lines[lines.length - 1] === "") lines.pop();
-  to = from + (lines.length ? lines.join("\n").length : 0);
-  return { from, to };
+  const derived = bundleSections(source);
+  const section = (derived.length ? derived : deriveSections(source)).find(section => section.id === sectionId);
+  return section ? { from: section.bodyFrom, to: section.to } : null;
 }
 
 export function liveSnapshotFromSource(input: {
@@ -134,9 +85,10 @@ export function liveSnapshotFromSource(input: {
     }
   }
 
+  const ranges = bundleSections(input.source);
   const todos: LivePaperTodo[] = collectEditorTodos(input.source).flatMap((todo) => {
     if (!todo.id) return [];
-    const section = sections.find((item) => item.title.toLowerCase() === todo.section.toLowerCase());
+    const section = ranges.find(item => todo.from >= item.from && todo.from < item.to);
     return [{
       id: todo.id,
       ...(todo.title ? { title: todo.title } : {}),
@@ -228,10 +180,6 @@ export function usePaperWebMcp(host: PaperSourceHost): void {
         getSnapshot: () => hostRef.current.getSnapshot(),
         navigateSection: (sectionId) => hostRef.current.navigateSection(sectionId),
         setReaderMode: (mode) => hostRef.current.setReaderMode(mode),
-        repairSection: (sectionId, filePath, expectedSourceHash, signal) => {
-          if (!hostRef.current.repairSection) throw new Error("The live paper page cannot repair source envelopes.");
-          return hostRef.current.repairSection(sectionId, filePath, expectedSourceHash, signal);
-        },
         addTodoAtSection: (sectionId, text, title, todoId, signal) => {
           if (!hostRef.current.addTodoAtSection) throw new Error("The live paper page cannot add a section TODO.");
           return hostRef.current.addTodoAtSection(sectionId, text, title, todoId, signal);

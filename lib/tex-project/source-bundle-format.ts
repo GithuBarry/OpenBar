@@ -184,7 +184,12 @@ export function replaceBundlePart(source: string, filePath: string, nextBody: st
   const parts = splitBundleSource(source);
   if (!parts.length) return nextBody;
   return parts
-    .map((part) => `${fileBanner(part.filePath)}${part.filePath === filePath ? nextBody : part.body}`)
+    .map((part, index) => {
+      const body = part.filePath === filePath ? nextBody : part.body;
+      // Keep the next file banner on its own line after an editor trims EOF.
+      const separator = index < parts.length - 1 && body.length > 0 && !body.endsWith("\n") ? "\n" : "";
+      return `${fileBanner(part.filePath)}${body}${separator}`;
+    })
     .join("");
 }
 

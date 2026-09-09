@@ -10,13 +10,11 @@ import {
   getDataBlock,
   getEditBlock,
   normalizeTexBody,
-  parseSectionMeta,
   patchEditBlock,
   readDataFile,
   safeFileSegment,
   serializeDataFile,
   serializeEditBlock,
-  serializeSectionMeta,
   sha256,
   upsertDataBlock,
   withWriteLock,
@@ -26,21 +24,17 @@ import {
   type SectionMeta,
   TexEnvelopeError,
 } from "./codec";
+import { deriveSections, stripSectionComments } from "./section-ranges";
 import { figureToTex } from "./obmd";
 import { composePaperTex, looksLikeMarkdownPaper, PAPER_REFERENCES_INPUT, readTexDocumentTitle, sectionCommandForLevel, splitPaperTex } from "./paper-compose";
 import { prepareDocumentBody, inferDocumentFormat } from "./document-body";
-import { locateTexRoot, traverseInputGraph } from "./source-graph";
+import { locateTexRoot, traverseInputGraph, orderedSourceRanges } from "./source-graph";
 import { normalizeTeXInputPath } from "./source-bundle-format";
 import {
-  detachSectionFile,
   hashFile,
   patchSectionHeadingFile,
   patchSectionTitleFile,
-  requireManagedManuscript,
-  safeSectionFilename,
-  sectionInputLine,
   withPaperStructureLock,
-  writeNewSectionFile,
 } from "./structural-edits";
 import { escapeTexText, paperTitleCommand } from "./tex-encode";
 import { resolveProjectAsset, ASSET_EXTENSIONS } from "./asset-resolver";
@@ -76,6 +70,10 @@ export interface PaperSection extends SectionMeta {
   file: string;
   tex: string;
   hash: string;
+  from?: number;
+  bodyFrom?: number;
+  to?: number;
+  sourceHash?: string;
 }
 
 export interface TexPaper {
@@ -358,24 +356,17 @@ export function readTexPaper(projectDir: string, projectId: string, title: strin
   const rootSource = fs.readFileSync(paths.paperFile, "utf8");
   const documentTitle = readTexDocumentTitle(rootSource) || title;
   const graph = traverseInputGraph(paths.manuscriptDir, path.relative(paths.manuscriptDir, paths.paperFile));
-  const sections: PaperSection[] = [];
-  for (const node of graph.nodes) {
-    if (!node.editable) continue;
-    try {
-      const section = readPaperSection(node.absPath);
-      sections.push(node.appendix ? { ...section, appendix: true } : section);
-    } catch {
-      // Include-graph files without a complete envelope stay diagnostics, not sections.
+  const sections = graph.nodes.filter(node => node.editable).flatMap(node =>
+    readPaperSections(node.absPath, node.filePath).map(section => ({ ...section, ...(node.appendix ? { appendix: true } : {}) })),
+  );
+  const order = new Map<string, number>();
+  for (const range of orderedSourceRanges(graph)) {
+    for (const section of sections) {
+      if (section.file === range.node.absPath && section.from! >= range.from && section.from! < range.to && !order.has(section.id)) order.set(section.id, order.size);
     }
   }
-  if (!sections.length) {
-    for (const file of listSectionFiles(paths.sectionsDir)) {
-      const source = fs.readFileSync(file, "utf8");
-      if (!/^%\s*OB-SECTION\s+\{/m.test(source)) continue;
-      sections.push(readPaperSection(file));
-    }
-    sections.sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-  }
+  sections.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  sections.forEach((section, index) => { section.order = index; });
   // Keep the established expanded paper view for paper analysis and MCP draft
   // consumers. Preserve the declared root bytes alongside it so callers that
   // edit the manuscript source can use the real file through SourceBundle.
@@ -390,17 +381,18 @@ export function readTexPaper(projectDir: string, projectId: string, title: strin
   };
 }
 
-export function readPaperSection(file: string): PaperSection {
+export function readPaperSections(file: string, filePath = path.basename(file)): PaperSection[] {
   const source = fs.readFileSync(file, "utf8");
-  const meta = parseSectionMeta(source);
-  const block = getEditBlock(source, meta.id);
-  if (!block || block.schema !== TEX_SCHEMAS.markdown) {
-    throw new Error(`${file} is missing ${TEX_SCHEMAS.markdown} editable block ${meta.id}.`);
-  }
-  // Older managed manuscripts predate the appendix flag. Their explicit
-  // Appendix section title still gives an unambiguous and portable marker.
-  const appendix = meta.appendix || normalizeTitle(meta.title) === "appendix";
-  return { ...meta, ...(appendix ? { appendix: true } : {}), file, tex: block.body, hash: block.hash };
+  return deriveSections(source, filePath).map(({ heading, ...section }) => {
+    const tex = stripSectionComments(source.slice(section.bodyFrom, section.to));
+    return { ...section, file, tex, hash: sha256(`${section.id}\0${source}`), sourceHash: sha256(source) };
+  });
+}
+
+export function readPaperSection(file: string): PaperSection {
+  const section = readPaperSections(file)[0];
+  if (!section) throw new Error(`No LaTeX heading in ${file}.`);
+  return section;
 }
 
 export interface PaperSectionPatch {
@@ -416,30 +408,17 @@ function paperWriteLockFile(projectDir: string): string {
 }
 
 function withPaperLock<T>(projectDir: string, operation: () => T): T {
-  return withWriteLock(paperWriteLockFile(projectDir), operation);
+  return withPaperStructureLock(paperWriteLockFile(projectDir), operation);
 }
 
-function applySectionPatch(section: PaperSection, patch: PaperSectionPatch): void {
-  const nextLevel = (patch.level ?? section.level) as SectionMeta["level"];
-  const nextAppendix = patch.appendix ?? section.appendix;
-  if (nextLevel !== section.level || Boolean(nextAppendix) !== Boolean(section.appendix)) {
-    const source = fs.readFileSync(section.file, "utf8");
-    const meta: SectionMeta = {
-      id: section.id,
-      title: section.title,
-      level: nextLevel,
-      order: section.order,
-      label: section.label,
-      ...(nextAppendix ? { appendix: true } : {}),
-    };
-    const withMeta = source.replace(/^%\s*OB-SECTION\s+\{.*\}\s*$/m, serializeSectionMeta(meta).trimEnd());
-    const withHeading = withMeta.replace(
-      /^\\(section|subsection|subsubsection|paragraph|subparagraph)(\*)?\{/m,
-      `\\${sectionCommandForLevel(nextLevel)}$2{`,
-    );
-    writeTextAtomic(section.file, withHeading);
+function applySectionPatch(source: string, section: PaperSection, patch: PaperSectionPatch): string {
+  let next = `${source.slice(0, section.bodyFrom)}\n${normalizeTexBody(patch.tex)}${source.slice(section.to)}`;
+  if (patch.level !== undefined && patch.level !== section.level) {
+    const from = section.from!;
+    next = next.slice(0, from) + next.slice(from).replace(/^\\(?:section|subsection|subsubsection|paragraph|subparagraph)/,
+      `\\${sectionCommandForLevel(patch.level)}`);
   }
-  writeEditBlock(section.file, section.id, section.hash, patch.tex);
+  return next;
 }
 
 export function patchPaperSection(
@@ -467,8 +446,16 @@ export function patchPaperSections(projectDir: string, patches: PaperSectionPatc
       }
       return { section, patch };
     });
-    for (const { section, patch } of current) applySectionPatch(section, patch);
-    return current.map(({ section }) => readPaperSection(section.file));
+    const files = new Map<string, string>();
+    for (const { section, patch } of [...current].sort((a, b) => b.section.from! - a.section.from!)) {
+      const source = files.get(section.file) ?? fs.readFileSync(section.file, "utf8");
+      files.set(section.file, applySectionPatch(source, section, patch));
+    }
+    for (const [file, source] of files) writeTextAtomic(file, stripSectionComments(source));
+    for (const { section, patch } of current) {
+      if (patch.appendix !== undefined && Boolean(section.appendix) !== patch.appendix) patchAppendixMode(projectDir, section.id, patch.appendix);
+    }
+    return current.map(({ section }) => findPaperSection(projectDir, section.id)!);
   });
 }
 
@@ -514,17 +501,41 @@ export function replacePaperTex(projectDir: string, projectId: string, title: st
 }
 
 export function findPaperSection(projectDir: string, id: string): PaperSection | null {
-  const safeId = safeFileSegment(id, "section id");
   const paths = texPaths(projectDir);
   const graph = traverseInputGraph(paths.manuscriptDir, path.relative(paths.manuscriptDir, paths.paperFile));
   for (const node of graph.nodes) {
-    if (!node.editable || !/^%\s*OB-SECTION\s+\{/m.test(node.source)) continue;
-    const file = node.absPath;
-    const source = node.source;
-    const meta = parseSectionMeta(source);
-    if (meta.id === safeId) return readPaperSection(file);
+    if (!node.editable) continue;
+    const section = readPaperSections(node.absPath, node.filePath).find(section => section.id === id);
+    if (section) return node.appendix ? { ...section, appendix: true } : section;
   }
   return null;
+}
+
+/** Appendix mode is represented by the manuscript's ordinary LaTeX command. */
+function patchAppendixMode(projectDir: string, id: string, enabled: boolean): void {
+  const paths = texPaths(projectDir);
+  const section = findPaperSection(projectDir, id);
+  if (!section) throw new Error(`Unknown paper section: ${id}`);
+  if (Boolean(section.appendix) === enabled) return;
+  if (enabled) {
+    const source = fs.readFileSync(section.file, "utf8");
+    writeTextAtomic(section.file, source.slice(0, section.from) + "\\appendix\n" + source.slice(section.from));
+    return;
+  }
+  const graph = traverseInputGraph(paths.manuscriptDir, path.relative(paths.manuscriptDir, paths.paperFile));
+  let command: { file: string; from: number; to: number } | undefined;
+  for (const range of orderedSourceRanges(graph)) {
+    const target = range.node.absPath === section.file && section.from! >= range.from && section.from! < range.to;
+    const text = range.node.source.slice(range.from, target ? section.from : range.to);
+    for (const match of text.matchAll(/^[\t ]*\\appendix\b[\t ]*(?:\r?\n)?/gm)) {
+      command = { file: range.node.absPath, from: range.from + match.index!, to: range.from + match.index! + match[0].length };
+    }
+    if (target) break;
+  }
+  if (command) {
+    const source = fs.readFileSync(command.file, "utf8");
+    writeTextAtomic(command.file, source.slice(0, command.from) + source.slice(command.to));
+  }
 }
 
 function requirePaper(projectDir: string, title: string): TexPaper {
@@ -536,17 +547,14 @@ function requirePaper(projectDir: string, title: string): TexPaper {
 export function renamePaperSection(projectDir: string, title: string, id: string, nextTitle: string): TexPaper {
   const trimmed = nextTitle.trim();
   if (!trimmed) throw new Error("Section title cannot be empty.");
-  const allowed = requireManagedManuscript(texPaths(projectDir).manuscriptDir);
-  if (!allowed.ok) throw new Error(allowed.message);
   const paths = texPaths(projectDir);
   return withPaperStructureLock(paperWriteLockFile(projectDir), () => {
     const section = findPaperSection(projectDir, id);
     if (!section) throw new Error(`Unknown paper section: ${id}`);
     const styBefore = hashFile(paths.styleFile);
-    const rootBefore = fs.readFileSync(paths.paperFile);
-    patchSectionTitleFile(section.file, trimmed, section.level);
+    patchSectionTitleFile(section.file, trimmed, section.level, section.from);
     if (hashFile(paths.styleFile) !== styBefore) throw new Error("Rename must not rewrite openbarry.sty.");
-    if (!fs.readFileSync(paths.paperFile).equals(rootBefore)) throw new Error("Rename must not rewrite paper.tex.");
+
     return requirePaper(projectDir, title);
   });
 }
@@ -557,8 +565,6 @@ export function setPaperSectionHeading(
   id: string,
   heading: { level?: number; appendix?: boolean },
 ): TexPaper {
-  const allowed = requireManagedManuscript(texPaths(projectDir).manuscriptDir);
-  if (!allowed.ok) throw new Error(allowed.message);
   return withPaperStructureLock(paperWriteLockFile(projectDir), () => {
     const section = findPaperSection(projectDir, id);
     if (!section) throw new Error(`Unknown paper section: ${id}`);
@@ -566,7 +572,8 @@ export function setPaperSectionHeading(
     patchSectionHeadingFile(section.file, {
       level: resolvedLevel,
       appendix: heading.appendix ?? section.appendix,
-    });
+    }, section.from);
+    if (heading.appendix !== undefined) patchAppendixMode(projectDir, id, heading.appendix);
     return requirePaper(projectDir, title);
   });
 }
@@ -576,112 +583,29 @@ export function addPaperSection(
   title: string,
   spec: { title: string; afterId?: string; level?: number; appendix?: boolean },
 ): TexPaper {
-  const allowed = requireManagedManuscript(texPaths(projectDir).manuscriptDir);
-  if (!allowed.ok) throw new Error(allowed.message);
-  const paths = texPaths(projectDir);
   return withPaperStructureLock(paperWriteLockFile(projectDir), () => {
     const paper = requirePaper(projectDir, title);
-    const afterIndex = spec.afterId
-      ? paper.sections.findIndex((section) => section.id === spec.afterId)
-      : paper.sections.length - 1;
-    if (spec.afterId && afterIndex < 0) throw new Error(`Unknown paper section: ${spec.afterId}`);
-    const graph = traverseInputGraph(paths.manuscriptDir, path.relative(paths.manuscriptDir, paths.paperFile));
-    const refs = sectionIncludeReferences(paths.manuscriptDir, graph, paper.sections);
-    const anchor = refs
-      .filter((ref) => ref.id === (spec.afterId || paper.sections.at(-1)?.id))
-      .at(-1);
-    if (!anchor) {
-      throw new TexEnvelopeError("Could not locate a literal include line for the requested section insertion.");
-    }
-    const sectionTitle = spec.title.trim() || "New section";
-    const level = (spec.level ?? 2) as SectionMeta["level"];
-    const styBefore = hashFile(paths.styleFile);
-    const id = `sec-${Date.now().toString(36)}`;
-    let filename = `${String(afterIndex + 2).padStart(2, "0")}-${safeSectionFilename(sectionTitle, id)}.tex`;
-    let collision = 2;
-    while (fs.existsSync(path.join(paths.sectionsDir, filename))) {
-      filename = `${String(afterIndex + 2).padStart(2, "0")}-${safeSectionFilename(sectionTitle, id)}-${collision}.tex`;
-      collision += 1;
-    }
-    const file = path.join(paths.sectionsDir, filename);
-    writeNewSectionFile(file, {
-      id,
-      title: sectionTitle,
-      level,
-      order: afterIndex + 1,
-      label: id,
-      ...(spec.appendix ? { appendix: true } : {}),
-    });
-    try {
-      const ownerSource = fs.readFileSync(anchor.owner, "utf8");
-      const newline = ownerSource.includes("\r\n") ? "\r\n" : "\n";
-      const ownerLines = ownerSource.split(/\r?\n/);
-      const insertLines = [
-        ...(spec.appendix && !ownerLines.slice(anchor.lineIndex + 1).some((line) => /^\s*\\appendix\b/.test(line)) ? ["\\appendix"] : []),
-        sectionInputLine(path.relative(paths.manuscriptDir, file).split(path.sep).join("/")),
-      ];
-      ownerLines.splice(anchor.lineIndex + 1, 0, ...insertLines);
-      writeTextAtomic(anchor.owner, ownerLines.join(newline));
-      if (hashFile(paths.styleFile) !== styBefore) throw new Error("Add-section must not rewrite openbarry.sty.");
-      return requirePaper(projectDir, title);
-    } catch (error) {
-      try {
-        if (fs.existsSync(file)) fs.unlinkSync(file);
-      } catch {
-        // Preserve the original structural error. The new file remains in the
-        // managed sections directory for manual recovery if cleanup fails.
-      }
-      throw error;
-    }
+    const anchor = spec.afterId ? paper.sections.find(section => section.id === spec.afterId) : paper.sections.at(-1);
+    if (spec.afterId && !anchor) throw new Error(`Unknown paper section: ${spec.afterId}`);
+    const file = anchor?.file || texPaths(projectDir).paperFile;
+    const source = fs.readFileSync(file, "utf8");
+    const at = anchor?.to ?? source.search(/\\end\s*\{document\}/);
+    const offset = at < 0 ? source.length : at;
+    const text = `\n${spec.appendix ? "\\appendix\n" : ""}\\${sectionCommandForLevel(spec.level ?? 2)}{${escapeTexText(spec.title.trim() || "New section")}}\n\n`;
+    writeTextAtomic(file, stripSectionComments(source.slice(0, offset) + text + source.slice(offset)));
+    return requirePaper(projectDir, title);
   });
 }
 
 export function removePaperSection(projectDir: string, title: string, id: string): TexPaper {
-  const allowed = requireManagedManuscript(texPaths(projectDir).manuscriptDir);
-  if (!allowed.ok) throw new Error(allowed.message);
-  const paths = texPaths(projectDir);
   return withPaperStructureLock(paperWriteLockFile(projectDir), () => {
     const paper = requirePaper(projectDir, title);
     if (paper.sections.length <= 1) throw new Error("A paper needs at least one section.");
-    const section = paper.sections.find((item) => item.id === id);
+    const section = paper.sections.find(section => section.id === id);
     if (!section) throw new Error(`Unknown paper section: ${id}`);
-    const styBefore = hashFile(paths.styleFile);
-    const graph = traverseInputGraph(paths.manuscriptDir, path.relative(paths.manuscriptDir, paths.paperFile));
-    const refs = sectionIncludeReferences(paths.manuscriptDir, graph, paper.sections).filter((ref) => ref.id === id);
-    if (!refs.length) throw new TexEnvelopeError(`Could not locate an include line for section "${id}".`);
-    const byOwner = new Map<string, number[]>();
-    for (const ref of refs) byOwner.set(ref.owner, [...(byOwner.get(ref.owner) || []), ref.lineIndex]);
-    const originalOwners = new Map([...byOwner.keys()].map((owner) => [owner, fs.readFileSync(owner, "utf8")]));
-    let detachedFile: string | null = null;
-    try {
-      for (const [owner, lineIndexes] of byOwner) {
-        const source = originalOwners.get(owner)!;
-        const newline = source.includes("\r\n") ? "\r\n" : "\n";
-        const lines = source.split(/\r?\n/);
-        for (const lineIndex of [...lineIndexes].sort((a, b) => b - a)) lines.splice(lineIndex, 1);
-        writeTextAtomic(owner, lines.join(newline));
-      }
-      detachedFile = detachSectionFile(section.file, path.join(path.dirname(paths.buildDir), "detached"));
-      if (hashFile(paths.styleFile) !== styBefore) throw new Error("Remove-section must not rewrite openbarry.sty.");
-      return requirePaper(projectDir, title);
-    } catch (error) {
-      for (const [owner, source] of originalOwners) {
-        try {
-          writeTextAtomic(owner, source);
-        } catch {
-          // Keep the original error visible. The lock and detached copy keep
-          // the remaining state inspectable for recovery.
-        }
-      }
-      if (detachedFile && !fs.existsSync(/*turbopackIgnore: true*/ section.file) && fs.existsSync(/*turbopackIgnore: true*/ detachedFile)) {
-        try {
-          fs.renameSync(detachedFile, section.file);
-        } catch {
-          // Keep the detached copy if restoration cannot complete.
-        }
-      }
-      throw error;
-    }
+    const source = fs.readFileSync(section.file, "utf8");
+    writeTextAtomic(section.file, stripSectionComments(source.slice(0, section.from) + source.slice(section.to)));
+    return requirePaper(projectDir, title);
   });
 }
 
@@ -709,10 +633,9 @@ export function writePaperProject(
     const bodyTex = section.tex.trim().replace(/^\\appendix\b\s*/u, "");
     const command = sectionCommandForLevel(section.level);
     const content = [
-      serializeSectionMeta({ ...section, ...(appendix ? { appendix: true } : {}) }),
       `\\${command}{${escapeTexText(section.title)}}`,
       `\\label{${section.label}}`,
-      serializeEditBlock(TEX_SCHEMAS.markdown, section.id, bodyTex).trimEnd(),
+      bodyTex,
       "",
     ].join("\n");
     writeTextAtomic(file, content);
@@ -1190,56 +1113,6 @@ function listSectionFiles(dir: string): string[] {
   } catch {
     return [];
   }
-}
-
-type SectionIncludeReference = { id: string; owner: string; lineIndex: number };
-
-function sectionIncludeReferences(
-  manuscriptDir: string,
-  graph: ReturnType<typeof traverseInputGraph>,
-  sections: PaperSection[],
-): SectionIncludeReference[] {
-  const root = (() => {
-    try {
-      return fs.realpathSync.native(path.resolve(manuscriptDir));
-    } catch {
-      return path.resolve(manuscriptDir);
-    }
-  })();
-  const targets = new Map<string, string>();
-  for (const section of sections) {
-    try {
-      targets.set(fs.realpathSync.native(section.file), section.id);
-    } catch {
-      // The section will be reported as missing by the enclosing structural operation.
-    }
-  }
-  const refs: SectionIncludeReference[] = [];
-  for (const node of graph.nodes) {
-    const lines = node.source.split(/\r?\n/);
-    lines.forEach((line, lineIndex) => {
-      const raw = /^\s*\\(?:input|include)\s*\{([^}]+)\}/.exec(line)?.[1]?.trim();
-      if (!raw || /[\\#]/.test(raw)) return;
-      const input = normalizeTeXInputPath(raw);
-      const candidates = [
-        path.resolve(path.dirname(node.absPath), input),
-        path.resolve(root, input),
-      ];
-      for (const candidate of candidates) {
-        try {
-          const real = fs.realpathSync.native(candidate);
-          const relative = path.relative(root, real);
-          if (relative.startsWith("..") || path.isAbsolute(relative)) return;
-          const id = targets.get(real);
-          if (id) refs.push({ id, owner: node.absPath, lineIndex });
-          return;
-        } catch {
-          // Try the manuscript-root candidate next.
-        }
-      }
-    });
-  }
-  return refs;
 }
 
 function clearTexFiles(dir: string): void {

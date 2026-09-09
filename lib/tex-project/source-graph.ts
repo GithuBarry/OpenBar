@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { discoverTexHeadings } from "./tex-structure";
 import { sha256 } from "./codec";
 import { isEnvironment, isMacro, mandatoryArgs, nodesToPlainText, parseTex } from "./tex-ast";
 
@@ -64,7 +65,7 @@ function classify(rel: string, hasSectionMeta: boolean): GraphNode["kind"] {
 function classifyResolvedFile(rel: string, absPath: string): GraphNode["kind"] {
   let sectionMeta = false;
   try {
-    sectionMeta = hasObSection(fs.readFileSync(absPath, "utf8"));
+    sectionMeta = hasTexSections(fs.readFileSync(absPath, "utf8"));
   } catch {
     // The child visit reports the read failure with the file path.
   }
@@ -175,8 +176,8 @@ function walkIncludes(source: string): IncludeReference[] {
   return fallback;
 }
 
-function hasObSection(source: string): boolean {
-  return /^%\s*OB-SECTION\s+\{/m.test(source);
+function hasTexSections(source: string): boolean {
+  return discoverTexHeadings(source).length > 0;
 }
 
 function stripTexComments(source: string): string {
@@ -315,7 +316,7 @@ export function traverseInputGraph(manuscriptDir: string, rootFile?: string): {
       return;
     }
     const rel = posixRel(realRoot, real);
-    const sectionMeta = hasObSection(source);
+    const sectionMeta = hasTexSections(source);
     const kind = isRoot ? "root" : classify(rel, sectionMeta);
     const node: GraphNode = {
       // Keep the relative path itself as the identity. A punctuation-to-dash
@@ -378,7 +379,7 @@ export function inspectRepository(manuscriptDir: string): {
   diagnostics: SourceDiagnostic[];
 } {
   const graph = traverseInputGraph(manuscriptDir);
-  const managed = graph.nodes.filter((node) => node.kind === "section");
+  const managed = graph.nodes.filter((node) => node.editable && discoverTexHeadings(node.source).length > 0);
   return {
     migrationRequired: managed.length === 0,
     rootFile: graph.rootFile,
@@ -491,4 +492,33 @@ export function expandIncludesForConversion(manuscriptDir: string, rootFile?: st
   };
 
   return { source: expandFile(rootAbs, new Set()), diagnostics };
+}
+
+/** Text ranges in LaTeX include order, retaining each owning file's offsets. */
+export function orderedSourceRanges(graph: ReturnType<typeof traverseInputGraph>): Array<{ node: GraphNode; from: number; to: number }> {
+  const result: Array<{ node: GraphNode; from: number; to: number }> = [];
+  const root = graph.nodes.find(node => node.kind === "root");
+  if (!root) return result;
+  const manuscriptDir = path.resolve(root.absPath, ...graph.rootFile.split("/").map(() => ".."));
+  const byPath = new Map(graph.nodes.map(node => [node.absPath, node]));
+  const active = new Set<string>();
+  const walk = (node: GraphNode) => {
+    if (active.has(node.absPath) || !node.editable) return;
+    active.add(node.absPath);
+    let from = 0;
+    for (const include of walkIncludes(node.source)) {
+      if (include.dynamic) continue;
+      const resolved = resolveInput(manuscriptDir, node.absPath, include.raw);
+      let child: GraphNode | undefined;
+      try { child = resolved ? byPath.get(fs.realpathSync.native(resolved)) : undefined; } catch { /* graph reports missing files */ }
+      if (!child?.editable) continue;
+      result.push({ node, from, to: include.from });
+      walk(child);
+      from = include.to;
+    }
+    result.push({ node, from, to: node.source.length });
+    active.delete(node.absPath);
+  };
+  walk(root);
+  return result;
 }

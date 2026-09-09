@@ -1,3 +1,4 @@
+import { bundleSections, deriveSections } from "@/lib/tex-project/section-ranges";
 import { findMacroMatches, parseAnchorAttrs } from "@/lib/marker-codec";
 import { analyzePaper } from "@/lib/research/paper-analysis";
 import {
@@ -96,68 +97,18 @@ export interface ParsedEditorSections {
   error?: string;
 }
 
-interface HeadingHit {
-  index: number;
-  level: number;
-  title: string;
-  command: string;
-  appendix?: boolean;
-}
-
-function collectHeadings(lines: string[]): HeadingHit[] {
-  let appendix = false;
-  return lines.flatMap((line, index) => {
-    if (/^\\appendix\b/.test(line.trim())) {
-      appendix = true;
-      return [];
-    }
-    const match = TEX_HEADING_LINE.exec(line);
-    if (!match) return [];
-    return [{
-      index,
-      command: match[1]!,
-      level: texHeadingLevel(match[1]!),
-      title: normalizeHeadingTitle(match[2]!),
-      ...(appendix ? { appendix: true } : {}),
-    }];
-  });
-}
-
-/**
- * Parse only the declared section slots. Nested headings stay in the body
- * of their parent section. Matching by occurrence and id keeps duplicate
- * titles aligned without relying on a colliding slug.
- */
+/** Recompute editor sections from the current LaTeX and file addresses. */
 export function parseEditorSections(source: string, expected: PaperEditorSection[]): ParsedEditorSections {
-  const lines = source.replace(/\r\n/g, "\n").split("\n");
-  const headings = collectHeadings(lines);
-  const documentTitle = readTexDocumentTitle(source);
-  if (!documentTitle) {
-    return { sections: [], error: "Save blocked: the source needs a \\title{...} command." };
-  }
-
-  const sections: ParsedEditorSection[] = [];
-  let cursor = 0;
-  for (const original of expected) {
-    const heading = headings.find((candidate) =>
-      candidate.index >= cursor
-      && candidate.command !== "title"
-      && candidate.title === normalizeHeadingTitle(original.title),
-    );
-    if (!heading) {
-      return { sections: [], error: "Save blocked: section headings or order changed. Use a structural section action." };
-    }
-    const end = headings.find((candidate) => candidate.index > heading.index && candidate.level <= heading.level)?.index ?? lines.length;
-    sections.push({
-      id: original.id,
-      title: original.title,
-      level: heading.level,
-      tex: lines.slice(heading.index + 1, end).filter((line) => !isPaperChromeLine(line)).join("\n").trim(),
-      ...(heading.appendix ? { appendix: true } : {}),
-    });
-    cursor = end;
-  }
-  return { title: documentTitle, sections };
+  const sections = bundleSections(source);
+  const derived = sections.length ? sections : deriveSections(source);
+  return {
+    title: readTexDocumentTitle(source) || undefined,
+    sections: derived.map(section => ({
+      id: section.id, title: section.title, level: section.level,
+      tex: source.slice(section.bodyFrom, section.to),
+      ...(section.appendix ? { appendix: true } : {}),
+    })),
+  };
 }
 
 export function headingCountsFrom(source: string): Map<string, number> {

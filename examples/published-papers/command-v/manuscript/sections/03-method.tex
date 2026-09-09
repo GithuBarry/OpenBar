@@ -1,8 +1,6 @@
-% OB-SECTION {"id":"method","label":"sec-method","level":2,"order":3,"title":"Computing and Using Activation Profiles"}
 
 \section{Computing and Using Activation Profiles}
 \label{sec-method}
-% OB-EDIT-BEGIN openbarry/markdown@1 id=method
 Let $M$ denote a transformer LLM with layers $L_m$ and hidden states $h_m^{\ell}\in\mathbb{R}^{d_m}$.
 \cmdv{} uses three models: the donor $M_D$, a finetuned donor $M_{D'}$ that differs only by residual interventions, and the recipient $M_R$.
 Let $P=\{p_1,\ldots,p_N\}$ be a set of prompts.
@@ -67,4 +65,3 @@ h^{{\ell_R},\mathrm{intervened}}=h^{\ell_R}+C_{D\to R}\bigl(\Delta I^{\ell_D}(C_
 \end{equation}
 If profiles already exist, an edge device can apply an 8B adapter to a 3B model without downloading the 8B weights.
 Even when profiles must be built, the pass skips decoding and uses less peak memory than generation.
-% OB-EDIT-END id=method

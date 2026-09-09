@@ -1,11 +1,4 @@
-/**
- * Source-native TeX structure inspection.
- *
- * OpenBar envelopes provide stable write boundaries, but they are not the
- * manuscript's structural grammar. The outline and environment diagnostics
- * below come from TeX commands, with a small lexical recovery path for
- * malformed input that a full TeX AST cannot represent.
- */
+/** LaTeX headings and environment inspection with recovery for incomplete input. */
 
 import { macroName, mandatoryArgs, nodesToPlainText, parseTex } from "./tex-ast";
 import { plainHeadingTitle, texHeadingLevel } from "./paper-compose";
@@ -85,7 +78,9 @@ function fallbackHeadingId(filePath: string, index: number, title: string): stri
 function regexHeadings(source: string): TexHeading[] {
   const result: TexHeading[] = [];
   const pattern = /\\(section|subsection|subsubsection|paragraph|subparagraph)\*?(?:\s*\[[^\]\n]*\])?\s*\{([^{}\n]*)\}/g;
-  for (const match of source.matchAll(pattern)) {
+  const visible = withoutComments(source).replace(/\\begin\s*\{(verbatim|Verbatim|lstlisting|minted|alltt)\}[\s\S]*?(?:\\end\s*\{\1\}|$)/g,
+    match => match.replace(/[^\n]/g, " "));
+  for (const match of visible.matchAll(pattern)) {
     const start = match.index ?? 0;
     const line = source.slice(0, start).split("\n").length;
     const title = plainHeadingTitle(match[2] || "").trim();
@@ -110,6 +105,9 @@ export function discoverTexHeadings(source: string, filePath = "paper.tex"): Tex
   const visit = (nodes: unknown[]) => {
     for (const node of nodes) {
       const name = macroName(node);
+      const record = node as { type?: string; env?: string };
+      if (record.type === "verbatim_environment" || (record.env && VERBATIM_ENVIRONMENTS.has(record.env))) continue;
+      if (name && /^(?:newcommand|renewcommand|providecommand|DeclareRobustCommand|def|gdef|edef|xdef)$/.test(name)) continue;
       if (name && HEADING_COMMANDS.has(name)) {
         const args = mandatoryArgs(node);
         const title = plainHeadingTitle(nodesToPlainText(args[0] || [])).trim();

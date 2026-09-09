@@ -14,7 +14,7 @@ async function main() {
   fs.mkdirSync(dir, { recursive: true })
   const now = new Date().toISOString()
   writeProjectRecord(dir, { id: project, slug: project, title: "Fixture", tagline: "", overview: "", createdAt: now, updatedAt: now, links: [] })
-  writePaperProject(dir, "Fixture", [{ id: "intro", title: "Introduction", order: 0, level: 1, label: "sec-intro", tex: String.raw`Text.
+  const paper = writePaperProject(dir, "Fixture", [{ id: "intro", title: "Introduction", order: 0, level: 1, label: "sec-intro", tex: String.raw`Text.
 \begin{tabular}{ll}
 Axis & Value \\
 One & \obmarker{pending} \\
@@ -54,9 +54,9 @@ One & \obmarker{pending} \\
     const secondImage = await executeMcpTool("patch_mindmap_node", { project, mapId: "draft", id: "root", expectedRevision: invalidMap.revision, refs: [{ kind: "figure", id: image.path }, { kind: "figure", id: "figures/other.png" }] }, { actor: "test" })
     assert.equal(secondImage.ok, false)
     await mapWrite("detach_mindmap_image", { id: "root", assetId: image.path })
-    const section = (await call("read_paper_section", { sectionId: "intro" })).section
-    await call("patch_paper_table", { sectionId: "intro", baseHash: section.hash, tableIndex: 0, row: 1, column: 1, tex: "42" })
-    const patched = (await call("read_paper_section", { sectionId: "intro" })).section
+    const section = (await call("read_paper_section", { sectionId: paper.sections[0]!.id })).section
+    await call("patch_paper_table", { sectionId: paper.sections[0]!.id, baseHash: section.hash, tableIndex: 0, row: 1, column: 1, tex: "42" })
+    const patched = (await call("read_paper_section", { sectionId: paper.sections[0]!.id })).section
     assert.match(patched.tex, /Axis & Value/)
     assert.match(patched.tex, /One & 42/)
     assert.match(patched.tex, /obtodo/)

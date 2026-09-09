@@ -1,8 +1,6 @@
-% OB-SECTION {"id":"introduction","label":"sec-introduction","level":2,"order":1,"title":"Introduction"}
 
 \section{Introduction}
 \label{sec-introduction}
-% OB-EDIT-BEGIN openbarry/markdown@1 id=introduction
 Various approaches for adjusting the behaviors of large language models---including supervised finetuning~\cite{hu2022lora}, instruction tuning~\cite{wei2021flan}, and reinforcement learning from human feedback~\cite{christiano2017}---are widely used in practice~\cite{xia2024}.
 Despite their effectiveness, these methods are costly, requiring specifically curated data and considerable computational resources.
 Moreover, existing approaches do not use the fact that many existing models already exhibit desirable behaviors, instead opting to train in these behaviors from scratch.
@@ -31,4 +29,3 @@ Our contributions:
 \end{enumerate}
 
 \obclaim{\cmdv{} matches or exceeds direct DiReFT on refusal, jailbreak, and auto-CoT while deriving converters in 6.35s on a laptop CPU and without the original training data.}
-% OB-EDIT-END id=introduction
