@@ -1129,8 +1129,6 @@ export function MindmapEditor({
     setMapSettingsOpen(false);
     if (additive) setCardMenuOpen(true);
     dispatch({ type: "select", id, additive });
-    const node = sessionRef.current.mindmap.nodes.find(card => card.id === id);
-    if (!additive && !readOnly && node && !node.todoId && !editableCardText(node).trim()) void startEditing(id);
   }
 
   function indentSelected() {
@@ -1279,6 +1277,7 @@ export function MindmapEditor({
 
   const save = useCallback((): Promise<void> | undefined => {
     if (webMcpSaveCountRef.current > 0) return webMcpSaveQueueRef.current;
+    if (saveInFlightRef.current) return saveInFlightRef.current;
     if (isPending) return saveInFlightRef.current || Promise.resolve();
     const snapshot = cloneMindmap(sessionRef.current.mindmap);
     const signature = mapSignature(snapshot);
@@ -2927,7 +2926,7 @@ function CanvasNode({
             </div>
           )}
           <div className="mindmap-node-meta">
-            {node.priority && <span aria-label={`Priority ${node.priority}`}>{node.priority}</span>}
+            {node.priority && <span className="mindmap-node-priority" data-priority={node.priority} aria-label={`Priority ${node.priority}`}>{node.priority}</span>}
             {activityLabel && <span>{activityLabel}</span>}
             {tags.slice(0, 2).map((tag) => <span className="mindmap-node-tag" key={tag}>{tag}</span>)}
             {tags.length > 2 && <span className="mindmap-node-tag">+{tags.length - 2}</span>}

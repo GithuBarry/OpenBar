@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { applyMindmapAction, createMindmapSession, mindmapReducer } from "../features/mindmap/mindmap-state"
+import { applyMindmapAction, createMindmapSession, mapSignature, mindmapReducer } from "../features/mindmap/mindmap-state"
 import { normalizeMindmap } from "../lib/mindmap/mindmap"
 import { mindmapNodeSchema } from "../lib/schemas"
 import { createMindmapWebMcpHarness, executeMindmapWebMcpTool } from "../lib/research/webmcp-mindmap-contract"
@@ -7,10 +7,15 @@ import type { Mindmap } from "../lib/types"
 
 async function main() {
   const initial: Mindmap = { projectId: "fixture", id: "draft", role: "draft", rootId: "root", updatedAt: new Date().toISOString(), nodes: [{ id: "root", parentId: null, text: "Root" }] }
-  const human = applyMindmapAction(initial, { type: "add-node", parentId: "root", id: "human" }).mindmap.nodes[1]
+  const humanMap = applyMindmapAction(initial, { type: "add-node", parentId: "root", id: "human" }).mindmap
+  const human = humanMap.nodes[1]
   assert.equal(human.title, "")
   assert.equal(human.text, "")
   assert.equal(human.agentDraft, undefined)
+  assert.equal(mapSignature(humanMap), mapSignature(normalizeMindmap(humanMap)))
+  const deletedHumanMap = applyMindmapAction(humanMap, { type: "delete-node-keep-children", id: "human" }).mindmap
+  assert.notEqual(mapSignature(deletedHumanMap), mapSignature(humanMap))
+  assert.equal(deletedHumanMap.nodes.some(node => node.id === "human"), false)
   let state = createMindmapSession(initial)
   state = mindmapReducer(state, { type: "add-node", parentId: "root", id: "agent", title: "A proposal", agentDraft: true })
   state = mindmapReducer(state, { type: "patch-node", id: "agent", patch: { title: "Updated proposal" } })

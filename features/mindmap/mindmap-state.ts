@@ -1,4 +1,5 @@
 import { byOrder, indexMindmap, type MindmapIndex } from "@/lib/mindmap-index";
+import { normalizeMindmap } from "@/lib/mindmap/mindmap";
 import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import type { Mindmap, MindmapNode } from "@/lib/types";
 
@@ -114,8 +115,26 @@ function splitCardText(value: string): { title: string; text: string } {
   return { title: value.slice(0, newline), text: value.slice(newline + 1) };
 }
 
+function stableSignatureValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableSignatureValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, child]) => child !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, stableSignatureValue(child)]),
+  );
+}
+
 export function mapSignature(mindmap: Mindmap): string {
-  return JSON.stringify({ projectId: mindmap.projectId, title: mindmap.title, fontSize: mindmap.fontSize, rootId: mindmap.rootId, nodes: mindmap.nodes });
+  const persistable = normalizeMindmap(mindmap);
+  return JSON.stringify(stableSignatureValue({
+    projectId: persistable.projectId,
+    title: persistable.title,
+    fontSize: persistable.fontSize,
+    rootId: persistable.rootId,
+    nodes: persistable.nodes,
+  }));
 }
 
 export function descendantsOf(mindmap: Mindmap, id: string, index = indexMindmap(mindmap)): Set<string> {
