@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { discoverTexHeadings } from "./tex-structure";
-import { sha256 } from "./codec";
+import { getDataBlock, sha256 } from "./codec";
 import { isEnvironment, isMacro, mandatoryArgs, nodesToPlainText, parseTex } from "./tex-ast";
 
 export type SourceDiagnostic = {
@@ -38,13 +38,17 @@ function posixRel(from: string, to: string): string {
   return path.relative(from, to).split(path.sep).join("/");
 }
 
-function resolveInput(manuscriptDir: string, parentAbs: string, raw: string): string | null {
+/**
+ * TeX is invoked with `cwd === manuscriptDir`. Ordinary `\input` and
+ * `\include` names therefore resolve from that directory, including when the
+ * invocation appears in a nested source file. Keep this policy in one place
+ * so graph traversal and compiler snapshots identify the same files.
+ */
+function resolveInput(manuscriptDir: string, _parentAbs: string, raw: string): string | null {
   const trimmed = raw.trim().replace(/^\{/, "").replace(/\}$/, "");
   if (!trimmed || /\\/.test(trimmed) || /#/.test(trimmed)) return null;
   const withExt = path.extname(trimmed) ? trimmed : `${trimmed}.tex`;
-  const fromParent = path.resolve(path.dirname(parentAbs), withExt);
   const fromRoot = path.resolve(manuscriptDir, withExt);
-  if (fs.existsSync(fromParent)) return fromParent;
   if (fs.existsSync(fromRoot)) return fromRoot;
   return fromRoot;
 }
@@ -52,6 +56,29 @@ function resolveInput(manuscriptDir: string, parentAbs: string, raw: string): st
 function isInside(root: string, candidate: string): boolean {
   const rel = path.relative(root, candidate);
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+function safeRootCandidate(root: string, candidate: string): string | null {
+  const normalized = candidate.trim().replace(/\\/g, "/");
+  if (!normalized || path.posix.isAbsolute(normalized) || /^[A-Za-z]:\//.test(normalized)) return null;
+  if (normalized.split("/").some((part) => part === "..")) return null;
+  const abs = path.resolve(root, normalized);
+  return isInside(root, abs) ? abs : null;
+}
+
+/** Return a configured root only when it currently exists as an in-root file. */
+export function existingConfiguredTexRoot(manuscriptDir: string, preferred: string): string | undefined {
+  const root = path.resolve(manuscriptDir);
+  const candidate = safeRootCandidate(root, preferred);
+  if (!candidate) return undefined;
+  try {
+    if (!fs.statSync(candidate).isFile()) return undefined;
+    const realRoot = fs.realpathSync.native(root);
+    const realCandidate = fs.realpathSync.native(candidate);
+    return isInside(realRoot, realCandidate) ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function classify(rel: string, hasSectionMeta: boolean): GraphNode["kind"] {
@@ -150,10 +177,11 @@ function walkIncludes(source: string): IncludeReference[] {
   const astFound = found;
   if (astFound.length) return astFound;
   const fallback: IncludeReference[] = [];
+  const codeSource = stripTexComments(source);
   let lineFrom = 0;
   let appendix = false;
   for (const line of source.split(/\n/)) {
-    const code = stripTexComments(line);
+    const code = codeSource.slice(lineFrom, lineFrom + line.length);
     const appendixAt = code.search(/\\appendix\b/);
     const includes = /\\(input|include)\s*\{([^{}]*)\}/g;
     let match: RegExpExecArray | null;
@@ -180,50 +208,114 @@ function hasTexSections(source: string): boolean {
   return discoverTexHeadings(source).length > 0;
 }
 
-function stripTexComments(source: string): string {
-  let output = "";
+function isEscaped(source: string, index: number): boolean {
   let backslashes = 0;
-  for (const char of source) {
-    if (char === "\\") {
-      backslashes += 1;
-      output += char;
-      continue;
-    }
-    if (char === "%" && backslashes % 2 === 0) {
-      while (output.length && output.at(-1) !== "\n") output = output.slice(0, -1);
-      backslashes = 0;
-      continue;
-    }
-    output += char;
-    backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && source[cursor] === "\\"; cursor -= 1) backslashes += 1;
+  return backslashes % 2 === 1;
+}
+
+function maskLiteralRange(output: string[], source: string, from: number, to: number): void {
+  for (let index = from; index < to; index += 1) {
+    if (source[index] !== "\r" && source[index] !== "\n") output[index] = " ";
   }
-  return output;
+}
+
+function environmentCommandAt(source: string, index: number, command: "begin" | "end"): { name: string; to: number } | undefined {
+  if (source[index] !== "\\" || isEscaped(source, index)) return undefined;
+  const match = new RegExp(`^\\\\${command}\\s*\\{([^}\\r\\n]+)\\}`).exec(source.slice(index));
+  const name = match?.[1]?.trim();
+  return name && match ? { name, to: index + match[0].length } : undefined;
+}
+
+function verbCommandEnd(source: string, index: number): number | undefined {
+  if (source[index] !== "\\" || isEscaped(source, index)) return undefined;
+  const prefix = /^\\verb\*?/.exec(source.slice(index));
+  if (!prefix) return undefined;
+  const delimiter = source[index + prefix[0].length];
+  if (!delimiter || delimiter === "\r" || delimiter === "\n") return undefined;
+  for (let cursor = index + prefix[0].length + 1; cursor < source.length; cursor += 1) {
+    if (source[cursor] === delimiter) return cursor + 1;
+    if (source[cursor] === "\r" || source[cursor] === "\n") return cursor;
+  }
+  return source.length;
+}
+
+function stripTexComments(source: string): string {
+  const output = source.split("");
+  let inComment = false;
+  let verbatimEnvironment: string | undefined;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index]!;
+    if (inComment) {
+      if (char === "\r" || char === "\n") inComment = false;
+      else output[index] = " ";
+      continue;
+    }
+    if (verbatimEnvironment) {
+      const end = environmentCommandAt(source, index, "end");
+      if (end?.name === verbatimEnvironment) {
+        maskLiteralRange(output, source, index, end.to);
+        index = end.to - 1;
+        verbatimEnvironment = undefined;
+      } else if (char !== "\r" && char !== "\n") {
+        output[index] = " ";
+      }
+      continue;
+    }
+    const begin = environmentCommandAt(source, index, "begin");
+    if (begin && VERBATIM_ENVS.has(begin.name)) {
+      maskLiteralRange(output, source, index, begin.to);
+      index = begin.to - 1;
+      verbatimEnvironment = begin.name;
+      continue;
+    }
+    const verbEnd = verbCommandEnd(source, index);
+    if (verbEnd !== undefined) {
+      maskLiteralRange(output, source, index, verbEnd);
+      index = verbEnd - 1;
+      continue;
+    }
+    if (char === "%" && !isEscaped(source, index)) {
+      output[index] = " ";
+      inComment = true;
+    }
+  }
+  return output.join("");
+}
+
+function configuredMainFile(manuscriptDir: string): string | undefined {
+  const recordFiles = [
+    path.join(manuscriptDir, ".OpenBar", "project.tex"),
+    path.join(manuscriptDir, "openbarry", "project.tex"),
+  ];
+  for (const file of recordFiles) {
+    try {
+      const source = fs.readFileSync(file, "utf8");
+      const record = getDataBlock<Record<string, unknown>>(source, "openbarry/project@1", "project")?.data;
+      const mainFile = typeof record?.mainFile === "string" ? record.mainFile.trim() : "";
+      if (mainFile) return mainFile;
+    } catch {
+      // Root discovery remains available for legacy or partially migrated projects.
+    }
+  }
+  return undefined;
 }
 
 export function locateTexRoot(manuscriptDir: string, preferred?: string): string {
   const root = path.resolve(manuscriptDir);
-  const safeCandidate = (candidate: string): string | null => {
-    const normalized = candidate.trim().replace(/\\/g, "/");
-    if (!normalized || path.posix.isAbsolute(normalized) || /^[A-Za-z]:\//.test(normalized)) return null;
-    if (normalized.split("/").some((part) => part === "..")) return null;
-    const abs = path.resolve(root, normalized);
-    return isInside(root, abs) ? abs : null;
-  };
   const existingFile = (candidate: string | null): string | null => {
-    if (!candidate || !fs.existsSync(candidate)) return null;
-    try {
-      if (!fs.statSync(candidate).isFile()) return null;
-      const realRoot = fs.realpathSync.native(root);
-      const realCandidate = fs.realpathSync.native(candidate);
-      return isInside(realRoot, realCandidate) ? candidate : null;
-    } catch {
-      return null;
-    }
+    return candidate ? existingConfiguredTexRoot(root, path.relative(root, candidate)) || null : null;
   };
-  const requested = existingFile(safeCandidate(preferred || ""));
+  const selected = preferred?.trim() || configuredMainFile(root) || "";
+  const selectedCandidate = safeRootCandidate(root, selected);
+  const requested = existingFile(selectedCandidate);
   if (requested) return requested;
+  // Preserve a valid configured address even while its file is missing. This
+  // gives graph and compile callers a stable missing-root diagnostic instead
+  // of silently switching to another manuscript entry point.
+  if (selectedCandidate) return selectedCandidate;
   for (const candidate of ["paper.tex", "main.tex", "ms.tex"]) {
-    const conventional = existingFile(safeCandidate(candidate));
+    const conventional = existingFile(safeRootCandidate(root, candidate));
     if (conventional) return conventional;
   }
   try {
@@ -231,7 +323,7 @@ export function locateTexRoot(manuscriptDir: string, preferred?: string): string
       .filter((file) => /\.(?:tex|ltx)$/i.test(file))
       .sort((a, b) => a.localeCompare(b));
     for (const file of rootFiles) {
-      const candidate = existingFile(safeCandidate(file));
+      const candidate = existingFile(safeRootCandidate(root, file));
       if (!candidate) continue;
       const source = stripTexComments(fs.readFileSync(/*turbopackIgnore: true*/ candidate, "utf8"));
       if (/\\documentclass\b/.test(source) || /\\begin\s*\{document\}/.test(source)) return candidate;
@@ -359,7 +451,9 @@ export function traverseInputGraph(manuscriptDir: string, rootFile?: string): {
     visiting.delete(real);
   };
 
-  if (!fs.existsSync(/*turbopackIgnore: true*/ rootAbs)) {
+  let rootIsFile = false;
+  try { rootIsFile = fs.statSync(/*turbopackIgnore: true*/ rootAbs).isFile(); } catch { /* graph reports a missing root */ }
+  if (!rootIsFile) {
     diagnostics.push({
       severity: "error",
       code: "missing_root",

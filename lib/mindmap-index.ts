@@ -29,12 +29,12 @@ export function persistableMindmapNode(node: MindmapNode): MindmapNode {
     text: node.todoId?.trim() ? "" : node.text,
     parentId: node.parentId,
   };
-  if (!node.todoId?.trim() && node.caption?.trim()) next.caption = node.caption.trim();
+  // Extended notes are map-owned context for ordinary and TODO-backed cards.
+  if (node.caption?.trim()) next.caption = node.caption.trim();
   if (!node.todoId?.trim() && node.title !== undefined) next.title = node.title;
   if (node.todoId?.trim()) next.todoId = node.todoId.trim();
   if (node.shape) next.shape = node.shape === "note" ? "leaf" : node.shape;
   if (node.agentDraft || node.shape === "note") next.agentDraft = true;
-  if (node.collapsed) next.collapsed = node.collapsed;
   if (node.metadata) next.metadata = node.metadata;
   if (node.contentFormat) next.contentFormat = node.contentFormat;
   if (node.tableLayout) next.tableLayout = node.tableLayout;

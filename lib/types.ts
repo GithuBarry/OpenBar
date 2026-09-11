@@ -55,7 +55,7 @@ export interface MindmapNode {
    * Empty on TODO cards — TeX owns the text.
    */
   text: string;
-  /** Model-facing context hidden from the rendered card. */
+  /** Map-owned model-facing context hidden from the rendered card, including on TODO cards. */
   caption?: string;
   /** When set, this card is a view of the TeX `\obtodo` with this id. */
   todoId?: string;
@@ -63,7 +63,6 @@ export interface MindmapNode {
   shape?: MindmapNodeShape;
   /** Agent-created card awaiting explicit human Save. */
   agentDraft?: boolean;
-  collapsed?: boolean;
   metadata?: Record<string, unknown>;
   contentFormat?: "plain" | "markdown" | "tex";
   /** Table presentation for Markdown cards. Wide is the default. */
@@ -77,7 +76,7 @@ export interface MindmapNode {
   refs?: ArtifactRef[];
   order?: number;
   createdAt?: string;
-  /** Last mindmap-owned content change (text, refs, progress, tags, metadata). */
+  /** Last mindmap-owned content change (text, caption, refs, progress, tags, metadata). */
   updatedAt?: string;
 }
 
@@ -113,6 +112,25 @@ export type ArtifactKind =
   | "web"
   | "external";
 
+export type PaperSectionRefContext = {
+  /** Source-graph file path relative to the manuscript root. */
+  file?: string;
+  /** Display heading captured with the reference. */
+  title?: string;
+  /** TeX heading level, from 1 through 6. */
+  level?: number;
+  /** Enclosing heading titles in source order. */
+  headingPath?: string[];
+  /** Hash of the section body, independent of its positional id. */
+  bodyHash?: string;
+  /** TeX label when one was present at the time of capture. */
+  label?: string;
+  /** Source-file hash and range captured for diagnostics and migration. */
+  sourceHash?: string;
+  sourceRange?: { from: number; to: number };
+  order?: number;
+};
+
 export interface ArtifactRef {
   /** Map-local image width as a percentage of the card content area. */
   imageWidth?: number;
@@ -120,6 +138,10 @@ export interface ArtifactRef {
   id: string;
   label?: string;
   url?: string;
+  /** Explicit map identity for mindmap-node references. */
+  mapId?: string;
+  /** Source-derived identity for durable paper-section references. */
+  sectionContext?: PaperSectionRefContext;
 }
 
 export interface WikiPage {

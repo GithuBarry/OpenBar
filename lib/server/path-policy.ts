@@ -41,6 +41,82 @@ export function isPathAllowed(filePath: string): boolean {
   return resolveAllowedPath(filePath) !== undefined;
 }
 
+function isWithinRoot(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(root + path.sep);
+}
+
+function existingComponentsStayInside(root: string, candidate: string): boolean {
+  let current = root;
+  const relative = path.relative(root, candidate);
+  if (!relative) return true;
+  for (const segment of relative.split(path.sep)) {
+    current = path.join(current, segment);
+    try {
+      fs.lstatSync(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+      return false;
+    }
+    try {
+      const resolved = fs.realpathSync.native(current);
+      if (!isWithinRoot(root, resolved)) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Resolve a project directory to the path used for confined operations. */
+export function resolveConfinedRoot(rootPath: string): string | undefined {
+  try {
+    const root = fs.realpathSync.native(path.resolve(rootPath));
+    return fs.statSync(root).isDirectory() ? root : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve a path under one project root while checking every existing link in
+ * the path. Missing descendants are allowed when the nearest existing parent
+ * resolves inside the root.
+ */
+export function resolveConfinedPath(
+  rootPath: string,
+  filePath: string,
+  options: { allowMissing?: boolean } = {},
+): string | undefined {
+  try {
+    const lexicalRoot = path.resolve(rootPath);
+    const root = resolveConfinedRoot(lexicalRoot);
+    if (!root) return undefined;
+
+    const lexicalPath = path.resolve(filePath);
+    if (!isWithinRoot(lexicalRoot, lexicalPath)) return undefined;
+    const candidate = path.resolve(root, path.relative(lexicalRoot, lexicalPath));
+
+    let candidateExists = true;
+    try {
+      fs.lstatSync(candidate);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
+      candidateExists = false;
+    }
+    if (!existingComponentsStayInside(root, candidate)) return undefined;
+    if (!candidateExists && !options.allowMissing) return undefined;
+
+    if (candidateExists) {
+      const resolvedCandidate = fs.realpathSync.native(candidate);
+      if (!isWithinRoot(root, resolvedCandidate)) return undefined;
+    }
+
+    return candidate;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Resolve a new path whose nearest existing parent is inside an allowed root. */
 export function resolveAllowedCreationPath(filePath: string): string | undefined {
   try {

@@ -32,6 +32,7 @@ RUN apt-get update \
   && useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin nextjs
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
 COPY examples/published-papers /opt/openbar-seed/published-papers
 COPY deploy/start-openbar.sh /app/deploy/start-openbar.sh
 RUN mkdir -p /data/openbar /app/.next /app/deploy \

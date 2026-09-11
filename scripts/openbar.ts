@@ -40,6 +40,28 @@ type RegistryDoctorSummary = {
   hash?: string;
 };
 
+const SUPPORTED_PRODUCT_INVENTORY_LABEL = "Supported product inventory: web content-store project inventory";
+const EXPERIMENTAL_REGISTRY_LABEL = "Experimental CLI inventory: workspace registry";
+const REGISTRY_INVENTORY_NOTE =
+  "Registry results are separate from web results until registration and web integration share one inventory.";
+const REGISTRY_INVENTORY_METADATA = {
+  source: "workspace-registry",
+  status: "experimental",
+  supportedProductInventory: "web content-store project inventory",
+  relationship: "separate-until-registration-and-web-integration-share-one-inventory",
+  note: REGISTRY_INVENTORY_NOTE,
+} as const;
+
+const CLI_USAGE = `Usage: openbar doctor --all [--json]
+       openbar doctor --repo <path> [--json]
+       openbar credentials list [--json]
+       openbar projects list [--json]
+
+Inventory policy:
+  ${SUPPORTED_PRODUCT_INVENTORY_LABEL}
+  ${EXPERIMENTAL_REGISTRY_LABEL}
+  ${REGISTRY_INVENTORY_NOTE}`;
+
 function parseArgs(args: string[]): ParsedArgs {
   const positionals: string[] = [];
   let json = false;
@@ -131,8 +153,8 @@ function duplicateOk(duplicates: WorkspaceRegistryDuplicates): boolean {
 }
 
 function inspectRegistry(paths: OpenBarPaths):
-  | { ok: boolean; registry: RegistryDoctorSummary; duplicates: WorkspaceRegistryDuplicates; checkouts: CheckoutReport[] }
-  | { ok: false; registry: RegistryDoctorSummary; error: "invalid_workspace_registry" } {
+  | { ok: boolean; inventory: typeof REGISTRY_INVENTORY_METADATA; registry: RegistryDoctorSummary; duplicates: WorkspaceRegistryDuplicates; checkouts: CheckoutReport[] }
+  | { ok: false; inventory: typeof REGISTRY_INVENTORY_METADATA; registry: RegistryDoctorSummary; error: "invalid_workspace_registry" } {
   try {
     const snapshot = readWorkspaceRegistrySnapshot(paths);
     const duplicates = findWorkspaceRegistryDuplicates(snapshot.registry);
@@ -143,6 +165,7 @@ function inspectRegistry(paths: OpenBarPaths):
     const ok = duplicateOk(duplicates) && checkouts.every((checkout) => checkout.exists && checkout.isGitRoot && !checkout.issue);
     return {
       ok,
+      inventory: REGISTRY_INVENTORY_METADATA,
       registry: {
         path: paths.workspaceFile,
         exists: snapshot.exists,
@@ -156,12 +179,18 @@ function inspectRegistry(paths: OpenBarPaths):
       checkouts,
     };
   } catch {
-    return { ok: false, registry: { path: paths.workspaceFile, exists: fs.existsSync(paths.workspaceFile), syntaxValid: false }, error: "invalid_workspace_registry" };
+    return { ok: false, inventory: REGISTRY_INVENTORY_METADATA, registry: { path: paths.workspaceFile, exists: fs.existsSync(paths.workspaceFile), syntaxValid: false }, error: "invalid_workspace_registry" };
   }
 }
 
 function projectList(registry: WorkspaceRegistryV1): Array<RegisteredProject> {
   return registry.projects.map((project) => ({ ...project }));
+}
+
+function printRegistryInventoryNotice(): void {
+  console.log(EXPERIMENTAL_REGISTRY_LABEL);
+  console.log(SUPPORTED_PRODUCT_INVENTORY_LABEL);
+  console.log(REGISTRY_INVENTORY_NOTE);
 }
 
 function credentialStatus(paths: OpenBarPaths) {
@@ -194,18 +223,25 @@ function printHuman(value: unknown): void {
     console.log(value);
     return;
   }
-  const result = value as { ok?: boolean; registry?: RegistryDoctorSummary; duplicates?: WorkspaceRegistryDuplicates; checkouts?: CheckoutReport[]; credentials?: ReturnType<typeof credentialStatus>; projects?: RegisteredProject[] };
+  const result = value as { ok?: boolean; registry?: RegistryDoctorSummary; duplicates?: WorkspaceRegistryDuplicates; checkouts?: CheckoutReport[]; checkout?: CheckoutReport; credentials?: ReturnType<typeof credentialStatus>; projects?: RegisteredProject[] };
   if (result.credentials) {
     console.log(`Credential profile file: ${result.credentials.exists ? "present" : "absent"}`);
     if (result.credentials.mode !== undefined) console.log(`Credential profile mode: ${result.credentials.mode.toString(8)}`);
     return;
   }
   if (result.projects) {
-    console.log(`Registered projects: ${result.projects.length}`);
+    printRegistryInventoryNotice();
+    console.log(`Workspace-registry projects: ${result.projects.length}`);
     for (const project of result.projects) console.log(`${project.id}: ${project.checkoutPath}`);
     return;
   }
+  if (result.checkout) {
+    console.log(`Repository: ${result.ok ? "healthy" : "needs attention"}`);
+    console.log(humanCheckout(result.checkout));
+    return;
+  }
   if (result.registry && result.duplicates && result.checkouts) {
+    printRegistryInventoryNotice();
     console.log(`Workspace registry: ${result.ok ? "healthy" : "needs attention"}`);
     console.log(`Projects: ${result.registry.projectCount || 0}, skill packs: ${result.registry.skillPackCount || 0}`);
     if (result.duplicates.projectIds.length || result.duplicates.skillPackIds.length || result.duplicates.checkoutPaths.length) {
@@ -216,6 +252,7 @@ function printHuman(value: unknown): void {
     for (const checkout of result.checkouts) console.log(humanCheckout(checkout));
     return;
   }
+  printRegistryInventoryNotice();
   console.log("Workspace registry: invalid syntax");
 }
 
@@ -225,7 +262,11 @@ function emit(value: unknown, json: boolean): void {
 }
 
 function usage(): never {
-  throw new Error("Usage: openbar doctor --all [--json] | openbar doctor --repo <path> [--json] | openbar credentials list [--json] | openbar projects list [--json]");
+  throw new Error(CLI_USAGE);
+}
+
+function printHelp(): void {
+  console.log(CLI_USAGE);
 }
 
 function runDoctor(args: string[], paths: OpenBarPaths): void {
@@ -235,7 +276,9 @@ function runDoctor(args: string[], paths: OpenBarPaths): void {
     const repositoryPath = parsed.positionals[2];
     if (!repositoryPath || parsed.positionals.length !== 3) usage();
     const checkout = inspectCheckout(repositoryPath, { kind: "repository" });
-    emit({ ok: checkout.exists && checkout.isGitRoot && !checkout.issue, checkout }, parsed.json);
+    const ok = checkout.exists && checkout.isGitRoot && !checkout.issue;
+    emit({ ok, checkout }, parsed.json);
+    if (!ok) process.exitCode = 1;
     return;
   }
   if (parsed.positionals[1] !== "--all" || parsed.positionals.length !== 2) usage();
@@ -256,12 +299,20 @@ function runProjects(args: string[], paths: OpenBarPaths): void {
   if (parsed.positionals.join(" ") !== "projects list") usage();
   const snapshot = readWorkspaceRegistrySnapshot(paths);
   const projects = projectList(snapshot.registry);
-  emit({ ok: true, projects, ...(snapshot.hash ? { hash: snapshot.hash } : {}) }, parsed.json);
+  emit({ ok: true, projects, inventory: REGISTRY_INVENTORY_METADATA, ...(snapshot.hash ? { hash: snapshot.hash } : {}) }, parsed.json);
 }
 
 function main(): void {
   const args = process.argv.slice(2);
   if (args[0] === "--") args.shift();
+  if (args[0] === "help" && args.length === 1) {
+    printHelp();
+    return;
+  }
+  if (args.includes("--help") || args.includes("-h")) {
+    printHelp();
+    return;
+  }
   const paths = openBarPaths();
   if (args[0] === "doctor") runDoctor(args, paths);
   else if (args[0] === "credentials") runCredentials(args, paths);

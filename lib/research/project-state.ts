@@ -14,7 +14,7 @@ import {
   type ProjectSkill,
 } from "@/lib/research/project-skills";
 import type { CurrentLocation, ProjectStateQuery } from "@/lib/research/webmcp-shared-contract";
-import { getEditableTexPaper, getMindmap, getProject, getWikiPage, listWiki, listMindmaps, projectContentDir } from "@/lib/store";
+import { getEditableTexPaper, getMindmap, getPaperEditorState, getProject, getWikiPage, listWiki, listMindmaps, projectContentDir } from "@/lib/store";
 import { DRAFT_MINDMAP_ID, texPaths, type PaperSection, type TexPaper } from "@/lib/tex-project/project";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import type { Mindmap, Project, WikiPage } from "@/lib/types";
@@ -31,6 +31,7 @@ import {
 } from "@/lib/research/todo-map";
 import { openBarExpectations, type OpenBarExpectations } from "@/lib/research/expectations";
 import { compactActivityChanges, compactActivityResources, readActivity, type ActivityEvent } from "@/lib/research/activity-log";
+import { decodePaperSectionFragment, resolveMindmapNodeRef, resolvePaperSectionRef, type PaperSectionRefTarget } from "@/lib/research/artifact-link";
 
 export type { CurrentLocation };
 
@@ -972,7 +973,21 @@ export function resolveProjectNavigation(slug: string, input: { id?: string; hre
   if (href) {
     const parsed = parseProjectHref(href);
     if (!parsed || parsed.slug !== slug) return null;
-    if (parsed.kind === "mindmap" && parsed.mapId && !getMindmap(slug, parsed.mapId)) return null;
+    if (parsed.kind === "mindmap") {
+      const map = getMindmap(slug, parsed.mapId || DRAFT_MINDMAP_ID);
+      if (!map) return null;
+      if (parsed.hash && resolveMindmapNodeRef({ kind: "mindmap-node", id: parsed.hash, mapId: parsed.mapId }, [map]).status !== "resolved") return null;
+    }
+    if (parsed.kind === "paper" && parsed.hash) {
+      const durable = decodePaperSectionFragment(parsed.hash);
+      if (durable) {
+        const current = paperNavigationSections(slug);
+        const resolved = resolvePaperSectionRef(durable, current);
+        if (resolved.status !== "resolved") return null;
+        const target = resolved.section;
+        return { href: paperHref(slug, target.label || target.id) };
+      }
+    }
     if (parsed.kind === "wiki" && parsed.wikiPage && !getWikiPage(slug, parsed.wikiPage)) return null;
     return { href };
   }
@@ -1025,10 +1040,24 @@ export function resolveProjectNavigation(slug: string, input: { id?: string; hre
   const comment = state.paper?.comments.find((item) => item.id === id);
   if (comment) return { href: comment.href };
   if (state.paper?.outline.some((section) => section.id === id)) return { href: paperHref(slug, id) };
-  for (const map of listMindmaps(slug)) {
-    if (map.nodes.some((node) => node.id === id)) {
-      return { href: mindmapHref(slug, map.id, id) };
-    }
-  }
+  const primaryMap = findPrimaryMindmap(listMindmaps(slug));
+  if (primaryMap?.nodes.some(node => node.id === id)) return { href: mindmapHref(slug, primaryMap.id, id) };
   return null;
+}
+
+function paperNavigationSections(slug: string): PaperSectionRefTarget[] {
+  const editor = getPaperEditorState(slug);
+  return editor?.sourceContext.sections.map(section => ({
+    id: section.id,
+    title: section.title,
+    level: section.level,
+    ...(section.label ? { label: section.label } : {}),
+    file: section.file,
+    order: section.order,
+    sourceHash: section.sourceHash,
+    sourceRange: section.sourceRange,
+    bodyHash: section.bodyHash,
+    headingPath: section.headingPath,
+    excerpt: section.excerpt,
+  })) || [];
 }

@@ -19,6 +19,7 @@ export function PdfJsViewer({
   project,
   src,
   stale,
+  observationMessage,
   artifactId,
   sourceTarget,
   onJumpToSource,
@@ -28,6 +29,7 @@ export function PdfJsViewer({
   project: string;
   src: string;
   stale?: boolean;
+  observationMessage?: string;
   artifactId?: string;
   sourceTarget?: PdfSourceTarget | null;
   onJumpToSource?: (file: string, line: number) => void;
@@ -196,6 +198,9 @@ export function PdfJsViewer({
 
   return (
     <div className={compact ? "relative min-h-0 overflow-hidden" : "relative h-full min-h-0 overflow-auto bg-canvas/40 p-4"}>
+      {observationMessage && (
+        <p className="mb-3 text-[11px] font-medium text-warn" role="status">{observationMessage}</p>
+      )}
       {stale && (
         <p className="mb-3 text-[11px] font-medium text-warn">Showing the last successful PDF. Source has changed.</p>
       )}

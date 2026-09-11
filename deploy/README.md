@@ -1,17 +1,27 @@
-# Private Cloudflare dev page
+# Disposable public demo deployment
 
-This package runs OpenBar in one Cloudflare Container behind a small Worker.
-The image contains the real published `Command-V` and `NoveltyBench` projects
-from `examples/published-papers`. The container keeps writable paper state at
+This package runs OpenBar in disposable public-demo mode in one Cloudflare
+Container behind a small Worker. Cloudflare Access protects the hostname. The
+image contains the real published `Command-V` and `NoveltyBench` projects from
+`examples/published-papers`. The container keeps writable paper state at
 `/data/openbar` and the same-origin reset endpoint restores both projects from
 the image copy.
+
+The demo state survives edits within the current Container instance. A
+Container replacement, rebuild, or recovery event can discard `/data/openbar`,
+after which startup seeds the configured projects from the image fixture. The
+Reset demo action provides recovery to that known fixture baseline.
+
+Durable researcher hosting requires persistent storage for `OPENBARRY_CONTENT`
+plus a backup and restore policy. Attach that storage before accepting
+long-lived authored work. The current Wrangler configuration intentionally
+ships the disposable demo boundary and supplies no durable content binding.
 
 The recommended release path is Cloudflare Workers Builds. Workers Builds runs
 the existing Dockerfile-backed Container build in Cloudflare's build
 environment. Docker Desktop is optional for local Container checks.
 
-The Cloudflare Access policy protects the hostname. Install the Access policy
-before sharing the dev page URL.
+Install the Cloudflare Access policy before sharing the demo URL.
 
 ## Requirements
 
@@ -21,14 +31,11 @@ before sharing the dev page URL.
 - A domain managed by Cloudflare for the private hostname
 - Docker Desktop is optional for local Container verification
 
-## Verify locally
+## Build locally
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm typecheck
-pnpm test
-pnpm check:domain
-pnpm evals
 pnpm build
 pnpm seed:demo
 pnpm cf:types
@@ -62,7 +69,7 @@ Use the repository root as the build root and enter these settings:
 | Repository | The OpenBar GitHub repository |
 | Production branch | `cloudflare-demo`, or the selected release branch |
 | Root directory | Repository root |
-| Build command | `pnpm typecheck && pnpm test && pnpm check:domain && pnpm evals` |
+| Build command | `pnpm typecheck && pnpm build` |
 | Deploy command | `pnpm exec wrangler deploy --containers-rollout=immediate` |
 | Non-production branch builds | Disabled |
 | `NODE_VERSION` | `26.8.1` |
@@ -123,51 +130,21 @@ limited to one `standard-1` instance and sleeps after two hours of inactivity.
    hostname as a Worker route.
 2. Create a Cloudflare Access application for that exact hostname.
 3. Add the approved email or group policy. Add a service-token policy when an
-   automated browser smoke runner needs access.
+   operational client needs authenticated access.
 4. Require the Access policy before sending the hostname to anyone.
 5. Open `/api/health` after signing in. Confirm `mode` is `public-demo`,
    `demoSlugs` contains `command-v` and `noveltybench`, and the document tools
    report the expected capabilities.
-6. Run the state smoke against the protected hostname:
-
-```bash
-OB_SMOKE_BASE=https://openbar-dev.<your-domain> \
-OB_SMOKE_SLUGS=command-v,noveltybench \
-OB_EXPECT_PUBLIC_DEMO=1 \
-pnpm smoke
-
-OB_SMOKE_BASE=https://openbar-dev.<your-domain> \
-OB_SMOKE_SLUGS=command-v,noveltybench \
-pnpm smoke:demo-state
-```
-
-If Access is configured through a service token, pass the token headers using
-the smoke runner used by your environment. Keep the token outside the
-repository and outside browser-visible project data.
+6. Complete the manual protected-hostname acceptance described below.
 
 Record the deployed commit SHA, the Workers Build ID or URL, the final build
 result, the workers.dev URL, and the Container rollout status.
 
 ## Release verification
 
-After the cloud build succeeds, run the smoke checks against the protected
-workers.dev URL or private custom hostname:
-
-```bash
-export OPENBAR_URL="https://openbar-private-demo.<subdomain>.workers.dev"
-
-OB_SMOKE_BASE="$OPENBAR_URL" \
-OB_SMOKE_SLUGS=command-v,noveltybench \
-OB_EXPECT_PUBLIC_DEMO=1 \
-pnpm smoke
-
-OB_SMOKE_BASE="$OPENBAR_URL" \
-OB_SMOKE_SLUGS=command-v,noveltybench \
-OB_EXPECT_PUBLIC_DEMO=1 \
-pnpm smoke:demo-state
-```
-
-Manually confirm `/api/health` returns `ok=true`, `mode=public-demo`, both
+After the cloud build succeeds, complete the following manual acceptance on
+the protected workers.dev URL or private custom hostname. Confirm `/api/health`
+returns `ok=true`, `mode=public-demo`, both
 published projects are listed, `latexmk`, `pdflatex`, `latexpand`, and
 Pandoc are available, and `writableContent=true`. Open both papers and both
 Primary mindmaps, compile one paper, update a shared TODO and confirm the

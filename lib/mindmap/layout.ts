@@ -111,6 +111,7 @@ export function nodeDimensions(node: MindmapNode, displayText?: string): Dimensi
 export function layoutMindmapTree(
   mindmap: Mindmap,
   sizes: Map<string, Dimensions>,
+  collapsedIds: ReadonlySet<string> = new Set(),
 ): { positions: Map<string, Point>; reachable: Set<string>; connected: Set<string> } {
   const { nodeById, childrenByParent } = indexMindmap(mindmap);
   const toDatum = (id: string, path = new Set<string>()): Datum => {
@@ -118,7 +119,7 @@ export function layoutMindmapTree(
     if (path.has(id)) return { id, children: [] };
     const nextPath = new Set(path);
     nextPath.add(id);
-    const kids = node && !node.collapsed ? (childrenByParent.get(id) || []) : [];
+    const kids = node && !collapsedIds.has(id) ? (childrenByParent.get(id) || []) : [];
     return { id, children: kids.map((child) => toDatum(child.id, nextPath)) };
   };
   const rootId = nodeById.has(mindmap.rootId)

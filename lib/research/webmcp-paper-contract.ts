@@ -179,7 +179,18 @@ export type LivePaperSnapshot = {
     state: string;
     compiler?: "latexmk";
     jobId?: string;
+    pdfAvailable?: boolean;
     sourceHash?: string;
+    buildInputHash?: string;
+    artifactId?: string;
+    artifactSourceHash?: string;
+    artifactBuildInputHash?: string;
+    lastSuccessfulArtifact?: {
+      artifactId: string;
+      artifactSourceHash?: string;
+      artifactBuildInputHash?: string;
+    };
+    observationDelayed?: boolean;
     stale?: boolean;
     message?: string;
     diagnostics?: string[];
@@ -1143,84 +1154,4 @@ export function buildPaperWebMcpTools(host: PaperWebMcpHost): PaperWebMcpTool[] 
       execute: (args, options) => executePaperWebMcpTool(host, name, args, options),
     };
   });
-}
-
-export type PaperWebMcpHarness = PaperWebMcpHost & {
-  snapshot: LivePaperSnapshot;
-  navigatedTo?: string;
-  readerMode: WebMcpReaderMode;
-  replaceRange: (from: number, to: number, text: string, signal?: AbortSignal) => void | Promise<void>;
-};
-
-export function createPaperWebMcpHarness(init: {
-  project?: string;
-  title?: string;
-  revision?: number;
-  dirty?: boolean;
-  sections: Array<Pick<LivePaperSection, "id" | "title" | "tex"> & Partial<LivePaperSection>>;
-  bibliographyKeys?: string[];
-  bibliographyRaw?: string;
-}): PaperWebMcpHarness {
-  const sections: LivePaperSection[] = init.sections.map((section) => ({
-    id: section.id,
-    title: section.title,
-    level: section.level ?? 2,
-    tex: section.tex,
-    headingKey: section.headingKey,
-    persistedHash: section.persistedHash,
-  }));
-  const snapshot: LivePaperSnapshot = {
-    project: init.project || "demo",
-    title: init.title || "Demo paper",
-    revision: init.revision ?? 1,
-    source: sections.map((section) => `\\section{${section.title}}\n${section.tex}`).join("\n\n"),
-    sections,
-    activeSectionId: sections[0]?.id,
-    dirty: init.dirty ?? false,
-    compileState: { state: "idle" },
-    bibliographyKeys: init.bibliographyKeys || [],
-    bibliographyRaw: init.bibliographyRaw,
-  };
-
-  const bump = () => {
-    snapshot.revision += 1;
-    snapshot.dirty = true;
-    snapshot.source = snapshot.sections.map((section) => `\\section{${section.title}}\n${section.tex}`).join("\n\n");
-  };
-
-  const harness: PaperWebMcpHarness = {
-    snapshot,
-    readerMode: "document",
-    getSnapshot: () => snapshot,
-    navigateSection: (sectionId) => {
-      harness.navigatedTo = sectionId;
-      snapshot.activeSectionId = sectionId;
-    },
-    setReaderMode: (mode) => {
-      harness.readerMode = mode;
-    },
-    replaceSection: (sectionId, tex) => {
-      const section = snapshot.sections.find((item) => item.id === sectionId);
-      if (!section) return;
-      section.tex = tex;
-      bump();
-    },
-    removeTodo: (todoId) => {
-      const pattern = new RegExp(`\\\\obtodo\\[[^\\]]*id=${todoId}[^\\]]*\\]\\{[^}]*\\}\\s*`, "g");
-      for (const section of snapshot.sections) {
-        section.tex = section.tex.replace(pattern, "");
-      }
-      bump();
-    },
-    compile: () => {
-      snapshot.compileState = { state: "running", sourceHash: `rev-${snapshot.revision}` };
-      return { status: "started", sourceHash: snapshot.compileState.sourceHash };
-    },
-    replaceRange: (from, to, text) => {
-      snapshot.source = `${snapshot.source.slice(0, from)}${text}${snapshot.source.slice(to)}`;
-      snapshot.revision += 1;
-      snapshot.dirty = true;
-    },
-  };
-  return harness;
 }

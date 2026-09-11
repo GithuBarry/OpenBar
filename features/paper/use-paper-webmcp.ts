@@ -51,7 +51,18 @@ export function liveSnapshotFromSource(input: {
     state: string;
     compiler?: "latexmk";
     jobId?: string;
+    pdfAvailable?: boolean;
     sourceHash?: string;
+    buildInputHash?: string;
+    artifactId?: string;
+    artifactSourceHash?: string;
+    artifactBuildInputHash?: string;
+    lastSuccessfulArtifact?: {
+      artifactId: string;
+      artifactSourceHash?: string;
+      artifactBuildInputHash?: string;
+    };
+    observationDelayed?: boolean;
     stale?: boolean;
     message?: string;
     diagnostics?: string[];

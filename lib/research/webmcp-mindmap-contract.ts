@@ -5,10 +5,11 @@
 import { failResult, okResult, WEBMCP_ERROR_CODES, type OperationResult, type RemoteSyncOutcome } from "./operation-result";
 import { MINDMAP_WEBMCP_TOOL_NAMES, parseWebMcpArgs, unknownWebMcpArgument, type JsonSchemaObject, type MindmapWebMcpToolName } from "./webmcp-paper-contract";
 import type { SharedWebMcpActions, CurrentLocation } from "./webmcp-shared-contract";
-import { ARTIFACT_KINDS, isArtifactKind } from "./artifact-link";
+import { ARTIFACT_KINDS, coercePaperSectionRefContext, isArtifactKind } from "./artifact-link";
 import { safeUrl } from "@/lib/safe-url";
 import { artifactHref } from "./artifact-link";
 import { attachMindmapImage, captionMindmapImage, detachMindmapImage } from "@/lib/mindmap/image-refs";
+import { captionWithinLimit } from "@/lib/mindmap/card-content";
 import type { ArtifactRef, Mindmap, MindmapNode, MindmapNodeShape } from "@/lib/types";
 import { MAX_MINDMAP_LABELS, MAX_MINDMAP_LABEL_CHARS, normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import { isPrimaryMindmap as isPrimaryMindmapRole } from "./todo-map";
@@ -21,8 +22,8 @@ export { MAX_MINDMAP_LABELS, MAX_MINDMAP_LABEL_CHARS } from "@/lib/mindmap/node-
 
 export type LiveMindmapNode = Pick<
   MindmapNode,
-  "agentDraft" | "id" | "parentId" | "title" | "text" | "caption" | "todoId" | "collapsed" | "contentFormat" | "tableLayout" | "shape" | "color" | "tags" | "progress" | "priority" | "refs" | "metadata" | "createdAt" | "updatedAt"
-> & { completed?: boolean };
+  "agentDraft" | "id" | "parentId" | "title" | "text" | "caption" | "todoId" | "contentFormat" | "tableLayout" | "shape" | "color" | "tags" | "progress" | "priority" | "refs" | "metadata" | "createdAt" | "updatedAt"
+> & { completed?: boolean; /** Browser view preference, excluded from durable map state. */ collapsed?: boolean };
 
 export type MindmapPresentationPatch = Pick<MindmapNode, "contentFormat" | "tableLayout" | "shape" | "color"> & {
   progress?: MindmapNode["progress"] | null;
@@ -87,8 +88,14 @@ export type LiveMindmapSnapshot = {
   diskHash?: string;
   rootId: string;
   nodes: LiveMindmapNode[];
+  /** Browser-only map view state. It is scoped by the mounted project and map. */
+  viewLocal: { collapsedIds: string[] };
   selectedId?: string;
   activitySince?: string;
+  /** Browser-local persistence state for the live map draft. */
+  localSaveState?: "dirty" | "saving" | "saved" | "conflict";
+  /** Project Git synchronization state for the latest queued checkpoint. */
+  remoteSaveState?: "checking" | "pending" | "syncing" | "synced" | "changed" | "unavailable" | "failed";
   /** Last local-save-to-Git outcome, including an actionable failure. */
   remoteSync?: RemoteSyncOutcome;
   editingBlocked?: boolean;
@@ -168,6 +175,27 @@ export const MINDMAP_WEBMCP_TOOL_SCHEMAS: Record<MindmapWebMcpToolName, JsonSche
             label: { type: "string" },
             url: { type: "string" },
             imageWidth: { type: "integer", minimum: 25, maximum: 100, description: "Image width as a percentage of card content width." },
+            mapId: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$", description: "Map identity for mindmap-node references." },
+            sectionContext: {
+              type: "object",
+              properties: {
+                file: { type: "string" },
+                title: { type: "string" },
+                level: { type: "integer", minimum: 1, maximum: 6 },
+                headingPath: { type: "array", items: { type: "string" } },
+                bodyHash: { type: "string" },
+                label: { type: "string" },
+                sourceHash: { type: "string" },
+                sourceRange: {
+                  type: "object",
+                  properties: { from: { type: "integer", minimum: 0 }, to: { type: "integer", minimum: 0 } },
+                  required: ["from", "to"],
+                  additionalProperties: false,
+                },
+                order: { type: "integer", minimum: 0 },
+              },
+              additionalProperties: false,
+            },
           },
           required: ["kind", "id"],
           additionalProperties: false,
@@ -332,12 +360,17 @@ function parseRefsArg(value: unknown): OperationResult<ArtifactRef[]> {
       return failResult("invalid_arguments", "web and external refs require an http(s) URL.", false);
     }
     if (rec.imageWidth !== undefined && (typeof rec.imageWidth !== "number" || !Number.isInteger(rec.imageWidth) || rec.imageWidth < 25 || rec.imageWidth > 100)) return failResult("invalid_arguments", "imageWidth must be an integer from 25 to 100.", false);
+    if (rec.mapId !== undefined && (typeof rec.mapId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(rec.mapId.trim()))) return failResult("invalid_arguments", "ref mapId must be a safe persisted map id.", false);
+    const sectionContext = rec.sectionContext === undefined ? undefined : coercePaperSectionRefContext(rec.sectionContext);
+    if (rec.sectionContext !== undefined && !sectionContext) return failResult("invalid_arguments", "ref sectionContext must contain a paper section identity.", false);
     refs.push({
       kind,
       id: rec.id.trim(),
       ...(typeof rec.imageWidth === "number" ? { imageWidth: rec.imageWidth } : {}),
       ...(typeof rec.label === "string" && rec.label.trim() ? { label: rec.label.trim() } : {}),
       ...(url ? { url } : {}),
+      ...(typeof rec.mapId === "string" && rec.mapId.trim() ? { mapId: rec.mapId.trim() } : {}),
+      ...(sectionContext ? { sectionContext } : {}),
     });
   }
   if (refs.filter(ref => ref.kind === "figure").length > 1) return failResult("invalid_arguments", "Each card holds one image. Add child cards for additional images.", false);
@@ -504,8 +537,13 @@ export async function executeMindmapWebMcpTool(
       if (!rev.ok) return rev;
       if (!hasNode(args.id)) return failResult("invalid_arguments", `Unknown mindmap node "${String(args.id ?? "")}".`, false);
       if (typeof args.collapsed !== "boolean") return failResult("invalid_arguments", "collapsed must be a boolean.", false);
-      const result = await runPersistedMutation(host, () => host.setCollapsed(String(args.id ?? ""), args.collapsed as boolean, snapshot.revision));
-      return result.ok ? okResult({ id: args.id }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
+      try {
+        await host.setCollapsed(String(args.id ?? ""), args.collapsed as boolean, snapshot.revision);
+        const current = host.getSnapshot();
+        return okResult({ id: args.id, collapsed: args.collapsed, viewLocal: current.viewLocal }, { revision: current.revision });
+      } catch (error) {
+        return mutationFailure(host, error);
+      }
     }
     case "patch_mindmap_node": {
       const rev = assertRevision(args.expectedRevision, snapshot.revision);
@@ -522,6 +560,11 @@ export async function executeMindmapWebMcpTool(
         if (typeof args.text !== "string") return failResult("invalid_arguments", "text must be a string.", false);
         if (node.todoId) return failResult("invalid_arguments", "TODO card text is edited in TeX via update_todo.", false);
         patch.text = args.text;
+      }
+      if (args.caption !== undefined) {
+        if (typeof args.caption !== "string") return failResult("invalid_arguments", "caption must be a string.", false);
+        if (!captionWithinLimit(args.caption)) return failResult("invalid_arguments", "Card notes must be 500 words or fewer.", false);
+        patch.caption = args.caption;
       }
       if (args.labels !== undefined) {
         const labels = parseLabelsArg(args.labels);
@@ -720,7 +763,7 @@ export function buildMindmapWebMcpTools(host: MindmapWebMcpHost) {
 
 function mindmapToolDescription(name: MindmapWebMcpToolName): string {
   if (name === "get_mindmap") {
-    return "Read the live mindmap: card titles and bodies, hierarchy, TODO bindings, labels, refs, role, isPrimary, and revision. Ordinary card content belongs to the map. TODO title and body come from TeX.";
+    return "Read the live mindmap: card titles, bodies, and Extended notes, hierarchy, TODO bindings, labels, refs, role, isPrimary, and revision. Ordinary card content belongs to the map. TODO title and body come from TeX; Extended notes belong to the map.";
   }
   if (name === "focus_mindmap_node") {
     return "Select a saved mindmap card on the open map. Use navigate_project first if the mindmap page is not open.";
@@ -741,14 +784,14 @@ function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Visually highlight cards whose meaningful content changed since a date. Omit since for the past seven days. Pan, zoom, and collapse do not count.";
   }
   if (name === "patch_mindmap_node") {
-    return "Patch authored card fields: title and text (ordinary cards only), labels, refs, metadata, priority, and presentation (shape, color, contentFormat, tableLayout, progress). TODO title and text come from TeX.";
+    return "Patch authored card fields: title and text (ordinary cards only), Extended note (up to 500 words), labels, refs, metadata, priority, and presentation (shape, color, contentFormat, tableLayout, progress). TODO title and text come from TeX.";
   }
   if (name === "attach_mindmap_image") return "Attach one existing project image asset to an empty card. For an occupied card, use add_mindmap_node to create a child and attach there. Use read_mindmap_image to inspect it; this changes only this map's reference list.";
   if (name === "detach_mindmap_image") return "Detach one image reference from this card without deleting the shared project asset.";
   if (name === "caption_mindmap_image") return "Change one attached image's caption/alt label without changing the asset or other references.";
   if (name === "read_mindmap_image") return "Read one attached image reference and its bounded project asset URL. The original asset remains available; no OCR or research claim is inferred.";
   if (name === "set_mindmap_collapsed") {
-    return "Collapse or expand a branch in the live map. Collapse is not Recent activity.";
+    return "Collapse or expand a branch in the browser view. This preference is stored locally per project and map, and it does not change the repository or Git state.";
   }
   if (name === "place_todo_card") {
     return "Add a card for an existing TeX TODO to the currently open map. Use this after the paper page add_todo tool returns todoId, choose the intended parentId, and place the card in the Primary or selected secondary map. Each map may contain one card for a TODO. The same TODO may appear on Primary and multiple secondary maps. All cards share TeX-owned text and completion. This is a shared card, not a move from another map. If the TODO is already on this map, the existing card is returned unchanged.";
@@ -786,121 +829,4 @@ function validCalendarDate(value: unknown): string | undefined {
 function isActiveSince(node: LiveMindmapNode, since: string): boolean {
   const updatedAt = node.updatedAt || node.createdAt;
   return Boolean(updatedAt && Date.parse(updatedAt) >= Date.parse(`${since}T00:00:00Z`));
-}
-
-export function createMindmapWebMcpHarness(init: {
-  project?: string;
-  rootId?: string;
-  mapId?: string;
-  role?: "draft" | "planning";
-  isPrimary?: boolean;
-  nodes: LiveMindmapNode[];
-}): MindmapWebMcpHost & { snapshot: LiveMindmapSnapshot } {
-  const mapId = init.mapId || "draft";
-  const role = init.role || (mapId === "draft" ? "draft" : "planning");
-  const snapshot: LiveMindmapSnapshot = {
-    project: init.project || "demo",
-    mapId,
-    title: "Demo map",
-    role,
-    isPrimary: init.isPrimary ?? isPrimaryMindmapRole({ id: mapId, role }),
-    revision: 1,
-    rootId: init.rootId || "root",
-    nodes: init.nodes,
-  };
-  const bump = () => {
-    snapshot.revision += 1;
-  };
-  const harness: MindmapWebMcpHost & { snapshot: LiveMindmapSnapshot } = {
-    snapshot,
-    getSnapshot: () => snapshot,
-    focusNode: (id) => {
-      snapshot.selectedId = id;
-    },
-    addNode: (parentId, text, _expectedRevision, title) => {
-      const id = `n${snapshot.nodes.length + 1}`;
-      const value = text || "";
-      const explicitTitle = title !== undefined;
-      snapshot.nodes.push({
-        id,
-        parentId,
-        agentDraft: true,
-        title: explicitTitle ? title : (value.split("\n")[0] || ""),
-        text: explicitTitle ? value : value.split("\n").slice(1).join("\n"),
-      });
-      bump();
-      return id;
-    },
-    moveNode: (id, parentId) => {
-      const node = snapshot.nodes.find((item) => item.id === id);
-      if (node) node.parentId = parentId;
-      bump();
-    },
-    deleteNode: (id) => {
-      const node = snapshot.nodes.find((item) => item.id === id);
-      if (!node || !node.parentId) return;
-      const children = snapshot.nodes.filter((item) => item.parentId === id);
-      snapshot.nodes = snapshot.nodes
-        .filter((item) => item.id !== id)
-        .map((item) => children.some((child) => child.id === item.id) ? { ...item, parentId: node.parentId } : item);
-      bump();
-    },
-    deleteBranch: (id) => {
-      const descendants = new Set<string>();
-      const visit = (parentId: string) => {
-        for (const child of snapshot.nodes.filter((item) => item.parentId === parentId)) {
-          if (descendants.has(child.id)) continue;
-          descendants.add(child.id);
-          visit(child.id);
-        }
-      };
-      visit(id);
-      descendants.add(id);
-      snapshot.nodes = snapshot.nodes.filter((node) => !descendants.has(node.id));
-      bump();
-    },
-    setCollapsed: () => {},
-    patchNode: (id, patch) => {
-      const node = snapshot.nodes.find((item) => item.id === id);
-      if (!node) return;
-      if (patch.title !== undefined) node.title = patch.title;
-      if (patch.text !== undefined) node.text = patch.text;
-      if (patch.caption !== undefined) node.caption = patch.caption;
-      if (patch.labels) node.tags = patch.labels;
-      if (patch.refs) node.refs = patch.refs;
-      if (patch.metadata !== undefined) node.metadata = patch.metadata || undefined;
-      if (patch.priority !== undefined || Object.prototype.hasOwnProperty.call(patch, "priority")) node.priority = patch.priority;
-      if (patch.presentation) {
-        if (patch.presentation.contentFormat !== undefined) node.contentFormat = patch.presentation.contentFormat;
-        if (patch.presentation.tableLayout !== undefined) node.tableLayout = patch.presentation.tableLayout;
-        if (patch.presentation.shape !== undefined) node.shape = patch.presentation.shape;
-        if (patch.presentation.color !== undefined) node.color = patch.presentation.color;
-        if (patch.presentation.progress === null) node.progress = undefined;
-        else if (patch.presentation.progress !== undefined) node.progress = patch.presentation.progress;
-      }
-      bump();
-    },
-    setActivityHighlight: (since) => {
-      snapshot.activitySince = since;
-    },
-    placeTodoCard: (todoId, parentId) => {
-      const existing = snapshot.nodes.find((node) => node.todoId === todoId);
-      if (existing) return existing.id;
-      const id = `todo-${todoId}`;
-      snapshot.nodes.push({ id, parentId, text: "", todoId, completed: false, agentDraft: true });
-      bump();
-      return id;
-    },
-    completeTodo: (todoId) => {
-      for (const node of snapshot.nodes) {
-        if (node.todoId === todoId) node.completed = true;
-      }
-    },
-    reopenTodo: (todoId) => {
-      for (const node of snapshot.nodes) {
-        if (node.todoId === todoId) node.completed = false;
-      }
-    },
-  };
-  return harness;
 }

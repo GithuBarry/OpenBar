@@ -66,6 +66,11 @@ import {
 } from "@/lib/mindmap/layout";
 import { indentMindmapNode, mindmapMoveTargets, outdentMindmapNode, type MindmapDrop } from "@/lib/mindmap/drop-targets";
 import { mindmapDiskHash } from "@/lib/mindmap/mindmap";
+import {
+  mindmapCollapseStorageKey,
+  parseMindmapCollapsePreference,
+  serializeMindmapCollapsePreference,
+} from "@/lib/mindmap/collapse-preferences";
 import { cn } from "@/lib/utils";
 import { MAX_MINDMAP_CAPTION_WORDS, captionWordCount } from "@/lib/mindmap/card-content";
 import { artifactHref } from "@/lib/research/artifact-link";
@@ -79,6 +84,11 @@ import {
 } from "@/lib/research/webmcp-mindmap-contract";
 import { remoteSyncResult } from "@/lib/research/project-sync";
 import type { RemoteSyncOutcome } from "@/lib/research/operation-result";
+import { flushBeforeOperation } from "@/lib/research/editor-operation-races";
+import {
+  getMindmapRemoteSyncQueue,
+  type MindmapRemoteQueueEvent,
+} from "@/lib/research/mindmap-remote-sync-queue";
 import type { ArtifactRef, Mindmap, MindmapNode } from "@/lib/types";
 import type { ProjectState } from "@/lib/research/project-state";
 import type { MindmapTodoConversionResult } from "@/lib/research/webmcp-mindmap-contract";
@@ -98,7 +108,6 @@ import { TexCodeMirror, type TexCodeMirrorHandle } from "@/features/paper/tex-co
 
 const AUTOSAVE_DELAY = 700;
 const LAST_WEEK_DAYS = 7;
-const COLLAPSE_STORAGE_PREFIX = "openbar:mindmap-collapse:v1";
 const CARD_PALETTE = [
   { value: "#ffb000", label: "Amber" },
   { value: "#fe6100", label: "Orange" },
@@ -107,7 +116,9 @@ const CARD_PALETTE = [
   { value: "#648fff", label: "Blue" },
 ] as const;
 
-type RemoteSaveState = "checking" | "local" | "saving" | "saved" | "changed" | "unavailable" | "error";
+type LocalSaveState = "dirty" | "saving" | "saved" | "conflict";
+type RemoteSaveState = "checking" | "pending" | "syncing" | "synced" | "changed" | "unavailable" | "failed";
+type MindmapRemotePushResult = Awaited<ReturnType<typeof commitAndPushProjectAction>>;
 
 type Point = { x: number; y: number };
 type Dimensions = { width: number; height: number };
@@ -142,7 +153,6 @@ const MINDMAP_NODE_FIELDS: ReadonlyArray<keyof MindmapNode> = [
   "parentId",
   "shape",
   "agentDraft",
-  "collapsed",
   "metadata",
   "contentFormat",
   "color",
@@ -175,6 +185,10 @@ function valuesEqual(left: unknown, right: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+function mindmapRemoteCheckpoint(mindmap: Mindmap): string {
+  return `${mindmap.id || "draft"}:${mindmap.revision ?? 0}:${mindmap.diskHash || mindmapDiskHash(mindmap)}`;
 }
 
 function mergeConvertedNode(base: MindmapNode, saved: MindmapNode, latest: MindmapNode): MindmapNode {
@@ -257,6 +271,10 @@ export function MindmapEditor({
   paperState?: ProjectState | null;
 }) {
   const router = useRouter();
+  const remoteQueue = useMemo(
+    () => getMindmapRemoteSyncQueue<MindmapRemotePushResult>(project, (result) => result.ok),
+    [project],
+  );
   const [remoteOutOfSync, setRemoteOutOfSync] = useState(false);
   const [applyingRemote, setApplyingRemote] = useState(false);
   const applyingRemoteRef = useRef(false);
@@ -275,13 +293,14 @@ export function MindmapEditor({
   const persistedDiskHashRef = useRef(mindmapDiskHash(initialMindmap));
   const paperSourceHashRef = useRef<string | undefined>(paperState?.paper?.sourceHash);
   const convertingCardIdRef = useRef<string | null>(null);
+  const conversionStartingCardIdRef = useRef<string | null>(null);
   const pendingConversionRefreshRef = useRef<{ cardId: string; todoId: string } | null>(null);
   useEffect(() => {
     paperSourceHashRef.current = paperState?.paper?.sourceHash;
   }, [paperState?.paper?.sourceHash]);
   const [activitySince, setActivitySince] = useState<string | null>(null);
   const collapseMapId = mindmap.id || initialMindmap.id || "draft";
-  const collapseStorageKey = `${COLLAPSE_STORAGE_PREFIX}:${encodeURIComponent(project)}:${encodeURIComponent(collapseMapId)}`;
+  const collapseStorageKey = mindmapCollapseStorageKey(project, collapseMapId);
   const collapseNodeSignature = useMemo(
     () => mindmap.nodes.map((node) => `${node.id}:${node.parentId || ""}`).sort().join("|"),
     [mindmap.nodes],
@@ -299,7 +318,7 @@ export function MindmapEditor({
     try {
       window.localStorage.setItem(
         collapseStorageKey,
-        JSON.stringify({ version: 1, collapsedIds: [...next].sort() }),
+        serializeMindmapCollapsePreference(next),
       );
     } catch {
       // Browser storage can be unavailable in private or restricted sessions.
@@ -307,22 +326,19 @@ export function MindmapEditor({
   }, [collapseStorageKey]);
 
   useEffect(() => {
-    const validIds = new Set(mindmap.nodes.map((node) => node.id));
-    const parentIds = new Set(mindmap.nodes.flatMap((node) => node.parentId ? [node.parentId] : []));
     let next = new Set<string>();
     try {
       const raw = window.localStorage.getItem(collapseStorageKey);
-      if (raw) {
-        const stored = JSON.parse(raw) as { version?: unknown; collapsedIds?: unknown };
-        if ((stored.version === undefined || stored.version === 1) && Array.isArray(stored.collapsedIds)) {
-          next = new Set(
-            stored.collapsedIds.filter(
-              (id): id is string => typeof id === "string" && validIds.has(id) && parentIds.has(id),
-            ),
-          );
-        } else {
-          window.localStorage.removeItem(collapseStorageKey);
+      const preference = parseMindmapCollapsePreference(raw, mindmap.nodes);
+      if (preference) {
+        next = new Set(preference.collapsedIds);
+        // Rewrite legacy or stale entries into the canonical, node-filtered
+        // browser format while retaining the preference in this map's store.
+        if (raw !== null && raw !== serializeMindmapCollapsePreference(next)) {
+          window.localStorage.setItem(collapseStorageKey, serializeMindmapCollapsePreference(next));
         }
+      } else if (raw !== null) {
+        window.localStorage.removeItem(collapseStorageKey);
       }
     } catch {
       next = new Set();
@@ -331,7 +347,10 @@ export function MindmapEditor({
     setCollapsedIds(next);
   }, [collapseNodeSignature, collapseStorageKey]);
 
-  const [remoteSaveState, setRemoteSaveState] = useState<RemoteSaveState>("local");
+  const [remoteSaveState, setRemoteSaveState] = useState<RemoteSaveState>(() => {
+    const snapshot = remoteQueue.getSnapshot();
+    return snapshot.sequence > 0 ? snapshot.phase : "checking";
+  });
   const [checkingRemote, setCheckingRemote] = useState(false);
   const [remoteSaveError, setRemoteSaveError] = useState<string | null>(null);
   const [assetError, setAssetError] = useState<string | null>(null);
@@ -341,42 +360,89 @@ export function MindmapEditor({
   const remoteStatusRequestRef = useRef(0);
   const remoteSyncRef = useRef<RemoteSyncOutcome | undefined>(undefined);
 
-  const pushRemote = useCallback(async (message: string) => {
-    ++remoteStatusRequestRef.current;
-    setCheckingRemote(false);
-    setRemoteSaveState("saving");
-    remoteSyncRef.current = {
-      status: "pending",
-      code: "push_in_progress",
-      message: "Local save complete. Pushing to Git…",
-      retryable: true,
-    };
-    try {
-      const result = await commitAndPushProjectAction(project, message);
-      remoteSyncRef.current = remoteSyncResult(result);
-      if (!result.ok) {
-        if (result.code === "remote_ahead" || result.code === "remote_conflict") setRemoteOutOfSync(true);
-        setRemoteSaveState(result.code === "remote_ahead" || result.code === "remote_conflict" ? "changed" : "error");
-        setRemoteSaveError(result.message);
-      } else {
-        setRemoteSaveState("saved");
+  useEffect(() => {
+    const applyQueueEvent = (event: MindmapRemoteQueueEvent<MindmapRemotePushResult>) => {
+      if (event.sequence === 0) return;
+      setCheckingRemote(false);
+      if (event.phase === "pending") {
+        setRemoteSaveState("pending");
+        setRemoteSaveError(null);
+        remoteSyncRef.current = {
+          status: "pending",
+          code: "remote_sync_queued",
+          message: "Local save complete. Waiting to push the latest checkpoint.",
+          retryable: true,
+        };
+        return;
+      }
+      if (event.phase === "syncing") {
+        setRemoteSaveState("syncing");
+        setRemoteSaveError(null);
+        remoteSyncRef.current = {
+          status: "pending",
+          code: "push_in_progress",
+          message: "Local save complete. Pushing to Git…",
+          retryable: true,
+        };
+        return;
+      }
+      if (event.phase === "synced") {
+        if (!event.result) return;
+        remoteSyncRef.current = remoteSyncResult(event.result);
+        setRemoteSaveState("synced");
         setRemoteOutOfSync(false);
         setRemoteSaveError(null);
+        return;
       }
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not save to the remote.";
-      remoteSyncRef.current = remoteSyncResult({ ok: false, code: "remote_save_failed", message });
-      setRemoteSaveState("error");
+      const result = event.result;
+      const message = result && !result.ok
+        ? result.message
+        : event.error instanceof Error
+          ? event.error.message
+          : "Could not save to the remote.";
+      remoteSyncRef.current = result && !result.ok
+        ? remoteSyncResult(result)
+        : {
+            status: "failed",
+            code: "remote_save_failed",
+            message,
+            retryable: true,
+          };
+      if (result && !result.ok && (result.code === "remote_ahead" || result.code === "remote_conflict")) {
+        setRemoteOutOfSync(true);
+      }
+      setRemoteSaveState("failed");
       setRemoteSaveError(message);
-      return { ok: false as const, code: "remote_save_failed", message };
-    }
-  }, [project]);
+    };
+    return remoteQueue.subscribe(applyQueueEvent);
+  }, [remoteQueue]);
+
+  const nextRemoteCheckpointRef = useRef(`initial:${project}`);
+  const enqueueRemote = useCallback((message: string, checkpoint = nextRemoteCheckpointRef.current) => {
+    // Any status request that predates this checkpoint cannot clear its queue
+    // state when its response arrives.
+    ++remoteStatusRequestRef.current;
+    return remoteQueue.enqueue(checkpoint, async () => {
+      try {
+        return await commitAndPushProjectAction(project, message);
+      } catch (error) {
+        return {
+          ok: false as const,
+          code: "remote_save_failed",
+          message: error instanceof Error ? error.message : "Could not save to the remote.",
+        };
+      }
+    });
+  }, [project, remoteQueue]);
+
+  const pushRemote = useCallback((message: string) => enqueueRemote(message), [enqueueRemote]);
 
   const refreshRemoteStatus = useCallback(async (refreshRemote = true, announce = true) => {
     const requestId = ++remoteStatusRequestRef.current;
+    const queueSequence = remoteQueue.getSnapshot().sequence;
+    const queueWasBusy = remoteQueue.isBusy;
     setCheckingRemote(true);
-    if (announce) setRemoteSaveState(current => current === "changed" || current === "error" || current === "unavailable" ? current : "checking");
+    if (announce) setRemoteSaveState(current => current === "changed" || current === "failed" || current === "unavailable" ? current : "checking");
     let timeoutId: number | undefined;
     try {
       const timeout = announce ? new Promise<never>((_, reject) => {
@@ -385,6 +451,8 @@ export function MindmapEditor({
       const request = getProjectGitStatusAction(project, refreshRemote);
       const status = timeout ? await Promise.race([request, timeout]) : await request;
       if (requestId !== remoteStatusRequestRef.current) return;
+      const queueSnapshot = remoteQueue.getSnapshot();
+      if (queueWasBusy || remoteQueue.isBusy || queueSnapshot.sequence !== queueSequence) return status;
       if (!status.isGitRepo) {
         setRemoteSaveState("unavailable");
         setRemoteSaveError("Git status unavailable: this project has no Git repository.");
@@ -410,17 +478,18 @@ export function MindmapEditor({
       remoteOutOfSyncRef.current = applyingRemoteRef.current;
       setRemoteOutOfSync(false);
       setRemoteSaveError(null);
-      setRemoteSaveState((status.ahead || 0) > 0 || !status.isClean ? "local" : "saved");
+      setRemoteSaveState((status.ahead || 0) > 0 || !status.isClean ? "pending" : "synced");
       return status;
     } catch (error) {
       if (requestId !== remoteStatusRequestRef.current) return;
+      if (queueWasBusy || remoteQueue.isBusy || remoteQueue.getSnapshot().sequence !== queueSequence) return;
       setRemoteSaveState("unavailable");
       setRemoteSaveError(`Git status unavailable: ${error instanceof Error ? error.message : "Could not check Git."}`);
     } finally {
       if (timeoutId !== undefined) window.clearTimeout(timeoutId);
       if (requestId === remoteStatusRequestRef.current) setCheckingRemote(false);
     }
-  }, [project]);
+  }, [project, remoteQueue]);
 
   useEffect(() => {
     // Start with cached Git state. Background checks fetch after first paint.
@@ -451,6 +520,7 @@ export function MindmapEditor({
       const snapshot = cloneMindmap(nextSession.mindmap);
       sessionRef.current = nextSession;
       dispatch(nextAction);
+      setLocalSaveState("saving");
       const saved = await saveMindmapAction(project, snapshot, persistedDiskHashRef.current);
       persistedDiskHashRef.current = saved.diskHash ?? mindmapDiskHash(saved);
       const savedMapSignature = mapSignature(saved);
@@ -472,12 +542,15 @@ export function MindmapEditor({
           persistedRevision: saved.revision,
           updatedAt: saved.updatedAt,
         });
+        setLocalSaveState("saved");
       } else {
         const rebased = mindmapReducer(latest, { type: "rebase-disk-hash", diskHash: persistedDiskHashRef.current });
         sessionRef.current = rebased;
         dispatch({ type: "rebase-disk-hash", diskHash: persistedDiskHashRef.current });
+        setLocalSaveState("dirty");
       }
-      await pushRemote("OpenBar: save mindmap");
+      nextRemoteCheckpointRef.current = mindmapRemoteCheckpoint(saved);
+      void enqueueRemote("OpenBar: save mindmap", nextRemoteCheckpointRef.current);
       return saved;
     });
     webMcpSaveQueueRef.current = job.then(() => undefined, () => undefined).finally(() => {
@@ -489,9 +562,10 @@ export function MindmapEditor({
       const message = error instanceof Error ? error.message : "Could not save the mindmap.";
       saveErrorRef.current = message;
       setSaveError(message);
+      setLocalSaveState(/conflict|changed.*reload|stale/i.test(message) ? "conflict" : "dirty");
       throw error;
     }
-  }, [project, pushRemote]);
+  }, [enqueueRemote, project]);
 
   useMindmapWebMcp({
     sharedActions: sharedWebMcpActions,
@@ -536,6 +610,9 @@ export function MindmapEditor({
         }),
         selectedId: sessionRef.current.selectedId,
         activitySince: activitySince || undefined,
+        viewLocal: { collapsedIds: [...collapsedIdsRef.current].sort() },
+        localSaveState,
+        remoteSaveState,
       };
     },
     focusNode: (id) => dispatch({ type: "select", id }),
@@ -575,6 +652,7 @@ export function MindmapEditor({
       const nodePatch: {
         title?: string;
         text?: string;
+        caption?: string;
         tags?: string[];
         refs?: ArtifactRef[];
         metadata?: Record<string, unknown>;
@@ -587,6 +665,7 @@ export function MindmapEditor({
       } = {};
       if (patch.title !== undefined) nodePatch.title = patch.title;
       if (patch.text !== undefined) nodePatch.text = patch.text;
+      if (patch.caption !== undefined) nodePatch.caption = patch.caption;
       if (patch.labels) nodePatch.tags = patch.labels;
       if (patch.refs) nodePatch.refs = patch.refs;
       if (patch.metadata !== undefined) nodePatch.metadata = patch.metadata || undefined;
@@ -617,7 +696,7 @@ export function MindmapEditor({
       return id;
     },
     convertCardToTodo: (id, sectionId, expectedRevision, requestId) => {
-      if (convertingCardIdRef.current) {
+      if (convertingCardIdRef.current || conversionStartingCardIdRef.current) {
         const message = "A mindmap card conversion is already in progress. Retry after it finishes.";
         return Promise.resolve({
           ok: false as const,
@@ -633,9 +712,15 @@ export function MindmapEditor({
           },
         });
       }
-      convertingCardIdRef.current = id;
-      setConvertingCardId(id);
-      return Promise.resolve(convertCardToTodo(id, sectionId, expectedRevision, requestId)).finally(() => {
+      // The flush must run before the conversion lock blocks ordinary-card
+      // commits. The separate preflight ref still serializes concurrent calls.
+      conversionStartingCardIdRef.current = id;
+      return flushBeforeOperation(flushPendingSaves, async () => {
+        convertingCardIdRef.current = id;
+        setConvertingCardId(id);
+        return convertCardToTodo(id, sectionId, expectedRevision, requestId);
+      }).finally(() => {
+        if (conversionStartingCardIdRef.current === id) conversionStartingCardIdRef.current = null;
         const pending = pendingConversionRefreshRef.current;
         if (convertingCardIdRef.current === id && pending?.cardId !== id) convertingCardIdRef.current = null;
         setConvertingCardId((current) => current === id && pending?.cardId !== id ? null : current);
@@ -741,6 +826,7 @@ export function MindmapEditor({
     return () => window.clearTimeout(timer);
   }, [moveNotice]);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [localSaveState, setLocalSaveState] = useState<LocalSaveState>("saved");
   const [savedSignature, setSavedSignature] = useState(() => mapSignature(initialMindmap));
   const saveErrorRef = useRef<string | null>(null);
   saveErrorRef.current = saveError;
@@ -869,8 +955,35 @@ export function MindmapEditor({
   const currentSignature = useMemo(() => mapSignature(mindmap), [mindmap]);
   const dirty = currentSignature !== savedSignature;
   useEffect(() => {
-    if (dirty && remoteSaveState === "saved") setRemoteSaveState("local");
-  }, [dirty, remoteSaveState]);
+    if (saveConflict) {
+      if (localSaveState !== "conflict") setLocalSaveState("conflict");
+    } else if (dirty) {
+      if (!saveInFlightRef.current && localSaveState === "saved") setLocalSaveState("dirty");
+    } else if (!saveInFlightRef.current && localSaveState !== "saved") {
+      setLocalSaveState("saved");
+    }
+    if (dirty && remoteSaveState === "synced") setRemoteSaveState("pending");
+  }, [dirty, localSaveState, remoteSaveState, saveConflict]);
+  const localSaveLabel = localSaveState === "saving"
+    ? "Saving locally…"
+    : localSaveState === "conflict"
+      ? "Local conflict"
+      : localSaveState === "dirty"
+        ? "Local changes"
+        : "Local saved";
+  const remoteSaveLabel = remoteSaveState === "checking"
+    ? "Checking Git…"
+    : remoteSaveState === "pending"
+      ? "Remote pending"
+      : remoteSaveState === "syncing"
+        ? "Syncing to Git…"
+        : remoteSaveState === "synced"
+          ? "Remote synced"
+          : remoteSaveState === "changed"
+            ? "Remote changed"
+            : remoteSaveState === "unavailable"
+              ? "Remote unavailable"
+              : "Remote failed";
   const descendantCounts = useMemo(() => countMindmapDescendants(mindmap), [mindmap]);
   const activityNodeIds = useMemo(() => {
     if (!activitySince) return new Set<string>();
@@ -977,12 +1090,15 @@ export function MindmapEditor({
     const savedMapSignature = mapSignature(saved);
     savedSignatureRef.current = savedMapSignature;
     setSavedSignature(savedMapSignature);
-    setSaveError(result.value.remote.status === "pushed" ? null : `Saved locally. ${result.value.remote.message}`);
+    nextRemoteCheckpointRef.current = mindmapRemoteCheckpoint(saved);
+    saveErrorRef.current = null;
+    setSaveError(null);
+    setLocalSaveState(mapSignature(sessionRef.current.mindmap) === savedMapSignature ? "saved" : "dirty");
     if (result.value.remote.status === "pushed") {
-      setRemoteSaveState("saved");
+      setRemoteSaveState("synced");
       setRemoteSaveError(null);
     } else {
-      setRemoteSaveState(result.value.remote.status === "pending" ? "local" : "error");
+      setRemoteSaveState(result.value.remote.status === "pending" ? "pending" : "failed");
       setRemoteSaveError(result.value.remote.message);
     }
     router.refresh();
@@ -991,9 +1107,10 @@ export function MindmapEditor({
 
   async function makeSelectedCardTodo() {
     const selectedCard = selected;
-    if (!selectedCard || selectedCard.todoId || convertingCardIdRef.current) return;
+    if (!selectedCard || selectedCard.todoId || convertingCardIdRef.current || conversionStartingCardIdRef.current) return;
     const id = selectedCard.id;
     if (inlineEditorSessionRef.current && !await inlineEditorSessionRef.current.commit()) return;
+    conversionStartingCardIdRef.current = id;
     convertingCardIdRef.current = id;
     setConvertingCardId(id);
     saveErrorRef.current = null;
@@ -1011,6 +1128,7 @@ export function MindmapEditor({
       } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not make this card a paper TODO.");
     } finally {
+      if (conversionStartingCardIdRef.current === id) conversionStartingCardIdRef.current = null;
       // The ref may be populated by the refresh effect while the conversion
       // request is suspended. Keep the post-await read widened for TypeScript.
       const pending = pendingConversionRefreshRef.current as { cardId: string; todoId: string } | null;
@@ -1283,6 +1401,7 @@ export function MindmapEditor({
     const signature = mapSignature(snapshot);
     saveErrorRef.current = null;
     setSaveError(null);
+    setLocalSaveState("saving");
     const job = (async () => {
       try {
         const saved = await saveMindmapAction(project, snapshot, persistedDiskHashRef.current);
@@ -1305,18 +1424,22 @@ export function MindmapEditor({
             persistedRevision: saved.revision,
             updatedAt: saved.updatedAt,
           });
+          setLocalSaveState("saved");
         } else {
           // Keep edits made while the request was in flight and carry forward
           // the server's fresh CAS hash for the next save.
           const rebased = mindmapReducer(current, { type: "rebase-disk-hash", diskHash: persistedDiskHashRef.current });
           sessionRef.current = rebased;
           dispatch({ type: "rebase-disk-hash", diskHash: persistedDiskHashRef.current });
+          setLocalSaveState("dirty");
         }
-        await pushRemote("OpenBar: save mindmap");
+        nextRemoteCheckpointRef.current = mindmapRemoteCheckpoint(saved);
+        void enqueueRemote("OpenBar: save mindmap", nextRemoteCheckpointRef.current);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Could not save the mindmap.";
         saveErrorRef.current = message;
         setSaveError(message);
+        setLocalSaveState(/conflict|changed.*reload|stale/i.test(message) ? "conflict" : "dirty");
       }
     })();
     saveInFlightRef.current = job;
@@ -1327,7 +1450,7 @@ export function MindmapEditor({
       await job;
     });
     return job;
-  }, [isPending, project, pushRemote]);
+  }, [enqueueRemote, isPending, project]);
 
   const flushPendingSaves = useCallback(async () => {
     if (inlineEditorSessionRef.current && !await inlineEditorSessionRef.current.commit()) {
@@ -1379,21 +1502,23 @@ export function MindmapEditor({
 
   const hydrateSavedMap = useCallback((saved: Mindmap) => {
     persistedDiskHashRef.current = saved.diskHash ?? mindmapDiskHash(saved);
+    nextRemoteCheckpointRef.current = mindmapRemoteCheckpoint(saved);
     sessionRef.current = mindmapReducer(sessionRef.current, { type: "hydrate", mindmap: saved });
     dispatch({ type: "hydrate", mindmap: saved });
     savedSignatureRef.current = mapSignature(saved);
     setSavedSignature(savedSignatureRef.current);
+    setLocalSaveState("saved");
     setSaveError(null);
   }, []);
 
   const canAutoPull = () => !isPending && !saveInFlightRef.current && !saveErrorRef.current
     && !inlineEditorSessionRef.current && !editingId && !pendingImageUploads.current
-    && webMcpSaveCountRef.current === 0 && !convertingCardIdRef.current
+    && webMcpSaveCountRef.current === 0 && !convertingCardIdRef.current && !remoteQueue.isBusy
     && mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current
     && !document.activeElement?.closest("input, textarea, [contenteditable=true]");
   useGitAutoSync({
     project,
-    isBusy: () => checkingRemote || remoteSaveState === "saving" || isPending,
+    isBusy: () => checkingRemote || remoteQueue.isBusy || isPending,
     canPull: canAutoPull,
     check: () => refreshRemoteStatus(true, false),
     onApplying: (applying) => {
@@ -1409,7 +1534,7 @@ export function MindmapEditor({
       await refreshRemoteStatus(false, false);
       router.refresh();
     },
-    onError: (message) => { setRemoteSaveState("error"); setRemoteSaveError(message); },
+    onError: (message) => { setRemoteSaveState("failed"); setRemoteSaveError(message); },
   });
 
   const reloadSavedMap = useCallback(() => {
@@ -1889,6 +2014,17 @@ export function MindmapEditor({
             <ToolbarButton title="Redo (⌘⇧Z / Ctrl+Y)" onClick={redo} disabled={readOnly || !future.length}><Redo2 size={15} /></ToolbarButton>
             <span>{mindmap.nodes.length} cards</span>
           </div>
+          <div
+            className={styles.historyControls}
+            role="status"
+            aria-live="polite"
+            data-local-save-state={localSaveState}
+            data-remote-save-state={remoteSaveState}
+          >
+            <span>{localSaveLabel}</span>
+            <span aria-hidden="true">·</span>
+            <span>{remoteSaveLabel}</span>
+          </div>
 
         </footer>
         {moveNotice && <div className={styles.moveNotice} role="status"><Check size={14} /><span>{moveNotice}</span><button type="button" onClick={() => { undo(); setMoveNotice(""); }}>Undo</button></div>}
@@ -1900,7 +2036,7 @@ export function MindmapEditor({
       </EditorNotice>}
       {!saveError && remoteSaveError && <OverleafSyncNotice
         project={project} message={remoteSaveError} editingPaused={remoteOutOfSync}
-        disabled={isPending || applyingRemote} checking={checkingRemote || remoteSaveState === "saving"}
+        disabled={isPending || applyingRemote} checking={checkingRemote || remoteSaveState === "syncing"}
         beforeReview={async () => { await flushPendingSaves(); return true; }}
         onApplied={async () => {
           const saved = await getMindmapAction(project, sessionRef.current.mindmap.id || "draft");
@@ -2127,7 +2263,7 @@ export function MindmapEditor({
                 <span>Priority</span>
                 <ChoiceButtons label="Card priority" value={selected.priority || ""} options={[{value:"",label:"Clear"}, ...["P0", "P1", "P2", "P3"].map(value => ({value,label:value}))]} onChange={(value) => dispatch({ type: "patch-node", id: selected.id, patch: { priority: value ? value as MindmapNode["priority"] : undefined } })} />
               </div>
-              {!selected.todoId && <div className="mindmap-field">
+              <div className="mindmap-field">
                 <span>Extended note</span>
                 <textarea
                   value={selected.caption || ""}
@@ -2141,7 +2277,7 @@ export function MindmapEditor({
                   }}
                 />
                 <small>{captionWordCount(selected.caption)} / {MAX_MINDMAP_CAPTION_WORDS} words · model context</small>
-              </div>}
+              </div>
             </div>
           </div>
           </fieldset>
@@ -3052,11 +3188,7 @@ function createCanvasLayout(
 ): CanvasLayout {
   const safeNodes = Array.isArray(mindmap?.nodes) ? mindmap.nodes : [];
   const visibleNodes = safeNodes;
-  const visibleMindmap = {
-    ...mindmap,
-    nodes: visibleNodes.map((node) => ({ ...node, collapsed: collapsedIds.has(node.id) })),
-  };
-  const { nodeById, childrenByParent: children } = indexMindmap(visibleMindmap);
+  const { nodeById, childrenByParent: children } = indexMindmap(mindmap);
   const displayTextById = new Map(visibleNodes.map((node) => [node.id, paperTodoText(node, paperState)]));
   const dimensions = new Map<string, Dimensions>();
   for (const node of visibleNodes) {
@@ -3071,9 +3203,9 @@ function createCanvasLayout(
       ? { width: measured.width, height: measured.height }
       : { ...size, height: size.height + extra });
   }
-  const { positions, reachable, connected } = layoutMindmapTree(visibleMindmap, dimensions);
-  const recoveryAnchorId = positions.has(visibleMindmap.rootId)
-    ? visibleMindmap.rootId
+  const { positions, reachable, connected } = layoutMindmapTree(mindmap, dimensions, collapsedIds);
+  const recoveryAnchorId = positions.has(mindmap.rootId)
+    ? mindmap.rootId
     : [...reachable].find((id) => positions.has(id));
   const orphanNodes = visibleNodes.filter((node) => !connected.has(node.id));
   const connectedBottom = Math.max(0, ...[...reachable].map((id) => {

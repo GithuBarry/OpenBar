@@ -1,21 +1,43 @@
 # OpenBar release acceptance
 
-Run these checks from the repository root after installing dependencies.
+Run these preparation steps from the repository root after installing dependencies.
 
-## Automated release checks
+## Release preparation
 
-| Check | Result | Evidence |
+Run the build and operational checks from the repository root:
+
+```bash
+pnpm typecheck
+pnpm build
+pnpm openbar doctor --all
+git diff --check
+```
+
+The retained operational checks cover these areas:
+
+| Check | Command | Scope |
 | --- | --- | --- |
-| TypeScript | passed | `pnpm typecheck` exited 0 |
-| Production build | passed | `pnpm build` exited 0 |
-| Domain invariants | passed | Raw output ended with `Domain checks passed.` |
-| Connection smoke | passed | `OB_SMOKE_SLUGS=[project-a-redacted],[project-b-redacted] pnpm smoke` passed against the built server |
-| Operational doctor | passed | `pnpm openbar doctor --all` exited 0 |
-| Browser WebMCP journey | passed in pure contract eval before suite retirement | Raw output ended with `WebMCP evals passed.` |
-| Node test suite | retired per PLAN (2) | The pre-retirement run reported 37 passed and 2 failures from stale fixture assumptions |
-| Git diff hygiene | passed | `git diff --check` exited 0 |
+| TypeScript | `pnpm typecheck` | Application type checking |
+| Production build | `pnpm build` | Next standalone output |
+| Operational doctor | `pnpm openbar doctor --all` | Experimental workspace-registry and checkout inspection |
+| Git diff hygiene | `git diff --check` | Whitespace errors in the worktree |
 
-The built-server route check returned these raw statuses:
+The supported product inventory is the web content-store project inventory.
+The operational doctor and `projects list` CLI commands inspect the separate
+experimental workspace registry. Their human output and JSON metadata carry
+that inventory label, with registry results remaining separate from web results
+until registration and web integration share one inventory.
+
+The clean-checkout CI workflow covers type checking and a production build
+with Node 26.8.1 and pnpm 11.9.0. Docker image creation is a separate
+deployment operation. Run
+`pnpm docker:build` using the instructions in [deploy/README.md](../deploy/README.md).
+
+Browser WebMCP behavior uses the manual journey below with a capable browser
+session.
+
+The built-server route check returned these raw statuses in the recorded
+acceptance run:
 
 ```text
 200 /p/[project-a-redacted]/wiki
@@ -23,20 +45,6 @@ The built-server route check returned these raw statuses:
 404 /p/[project-a-redacted]/wiki/missing-page
 200 /p/[project-b-redacted]/wiki
 ```
-
-The retired suite failures were:
-
-```text
-AssertionError: assert.ok(section)
-actual: undefined
-
-Expected values to be strictly equal:
-+ actual - expected
-+ './sections/evaluation.tex'
-- 'evaluation.tex'
-```
-
-The second result reflects the current full normalized source path contract.
 
 ## Manual browser acceptance
 

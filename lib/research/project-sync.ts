@@ -17,6 +17,42 @@ export type RemoteSyncResult = {
   credentialNeeded?: boolean;
 };
 
+export type RemoteSyncScheduler = (task: () => Promise<void>) => void;
+
+/**
+ * Register remote work after a local mutation can acknowledge its durable
+ * result. The caller supplies the runtime scheduler, such as Next's `after`.
+ */
+export function scheduleRemoteSyncAfterResponse(
+  schedule: RemoteSyncScheduler,
+  work: () => Promise<unknown>,
+): RemoteSyncResult {
+  try {
+    schedule(async () => {
+      try {
+        await work();
+      } catch (error) {
+        // The local mutation already reached durable storage. Git status and
+        // the existing retry action remain the source of truth for this work.
+        console.warn("OpenBar remote synchronization failed", error instanceof Error ? error.message : String(error));
+      }
+    });
+    return {
+      status: "pending",
+      code: "remote_sync_scheduled",
+      message: "Local save complete. Remote Git synchronization is scheduled after this response.",
+      retryable: true,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      code: "remote_sync_schedule_failed",
+      message: error instanceof Error ? error.message : String(error),
+      retryable: true,
+    };
+  }
+}
+
 const UNCONFIGURED_CODES = new Set(["not_git_repo", "remote_unconfigured", "remote_not_overleaf"]);
 const PENDING_CODES = new Set(["push_failed", "remote_ahead", "remote_conflict", "remote_check_failed"]);
 

@@ -72,7 +72,7 @@ the project identity.
   `reopen_todo`.
 - **Mindmap** — `get_mindmap`, `focus_mindmap_node`,
   `add_mindmap_node`, `move_mindmap_node`, `delete_mindmap_node`,
-  `set_mindmap_collapsed`, `patch_mindmap_node`,
+  `patch_mindmap_node`,
   `highlight_mindmap_activity`, `place_todo_card`,
   `convert_card_to_todo`, `complete_todo`, `reopen_todo`,
   `focus_todo_in_paper`, and `rename_mindmap`.
@@ -89,11 +89,27 @@ Page-local tools use live editor state, selected cards, navigation, focus, and
 the visible actions of their page. Their project and document identity comes
 from the active page. TeX owns TODO identity, text, and completion. Each map
 owns its card placement, labels, refs, progress, and appearance.
+Mindmap collapse is a browser-local view preference stored per project and map.
+The browser mindmap WebMCP exposes that view state. Headless MCP reads and
+writes durable map content.
 
-## Private project demo
+## Project inventory boundary
 
-The private demo allowlist comes from `OPENBAR_DEMO_SLUGS`. It exposes the
-configured project fixtures with their manuscript source, figures, maps,
+The supported product inventory is the web content-store project inventory at
+`OPENBARRY_CONTENT/projects/<slug>`. The web home page and workspace WebMCP
+derive their project results from that content store.
+
+`pnpm openbar projects list` and `pnpm openbar doctor --all` inspect the
+machine-local workspace registry. This is an experimental CLI inventory for
+registered checkout paths and local diagnostics. Registry results are separate
+from web results until registration and web integration share one inventory.
+The CLI human output, help text, and JSON metadata identify this boundary.
+
+## Disposable public demo deployment
+
+The Cloudflare deployment runs a disposable public-demo boundary behind
+Cloudflare Access. Its allowlist comes from `OPENBAR_DEMO_SLUGS`. It exposes
+the configured project fixtures with their manuscript source, figures, maps,
 annotations, and project notes. Other workspace projects remain outside the
 demo image.
 
@@ -101,6 +117,11 @@ The demo banner identifies shared disposable state. The `Reset demo` control
 restores configured projects from the fixture source. The server also enforces
 the allowlist and disables workspace administration, imports, uploads,
 instruction writes, and skill writes in demo mode.
+
+The deployment keeps authored changes in its writable Container content tree.
+Container replacement or recovery can return that tree to the image fixture.
+Use persistent content storage with backup and restore for durable researcher
+hosting.
 
 ## Main routes
 
@@ -136,20 +157,22 @@ OPENBAR_DEMO_FIXTURE=/path/to/project-fixtures \
 pnpm seed:demo
 ```
 
-## Release checks
+## Release preparation
 
 ```bash
 pnpm typecheck
-pnpm check:domain
 pnpm build
-OB_SMOKE_SLUGS=private-project-a,private-project-b pnpm smoke
+pnpm openbar doctor --all
 git diff --check
 ```
 
-The release surface keeps type checking, the production build, domain
-invariants, operational doctor checks, and connection smoke diagnostics.
-Manual durability and browser WebMCP acceptance steps live in
+Browser WebMCP uses the manual journey documented in
 [docs/release-acceptance.md](docs/release-acceptance.md).
+
+GitHub Actions runs type checking and a production build from a clean checkout
+with the declared Node and pnpm versions. Docker image creation remains a
+separate deployment operation. Run it with
+`pnpm docker:build` as described in [deploy/README.md](deploy/README.md).
 
 For the private Cloudflare Worker plus Container package, use the build,
 Workers Builds, optional local Container, Access, and custom-hostname steps in

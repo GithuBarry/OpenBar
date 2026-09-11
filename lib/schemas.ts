@@ -5,6 +5,21 @@ import { captionWithinLimit } from "@/lib/mindmap/card-content";
 
 const isoDateTime = z.string().datetime({ offset: true });
 
+const paperSectionRefContextSchema = z.object({
+  file: z.string().max(1_000).optional(),
+  title: z.string().max(2_000).optional(),
+  level: z.number().int().min(1).max(6).optional(),
+  headingPath: z.array(z.string().max(2_000)).max(32).optional(),
+  bodyHash: z.string().max(200).optional(),
+  label: z.string().max(1_000).optional(),
+  sourceHash: z.string().max(200).optional(),
+  sourceRange: z.object({
+    from: z.number().int().min(0),
+    to: z.number().int().min(0),
+  }).optional(),
+  order: z.number().int().min(0).optional(),
+}).strip();
+
 export const artifactRefSchema = z
   .object({
     imageWidth: z.number().int().min(25).max(100).optional(),
@@ -22,6 +37,8 @@ export const artifactRefSchema = z
     id: z.string(),
     label: z.string().optional(),
     url: z.string().max(2_000).optional(),
+    mapId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).optional(),
+    sectionContext: paperSectionRefContextSchema.optional(),
   })
   .strip()
   .superRefine((ref, context) => {
@@ -90,7 +107,6 @@ export const mindmapNodeSchema = z
     parentId: z.string().nullable(),
     shape: z.enum(["root", "branch", "leaf", "note", "callout"]).optional(),
     agentDraft: z.boolean().optional(),
-    collapsed: z.boolean().optional(),
     metadata: z.record(z.unknown()).optional(),
     contentFormat: z.enum(["plain", "markdown", "tex"]).optional(),
     tableLayout: z.enum(["wide", "scroll"]).optional(),

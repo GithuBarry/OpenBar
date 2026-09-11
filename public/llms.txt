@@ -117,5 +117,6 @@ bearer-token setup supports headless clients directly and through the stdio brid
 Card authorship: Write every card as self-contained material for an external reader, including cards prompted by @agent or @agents. State the question or topic, essential context, answer or current uncertainty, and relevant evidence or file references. Keep conversational replies and personal acknowledgments in the task. Preserve the project-specific meaning and available evidence.
 Agent-created cards stay marked Agent draft through edits and refreshes. The human
 accepts them using the small Save card control at the upper right, or deletes them.
+Every card, including TODO-backed cards, may carry map-owned Extended notes.
 Extended notes open in a floating window beside the card.
 When Git has incoming commits or conflicts, review and synchronize to resume editing.

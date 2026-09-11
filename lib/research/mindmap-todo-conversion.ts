@@ -11,11 +11,13 @@ import { assertUniqueMindmapTodoIds } from "@/lib/mindmap-index";
 import { mindmapDiskHash, normalizeMindmap } from "@/lib/mindmap/mindmap";
 import type { Mindmap } from "@/lib/types";
 import { ordinaryMindmapCardContent } from "./todo-map";
-import { requestFingerprint, readRequestReplay, recordRequestReplay } from "./request-replay";
+import { requestFingerprint, readRequestReplay, recordRequestReplay, RequestReplayStoreError } from "./request-replay";
 import { failResult, type OperationResult } from "./operation-result";
 import { insertTodoAtSection } from "./paper-todo-persist";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import { fileBytesUnchanged, splitBundleSource } from "@/lib/tex-project/source-bundle-format";
+import { buildSourceContextIndex } from "@/lib/research/source-context";
+import { canonicalizeArtifactRef, type PaperSectionRefTarget } from "@/lib/research/artifact-link";
 import {
   DRAFT_MINDMAP_ID,
   resolveMindmapStorageIdentity,
@@ -53,6 +55,9 @@ export type MindmapTodoConversionInput = {
   expectedMapDiskHash?: string;
   expectedBundleHash?: string;
   requestId?: string;
+  /** The MCP idempotent-write wrapper owns replay persistence for this call. */
+  replayOwner?: "service" | "caller";
+  replayFingerprint?: string;
 };
 
 type ConversionFailure = OperationResult<never>;
@@ -106,6 +111,22 @@ function currentMap(projectDir: string, id: string): Mindmap | null {
   return record ? normalizeMindmap(record) : null;
 }
 
+function sectionRefTargets(bundle: ReturnType<typeof buildSourceBundle>, manuscriptDir: string): PaperSectionRefTarget[] {
+  const context = buildSourceContextIndex(manuscriptDir, bundle.rootFile, bundle);
+  return context.sections.map((section) => ({
+    id: section.id,
+    title: section.title,
+    level: section.level,
+    ...(section.label ? { label: section.label } : {}),
+    file: section.file,
+    order: section.order,
+    headingPath: section.headingPath,
+    bodyHash: section.bodyHash,
+    sourceHash: section.sourceHash,
+    sourceRange: section.sourceRange,
+  }));
+}
+
 function success(
   todoId: string,
   map: Mindmap,
@@ -141,7 +162,8 @@ export async function convertMindmapCardToTodo(input: MindmapTodoConversionInput
       false,
     );
   }
-  const fingerprint = requestFingerprint({
+  const ownsReplay = input.replayOwner !== "caller";
+  const fingerprint = input.replayFingerprint || requestFingerprint({
     operation: "convert_card_to_todo",
     slug: input.slug,
     mapId,
@@ -154,17 +176,26 @@ export async function convertMindmapCardToTodo(input: MindmapTodoConversionInput
   return withProjectWriteLockAsync(input.projectDir, async () => {
     const map = currentMap(input.projectDir, mapId);
     if (!map) return conversionFailure("unknown_map", `Unknown mindmap "${mapId}".`);
-    const replay = readRequestReplay(input.projectDir, requestId);
-    if (replay) {
-      if (replay.operation !== "convert_card_to_todo" || replay.fingerprint !== fingerprint) {
-        return conversionFailure("request_conflict", `Request id "${requestId}" was already used for another operation.`);
+    if (ownsReplay) {
+      let replay: ReturnType<typeof readRequestReplay>;
+      try {
+        replay = readRequestReplay(input.projectDir, requestId);
+      } catch (error) {
+        if (error instanceof RequestReplayStoreError) return conversionFailure("request_replay_recovery_pending", error.message, true);
+        throw error;
       }
-      const replayTodoId = typeof replay.result.todoId === "string" ? replay.result.todoId : "";
-      const replayNode = map.nodes.find((node) => node.id === input.cardId);
-      if (replayTodoId && replayNode?.todoId === replayTodoId) return success(replayTodoId, map, sectionId);
+      if (replay) {
+        if (replay.operation !== "convert_card_to_todo" || replay.fingerprint !== fingerprint) {
+          return conversionFailure("request_conflict", `Request id "${requestId}" was already used for another operation.`);
+        }
+        const replayTodoId = typeof replay.result.todoId === "string" ? replay.result.todoId : "";
+        const replayNode = map.nodes.find((node) => node.id === input.cardId);
+        if (replayTodoId && replayNode?.todoId === replayTodoId) return success(replayTodoId, map, sectionId);
+      }
     }
-    if (input.expectedMapDiskHash && mindmapDiskHash(map) !== input.expectedMapDiskHash) {
-      return conversionFailure("stale_disk_state", "The mindmap changed on disk. Reload before converting this card.", true, mindmapDiskHash(map));
+    const currentMapDiskHash = mindmapDiskHash(map);
+    if (input.expectedMapDiskHash && currentMapDiskHash !== input.expectedMapDiskHash) {
+      return conversionFailure("stale_disk_state", "The mindmap changed on disk. Reload before converting this card.", true, currentMapDiskHash);
     }
     const node = map.nodes.find((item) => item.id === input.cardId);
     if (!node) return conversionFailure("unknown_card", `Unknown mindmap card "${input.cardId}".`);
@@ -183,11 +214,19 @@ export async function convertMindmapCardToTodo(input: MindmapTodoConversionInput
     if (inserted.error) return conversionFailure("invalid_tex", inserted.error);
 
     const bound = applyMindmapAction(map, { type: "bind-todo", id: input.cardId, todoId: inserted.id }).mindmap;
-    const nextMap = normalizeMindmap({
+    const sections = sectionRefTargets(bundle, paths.manuscriptDir);
+    const normalizedNextMap = normalizeMindmap({
       ...bound,
       projectId: input.slug,
       revision: (map.revision ?? 0) + 1,
     });
+    const nextMap = {
+      ...normalizedNextMap,
+      nodes: normalizedNextMap.nodes.map((node) => ({
+        ...node,
+        ...(node.refs ? { refs: node.refs.map((ref) => canonicalizeArtifactRef(ref, sections)) } : {}),
+      })),
+    } satisfies Mindmap;
     assertUniqueMindmapTodoIds(nextMap);
     const encoded = serializeMindmapRecord(input.projectDir, nextMap);
     const mapFilePath = relativePath(paths.manuscriptDir, encoded.identity.file);
@@ -214,21 +253,21 @@ export async function convertMindmapCardToTodo(input: MindmapTodoConversionInput
       );
     }
 
-    try {
-      // The conversion holds the project lock while committing the paper and
-      // map. Replay metadata uses its own lock path, so this is a distinct
-      // lock acquisition rather than a reentrant project-lock attempt. Other
-      // MCP writers follow the same project-write then replay-write ordering.
-      recordRequestReplay(input.projectDir, {
-        requestId,
-        operation: "convert_card_to_todo",
-        fingerprint,
-        result: { todoId: inserted.id, mapId, cardId: input.cardId, ...(inserted.sectionId ? { sectionId: inserted.sectionId } : {}) },
-      });
-    } catch {
-      // The source transaction is already durable; a later retry still sees
-      // the bound card and is therefore idempotent even if replay metadata is
-      // temporarily unavailable.
+    if (ownsReplay) {
+      try {
+        // The conversion holds the project lock while committing the paper and
+        // map. Replay metadata uses its own lock path, so this is a distinct
+        // lock acquisition rather than a reentrant project-lock attempt.
+        recordRequestReplay(input.projectDir, {
+          requestId,
+          operation: "convert_card_to_todo",
+          fingerprint,
+          result: { todoId: inserted.id, mapId, cardId: input.cardId, ...(inserted.sectionId ? { sectionId: inserted.sectionId } : {}) },
+        });
+      } catch {
+        // The source transaction is already durable. A later retry still sees
+        // the bound card and remains idempotent while replay metadata recovers.
+      }
     }
     const after = buildSourceBundle(paths.manuscriptDir, undefined, 0, true);
     return success(inserted.id, nextMap, inserted.sectionId, mapFilePath, after.bundleHash);

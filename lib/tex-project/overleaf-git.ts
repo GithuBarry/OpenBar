@@ -7,6 +7,7 @@ import { hasTexProject, texPaths, writePaperProject, writeProjectRecord } from "
 import { withWriteLockAsync } from "./codec";
 import { gitProcessEnv } from "@/lib/server/git-credential-store";
 import { redactGitRemote, redactSensitiveText } from "@/lib/server/git-url";
+import { withProjectWriteLockAsync } from "@/lib/research/project-lock";
 
 const execFileAsync = promisify(execFile);
 
@@ -84,11 +85,6 @@ export type OverleafGitRemoteSyncResult = {
   code?: string;
   retryable: boolean;
 };
-
-interface GitIndexSnapshot {
-  path: string;
-  data: Buffer | null;
-}
 
 function gitErrorMessage(error: unknown): string {
   if (error && typeof error === "object") {
@@ -224,6 +220,7 @@ function gitPathspec(projectDir: string, cwd: string): string[] {
       `:(exclude,glob)${metadata}/build/**`,
       `:(exclude,glob)${metadata}/activity.jsonl`,
       `:(exclude,glob)${metadata}/request-replay.json`,
+      `:(exclude,glob)${metadata}/request-replay-journal.json`,
       `:(exclude,glob)${metadata}/recovery/**`,
     );
   }
@@ -293,24 +290,21 @@ function movePath(src: string, dest: string): void {
   }
 }
 
-async function snapshotGitIndex(cwd: string): Promise<GitIndexSnapshot> {
-  const relative = (await runGit(cwd, ["rev-parse", "--git-path", "index"])).trim();
-  const indexPath = path.resolve(cwd, relative);
-  try {
-    return { path: indexPath, data: fs.readFileSync(indexPath) };
-  } catch {
-    return { path: indexPath, data: null };
-  }
+async function resolveGitAdministrativePath(cwd: string, name: string): Promise<string> {
+  const relative = (await runGit(cwd, ["rev-parse", "--git-path", name])).trim();
+  if (!relative) throw new Error(`Git did not return an administrative path for ${name}.`);
+  return path.resolve(cwd, relative);
 }
 
-function restoreGitIndex(snapshot: GitIndexSnapshot | undefined): void {
-  if (!snapshot) return;
-  try {
-    if (snapshot.data === null) fs.rmSync(snapshot.path, { force: true });
-    else fs.writeFileSync(snapshot.path, snapshot.data);
-  } catch {
-    // Best-effort: the original git error is more useful than a restore failure.
-  }
+async function withGitSyncLock<T>(cwd: string, operation: () => Promise<T> | T): Promise<T> {
+  const lockPath = await resolveGitAdministrativePath(cwd, "openbar-sync");
+  return withWriteLockAsync(lockPath, operation);
+}
+
+async function temporaryGitIndex(cwd: string): Promise<{ directory: string; path: string }> {
+  const indexPath = await resolveGitAdministrativePath(cwd, "index");
+  const directory = fs.mkdtempSync(path.join(path.dirname(indexPath), "openbar-index-"));
+  return { directory, path: path.join(directory, "index") };
 }
 
 export async function inspectTexGitRepo(repositoryPath: string): Promise<TexGitRepoInspection> {
@@ -377,13 +371,16 @@ export async function initializeMinimalTexRepo(
   }
 }
 
-async function runGit(cwd: string, args: string[]): Promise<string> {
+async function runGit(cwd: string, args: string[], options: { indexPath?: string } = {}): Promise<string> {
+  const env = options.indexPath
+    ? { ...process.env, GIT_INDEX_FILE: options.indexPath }
+    : process.env;
   const { stdout } = await execFileAsync("git", args, {
     cwd,
     encoding: "utf8",
     timeout: 120_000,
     maxBuffer: 10 * 1024 * 1024,
-    env: gitProcessEnv(process.env),
+    env: gitProcessEnv(env),
   });
   return stdout;
 }
@@ -570,7 +567,8 @@ function isSafeCommittedPath(file: string): boolean {
   return !normalized.startsWith(".git/")
     && !normalized.includes("/.git/")
     && !/(^|\/)(?:\.OpenBar|\.openbarry)\/(?:build|recovery)(?:\/|$)/.test(normalized)
-    && !/(^|\/)(?:activity\.jsonl|request-replay\.json)$/.test(normalized)
+    && !/(^|\/)(?:\.OpenBar|\.openbarry)\/project-write(?:\.ob-lock)?$/.test(normalized)
+    && !/(^|\/)(?:activity\.jsonl|request-replay(?:-journal)?\.json)$/.test(normalized)
     && !isSensitivePath(normalized);
 }
 
@@ -592,46 +590,61 @@ export async function commitOverleafGit(
 ): Promise<OverleafGitLocalCommitResult> {
   const cwd = resolveGitDir(projectDir);
   if (!fs.existsSync(path.join(cwd, ".git"))) return { ok: false, status: "failed", code: "not_git_repo", message: "Directory is not a git repository.", paths: [] };
-  return withWriteLockAsync(path.join(cwd, ".git", "openbar-sync"), async () => {
-    let indexSnapshot: GitIndexSnapshot | undefined;
-    let committed = false;
+  return withProjectWriteLockAsync(projectDir, async () => {
     try {
-      const branch = (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
-      if (!branch || branch === "HEAD") return { ok: false, status: "failed", code: "detached_head", message: "Checkout a named branch before creating an OpenBar commit.", paths: [] };
-      const pathspec = gitPathspec(projectDir, cwd);
-      const existingOutput = await runGit(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...pathspec]);
-      const existingEntries = parsePorcelainZ(existingOutput);
-      const existingPaths = porcelainPaths(existingEntries);
-      const sensitive = sensitiveAmong(existingPaths);
-      if (sensitive.length) return { ok: false, status: "blocked", code: "sensitive_path", message: "Sensitive paths require cleanup before a local OpenBar commit: " + sensitive.join(", ") + ".", paths: [] };
-      const staged = preStagedPaths(existingEntries);
-      if (staged.length) return { ok: false, status: "blocked", code: "pre_staged_work", message: "Affected paths contain pre-staged work. Review or commit the existing index before automatic synchronization: " + [...new Set(staged)].join(", ") + ".", paths: [] };
-      if (!existingPaths.length) return { ok: true, status: "no_changes", message: "No local changes to commit.", branch, paths: [] };
-      const before = new Map<string, string | undefined>();
-      for (const file of existingPaths) before.set(file, await worktreeHash(cwd, file));
-      indexSnapshot = await snapshotGitIndex(cwd);
-      await runGit(cwd, ["add", "-A", "--", ...existingPaths.map((file) => `:(literal)${file}`)]);
-      const stagedStatus = await runGit(cwd, ["diff", "--cached", "--name-status", "-z", "--", ...pathspec]);
-      const stagedNameOnly = await runGit(cwd, ["diff", "--cached", "--name-only", "-z", "--", ...pathspec]);
-      const stagedPaths = [...new Set([...parseNameStatusZ(stagedStatus), ...parseNulTerminatedPaths(stagedNameOnly)])].filter(isSafeCommittedPath);
-      if (!stagedPaths.length) return { ok: true, status: "no_changes", message: "No local changes to commit.", branch, paths: [] };
-      const beforeAfterStage = new Map<string, string | undefined>();
-      for (const file of stagedPaths) beforeAfterStage.set(file, await worktreeHash(cwd, file));
-      const changedDuringStage = stagedPaths.filter((file) => before.get(file) !== beforeAfterStage.get(file));
-      if (changedDuringStage.length) {
-        restoreGitIndex(indexSnapshot);
-        return { ok: false, status: "blocked", code: "concurrent_save", message: "A save arrived while Git was preparing the commit. Retry after the current save finishes.", paths: changedDuringStage.map((file) => ({ path: file })) };
-      }
-      // Commit the concrete changed paths. Optional metadata directories may
-      // have zero matches, which `git commit --only` treats as an error.
-      await runGit(cwd, ["commit", "--only", "-m", message, "--", ...stagedPaths.map((file) => `:(literal)${file}`)]);
-      committed = true;
-      const commitHash = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
-      const paths = await fileReceipts(cwd, commitHash, stagedPaths, before);
-      return { ok: true, status: "committed", message: `Created local commit ${commitHash}.`, commitHash, branch, paths };
+      return await withGitSyncLock(cwd, async () => {
+        let temporaryIndex: { directory: string; path: string } | undefined;
+        try {
+          const branch = (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+          if (!branch || branch === "HEAD") return { ok: false, status: "failed", code: "detached_head", message: "Checkout a named branch before creating an OpenBar commit.", paths: [] };
+          const head = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
+          const pathspec = gitPathspec(projectDir, cwd);
+          const existingOutput = await runGit(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...pathspec]);
+          const existingEntries = parsePorcelainZ(existingOutput);
+          const affectedPaths = porcelainPaths(existingEntries);
+          const sensitive = sensitiveAmong(affectedPaths);
+          if (sensitive.length) return { ok: false, status: "blocked", code: "sensitive_path", message: "Sensitive paths require cleanup before a local OpenBar commit: " + sensitive.join(", ") + ".", paths: [] };
+          const existingPaths = affectedPaths.filter(isSafeCommittedPath);
+          const staged = preStagedPaths(existingEntries).filter(isSafeCommittedPath);
+          if (staged.length) return { ok: false, status: "blocked", code: "pre_staged_work", message: "Affected paths contain pre-staged work. Review or commit the existing index before automatic synchronization: " + [...new Set(staged)].join(", ") + ".", paths: [] };
+          if (!existingPaths.length) return { ok: true, status: "no_changes", message: "No local changes to commit.", branch, paths: [] };
+          const before = new Map<string, string | undefined>();
+          for (const file of existingPaths) before.set(file, await worktreeHash(cwd, file));
+
+          // Capture into an isolated index seeded from HEAD. The user's ordinary
+          // index remains available for unrelated staged work throughout.
+          temporaryIndex = await temporaryGitIndex(cwd);
+          const indexOptions = { indexPath: temporaryIndex.path };
+          await runGit(cwd, ["read-tree", head], indexOptions);
+          await runGit(cwd, ["add", "-A", "--", ...existingPaths.map((file) => `:(literal)${file}`)], indexOptions);
+          const stagedStatus = await runGit(cwd, ["diff", "--cached", "--name-status", "-z", "--", ...pathspec], indexOptions);
+          const stagedNameOnly = await runGit(cwd, ["diff", "--cached", "--name-only", "-z", "--", ...pathspec], indexOptions);
+          const stagedPaths = [...new Set([...parseNameStatusZ(stagedStatus), ...parseNulTerminatedPaths(stagedNameOnly)])].filter(isSafeCommittedPath);
+          if (!stagedPaths.length) return { ok: true, status: "no_changes", message: "No local changes to commit.", branch, paths: [] };
+
+          // write-tree freezes the exact bytes staged above. Later worktree saves
+          // remain dirty against this captured tree and enter a later checkpoint.
+          const tree = (await runGit(cwd, ["write-tree"], indexOptions)).trim();
+          if (!tree) throw new Error("Git produced an empty checkpoint tree.");
+          const commitHash = (await runGit(cwd, ["commit-tree", tree, "-p", head, "-m", message])).trim();
+          if (!commitHash) throw new Error("Git produced an empty checkpoint commit.");
+          await runGit(cwd, ["update-ref", `refs/heads/${branch}`, commitHash, head]);
+          const paths = await fileReceipts(cwd, commitHash, stagedPaths, before);
+          return { ok: true, status: "committed", message: `Created local commit ${commitHash}.`, commitHash, branch, paths };
+        } catch (error) {
+          return { ok: false, status: "failed", code: "commit_failed", message: "Local commit failed: " + gitErrorMessage(error), paths: [] };
+        } finally {
+          if (temporaryIndex) {
+            try {
+              fs.rmSync(temporaryIndex.directory, { recursive: true, force: true });
+            } catch {
+              // The Git result remains authoritative when temporary cleanup itself fails.
+            }
+          }
+        }
+      });
     } catch (error) {
-      if (!committed) restoreGitIndex(indexSnapshot);
-      return { ok: false, status: "failed", code: "commit_failed", message: "Local commit failed: " + gitErrorMessage(error), paths: [] };
+      return { ok: false, status: "failed", code: "git_admin_path", message: "Local commit failed: " + gitErrorMessage(error), paths: [] };
     }
   });
 }
@@ -640,40 +653,44 @@ export async function commitOverleafGit(
 export async function syncOverleafGit(projectDir: string, expectedCommitHash?: string): Promise<OverleafGitRemoteSyncResult> {
   const cwd = resolveGitDir(projectDir);
   if (!fs.existsSync(path.join(cwd, ".git"))) return { ok: false, status: "failed", code: "not_git_repo", message: "Directory is not a git repository.", retryable: false };
-  return withWriteLockAsync(path.join(cwd, ".git", "openbar-sync"), async () => {
-    try {
-      const branch = (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
-      const head = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
-      if (!branch || branch === "HEAD") return { ok: false, status: "failed", code: "detached_head", message: "Checkout a named branch before synchronizing OpenBar.", retryable: false };
-      if (expectedCommitHash && expectedCommitHash !== head) return { ok: false, status: "pending", code: "commit_changed", message: "A newer local commit exists. Read status and synchronize the latest commit.", commitHash: head, branch, retryable: true };
-      const remoteUrl = await runGit(cwd, ["config", "--get", "remote.origin.url"]).then((value) => value.trim()).catch(() => "");
-      if (!remoteUrl) return { ok: false, status: "unconfigured", code: "remote_unconfigured", message: "No origin remote is configured. Local commits remain available until an Git remote is configured.", commitHash: head, branch, retryable: false };
-      if (!isOverleafGitRemote(remoteUrl)) return { ok: false, status: "unconfigured", code: "remote_not_overleaf", message: "Configure a supported Git remote before pushing.", commitHash: head, branch, retryable: false };
-      await runGit(cwd, ["fetch", "--prune", "origin"]);
-      let ahead = 0;
-      let behind = 0;
-      let remoteBranchExists = true;
+  try {
+    return await withGitSyncLock(cwd, async () => {
       try {
-        await runGit(cwd, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`]);
-        const counts = (await runGit(cwd, ["rev-list", "--left-right", "--count", `HEAD...origin/${branch}`])).trim();
-        const [localAhead, remoteAhead] = counts.split(/\s+/).map(Number);
-        ahead = Number.isFinite(localAhead) ? localAhead : 0;
-        behind = Number.isFinite(remoteAhead) ? remoteAhead : 0;
-      } catch {
-        remoteBranchExists = false;
-        ahead = 1;
+        const branch = (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+        const head = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
+        if (!branch || branch === "HEAD") return { ok: false, status: "failed", code: "detached_head", message: "Checkout a named branch before synchronizing OpenBar.", retryable: false };
+        if (expectedCommitHash && expectedCommitHash !== head) return { ok: false, status: "pending", code: "commit_changed", message: "A newer local commit exists. Read status and synchronize the latest commit.", commitHash: head, branch, retryable: true };
+        const remoteUrl = await runGit(cwd, ["config", "--get", "remote.origin.url"]).then((value) => value.trim()).catch(() => "");
+        if (!remoteUrl) return { ok: false, status: "unconfigured", code: "remote_unconfigured", message: "No origin remote is configured. Local commits remain available until an Git remote is configured.", commitHash: head, branch, retryable: false };
+        if (!isOverleafGitRemote(remoteUrl)) return { ok: false, status: "unconfigured", code: "remote_not_overleaf", message: "Configure a supported Git remote before pushing.", commitHash: head, branch, retryable: false };
+        await runGit(cwd, ["fetch", "--prune", "origin"]);
+        let ahead = 0;
+        let behind = 0;
+        let remoteBranchExists = true;
+        try {
+          await runGit(cwd, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`]);
+          const counts = (await runGit(cwd, ["rev-list", "--left-right", "--count", `HEAD...origin/${branch}`])).trim();
+          const [localAhead, remoteAhead] = counts.split(/\s+/).map(Number);
+          ahead = Number.isFinite(localAhead) ? localAhead : 0;
+          behind = Number.isFinite(remoteAhead) ? remoteAhead : 0;
+        } catch {
+          remoteBranchExists = false;
+          ahead = 1;
+        }
+        if (behind > 0) {
+          const diverged = ahead > 0;
+          return { ok: false, status: "pending", code: diverged ? "remote_conflict" : "remote_ahead", message: diverged ? "Git and this checkout have diverged. Reconcile both histories before pushing." : "Git has newer commits. Pull and reconcile before pushing.", commitHash: head, branch, ahead, behind, retryable: true };
+        }
+        if (ahead === 0 && remoteBranchExists) return { ok: true, status: "synchronized", message: "The intended local commit is present on the Git branch.", commitHash: head, branch, ahead, behind, retryable: false };
+        const pushOutput = (await runGit(cwd, ["push", "origin", `HEAD:refs/heads/${branch}`])).trim();
+        return { ok: true, status: "synchronized", message: pushOutput || `Pushed ${head} to origin/${branch}.`, commitHash: head, branch, ahead, behind, retryable: false };
+      } catch (error) {
+        return { ok: false, status: "pending", code: "push_failed", message: "Local commits remain intact. Git synchronization failed: " + gitErrorMessage(error), retryable: true };
       }
-      if (behind > 0) {
-        const diverged = ahead > 0;
-        return { ok: false, status: "pending", code: diverged ? "remote_conflict" : "remote_ahead", message: diverged ? "Git and this checkout have diverged. Reconcile both histories before pushing." : "Git has newer commits. Pull and reconcile before pushing.", commitHash: head, branch, ahead, behind, retryable: true };
-      }
-      if (ahead === 0 && remoteBranchExists) return { ok: true, status: "synchronized", message: "The intended local commit is present on the Git branch.", commitHash: head, branch, ahead, behind, retryable: false };
-      const pushOutput = (await runGit(cwd, ["push", "origin", `HEAD:refs/heads/${branch}`])).trim();
-      return { ok: true, status: "synchronized", message: pushOutput || `Pushed ${head} to origin/${branch}.`, commitHash: head, branch, ahead, behind, retryable: false };
-    } catch (error) {
-      return { ok: false, status: "pending", code: "push_failed", message: "Local commits remain intact. Git synchronization failed: " + gitErrorMessage(error), retryable: true };
-    }
-  });
+    });
+  } catch (error) {
+    return { ok: false, status: "failed", code: "git_admin_path", message: "Git synchronization failed: " + gitErrorMessage(error), retryable: false };
+  }
 }
 
 /** Compatibility wrapper for the existing UI while it migrates to separate buttons. */

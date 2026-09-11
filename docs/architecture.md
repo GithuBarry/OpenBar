@@ -34,6 +34,18 @@ One-line definition:
 > The Primary mindmap covers every paper TODO. Secondary maps reuse
 > selected TODOs as different views of the same work.
 
+## Project inventory boundary
+
+The supported product inventory is the web content-store project inventory at
+`OPENBARRY_CONTENT/projects/<slug>`. The web home page and workspace WebMCP
+derive project discovery from this source.
+
+The workspace-registry CLI reads a machine-local registration file for
+checkout and credential diagnostics. Its inventory is experimental and stays
+separate from web results until registration and web integration share one
+inventory. `openbar projects list` and `openbar doctor --all` label this source
+in human output, help text, and structured metadata.
+
 ## Invariants
 
 ### Paper first
@@ -156,6 +168,25 @@ mindmap card. Promote work into maps with `\obtodo`.
 
 Do not add a new annotation syntax until `\obtodo` / `\obcomment` /
 `\obmarker` / ordinary TeX comments are insufficient.
+
+## Compiler process boundary
+
+Paper compilation runs `latexmk` with `-no-shell-escape` from an immutable
+temporary source snapshot. The child receives an explicit environment
+allowlist containing the executable `PATH` (including discovered TeX binary
+directories), snapshot `TEXINPUTS`, disposable `HOME` and temporary
+directories, a stable `C.UTF-8` locale, and TeX's paranoid `openin_any` and
+`openout_any` settings. Compiler output retained in compile status is bounded
+to a useful tail.
+
+This is an immediate environment-hardening measure. The allowlist limits
+application-secret and process-marker exposure while the compiler still runs
+with the host process's ordinary filesystem and operating-system privileges.
+Filesystem isolation remains a separate deployment control. Durable
+multi-tenant hosting requires an independently sandboxed, unprivileged worker
+with restricted mounts, disabled or tightly restricted network access, and
+CPU, memory, process-count, and wall-clock resource limits for every untrusted
+TeX compile.
 
 ## Structured incompleteness
 

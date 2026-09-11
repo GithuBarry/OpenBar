@@ -77,19 +77,17 @@ export function lookupBundlePart(parts: BundleSourcePart[], rawOrPath: string): 
 export function lookupBundlePartFrom(
   parts: BundleSourcePart[],
   rawOrPath: string,
-  ownerFilePath?: string,
+  _ownerFilePath?: string,
 ): BundleSourcePart | undefined {
   const path = normalizeTeXInputPath(rawOrPath);
-  const ownerDir = ownerFilePath?.includes("/") ? ownerFilePath.slice(0, ownerFilePath.lastIndexOf("/") + 1) : "";
-  const relative = normalizeBundlePath(`${ownerDir}${path}`);
   const rootRelative = normalizeBundlePath(path);
-  if (!relative || !rootRelative) return undefined;
-  const exact = parts.find((part) => part.filePath === relative)
-    || parts.find((part) => part.filePath === rootRelative)
+  if (!rootRelative) return undefined;
+  // The source bundle mirrors TeX's manuscript-root working directory. An
+  // include written in `nested/parent.tex` still names `child.tex` at the
+  // manuscript root, so owner-relative and suffix matching would select a
+  // different file from the compiler when duplicate basenames exist.
+  return parts.find((part) => part.filePath === rootRelative)
     || parts.find((part) => part.filePath === rawOrPath);
-  if (exact) return exact;
-  const suffixes = parts.filter((part) => part.filePath.endsWith(`/${rootRelative}`) || part.filePath === rootRelative);
-  return suffixes.length === 1 ? suffixes[0] : undefined;
 }
 
 function normalizeBundlePath(value: string): string | null {
@@ -124,50 +122,151 @@ export type RootSlice =
     to: number;
   };
 
-const INCLUDE_LINE = /^(\s*)\\(input|include)\s*\{([^}]+)\}([ \t]*%.*)?\s*$/;
+const VERBATIM_ENVS = new Set(["verbatim", "Verbatim", "lstlisting", "minted", "alltt"]);
+
+type IncludeMatch = {
+  command: "input" | "include";
+  raw: string;
+  from: number;
+  to: number;
+};
+
+function escapedAt(source: string, index: number): boolean {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && source[cursor] === "\\"; cursor -= 1) backslashes += 1;
+  return backslashes % 2 === 1;
+}
+
+function commandEnvironmentAt(source: string, index: number, command: "begin" | "end"): { name: string; to: number } | undefined {
+  if (source[index] !== "\\" || escapedAt(source, index)) return undefined;
+  const match = new RegExp(`^\\\\${command}\\s*\\{([^}\\r\\n]+)\\}`).exec(source.slice(index));
+  const name = match?.[1]?.trim();
+  return name && match ? { name, to: index + match[0].length } : undefined;
+}
+
+function verbCommandEnd(source: string, index: number): number | undefined {
+  if (source[index] !== "\\" || escapedAt(source, index)) return undefined;
+  const prefix = /^\\verb\*?/.exec(source.slice(index));
+  if (!prefix) return undefined;
+  const delimiter = source[index + prefix[0].length];
+  if (!delimiter || delimiter === "\r" || delimiter === "\n") return undefined;
+  for (let cursor = index + prefix[0].length + 1; cursor < source.length; cursor += 1) {
+    if (source[cursor] === delimiter) return cursor + 1;
+    if (source[cursor] === "\r" || source[cursor] === "\n") return cursor;
+  }
+  return source.length;
+}
+
+/** Mask TeX comments and literal environments while retaining source offsets. */
+function maskIncludeSource(source: string): string {
+  const output = source.split("");
+  let inComment = false;
+  let verbatimEnvironment: string | undefined;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index]!;
+    if (inComment) {
+      if (char === "\r" || char === "\n") inComment = false;
+      else output[index] = " ";
+      continue;
+    }
+    if (verbatimEnvironment) {
+      const end = commandEnvironmentAt(source, index, "end");
+      if (end?.name === verbatimEnvironment) {
+        for (let cursor = index; cursor < end.to; cursor += 1) {
+          if (source[cursor] !== "\r" && source[cursor] !== "\n") output[cursor] = " ";
+        }
+        index = end.to - 1;
+        verbatimEnvironment = undefined;
+      } else if (char !== "\r" && char !== "\n") {
+        output[index] = " ";
+      }
+      continue;
+    }
+    const begin = commandEnvironmentAt(source, index, "begin");
+    if (begin && VERBATIM_ENVS.has(begin.name)) {
+      for (let cursor = index; cursor < begin.to; cursor += 1) {
+        if (source[cursor] !== "\r" && source[cursor] !== "\n") output[cursor] = " ";
+      }
+      index = begin.to - 1;
+      verbatimEnvironment = begin.name;
+      continue;
+    }
+    const verbEnd = verbCommandEnd(source, index);
+    if (verbEnd !== undefined) {
+      for (let cursor = index; cursor < verbEnd; cursor += 1) {
+        if (source[cursor] !== "\r" && source[cursor] !== "\n") output[cursor] = " ";
+      }
+      index = verbEnd - 1;
+      continue;
+    }
+    if (char === "%" && !escapedAt(source, index)) {
+      output[index] = " ";
+      inComment = true;
+    }
+  }
+  return output.join("");
+}
+
+/** Find executable braced includes while retaining their offsets in `source`. */
+function findIncludeCommands(source: string): IncludeMatch[] {
+  const masked = maskIncludeSource(source);
+  const includePattern = /\\(input|include)\s*\{([^{}]*)\}/g;
+  const matches: IncludeMatch[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = includePattern.exec(masked))) {
+    matches.push({
+      command: match[1] as "input" | "include",
+      raw: match[2] || "",
+      from: match.index ?? 0,
+      to: includePattern.lastIndex,
+    });
+  }
+  return matches;
+}
+
+/**
+ * Keep a standalone include line together for the nested editor. Inline and
+ * multiple includes retain exact command spans so surrounding source stays
+ * owned by its original file and offset range.
+ */
+function rootIncludeSlice(rootBody: string, include: IncludeMatch): Extract<RootSlice, { kind: "include" }> {
+  const lineFrom = rootBody.lastIndexOf("\n", include.from - 1) + 1;
+  const lineBreak = rootBody.indexOf("\n", include.to);
+  const lineTo = lineBreak < 0 ? rootBody.length : lineBreak;
+  const prefix = rootBody.slice(lineFrom, include.from);
+  const suffix = rootBody.slice(include.to, lineTo).replace(/\r$/, "");
+  const standalone = include.to <= lineTo
+    && /^[ \t]*$/.test(prefix)
+    && /^[ \t]*(?:%[^\r\n]*)?[ \t]*$/.test(suffix);
+  const from = standalone ? lineFrom : include.from;
+  const to = standalone ? (lineBreak < 0 ? lineTo : lineBreak + 1) : include.to;
+  return {
+    kind: "include",
+    command: include.command,
+    raw: include.raw,
+    line: rootBody.slice(from, standalone ? lineTo : to),
+    filePath: normalizeTeXInputPath(include.raw),
+    from,
+    to,
+  };
+}
 
 export function sliceRootByIncludes(rootBody: string): RootSlice[] {
   const slices: RootSlice[] = [];
-  const lines = rootBody.split("\n");
   let cursor = 0;
-  let texFrom = 0;
-  let texParts: string[] = [];
-
-  const flushTex = (to: number) => {
-    if (!texParts.length) {
-      texFrom = to;
-      return;
+  for (const include of findIncludeCommands(rootBody)) {
+    if (!include.raw || isPassthroughInclude(include.raw)) continue;
+    const slice = rootIncludeSlice(rootBody, include);
+    if (slice.from < cursor) continue;
+    if (slice.from > cursor) {
+      slices.push({ kind: "tex", text: rootBody.slice(cursor, slice.from), from: cursor, to: slice.from });
     }
-    const text = texParts.join("\n");
-    slices.push({ kind: "tex", text, from: texFrom, to });
-    texParts = [];
-    texFrom = to;
-  };
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const lineFrom = cursor;
-    const lineTo = cursor + line.length + (i < lines.length - 1 ? 1 : 0);
-    const match = INCLUDE_LINE.exec(line);
-    const raw = match?.[3] || "";
-    if (match && raw && !isPassthroughInclude(raw)) {
-      flushTex(lineFrom);
-      slices.push({
-        kind: "include",
-        command: match[2] as "input" | "include",
-        raw,
-        line,
-        filePath: normalizeTeXInputPath(raw),
-        from: lineFrom,
-        to: lineTo,
-      });
-      texFrom = lineTo;
-    } else {
-      texParts.push(line);
-    }
-    cursor = lineTo;
+    slices.push(slice);
+    cursor = slice.to;
   }
-  flushTex(rootBody.length);
+  if (cursor < rootBody.length) {
+    slices.push({ kind: "tex", text: rootBody.slice(cursor), from: cursor, to: rootBody.length });
+  }
   return slices;
 }
 
@@ -175,9 +274,14 @@ export function joinRootSlices(slices: RootSlice[]): string {
   const chunks: string[] = [];
   for (const slice of slices) {
     if (slice.kind === "tex") chunks.push(slice.text);
-    else chunks.push(slice.line);
+    else {
+      chunks.push(slice.line);
+      // Standalone include slices own their line terminator in `to` while
+      // `line` retains the historical line-without-terminator value.
+      if (slice.to > slice.from + slice.line.length) chunks.push("\n");
+    }
   }
-  return chunks.join("\n");
+  return chunks.join("");
 }
 
 export function replaceBundlePart(source: string, filePath: string, nextBody: string): string {
@@ -217,7 +321,7 @@ function mappedSlice(text: string, offsets: number[], from: number, to: number):
 
 function appendMapped(target: MappedText, next: MappedText): void {
   target.text += next.text;
-  target.offsets.push(...next.offsets);
+  for (const offset of next.offsets) target.offsets.push(offset);
 }
 
 function dropOneTrailingNewline(value: MappedText): MappedText {
@@ -256,35 +360,25 @@ function inlineMappedBody(
   seen: Set<string>,
 ): MappedText {
   const result: MappedText = { text: "", offsets: [] };
-  const lines = body.text.split("\n");
   let cursor = 0;
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]!;
-    const hasNewline = index < lines.length - 1;
-    const lineEnd = cursor + line.length + (hasNewline ? 1 : 0);
-    const match = INCLUDE_LINE.exec(line);
-    const raw = match?.[3] || "";
-    const part = match && raw && !isPassthroughInclude(raw)
-      ? lookupBundlePartFrom(parts, raw, ownerFilePath)
+  for (const include of findIncludeCommands(body.text)) {
+    const part = include.raw && !isPassthroughInclude(include.raw)
+      ? lookupBundlePartFrom(parts, include.raw, ownerFilePath)
       : undefined;
-    if (!part || seen.has(part.filePath)) {
-      appendMapped(result, mappedSlice(body.text, body.offsets, cursor, lineEnd));
-    } else {
-      const nextSeen = new Set(seen);
-      nextSeen.add(part.filePath);
-      const included = stripPreviewEnvelopeMapped(part.body, part.bodyFrom);
-      const nested = inlineMappedBody(included, part.filePath, parts, nextSeen);
-      // The old line-based inliner removed one trailing newline from the
-      // included body before joining it at the include site. Preserve that
-      // exact behavior while keeping the source offset map aligned.
-      appendMapped(result, dropOneTrailingNewline(nested));
-      if (hasNewline) {
-        const newlineOffset = body.offsets[cursor + line.length] ?? body.offsets[cursor] ?? 0;
-        appendMapped(result, { text: "\n", offsets: [newlineOffset] });
-      }
-    }
-    cursor = lineEnd;
+    if (!part || seen.has(part.filePath)) continue;
+    appendMapped(result, mappedSlice(body.text, body.offsets, cursor, include.from));
+    const nextSeen = new Set(seen);
+    nextSeen.add(part.filePath);
+    const included = stripPreviewEnvelopeMapped(part.body, part.bodyFrom);
+    const nested = inlineMappedBody(included, part.filePath, parts, nextSeen);
+    // Drop one included trailing newline because the original include
+    // invocation retains the source bytes that followed it. This preserves
+    // the established line behavior and also handles inline or multiple
+    // includes without shifting the offset map.
+    appendMapped(result, dropOneTrailingNewline(nested));
+    cursor = include.to;
   }
+  appendMapped(result, mappedSlice(body.text, body.offsets, cursor, body.text.length));
   return result;
 }
 

@@ -1,6 +1,7 @@
 /** Paper locations and ownership derived from the current LaTeX include graph. */
 
 import { sha256, type SectionMeta } from "@/lib/tex-project/codec";
+import { sha256Hex } from "@/lib/mindmap/sha256";
 import { deriveSections } from "@/lib/tex-project/section-ranges";
 import type { SourceBundle } from "@/lib/tex-project/source-bundle";
 import { orderedSourceRanges, traverseInputGraph, type GraphNode, type SourceDiagnostic } from "@/lib/tex-project/source-graph";
@@ -52,6 +53,7 @@ export type SourceContextSection = SectionMeta & {
   absPath: string;
   sourceHash: string;
   sourceRange: SourceRange;
+  bodyHash: string;
   editable: boolean;
   /** Optional enclosing write target. */
   writeTargetId?: string;
@@ -162,6 +164,7 @@ function makeSections(node: GraphNode): { sections: SourceContextSection[]; head
     absPath: node.absPath,
     sourceHash: node.hash,
     sourceRange: { from, to },
+    bodyHash: sha256Hex(node.source.slice(bodyFrom, to)),
     editable: node.editable,
     headingPath: heading.path || [],
     excerpt: excerpt(node.source, { from, to }),

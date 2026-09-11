@@ -37,6 +37,9 @@ export interface PaperCompileStatus {
   pageBudget?: PaperPageBudget;
   artifactId?: string;
   artifactSourceHash?: string;
+  /** Build identity of the latest successfully published artifact. */
+  artifactBuildInputHash?: string;
+  /** Build identity targeted by the latest attempted compile. */
   buildInputHash?: string;
 }
 
@@ -55,6 +58,26 @@ export type CompilerConfig = {
   engine: TexEngine;
   texliveVersion?: string;
   mainFile?: string;
+};
+
+export type BuildInputFile = {
+  path: string;
+  bytes: string | Buffer;
+};
+
+export type BuildInputHashInput = {
+  sourceHash: string;
+  rootFile: string;
+  config: CompilerConfig;
+  toolchain: string;
+  files: readonly BuildInputFile[];
+};
+
+export type BuildInputSnapshot = {
+  sourceHash: string;
+  buildInputHash: string;
+  rootFile: string;
+  config: CompilerConfig;
 };
 
 const running = new Map<string, Promise<PaperCompileStatus>>();
@@ -139,6 +162,72 @@ export function readCompilerConfig(projectDir: string): CompilerConfig {
   return { compiler: "latexmk", engine, ...(mainFile ? { mainFile } : {}), ...(texliveVersion ? { texliveVersion } : {}) };
 }
 
+function normalizeBuildPath(value: string): string {
+  return value.replaceAll("\\", "/");
+}
+
+/**
+ * Hash the complete compiler input identity in a deterministic order.
+ *
+ * The caller supplies the allowed manuscript files, so this pure function can
+ * be tested without invoking TeX or reading a project directory. Length
+ * framing keeps file paths and bytes unambiguous even when a source file has
+ * unusual text or binary content.
+ */
+export function hashBuildInputs(input: BuildInputHashInput): string {
+  const files = [...input.files]
+    .map((file) => ({ path: normalizeBuildPath(file.path), bytes: file.bytes }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const hash = createHash("sha256");
+  hash.update(JSON.stringify({
+    version: 1,
+    sourceHash: input.sourceHash,
+    rootFile: normalizeBuildPath(input.rootFile),
+    compiler: input.config.compiler,
+    engine: input.config.engine,
+    texliveVersion: input.config.texliveVersion || "",
+    mainFile: normalizeBuildPath(input.config.mainFile || ""),
+    toolchain: input.toolchain,
+    fileCount: files.length,
+  }));
+  for (const file of files) {
+    const relativePath = Buffer.from(file.path);
+    const bytes = typeof file.bytes === "string" ? Buffer.from(file.bytes) : file.bytes;
+    hash.update(String(relativePath.byteLength));
+    hash.update(":");
+    hash.update(relativePath);
+    hash.update(String(bytes.byteLength));
+    hash.update(":");
+    hash.update(bytes);
+  }
+  return hash.digest("hex");
+}
+
+function currentBuildInput(projectDir: string): BuildInputSnapshot {
+  const paths = texPaths(projectDir);
+  const sourceRoot = path.resolve(paths.manuscriptDir);
+  return withWriteLock(path.resolve(paths.paperFile), () => {
+    const config = readCompilerConfig(projectDir);
+    const sourceHash = paperSourceHash(projectDir);
+    const rootFile = normalizeBuildPath(path.relative(sourceRoot, locateTexRoot(sourceRoot, config.mainFile)));
+    return {
+      sourceHash,
+      rootFile,
+      config,
+      buildInputHash: snapshotDigest(sourceRoot, sourceHash, config, rootFile),
+    };
+  });
+}
+
+function artifactBuildInputHash(projectDir: string): string | undefined {
+  return readArtifactManifest(projectDir)?.buildInputHash;
+}
+
+function artifactIsStale(projectDir: string, buildInputHash: string): boolean {
+  const artifactHash = artifactBuildInputHash(projectDir);
+  return Boolean(artifactHash && artifactHash !== buildInputHash);
+}
+
 export function getPaperCompileStatus(projectDir: string): PaperCompileStatus {
   try {
     const status = JSON.parse(fs.readFileSync(compileStatusFile(projectDir), "utf8")) as PaperCompileStatus;
@@ -149,9 +238,10 @@ export function getPaperCompileStatus(projectDir: string): PaperCompileStatus {
     const artifact = readArtifactManifest(projectDir);
     const pdfAvailable = Boolean(artifact && fs.existsSync(compiledPdfFile(projectDir, artifact.artifactId)));
     let stale = status.stale;
-    if (status.sourceHash) {
+    const expectedBuildInputHash = status.buildInputHash || artifact?.buildInputHash;
+    if (expectedBuildInputHash) {
       try {
-        stale = paperSourceHash(projectDir) !== status.sourceHash;
+        stale = currentBuildInput(projectDir).buildInputHash !== (artifact?.buildInputHash || expectedBuildInputHash);
       } catch {
         // Keep the persisted indicator when the source is temporarily unreadable.
       }
@@ -159,7 +249,12 @@ export function getPaperCompileStatus(projectDir: string): PaperCompileStatus {
     return {
       ...status,
       pdfAvailable,
-      ...(artifact ? { artifactId: artifact.artifactId, artifactSourceHash: artifact.sourceHash, buildInputHash: artifact.buildInputHash } : {}),
+      ...(artifact ? {
+        artifactId: artifact.artifactId,
+        artifactSourceHash: artifact.sourceHash,
+        artifactBuildInputHash: artifact.buildInputHash,
+        ...(status.buildInputHash ? {} : { buildInputHash: artifact.buildInputHash }),
+      } : {}),
       ...(stale === undefined ? {} : { stale }),
       ...(pdfAvailable && status.state === "success" ? { pageBudget: inspectPaperPageBudget(projectDir, artifact?.artifactId) } : {}),
     };
@@ -170,30 +265,52 @@ export function getPaperCompileStatus(projectDir: string): PaperCompileStatus {
 
 export function requestPaperCompile(projectDir: string): PaperCompileStatus {
   const current = getPaperCompileStatus(projectDir);
-  const newestHash = paperSourceHash(projectDir);
+  const target = currentBuildInput(projectDir);
   if (running.has(projectDir)) {
-    if (current.sourceHash !== newestHash) queuedAfterCurrent.add(projectDir);
+    const targetChanged = current.buildInputHash !== target.buildInputHash;
+    if (targetChanged) queuedAfterCurrent.add(projectDir);
     return {
       state: "running",
       jobId: current.jobId,
-      sourceHash: newestHash,
+      sourceHash: target.sourceHash,
+      buildInputHash: target.buildInputHash,
       startedAt: current.startedAt || new Date().toISOString(),
-      stale: current.sourceHash !== newestHash,
+      stale: targetChanged || current.stale === true || artifactIsStale(projectDir, target.buildInputHash),
       compiler: "latexmk",
+      engine: target.config.engine,
+      ...(target.config.texliveVersion ? { texliveVersion: target.config.texliveVersion } : {}),
     };
   }
-  const sourceHash = newestHash;
-  if (current.state === "success" && current.sourceHash === sourceHash && current.pdfAvailable && current.artifactId) return current;
+  if (
+    current.state === "success"
+    && current.buildInputHash === target.buildInputHash
+    && current.artifactBuildInputHash === target.buildInputHash
+    && current.pdfAvailable
+    && current.artifactId
+  ) return current;
 
   const jobId = `compile-${randomUUID()}`;
-  const status: PaperCompileStatus = { state: "running", jobId, sourceHash, startedAt: new Date().toISOString(), stale: false, compiler: "latexmk" };
+  const status: PaperCompileStatus = {
+    state: "running",
+    jobId,
+    sourceHash: target.sourceHash,
+    buildInputHash: target.buildInputHash,
+    startedAt: new Date().toISOString(),
+    stale: artifactIsStale(projectDir, target.buildInputHash),
+    compiler: "latexmk",
+    engine: target.config.engine,
+    ...(target.config.texliveVersion ? { texliveVersion: target.config.texliveVersion } : {}),
+  };
   persistStatus(projectDir, status);
-  const job = runLatexmk(projectDir, sourceHash, jobId)
+  const job = runLatexmk(projectDir, target, jobId)
     .catch((error): PaperCompileStatus => ({
       state: "error",
       jobId,
-      sourceHash,
+      sourceHash: target.sourceHash,
+      buildInputHash: target.buildInputHash,
       compiler: "latexmk",
+      engine: target.config.engine,
+      ...(target.config.texliveVersion ? { texliveVersion: target.config.texliveVersion } : {}),
       completedAt: new Date().toISOString(),
       message: error instanceof Error ? error.message : String(error),
       diagnostics: [error instanceof Error ? error.message : String(error)],
@@ -204,7 +321,7 @@ export function requestPaperCompile(projectDir: string): PaperCompileStatus {
       running.delete(projectDir);
       let changedDuringBuild = queuedAfterCurrent.delete(projectDir);
       try {
-        changedDuringBuild ||= paperSourceHash(projectDir) !== sourceHash;
+        changedDuringBuild ||= currentBuildInput(projectDir).buildInputHash !== target.buildInputHash;
       } catch {
         // The just-written status remains useful if source vanished mid-build.
       }
@@ -228,12 +345,18 @@ export function getCompiledPdf(projectDir: string, artifactId?: string): Buffer 
 function persistStatus(projectDir: string, status: PaperCompileStatus): void {
   const artifact = readArtifactManifest(projectDir);
   const pdfAvailable = Boolean(artifact && fs.existsSync(compiledPdfFile(projectDir, artifact.artifactId)));
+  const artifactFields = artifact ? {
+    artifactId: artifact.artifactId,
+    artifactSourceHash: artifact.sourceHash,
+    artifactBuildInputHash: artifact.buildInputHash,
+    ...(status.buildInputHash ? {} : { buildInputHash: artifact.buildInputHash }),
+  } : {};
   writeTextAtomic(
     compileStatusFile(projectDir),
     `${JSON.stringify({
       ...status,
       pdfAvailable,
-      ...(artifact ? { artifactId: artifact.artifactId, artifactSourceHash: artifact.sourceHash, buildInputHash: artifact.buildInputHash } : {}),
+      ...artifactFields,
     }, null, 2)}\n`,
   );
 }
@@ -243,9 +366,54 @@ export function latexmkArgs(buildDir: string, rootFile = "paper.tex", engine: Te
   return [engineFlag, "-interaction=nonstopmode", "-file-line-error", "-no-shell-escape", "-norc", "-synctex=1", "-jobname=paper", `-outdir=${buildDir}`, rootFile];
 }
 
-function compilerEnv(): NodeJS.ProcessEnv {
-  const extra = discoverTexBinDirs();
-  return { ...process.env, PATH: [...new Set([process.env.PATH || "", ...extra].filter(Boolean))].join(path.delimiter) };
+const DEFAULT_COMPILER_PATH = process.platform === "win32"
+  ? `C:\\Windows${path.win32.sep}System32`
+  : "/usr/local/bin:/usr/bin:/bin";
+const STANDARD_COMPILER_LOCALE = "C.UTF-8";
+
+export type CompilerEnvironmentOptions = {
+  /** Source environment used for the small allowlist. Tests can provide a fixture. */
+  base?: Record<string, string | undefined>;
+  /** TeX installation directories appended to the inherited executable path. */
+  extraPathEntries?: readonly string[];
+  /** Disposable HOME used by the compiler process. */
+  home?: string;
+  /** Disposable temporary directory used by the compiler process. */
+  tempDir?: string;
+  /** Snapshot source directory followed by TeX's normal search path. */
+  texInputs?: string;
+};
+
+/**
+ * Build the compiler environment from an explicit allowlist.
+ *
+ * TeX receives executable lookup, locale, temporary-directory, and source
+ * search settings. Application credentials and arbitrary process markers stay
+ * in the parent process. This boundary controls environment exposure while
+ * filesystem and process isolation remain deployment responsibilities.
+ */
+export function compilerEnv(options: CompilerEnvironmentOptions = {}): NodeJS.ProcessEnv {
+  const base = options.base || process.env;
+  const extra = options.extraPathEntries === undefined ? discoverTexBinDirs() : options.extraPathEntries;
+  const pathEntries = [base.PATH, ...extra]
+    .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+  const compilerPath = [...new Set(pathEntries)].join(path.delimiter) || DEFAULT_COMPILER_PATH;
+  const tempDir = options.tempDir || base.TMPDIR || base.TEMP || base.TMP || os.tmpdir();
+  const home = options.home || base.HOME || os.homedir();
+  const environment = {
+    PATH: compilerPath,
+    HOME: home,
+    TMPDIR: tempDir,
+    TEMP: tempDir,
+    TMP: tempDir,
+    LANG: STANDARD_COMPILER_LOCALE,
+    LC_ALL: STANDARD_COMPILER_LOCALE,
+    LC_CTYPE: STANDARD_COMPILER_LOCALE,
+    openin_any: "p",
+    openout_any: "p",
+  } as unknown as NodeJS.ProcessEnv;
+  if (options.texInputs !== undefined) environment.TEXINPUTS = options.texInputs;
+  return environment;
 }
 
 function latexmkAvailable(): boolean {
@@ -273,7 +441,7 @@ function shouldIncludeSnapshotPath(relative: string): boolean {
   const parts = relative.split(path.sep);
   if (parts[0] === ".git" || parts[0] === "node_modules") return false;
   if (parts[0] === ".OpenBar" || parts[0] === ".openbarry") {
-    return !["build", "activity.jsonl", "request-replay.json", "recovery"].includes(parts[1] || "");
+    return !["build", "activity.jsonl", "request-replay.json", "request-replay-journal.json", "recovery"].includes(parts[1] || "");
   }
   return true;
 }
@@ -319,31 +487,42 @@ function cleanupOldArtifacts(projectDir: string, displayedId = displayedArtifact
   }
 }
 
-function snapshotDigest(snapshotRoot: string, sourceHash: string, config: CompilerConfig): string {
-  const hash = createHash("sha256");
-  let toolchain = "unavailable";
+function compilerToolchainIdentity(): string {
   try {
-    toolchain = execFileSync("latexmk", ["-v"], { encoding: "utf8", timeout: 4_000, env: compilerEnv() }).toString().slice(0, 4_000);
+    return execFileSync("latexmk", ["-v"], { encoding: "utf8", timeout: 4_000, env: compilerEnv() }).toString().slice(0, 4_000);
   } catch {
-    // The unavailable compiler state is captured in the build status.
+    return "unavailable";
   }
-  hash.update(JSON.stringify({ sourceHash, compiler: config.compiler, engine: config.engine, texliveVersion: config.texliveVersion || "", mainFile: config.mainFile || "", toolchain }));
-  const files: string[] = [];
+}
+
+function snapshotFiles(snapshotRoot: string): BuildInputFile[] {
+  const files: BuildInputFile[] = [];
   const visit = (directory: string) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const absolute = path.join(directory, entry.name);
       const relative = path.relative(snapshotRoot, absolute);
       if (!shouldIncludeSnapshotPath(relative)) continue;
       if (entry.isDirectory()) visit(absolute);
-      else if (entry.isFile()) files.push(absolute);
+      else if (entry.isFile()) files.push({ path: normalizeBuildPath(relative), bytes: fs.readFileSync(absolute) });
     }
   };
   visit(snapshotRoot);
-  for (const file of files) {
-    hash.update(path.relative(snapshotRoot, file).split(path.sep).join("/"));
-    hash.update(fs.readFileSync(file));
-  }
-  return hash.digest("hex");
+  return files;
+}
+
+function snapshotDigest(
+  snapshotRoot: string,
+  sourceHash: string,
+  config: CompilerConfig,
+  rootFile = "paper.tex",
+): string {
+  return hashBuildInputs({
+    sourceHash,
+    rootFile,
+    config,
+    toolchain: compilerToolchainIdentity(),
+    files: snapshotFiles(snapshotRoot),
+  });
 }
 
 function killCompiler(child: ReturnType<typeof spawn>, signal: NodeJS.Signals): void {
@@ -355,15 +534,16 @@ function killCompiler(child: ReturnType<typeof spawn>, signal: NodeJS.Signals): 
   }
 }
 
-async function runLatexmk(projectDir: string, sourceHash: string, jobId: string): Promise<PaperCompileStatus> {
+async function runLatexmk(projectDir: string, target: BuildInputSnapshot, jobId: string): Promise<PaperCompileStatus> {
   const paths = texPaths(projectDir);
   const startedAt = new Date().toISOString();
-  const config = readCompilerConfig(projectDir);
+  const { sourceHash, buildInputHash, config } = target;
   if (!latexmkAvailable()) {
     return Promise.resolve({
       state: "unavailable",
       jobId,
       sourceHash,
+      buildInputHash,
       startedAt,
       completedAt: new Date().toISOString(),
       compiler: "latexmk",
@@ -378,31 +558,35 @@ async function runLatexmk(projectDir: string, sourceHash: string, jobId: string)
   const snapshotRoot = path.join(temporaryRoot, "source");
   const buildDir = path.join(temporaryRoot, "build");
   const sourceRoot = path.resolve(paths.manuscriptDir);
-  let buildInputHash = "";
-  let rootFile = "";
+  let rootFile = target.rootFile;
   try {
-    // Capture the complete include graph while the same lock used by source
-    // writes is held. A second hash catches an external writer that raced the
-    // filesystem copy; mixed snapshots are rejected explicitly.
+    // Capture the complete compiler input set while the same lock used by
+    // source writes is held. A second hash catches an external writer that
+    // raced the filesystem copy; mixed snapshots are rejected explicitly.
     const capture = withWriteLock(path.resolve(paths.paperFile), () => {
       const before = paperSourceHash(projectDir);
-      const sourceRootFile = locateTexRoot(sourceRoot, config.mainFile);
+      const currentConfig = readCompilerConfig(projectDir);
+      const sourceRootFile = locateTexRoot(sourceRoot, currentConfig.mainFile);
       copyManuscriptSnapshot(sourceRoot, snapshotRoot);
       const after = paperSourceHash(projectDir);
-      if (before !== after || before !== sourceHash) {
-        throw new Error("The manuscript changed while the compile snapshot was being captured. Save again and retry.");
+      const capturedRootFile = normalizeBuildPath(path.relative(sourceRoot, sourceRootFile));
+      const capturedBuildInputHash = snapshotDigest(snapshotRoot, before, currentConfig, capturedRootFile);
+      if (before !== after || before !== sourceHash || capturedBuildInputHash !== buildInputHash) {
+        throw new Error("The compiler inputs changed while the compile snapshot was being captured. Save again and retry.");
       }
-      rootFile = path.relative(sourceRoot, sourceRootFile).split(path.sep).join("/");
-      buildInputHash = snapshotDigest(snapshotRoot, before, config);
-      return before;
+      return { sourceHash: before, buildInputHash: capturedBuildInputHash, rootFile: capturedRootFile };
     });
-    if (capture !== sourceHash) throw new Error("The compile target is no longer the requested source revision.");
+    if (capture.sourceHash !== sourceHash || capture.buildInputHash !== buildInputHash) {
+      throw new Error("The compile target is no longer the requested build input.");
+    }
+    rootFile = capture.rootFile;
   } catch (error) {
     try { fs.rmSync(temporaryRoot, { recursive: true, force: true }); } catch { /* best effort */ }
     return {
       state: "error",
       jobId,
       sourceHash,
+      buildInputHash,
       startedAt,
       completedAt: new Date().toISOString(),
       compiler: "latexmk",
@@ -421,9 +605,17 @@ async function runLatexmk(projectDir: string, sourceHash: string, jobId: string)
   };
   return new Promise((resolve) => {
     fs.mkdirSync(buildDir, { recursive: true });
+    const compilerHome = path.join(temporaryRoot, "home");
+    const compilerTemp = path.join(temporaryRoot, "tmp");
+    fs.mkdirSync(compilerHome, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(compilerTemp, { recursive: true, mode: 0o700 });
     const child = spawn("latexmk", latexmkArgs(buildDir, rootFile, config.engine), {
       cwd: snapshotRoot,
-      env: { ...compilerEnv(), TEXINPUTS: `${snapshotRoot}${path.delimiter}` },
+      env: compilerEnv({
+        home: compilerHome,
+        tempDir: compilerTemp,
+        texInputs: `${snapshotRoot}${path.delimiter}`,
+      }),
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     });
@@ -437,8 +629,9 @@ async function runLatexmk(projectDir: string, sourceHash: string, jobId: string)
         state: "running",
         jobId,
         sourceHash,
+        buildInputHash,
         startedAt,
-        stale: false,
+        stale: artifactIsStale(projectDir, buildInputHash),
         compiler: "latexmk",
         engine: config.engine,
         rawLog: output,
@@ -453,8 +646,9 @@ async function runLatexmk(projectDir: string, sourceHash: string, jobId: string)
         state: "running",
         jobId,
         sourceHash,
+        buildInputHash,
         startedAt,
-        stale: false,
+        stale: artifactIsStale(projectDir, buildInputHash),
         compiler: "latexmk",
         engine: config.engine,
         message: "Compilation exceeded the five-minute limit. Terminating the compiler process tree.",
@@ -476,6 +670,7 @@ async function runLatexmk(projectDir: string, sourceHash: string, jobId: string)
         state: unavailable ? "unavailable" : "error",
         jobId,
         sourceHash,
+        buildInputHash,
         compiler: "latexmk",
         engine: config.engine,
         startedAt,
@@ -492,24 +687,19 @@ async function runLatexmk(projectDir: string, sourceHash: string, jobId: string)
       const diagnostics = parseDiagnostics(output).slice(-16);
       const parsedDiagnostics = parseTexFileLines(diagnostics);
       if (code === 0) {
-        const artifactId = `pdf-${sourceHash.slice(0, 16)}-${jobId.slice(-12)}`;
+        const artifactId = `pdf-${buildInputHash.slice(0, 16)}-${jobId.slice(-12)}`;
         try {
-          // Recheck the complete compiler input set, not only the TeX graph
-          // hash. Assets, bibliography files, and compiler metadata can
-          // change while TeX is running and otherwise produce a mixed PDF
-          // that looks current to the editor.
-          const finalInput = withWriteLock(path.resolve(paths.paperFile), () => {
-            const finalSourceHash = paperSourceHash(projectDir);
-            return {
-              sourceHash: finalSourceHash,
-              buildInputHash: snapshotDigest(sourceRoot, finalSourceHash, config),
-            };
-          });
+          // Recheck the same complete compiler input identity used by cache
+          // hits and status freshness. Assets, bibliography files, and
+          // compiler metadata can change while TeX is running and otherwise
+          // produce a mixed PDF that looks current to the editor.
+          const finalInput = currentBuildInput(projectDir);
           if (finalInput.sourceHash !== sourceHash || finalInput.buildInputHash !== buildInputHash) {
             finish({
               state: "error",
               jobId,
               sourceHash,
+              buildInputHash,
               compiler: "latexmk",
               engine: config.engine,
               startedAt,
@@ -535,10 +725,11 @@ async function runLatexmk(projectDir: string, sourceHash: string, jobId: string)
           cleanupOldArtifacts(projectDir);
         } catch (error) {
           finish({
-            state: "error",
-            jobId,
-            sourceHash,
-            compiler: "latexmk",
+          state: "error",
+          jobId,
+          sourceHash,
+          buildInputHash,
+          compiler: "latexmk",
             engine: config.engine,
             startedAt,
             completedAt: new Date().toISOString(),
@@ -554,6 +745,7 @@ async function runLatexmk(projectDir: string, sourceHash: string, jobId: string)
           state: "success",
           jobId,
           sourceHash,
+          buildInputHash,
           startedAt,
           completedAt: new Date().toISOString(),
           diagnostics,
@@ -564,7 +756,6 @@ async function runLatexmk(projectDir: string, sourceHash: string, jobId: string)
           engine: config.engine,
           artifactId,
           artifactSourceHash: sourceHash,
-          buildInputHash,
           ...(config.texliveVersion ? { texliveVersion: config.texliveVersion } : {}),
         });
         return;
@@ -573,6 +764,7 @@ async function runLatexmk(projectDir: string, sourceHash: string, jobId: string)
         state: "error",
         jobId,
         sourceHash,
+        buildInputHash,
         compiler: "latexmk",
         engine: config.engine,
         startedAt,

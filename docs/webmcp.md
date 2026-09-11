@@ -118,6 +118,10 @@ The mindmap page registers:
 - `place_todo_card`, `convert_card_to_todo`, `complete_todo`,
   `reopen_todo`, and `focus_todo_in_paper`
 
+`set_mindmap_collapsed` changes the browser-local view preference for the
+current project and map. The preference is returned under `viewLocal` by the
+browser `get_mindmap` tool and remains outside the durable map record.
+
 TeX owns each TODO id, title, text, and completion. A map owns card
 placement, labels, refs, progress, optional P0–P3 priority, table layout,
 and appearance. Primary covers every
@@ -246,6 +250,23 @@ revisions and remote-save receipts. Both MCP text and `structuredContent`
 contain `{ok:true,value,...}` or `{ok:false,code,message,retryable,...}`. Array
 values live inside `value`, so standard MCP clients can validate every result.
 
+### Request replay recovery
+
+Every idempotent mutation reserves its `requestId`, project, operation and
+argument fingerprint in `.OpenBar/request-replay-journal.json` before saving
+local state. A process interruption after that reservation leaves the intent
+in place. A retry returns `request_replay_recovery_pending` and preserves the
+intent, which gives an operator a safe inspection point before another write.
+
+An intent-only recovery is resolved by a server-side operator after inspecting
+the saved project. Call `resolveRequestReplayIntent(projectDir, requestId,
+operation, fingerprint, { action: "clear" })` after confirming that the
+mutation did not land. Call the same helper with
+`{ action: "promote", result }` after reconstructing the exact original MCP
+result. Result-bearing journal entries are promoted automatically on the next
+matching retry. The journal is bounded to 200 entries and refuses new intent
+reservations while it is full, preserving unresolved intents for recovery.
+
 - `GET /api/tools` lists the authenticated saved-state tool catalog.
 - `POST /api/tools/<name>` executes its JSON arguments using bearer authentication.
 - `GET /api/projects` lists projects using the same authentication.
@@ -288,7 +309,5 @@ bearer connection and stdio bridge work with clients that support configured
 credentials. Native WebMCP requires a browser exposing that API, while the
 portable browser bridge works with ordinary page-evaluation tooling.
 
-Run `node --env-file=.env.local scripts/check-agent-access.mjs` against localhost,
-or set `OPENBARRY_URL` for a remote server. Set `OB_SMOKE_WRITES=1` to verify a
-scratch skill create/update/delete cycle and stale-hash protection. The check
-preserves existing instructions and cleans up its unique scratch skill.
+Use a configured bearer token for authenticated MCP access. The product
+instructions at `/llms.txt` and `/agents` describe the connection contract.

@@ -39,6 +39,7 @@ import {
 import { escapeTexText, paperTitleCommand } from "./tex-encode";
 import { resolveProjectAsset, ASSET_EXTENSIONS } from "./asset-resolver";
 import { mindmapDiskHash } from "@/lib/mindmap/mindmap";
+import { stripLegacyCollapsedField } from "@/lib/mindmap/collapse-preferences";
 
 export const TEX_SCHEMAS = {
   project: "openbarry/project@1",
@@ -113,6 +114,12 @@ function hasSupportedTexDocument(manuscriptDir: string): boolean {
 }
 
 function useCanonicalLayout(projectDir: string): boolean {
+  // The persisted project record is the layout marker. Keep a canonical
+  // project anchored to its own manuscript root while its configured entry
+  // file is temporarily missing, even when a legacy-looking `manuscript/`
+  // directory happens to exist beside it.
+  if (fs.existsSync(path.join(projectDir, ".OpenBar", "project.tex"))) return true;
+  if (fs.existsSync(path.join(projectDir, "manuscript", "openbarry", "project.tex"))) return false;
   return hasSupportedTexDocument(projectDir)
     || !hasSupportedTexDocument(path.join(projectDir, "manuscript"));
 }
@@ -123,7 +130,8 @@ export function texPaths(projectDir: string): TexPaths {
   const openBarDir = canonical ? path.join(projectDir, ".OpenBar") : path.join(manuscriptDir, "openbarry");
   // `paper.tex` remains the initialization default. Existing projects may
   // declare `main.tex`, `ms.tex`, or another document root discovered by the
-  // source graph.
+  // source graph. A persisted `mainFile` is resolved by locateTexRoot using
+  // the same manuscript-root policy as the compiler and source bundle.
   const paperFile = locateTexRoot(manuscriptDir);
   return {
     projectDir,
@@ -215,7 +223,7 @@ export function normalizeStoredMindmap(mindmap: Mindmap, fileId: string): Mindma
     title: mindmap.title?.trim() || (role === "draft" ? "Draft" : id),
     createdAt: mindmap.createdAt || mindmap.updatedAt,
     nodes: mindmap.nodes.map((node) => ({
-      ...node,
+      ...stripLegacyCollapsedField(node),
       ...(node.progress === undefined ? {} : { progress: normalizeMindmapProgress(node.progress) }),
     })),
   };

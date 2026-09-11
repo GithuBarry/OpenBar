@@ -81,6 +81,21 @@ import { TodoPanel, type TodoUndoSnapshot } from "./todo-panel";
 import { sharedWebMcpActions } from "@/features/webmcp-actions";
 import { remoteSyncResult } from "@/lib/research/project-sync";
 import type { RemoteSyncOutcome } from "@/lib/research/operation-result";
+import { decodePaperSectionFragment, resolvePaperSectionRef } from "@/lib/research/artifact-link";
+import {
+  COMPILE_POLL_MS,
+  compilePollDecision,
+  markCompileObservationDelayed,
+  recordCompileObservationError,
+  resumeCompilePolling,
+  transitionCompileStatus,
+  type PaperCompileViewState,
+} from "./compile-state";
+import {
+  hasLiveEditorChanged,
+  removeSourceRange,
+  requireAppliedRemovalSource,
+} from "@/lib/research/editor-operation-races";
 import {
   collectEditorComments,
   collectEditorTodos,
@@ -104,8 +119,6 @@ type RemoteSaveState = "checking" | "local" | "saving" | "saved" | "changed" | "
 
 const AUTOSAVE_IDLE_MS = 500;
 const AUTOSAVE_MAX_MS = 2_000;
-const COMPILE_POLL_MS = 400;
-const COMPILE_POLL_MAX_MS = 120_000;
 const PAGE_BUDGET_REFRESH_MS = 3 * 60_000;
 const TODO_PANEL_DEFAULT = 360;
 const TODO_PANEL_MIN = 220;
@@ -185,7 +198,9 @@ type PaperSourceContextSection = {
   title: string;
   level: number;
   order: number;
+  label: string;
   file: string;
+  bodyHash: string;
   sourceHash: string;
   sourceRange: { from: number; to: number };
   writeTargetId?: string;
@@ -278,7 +293,7 @@ export function PaperEditor({
   const [editorFontScale, setEditorFontScale] = useState(DEFAULT_EDITOR_FONT_SCALE);
   const [previewLineHeight, setPreviewLineHeight] = useState(DEFAULT_PREVIEW_LINE_HEIGHT);
   const [previewFont, setPreviewFont] = useState<PaperReaderFont>(DEFAULT_PREVIEW_FONT);
-  const [compile, setCompile] = useState<PaperCompileStatus>({ state: "idle" });
+  const [compile, setCompile] = useState<PaperCompileViewState>({ state: "idle" });
   const [recoveryDraft, setRecoveryDraft] = useState<RecoveryDraft | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -679,11 +694,9 @@ export function PaperEditor({
     setSaveError(null);
     setSaveConflict(false);
     clearRecoveryDraft();
-    setCompile((current) => ({
+    setCompile((current) => transitionCompileStatus(current, {
       state: "idle",
       message: "Source changed. Compile to refresh the PDF.",
-      pdfAvailable: current.pdfAvailable,
-      pageBudget: current.pageBudget,
     }));
     resetPreview(next);
   }, [clearRecoveryDraft, resetPreview]);
@@ -728,11 +741,9 @@ export function PaperEditor({
       sourceRef.current = live;
       writeRecoveryDraft();
     }
-    setCompile((current) => ({
+    setCompile((current) => transitionCompileStatus(current, {
       state: "idle",
       message: "Source changed. Compile to refresh the PDF.",
-      pdfAvailable: current.pdfAvailable,
-      pageBudget: current.pageBudget,
     }));
     setSaveError(null);
     setSaveConflict(false);
@@ -871,7 +882,7 @@ export function PaperEditor({
     const refreshCompileStatus = async () => {
       try {
         const status = await getPaperCompileStatusAction(project);
-        if (active) setCompile(status);
+        if (active) setCompile((current) => transitionCompileStatus(current, status));
       } catch {
         // The editor remains available when compilation status cannot be read.
       }
@@ -1021,44 +1032,47 @@ export function PaperEditor({
       if (signal?.aborted) throw new Error("Compilation cancelled.");
       const status = await requestPaperCompileAction(project);
       if (signal?.aborted) throw new Error("Compilation cancelled.");
-      setCompile((current) => ({
-        ...status,
-        pdfAvailable: status.pdfAvailable ?? current.pdfAvailable,
-        pageBudget: status.pageBudget ?? current.pageBudget,
-      }));
+      setCompile((current) => transitionCompileStatus(current, status));
       return status;
     } catch (error) {
       const cancelled = signal?.aborted || (error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "cancelled");
       if (cancelled) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
       const status: PaperCompileStatus = { state: "error", message: error instanceof Error ? error.message : "Could not compile PDF." };
-      setCompile(status);
+      setCompile((current) => transitionCompileStatus(current, status));
       return status;
     }
   }, [doSave, project]);
 
   useEffect(() => {
-    if (compile.state !== "running") return;
+    if (compile.state !== "running" || compile.observationDelayed) return;
     let cancelled = false;
     let delay = COMPILE_POLL_MS;
     let timer = 0;
     const started = Date.now();
     const tick = async () => {
       if (cancelled) return;
-      if (Date.now() - started > COMPILE_POLL_MAX_MS) {
-        setCompile({ state: "error", message: "Compilation timed out." });
+      const decision = compilePollDecision(Date.now() - started, delay);
+      if (decision.kind === "observation-delayed") {
+        setCompile((current) => markCompileObservationDelayed(current, decision.message));
         return;
       }
       try {
         const status = await getPaperCompileStatusAction(project);
         if (cancelled) return;
-        setCompile(status);
+        setCompile((current) => transitionCompileStatus(current, status));
         if (status.state === "running") {
-          delay = Math.min(Math.round(delay * 1.5), 4000);
+          delay = decision.delayMs;
           timer = window.setTimeout(tick, delay);
         }
       } catch {
         if (cancelled) return;
-        delay = Math.min(Math.round(delay * 1.5), 4000);
+        setCompile((current) => recordCompileObservationError(current, "Could not check the compile job. Retrying…"));
+        const retry = compilePollDecision(Date.now() - started, delay);
+        if (retry.kind === "observation-delayed") {
+          setCompile((current) => markCompileObservationDelayed(current, retry.message));
+          return;
+        }
+        delay = retry.delayMs;
         timer = window.setTimeout(tick, delay);
       }
     };
@@ -1067,7 +1081,7 @@ export function PaperEditor({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [compile.state, project]);
+  }, [compile.observationDelayed, compile.state, project]);
 
   const surround = useCallback((open: string, close: string, placeholder = "") => {
     editorRef.current?.surround(open, close, placeholder);
@@ -1122,8 +1136,16 @@ export function PaperEditor({
   }, []);
 
   const applyPaperHash = useCallback((rawHash?: string) => {
-    const hash = decodeURIComponent((rawHash ?? window.location.hash).replace(/^#/, "")).trim();
+    const encodedHash = (rawHash ?? window.location.hash).replace(/^#/, "").trim();
+    const hash = decodeURIComponent(encodedHash).trim();
     if (!hash) return false;
+    const durable = decodePaperSectionFragment(encodedHash);
+    if (durable) {
+      const resolved = resolvePaperSectionRef(durable, sourceContextState.sections);
+      if (resolved.status !== "resolved") return false;
+      jumpToExpectedSection(resolved.section.id);
+      return true;
+    }
     if (expectedSectionsRef.current.some((section) => section.id === hash)) {
       jumpToExpectedSection(hash);
       return true;
@@ -1149,7 +1171,7 @@ export function PaperEditor({
       return true;
     }
     return false;
-  }, [jumpToExpectedSection, jumpToSection, jumpToTodo]);
+  }, [jumpToExpectedSection, jumpToSection, jumpToTodo, sourceContextState.sections]);
 
   useEffect(() => {
     const onHash = () => { applyPaperHash(); };
@@ -1185,13 +1207,83 @@ export function PaperEditor({
       if (!live) throw Object.assign(new Error(`stale_selection: TODO "${todoId}" moved during save.`), { code: "stale_selection" });
     }
     if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
+    const operationSource = current;
+    const operationRevision = revisionRef.current;
+    const operationTodo = live;
     const result = await removePaperTodoAction(project, todoId, bundleHashRef.current);
     if (!result.ok) throw Object.assign(new Error(result.message), { code: result.code });
+    const removedBundleHash = result.value.bundleHash;
+    bundleHashRef.current = removedBundleHash;
+    setBundleHash(removedBundleHash);
+
+    // The server has removed the TODO from operationSource. Apply that same
+    // deletion to the current editor buffer before Git sync can reload it.
+    // This keeps edits typed during the server request attached to the live
+    // source and gives the ordinary save queue the new bundle hash.
+    const sourceAfterRemoval = removeSourceRange(operationSource, operationTodo.from, operationTodo.to);
+    const liveBeforeRemoval = liveSource();
+    const liveTodo = collectEditorTodos(liveBeforeRemoval).find((item) => item.id === todoId);
+    let liveAfterRemoval = liveBeforeRemoval;
+    let editorRemovalApplied = false;
+    if (liveTodo) {
+      const applied = editorRef.current?.applyVirtualChange(liveTodo.from, liveTodo.to, "");
+      liveAfterRemoval = requireAppliedRemovalSource(
+        applied,
+        editorRef.current?.getLiveSource(),
+        todoId,
+        (source, id) => collectEditorTodos(source).some((item) => item.id === id),
+      );
+      editorRemovalApplied = true;
+    }
+    sourceRef.current = liveAfterRemoval;
+    setSource(liveAfterRemoval);
+    if (!editorRemovalApplied) resetPreview(liveAfterRemoval);
+    savedSourceRef.current = sourceAfterRemoval;
+    setSavedSource(sourceAfterRemoval);
+    const editsDuringRemoval = hasLiveEditorChanged(
+      { source: operationSource, revision: operationRevision },
+      { source: liveBeforeRemoval, revision: revisionRef.current },
+    ) || liveAfterRemoval !== sourceAfterRemoval;
+    const removalSnapshot = {
+      source: liveAfterRemoval,
+      revision: revisionRef.current,
+    };
     remoteSavePendingRef.current = true;
     const remote = await pushRemote("OpenBar: remove paper TODO");
     if (!remote.ok) setSaveError(`Saved locally. ${remote.message}`);
-    await reloadLatest();
-  }, [project, pushRemote, reloadLatest, saveNow]);
+
+    // Fetching the latest paper is safe only while the live editor still
+    // matches the post-removal snapshot. New typing takes the normal save
+    // path, preserving the editor buffer instead of applying stale server
+    // state over it.
+    const liveAfterRemote = liveSource();
+    if (editsDuringRemoval || hasLiveEditorChanged(removalSnapshot, { source: liveAfterRemote, revision: revisionRef.current })) {
+      const saved = await saveNow(liveAfterRemote, signal);
+      if (!saved) {
+        throw Object.assign(new Error(saveFailureRef.current?.message || "Could not save edits made during TODO removal."), {
+          code: saveFailureRef.current?.code || "save_failed",
+        });
+      }
+      return;
+    }
+
+    const latestPaper = await getEditablePaperAction(project);
+    if (!latestPaper) {
+      setSaveError("Could not reload the paper.");
+      return;
+    }
+    const liveBeforeReload = liveSource();
+    if (editsDuringRemoval || hasLiveEditorChanged(removalSnapshot, { source: liveBeforeReload, revision: revisionRef.current })) {
+      const saved = await saveNow(liveBeforeReload, signal);
+      if (!saved) {
+        throw Object.assign(new Error(saveFailureRef.current?.message || "Could not save edits made during TODO removal."), {
+          code: saveFailureRef.current?.code || "save_failed",
+        });
+      }
+      return;
+    }
+    applyHydrated(latestPaper);
+  }, [applyHydrated, project, pushRemote, resetPreview, saveNow]);
 
   const resolveTodo = useCallback(async (todo: EditorTodo) => {
     try {
@@ -1277,7 +1369,16 @@ export function PaperEditor({
         state: compileRef.current.state,
         compiler: compileRef.current.compiler,
         jobId: compileRef.current.jobId,
+        pdfAvailable: compileRef.current.pdfAvailable,
         sourceHash: compileRef.current.sourceHash,
+        buildInputHash: compileRef.current.buildInputHash,
+        artifactId: compileRef.current.artifactId,
+        artifactSourceHash: compileRef.current.artifactSourceHash,
+        artifactBuildInputHash: compileRef.current.artifactBuildInputHash,
+        ...(compileRef.current.lastSuccessfulArtifact
+          ? { lastSuccessfulArtifact: compileRef.current.lastSuccessfulArtifact }
+          : {}),
+        observationDelayed: compileRef.current.observationDelayed,
         stale: compileRef.current.stale,
         message: compileRef.current.message,
         diagnostics: compileRef.current.diagnostics,
@@ -1490,7 +1591,7 @@ export function PaperEditor({
     ),
     [sourceContextState.sections],
   );
-  const pdfCurrent = isSaved && compile.state === "success";
+  const pdfCurrent = isSaved && compile.state === "success" && compile.stale !== true;
   const pdfVisible = layout === "pdf" || layout === "pdf-only";
   const widthClass = editorWidth === "compact" ? paperStyles.widthCompact : editorWidth === "wide" ? paperStyles.widthWide : paperStyles.widthFull;
   const previewStyle = {
@@ -1604,6 +1705,17 @@ export function PaperEditor({
               title={compile.diagnostics?.[0] || compile.message || "Compile failed"}
             >
               Compile failed
+            </button>
+          )}
+
+          {compile.state === "running" && compile.observationDelayed && (
+            <button
+              type="button"
+              onClick={() => setCompile((current) => resumeCompilePolling(current))}
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-warn/40 bg-warn/10 px-1.5 text-[11px] font-medium text-warn"
+              title={compile.message || "Resume polling for the running compile job"}
+            >
+              Resume polling
             </button>
           )}
 
@@ -2141,14 +2253,16 @@ function PdfPreview({
   onJumpToSource,
 }: {
   project: string;
-  compile: PaperCompileStatus;
+  compile: PaperCompileViewState;
   sourceTarget?: { page: number; x: number; y: number; width?: number; height?: number } | null;
   onJumpToSource?: (file: string, line: number) => void;
 }) {
-  const pdfSrc = compile.pdfAvailable && compile.artifactId
-    ? `/api/p/${project}/paper/pdf?artifact=${encodeURIComponent(compile.artifactId)}`
+  const artifactId = compile.lastSuccessfulArtifact?.artifactId || compile.artifactId;
+  const pdfAvailable = compile.lastSuccessfulArtifact ? compile.pdfAvailable !== false : compile.pdfAvailable;
+  const pdfSrc = pdfAvailable && artifactId
+    ? `/api/p/${project}/paper/pdf?artifact=${encodeURIComponent(artifactId)}`
     : null;
-  const stale = Boolean(compile.stale || (compile.pdfAvailable && compile.state !== "success"));
+  const stale = Boolean(compile.stale || (pdfAvailable && compile.state !== "success"));
 
   if (compile.state === "unavailable" && !pdfSrc) {
     return <div className="p-12 text-center text-sm text-muted">LaTeX compilation is not available on this server.</div>;
@@ -2190,7 +2304,15 @@ function PdfPreview({
         </div>
         {pdfSrc && (
           <div className="min-h-0 flex-1">
-            <PdfJsViewer project={project} src={pdfSrc} artifactId={compile.artifactId} stale sourceTarget={sourceTarget} onJumpToSource={onJumpToSource} />
+            <PdfJsViewer
+              project={project}
+              src={pdfSrc}
+              artifactId={artifactId}
+              stale
+              observationMessage={compile.observationDelayed ? compile.message : undefined}
+              sourceTarget={sourceTarget}
+              onJumpToSource={onJumpToSource}
+            />
           </div>
         )}
       </div>
@@ -2199,10 +2321,16 @@ function PdfPreview({
   if (compile.state === "running" && !pdfSrc) {
     return (
       <div className="p-8 flex flex-col items-center justify-center gap-3 text-sm text-muted">
-        <div className="flex items-center gap-2 font-medium text-ink">
-          <LoaderCircle size={15} className="animate-spin text-accent" />
-          Compiling TeX with {compile.compiler || "latexmk"}…
-        </div>
+        {compile.observationDelayed ? (
+          <div className="font-medium text-warn" role="status">
+            {compile.message || "The compile is still running. Resume polling to check the same job."}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 font-medium text-ink">
+            <LoaderCircle size={15} className="animate-spin text-accent" />
+            Compiling TeX with {compile.compiler || "latexmk"}…
+          </div>
+        )}
         {compile.lastLines && compile.lastLines.length > 0 && (
           <div className="w-full max-w-xl rounded-lg border border-line bg-canvas p-3 font-mono text-[11px] leading-relaxed shadow-xs">
             <div className="text-[10px] uppercase font-bold tracking-wider text-muted mb-1.5 flex items-center justify-between">
@@ -2230,8 +2358,9 @@ function PdfPreview({
     <PdfJsViewer
       project={project}
       src={pdfSrc}
-      artifactId={compile.artifactId}
+      artifactId={artifactId}
       stale={stale}
+      observationMessage={compile.observationDelayed ? compile.message : undefined}
       sourceTarget={sourceTarget}
       onJumpToSource={onJumpToSource}
     />

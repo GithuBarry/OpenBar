@@ -1,0 +1,40 @@
+name: OpenBar CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Typecheck and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm 11.9.0
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+
+      - name: Set up Node 26.8.1
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26.8.1
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build production app
+        run: pnpm build
+
+      # `pnpm docker:build` stays in the deployment acceptance docs because
+      # it requires a Docker image runtime and an image-capable environment.

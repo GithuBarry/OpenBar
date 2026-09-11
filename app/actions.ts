@@ -11,6 +11,7 @@
  */
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 
 import {
   getEditableTexPaper,
@@ -48,7 +49,7 @@ import { okResult, type OperationResult } from "@/lib/research/operation-result"
 import { getProjectState, projectStateForAgent, resolveProjectNavigation, searchProject } from "@/lib/research/project-state";
 import { ensureCommentId } from "@/lib/research/paper-analysis";
 import { isPrimaryMindmap } from "@/lib/research/todo-map";
-import type { MindmapTodoConversion, MindmapTodoConversionFailure, MindmapTodoConversionResult } from "@/lib/research/webmcp-mindmap-contract";
+import type { MindmapTodoConversionFailure, MindmapTodoConversionResult } from "@/lib/research/webmcp-mindmap-contract";
 import type { CurrentLocation, ProjectMetadataPatch, ProjectStateQuery } from "@/lib/research/webmcp-shared-contract";
 import type { WorkspaceProjectResult } from "@/lib/research/webmcp-workspace-contract";
 import {
@@ -62,7 +63,7 @@ import {
 } from "@/lib/research/project-skills";
 import { persistPaperTodoOperation, insertTodoAtSection, persistPaperTodoPlacement, previewPaperTodoPlacement, relocatePaperTodo } from "@/lib/research/paper-todo-persist";
 import { convertMindmapCardToTodo } from "@/lib/research/mindmap-todo-conversion";
-import { remoteSyncResult } from "@/lib/research/project-sync";
+import { scheduleRemoteSyncAfterResponse } from "@/lib/research/project-sync";
 import { applyMindmapAction, newNodeId } from "@/features/mindmap/mindmap-state";
 import { analyzePaper } from "@/lib/research/paper-analysis";
 import type { SourceOperation } from "@/lib/research/operations";
@@ -193,6 +194,7 @@ function isIsoDateTime(value: unknown): value is string {
 const MINDMAP_ACTIVITY_NODE_FIELDS = [
   "title",
   "text",
+  "caption",
   "todoId",
   "parentId",
   "order",
@@ -300,7 +302,7 @@ export async function saveMindmapAction(
     throw new Error("Mindmap creation is disabled in the public demo.");
   }
   if (expectedDiskHash && current) {
-    const currentHash = mindmapDiskHash(current);
+    const currentHash = current.diskHash || mindmapDiskHash(current);
     if (currentHash !== expectedDiskHash) {
       throw new Error(`conflict: mindmap changed (hash ${currentHash}). Reload before saving.`);
     }
@@ -692,6 +694,7 @@ export async function updateProjectAction(
   patch: ProjectMetadataPatch,
 ) {
   await requireProjectAccess(slug);
+  assertAdministrativeWriteAllowed("Project metadata changes");
   const current = getProject(slug);
   if (!current) throw new Error(`Unknown project "${slug}".`);
   if (!patch.expectedHash) throw new Error("Read project state and pass project.hash before saving.");
@@ -1031,18 +1034,10 @@ export async function convertMindmapCardToTodoAction(
     href: `/p/${encodeURIComponent(slug)}/mindmap${current.id && !isPrimaryMindmap(current) ? `/${encodeURIComponent(current.id)}` : ""}#${encodeURIComponent(cardId)}`,
   });
   bust(slug);
-  let remote: MindmapTodoConversion["remote"];
-  try {
-    const pushed = await commitAndPushProjectAction(slug, "OpenBar: convert mindmap card to paper TODO");
-    remote = remoteSyncResult(pushed);
-  } catch (error) {
-    remote = {
-      status: "failed",
-      code: "remote_sync_failed",
-      message: error instanceof Error ? error.message : String(error),
-      retryable: true,
-    };
-  }
+  const remote = scheduleRemoteSyncAfterResponse(
+    (task) => after(task),
+    () => commitAndPushProjectAction(slug, "OpenBar: convert mindmap card to paper TODO"),
+  );
   return okResult({
     todoId: local.value.todoId,
     mindmap: local.value.mindmap,

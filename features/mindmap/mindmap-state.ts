@@ -44,6 +44,7 @@ function semanticPatch(patch: MindmapNodePatch): MindmapNodePatch {
 function patchTouchesActivity(patch: MindmapNodePatch): boolean {
   return Object.prototype.hasOwnProperty.call(patch, "title")
     || Object.prototype.hasOwnProperty.call(patch, "text")
+    || Object.prototype.hasOwnProperty.call(patch, "caption")
     || Object.prototype.hasOwnProperty.call(patch, "progress")
     || Object.prototype.hasOwnProperty.call(patch, "tags")
     || Object.prototype.hasOwnProperty.call(patch, "metadata")
@@ -58,7 +59,6 @@ export type MindmapTreeAction =
   | { type: "move-sibling"; id: string; direction: -1 | 1 }
   | { type: "edit-text"; id: string; text: string }
   | { type: "edit-card"; id: string; title: string; text: string; contentFormat?: MindmapNode["contentFormat"] }
-  | { type: "collapse"; id: string }
   | { type: "delete-subtree"; id: string }
   | { type: "delete-node-keep-children"; id: string }
   | { type: "patch-node"; id: string; patch: MindmapNodePatch }
@@ -291,11 +291,6 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
             ? item
             : { ...item, title: action.title, text: action.text, ...(action.contentFormat ? { contentFormat: action.contentFormat } : {}), updatedAt: new Date().toISOString() }
         )),
-      };
-    }
-    case "collapse": {
-      return {
-        mindmap: updateNode(mindmap, index, action.id, (node) => ({ ...node, collapsed: !node.collapsed })),
       };
     }
     case "delete-subtree": {

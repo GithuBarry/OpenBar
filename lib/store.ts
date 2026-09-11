@@ -48,6 +48,7 @@ import { mindmapDiskHash } from "./mindmap/mindmap";
 import { readPaper } from "./research/paper-service";
 import { buildSourceBundle } from "./tex-project/source-bundle";
 import { buildSourceContextIndex } from "./research/source-context";
+import { existingConfiguredTexRoot } from "./tex-project/source-graph";
 import type { SourceDiagnostic } from "./tex-project/source-graph";
 import type { ClientSourceBundle } from "./tex-project/source-bundle-format";
 import {
@@ -57,6 +58,11 @@ import { assertUniqueMindmapTodoIds, emptyMindmap, persistableMindmap, slugifyMi
 import { isPrimaryMindmap } from "./research/todo-map";
 import { composeObtodo } from "./todo-meta";
 import { normalizeMindmap } from "./mindmap/mindmap";
+import {
+  canonicalizeArtifactRef,
+  migrateMindmapArtifactRefs,
+  type PaperSectionRefTarget,
+} from "./research/artifact-link";
 import { filterProjectsForPublicDemo } from "./server/demo-mode";
 import {
   Mindmap,
@@ -235,6 +241,15 @@ export function saveProject(project: Project, expectedHash?: string): void {
   const dir = projectDir(project.slug);
   const persisted = projectSchema.parse(persistableProject(project));
   withProjectWriteLock(dir, () => {
+    const currentRecord = readProjectRecord<Record<string, unknown>>(dir);
+    const currentMainFile = typeof currentRecord?.mainFile === "string" ? currentRecord.mainFile.trim() : "";
+    const nextMainFile = typeof persisted.mainFile === "string" ? persisted.mainFile.trim() : "";
+    if (nextMainFile && nextMainFile !== currentMainFile) {
+      const manuscriptDir = texPaths(dir).manuscriptDir;
+      if (!existingConfiguredTexRoot(manuscriptDir, nextMainFile)) {
+        throw new TexEnvelopeError(`Configured TeX root "${nextMainFile}" was not found inside the manuscript.`);
+      }
+    }
     if (expectedHash) {
       const currentHash = projectFileHash(dir);
       if (!currentHash || currentHash !== expectedHash) {
@@ -305,19 +320,56 @@ export function createProject(input: { title: string; slug?: string; tagline?: s
 // Mindmap
 // ---------------------------------------------------------------------------
 
+function paperSectionRefTargets(slug: string): PaperSectionRefTarget[] {
+  const dir = projectDir(slug);
+  if (!hasTexProject(dir)) return [];
+  try {
+    const paths = texPaths(dir);
+    const bundle = buildSourceBundle(paths.manuscriptDir);
+    const context = buildSourceContextIndex(paths.manuscriptDir, bundle.rootFile, bundle);
+    return context.sections.map(section => ({
+      id: section.id,
+      title: section.title,
+      level: section.level,
+      ...(section.label ? { label: section.label } : {}),
+      file: section.file,
+      order: section.order,
+      headingPath: section.headingPath,
+      bodyHash: section.bodyHash,
+      sourceHash: section.sourceHash,
+      sourceRange: section.sourceRange,
+    }));
+  } catch {
+    const paper = getEditableTexPaper(slug);
+    return paper?.sections.map(section => ({
+      id: section.id,
+      title: section.title,
+      level: section.level,
+      ...(section.label ? { label: section.label } : {}),
+      file: section.file,
+      order: section.order,
+      sourceHash: section.sourceHash,
+    })) || [];
+  }
+}
+
 export function getMindmap(slug: string, id = DRAFT_MINDMAP_ID): Mindmap | null {
   const dir = projectDir(slug);
   if (!hasTexProject(dir)) return null;
   const map = readMindmapRecord(dir, id);
   if (!map) return null;
   const normalized = normalizeMindmap(map);
-  return { ...normalized, diskHash: mindmapDiskHash(normalized) };
+  const diskHash = mindmapDiskHash(normalized);
+  // Reads expose the current canonical view while preserving the hash of the
+  // bytes that were read. A later save can persist the migration atomically.
+  return { ...migrateMindmapArtifactRefs(normalized, paperSectionRefTargets(slug)), diskHash };
 }
 
 export function listMindmaps(slug: string): Mindmap[] {
   const dir = projectDir(slug);
   if (!hasTexProject(dir)) return [];
-  return listMindmapRecords(dir, recordContentDiagnostic).map(normalizeMindmap);
+  const sections = paperSectionRefTargets(slug);
+  return listMindmapRecords(dir, recordContentDiagnostic).map(map => migrateMindmapArtifactRefs(normalizeMindmap(map), sections));
 }
 
 export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: string): void {
@@ -341,8 +393,16 @@ export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: s
       }
     }
     const normalized = normalizeMindmap({ ...mindmap, projectId: slug, id: identity.id, role: identity.role });
-    assertUniqueMindmapTodoIds(normalized);
-    writeMindmapRecord(dir, persistableMindmap(normalized));
+    const sections = paperSectionRefTargets(slug);
+    const canonicalized = {
+      ...normalized,
+      nodes: normalized.nodes.map(node => ({
+        ...node,
+        ...(node.refs ? { refs: node.refs.map(ref => canonicalizeArtifactRef(ref, sections)) } : {}),
+      })),
+    };
+    assertUniqueMindmapTodoIds(canonicalized);
+    writeMindmapRecord(dir, persistableMindmap(canonicalized));
   });
 }
 
@@ -396,9 +456,11 @@ type PaperEditorState = {
       title: string;
       level: number;
       order: number;
+      label: string;
       file: string;
       sourceHash: string;
       sourceRange: { from: number; to: number };
+      bodyHash: string;
       writeTargetId?: string;
       excerpt: string;
       headingPath: string[];
@@ -440,9 +502,11 @@ export function getPaperEditorState(slug: string): PaperEditorState | null {
         title: section.title,
         level: section.level,
         order: section.order,
+        label: section.label,
         file: section.file,
         sourceHash: section.sourceHash,
         sourceRange: section.sourceRange,
+        bodyHash: section.bodyHash,
         ...(section.writeTargetId ? { writeTargetId: section.writeTargetId } : {}),
         excerpt: section.excerpt,
         headingPath: section.headingPath,

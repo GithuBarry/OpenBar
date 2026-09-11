@@ -183,8 +183,8 @@ it after the check. No new durable test file is kept in the repository:
 - field-level cancel/conflict handling and child-preserving deletion;
 - seven progress states, safe content formats, source-derived locations,
   Unplaced/Outline contracts, and WebMCP parity;
-- production typecheck, build, domain checks, evals, and localhost smoke
-  checks against both published projects.
+- production typecheck, build, and manual localhost acceptance against both
+  published projects.
 
 The existing dirty tree is user-owned. Implementation will integrate its
 partial root-layout and durability changes, preserve unrelated artifacts, and
@@ -193,11 +193,12 @@ cleanup. The final integration target is the repository’s `main` branch, with
 the current branch merged and pushed only after fresh verification.
 # Card notes and visible-content guidance
 
-Each ordinary mindmap card may carry an optional Extended note of up to 500
+Each mindmap card may carry an optional Extended note of up to 500
 words. The note is map-owned, model-readable context that opens in a floating window from the
 bottom of the card with one click and is edited independently from the visible
 title and body.
-TODO cards keep their TeX-owned content rules.
+TODO cards keep their TeX-owned title and body rules. Their Extended notes remain
+map-owned context.
 
 The editor warns when a card's visible title plus body exceeds 100 words. The
 warning recommends splitting the material into more cards. This is advisory so
