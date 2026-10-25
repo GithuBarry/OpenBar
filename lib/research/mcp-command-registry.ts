@@ -441,7 +441,14 @@ async function writeMap(
       href: `/p/${encodeURIComponent(project)}/mindmap${saved.id && saved.id !== DRAFT_MINDMAP_ID ? `/${encodeURIComponent(saved.id)}` : ""}`,
       ...(deleted ? { deleted: true } : {}),
     });
-    const value = receipt({ requestId, operation, resources, revision: saved.revision ?? 0, diskHash: saved.diskHash, value: saved });
+    const beforeNodes = new Map(map.nodes.map((node) => [node.id, JSON.stringify(node)]));
+    const savedIds = new Set(saved.nodes.map((node) => node.id));
+    const { nodes, ...mapState } = saved;
+    const value = receipt({ requestId, operation, resources, revision: saved.revision ?? 0, diskHash: saved.diskHash, value: {
+      ...mapState,
+      updatedNodes: nodes.filter((node) => beforeNodes.get(node.id) !== JSON.stringify(node)),
+      removedNodeIds: map.nodes.filter((node) => !savedIds.has(node.id)).map((node) => node.id),
+    } });
     return okResult(value, { revision: saved.revision, diskHash: saved.diskHash, remote: pendingRemote() });
   } catch (error) {
     return mutationFailure(error, map);
@@ -1306,12 +1313,13 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
       return writeMap(project, map, next.mindmap, requestId, "place_todo_card", [{ kind: "mindmap_node", id: next.selectedId!, mapId: map.id }]);
     });
   }),
-  tool("get_agent_capabilities", "Discover agent access", "Discover transports, authentication, canonical tool schemas, and saved versus browser state.", objectSchema(), async () => okResult({
+  tool("get_agent_capabilities", "Discover agent access", "Read transports, authentication, and saved versus browser state. Discover tool schemas through tools/list or /api/tools.", objectSchema(), async () => okResult({
     transports: { mcp: "/api/mcp", rest: "/api/tools/{name}", openapi: "/openapi.json", stdio: "node scripts/mcp-stdio.mjs", browser: "window.openbarAgent" },
     authentication: { methods: ["bearer", "configured Cloudflare Access"], tokenEnvironment: "OPENBARRY_ACCESS_TOKEN", browserOriginsEnvironment: "OPENBARRY_AGENT_ORIGINS" },
     state: { http: "saved repository", browser: "live page and editor" },
     browserOnly: ["open_project", "navigate_project", "focus_mindmap_node", "focus_todo_in_paper", "set_paper_reader_mode", "navigate_paper_section", "highlight_mindmap_activity"],
-    tools: listMcpTools().map(({ execute: _execute, ...definition }) => definition),
+    toolCount: MCP_TOOL_REGISTRY.length,
+    discovery: { mcp: "tools/list", rest: "/api/tools" },
   }), { readOnlyHint: true }),
   tool("list_wiki_pages", "List wiki pages", "Discover readable supporting-memory pages.", objectSchema({ project: projectIdSchema }, ["project"]), async raw => {
     const project = projectArg(asObject(raw)!);

@@ -250,6 +250,10 @@ revisions and remote-save receipts. Both MCP text and `structuredContent`
 contain `{ok:true,value,...}` or `{ok:false,code,message,retryable,...}`. Array
 values live inside `value`, so standard MCP clients can validate every result.
 
+Saved map mutations return map metadata with `updatedNodes` and
+`removedNodeIds`, covering changed cards, sibling order, and promoted children.
+`get_mindmap` reads the complete map through its existing pagination.
+
 ### Request replay recovery
 
 Every idempotent mutation reserves its `requestId`, project, operation and
@@ -271,7 +275,8 @@ reservations while it is full, preserving unresolved intents for recovery.
 - `POST /api/tools/<name>` executes its JSON arguments using bearer authentication.
 - `GET /api/projects` lists projects using the same authentication.
 - `GET /openapi.json` describes every tool endpoint in OpenAPI 3.1.
-- `get_agent_capabilities` explains transport selection and the current catalog.
+- `get_agent_capabilities` returns connection metadata and tool count. Native
+  `tools/list` and REST `/api/tools` supply the complete catalog.
 - MCP resources expose the guide and project states, with source and skill URI templates.
 - The `start_project` MCP prompt describes project orientation.
 
