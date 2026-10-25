@@ -64,10 +64,10 @@ function exposeBrowserBridge(): void {
     waitForNavigation: async (href, timeoutMs = 30_000) => {
       const target = new URL(href, window.location.href);
       if (target.origin !== window.location.origin) throw new Error("Use a same-origin project URL.");
-      const expectedTool = target.pathname.includes("/mindmap") ? "get_mindmap" : target.pathname.includes("/paper") ? "get_paper_state" : target.pathname.includes("/instructions") ? "write_agents_md" : "get_project_state";
+      const expectedTool = target.pathname === "/" ? "list_projects" : target.pathname.includes("/mindmap") ? "get_mindmap" : target.pathname.includes("/paper") ? "get_paper_state" : "get_project_state";
       const started = Date.now();
       while (Date.now() - started < Math.min(Math.max(timeoutMs, 0), 60_000)) {
-        if (window.location.pathname === target.pathname && window.location.hash === target.hash && pageTools.has(expectedTool)) return { href: window.location.pathname + window.location.hash, tools: [...pageTools.keys()] };
+        if (window.location.pathname === target.pathname && window.location.search === target.search && window.location.hash === target.hash && pageTools.has(expectedTool)) return { href: window.location.pathname + window.location.search + window.location.hash, tools: [...pageTools.keys()] };
         await new Promise(resolve => window.setTimeout(resolve, 50));
       }
       throw new Error(`Navigation to ${target.pathname} exceeded the wait limit.`);

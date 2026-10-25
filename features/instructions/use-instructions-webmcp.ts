@@ -4,7 +4,6 @@ import { useEffect, useRef } from "react";
 
 import { buildInstructionsWebMcpTools, type InstructionsWebMcpHost } from "@/lib/research/webmcp-instructions-contract";
 import {
-  buildInstructionsWebMcpTools as buildProjectSkillWebMcpTools,
   buildSetupWebMcpTools,
 } from "@/lib/research/webmcp-shared-contract";
 import { registerWebMcpToolsIndependent, waitForModelContext } from "@/lib/research/webmcp-register";
@@ -30,10 +29,7 @@ export function useInstructionsWebMcp(host: InstructionsWebMcpHost): void {
       const registrations = await Promise.all([
         registerWebMcpToolsIndependent(
           modelContext,
-          [
-            ...buildInstructionsWebMcpTools(bound),
-            ...buildProjectSkillWebMcpTools(sharedHost),
-          ],
+          buildInstructionsWebMcpTools(bound),
           controller.signal,
           "instructions",
         ),

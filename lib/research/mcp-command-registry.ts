@@ -17,10 +17,11 @@ import { attachMindmapImage, detachMindmapImage, captionMindmapImage } from "@/l
 import { captionWithinLimit, MAX_VISIBLE_MINDMAP_WORDS, visibleMindmapWordCount } from "@/lib/mindmap/card-content";
 
 import { buildInstructionsWebMcpTools } from "./webmcp-instructions-contract";
-
+import { MINDMAP_WEBMCP_TOOL_SCHEMAS, mindmapToolDescription, parsePresentationArg } from "./webmcp-mindmap-contract";
+import { SHARED_WEBMCP_SCHEMAS } from "./mcp-tool-schemas";
+import { sharedToolDescription } from "./webmcp-shared-contract";
 
 import { syncProjectCommand } from "./sync-project-command";
-import { syncProjectProperties } from "./sync-project-contract";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -44,7 +45,6 @@ import { clearRequestReplayJournal, persistRequestReplay, readRequestReplay, rec
 import { applyMindmapAction, newNodeId } from "@/features/mindmap/mindmap-state";
 import { mindmapDiskHash, normalizeMindmap } from "@/lib/mindmap/mindmap";
 import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
-import { normalizeMindmapProgress } from "@/lib/mindmap/progress";
 import { DRAFT_MINDMAP_ID, patchPaperSection, texPaths } from "@/lib/tex-project/project";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import { persistPaperTodoOperation, persistPaperTodoPlacement } from "./paper-todo-persist";
@@ -96,13 +96,13 @@ type InFlightReplay = {
 /**
  * Promise sharing closes the in-process read/write/replay race. The durable
  * request ID remains project-scoped, so an in-flight ID also reserves its
- * operation and fingerprint for collision checks across aliases.
+ * operation and fingerprint for collision checks across tool names.
  */
 const inFlightReplays = new Map<string, InFlightReplay>();
 
-const projectIdSchema = { type: "string", minLength: 1, description: "Project slug from list_projects." };
-const mapIdSchema = { type: "string", minLength: 1, description: "Persisted map id. Use draft for the Primary map." };
-const revisionSchema = { type: "integer", minimum: 0, description: "Revision returned by the last read or preview." };
+const projectIdSchema = { type: "string", minLength: 1, description: "Project slug from list_projects or the /p/<slug>/ URL." };
+const mapIdSchema = { type: "string", minLength: 1, description: "Saved map id from get_project_state or list_mindmaps. draft identifies the Primary map." };
+const revisionSchema = { type: "integer", minimum: 0, description: "Current map revision returned by get_mindmap or a map preview." };
 const diskHashSchema = { type: "string", pattern: "^[a-f0-9]{64}$", description: "Disk hash returned by the last read." };
 
 /** Browser view preferences have no durable headless MCP mutation. */
@@ -671,7 +671,7 @@ async function executeReadPaperSection(args: unknown): Promise<OperationResult<u
   } catch (error) { return caught(error); }
 }
 
-async function executeReadPaperSource(args: unknown): Promise<OperationResult<unknown>> {
+async function executeGetSourceBundle(args: unknown): Promise<OperationResult<unknown>> {
   const record = asObject(args);
   if (!record) return failResult("invalid_arguments", "Arguments must be an object.", false);
   try {
@@ -744,7 +744,7 @@ async function executePatchMindmapNode(args: unknown, context: McpCommandContext
       const current = map.nodes.find((node) => node.id === nodeId);
       if (!current) throw new McpCommandError("invalid_arguments", `Unknown mindmap card "${nodeId}".`, false);
       const patch: Record<string, unknown> = {};
-      for (const key of ["title", "text", "caption", "shape", "metadata", "contentFormat", "tableLayout", "color", "refs"] as const) if (record[key] !== undefined) patch[key] = record[key];
+      for (const key of ["title", "text", "caption", "caution", "metadata", "refs"] as const) if (record[key] !== undefined) patch[key] = record[key];
       if (record.refs !== undefined) {
         const refs = artifactRefSchema.array().safeParse(record.refs);
         if (!refs.success || refs.data.filter(ref => ref.kind === "figure").length > 1) return failResult("invalid_arguments", "Use valid references with one image per card and imageWidth from 25 to 100. Add child cards for additional images.", false);
@@ -755,7 +755,14 @@ async function executePatchMindmapNode(args: unknown, context: McpCommandContext
         if (typeof record.caption !== "string") throw new McpCommandError("invalid_arguments", "caption must be a string.", false);
         if (!captionWithinLimit(record.caption)) throw new McpCommandError("invalid_arguments", "Card notes must be 500 words or fewer.", false);
       }
-      if (record.progress !== undefined) patch.progress = record.progress === null ? undefined : normalizeMindmapProgress(record.progress);
+      if (record.caution !== undefined && typeof record.caution !== "string") throw new McpCommandError("invalid_arguments", "caution must be a string.", false);
+      if (record.presentation !== undefined) {
+        const parsed = parsePresentationArg(record.presentation, map.rootId, nodeId!);
+        if (!parsed.ok) return parsed;
+        const presentation = parsed.value!;
+        Object.assign(patch, presentation);
+        if (Object.hasOwn(presentation, "progress")) patch.progress = presentation.progress === null ? undefined : presentation.progress;
+      }
       if (record.priority !== undefined) {
         if (record.priority !== null && !["P0", "P1", "P2", "P3"].includes(String(record.priority))) throw new McpCommandError("invalid_arguments", "priority must be P0–P3 or null.", false);
         patch.priority = record.priority || undefined;
@@ -782,12 +789,13 @@ async function executeAddMindmapNode(args: unknown, context: McpCommandContext):
       assertRevision(map, expectedRevision);
       assertDiskHash(map, typeof record.expectedDiskHash === "string" ? record.expectedDiskHash : undefined);
       if (!map.nodes.some((node) => node.id === parentId)) throw new McpCommandError("invalid_arguments", `Unknown parent card "${parentId}".`, false);
+      if (record.caution !== undefined && typeof record.caution !== "string") throw new McpCommandError("invalid_arguments", "caution must be a string.", false);
       const id = typeof record.id === "string" && record.id.trim() ? record.id.trim() : newNodeId();
-      const next = applyMindmapAction(map, { type: "add-node", agentDraft: true, id, parentId: parentId!, title: typeof record.title === "string" ? record.title : undefined, text: typeof record.text === "string" ? record.text : "" }).mindmap;
+      const next = applyMindmapAction(map, { type: "add-node", agentDraft: true, id, parentId: parentId!, title: typeof record.title === "string" ? record.title : undefined, text: typeof record.text === "string" ? record.text : "", caution: typeof record.caution === "string" ? record.caution : undefined }).mindmap;
       const result = await writeMap(project, map, next, requestId, "add_mindmap_node", [{ kind: "mindmap-node", id, mapId }], [{ field: "added", after: id }]);
       if (result.ok && visibleMindmapWordCount(typeof record.title === "string" ? record.title : "", typeof record.text === "string" ? record.text : "") > MAX_VISIBLE_MINDMAP_WORDS) {
         const value = result.value;
-        if (value && typeof value === "object") (value as Record<string, unknown>).creationWarning = "Visible content exceeds 100 words. Consider splitting this into more cards.";
+        if (value && typeof value === "object") (value as Record<string, unknown>).creationWarning = "Visible content exceeds 100 words. Keep the visible card focused on its subject. Put exclusions, defensive qualifications, and precautionary notes in the caution scratchpad, and supporting explanations in Extended notes.";
       }
       return result;
     });
@@ -878,7 +886,7 @@ function persistPaperSectionPatch(
   } catch (error) { return caught(error); }
 }
 
-async function executePaperPatch(args: unknown, context: McpCommandContext): Promise<OperationResult<unknown>> {
+async function executeReplacePaperSection(args: unknown, context: McpCommandContext): Promise<OperationResult<unknown>> {
   const record = asObject(args);
   if (!record) return failResult("invalid_arguments", "Arguments must be an object.", false);
   try {
@@ -887,8 +895,8 @@ async function executePaperPatch(args: unknown, context: McpCommandContext): Pro
     const tex = typeof record.tex === "string" ? record.tex : undefined;
     if (tex === undefined) throw new McpCommandError("invalid_arguments", "tex must be a string.", false);
     const baseHash = stringArg(record, "baseHash");
-    return idempotentWrite(project, "patch_paper_section", record, context, (requestId) => {
-      return persistPaperSectionPatch(project, sectionId!, baseHash!, tex, requestId, "patch_paper_section", {
+    return idempotentWrite(project, "replace_paper_section", record, context, (requestId) => {
+      return persistPaperSectionPatch(project, sectionId!, baseHash!, tex, requestId, "replace_paper_section", {
         level: typeof record.level === "number" ? record.level : undefined,
         appendix: typeof record.appendix === "boolean" ? record.appendix : undefined,
       });
@@ -896,7 +904,7 @@ async function executePaperPatch(args: unknown, context: McpCommandContext): Pro
   } catch (error) { return caught(error); }
 }
 
-async function executeAddTodo(args: unknown, context: McpCommandContext): Promise<OperationResult<unknown>> {
+async function executeAddPaperTodoAtSection(args: unknown, context: McpCommandContext): Promise<OperationResult<unknown>> {
   const record = asObject(args);
   if (!record) return failResult("invalid_arguments", "Arguments must be an object.", false);
   try {
@@ -905,14 +913,14 @@ async function executeAddTodo(args: unknown, context: McpCommandContext): Promis
     const text = stringArg(record, "text");
     const title = stringArg(record, "title", false);
     const expectedBundleHash = stringArg(record, "expectedBundleHash");
-    return idempotentWrite(project, "add_paper_todo", record, context, async (requestId) => {
+    return idempotentWrite(project, "add_paper_todo_at_section", record, context, async (requestId) => {
       try {
         assertAdministrativeWriteAllowed("MCP paper TODO changes");
         const result = persistPaperTodoPlacement({ manuscriptDir: texPaths(projectContentDir(project)).manuscriptDir, sectionId: sectionId!, text: text!, title, id: stringArg(record, "todoId", false), expectedBundleHash });
         if (!result.ok) return result;
         const id = (result.value as { id?: string }).id;
-        const value = receipt({ requestId, operation: "add_paper_todo", resources: [{ kind: "paper-todo", id: id || "unknown" }, { kind: "paper-section", id: sectionId! }], diskHash: result.diskHash, value: result.value });
-        recordWebMcpActivity(project, { ...context, requestId }, { operation: "add_paper_todo", resources: [{ kind: "paper-todo", id: id || "unknown" }, { kind: "paper-section", id: sectionId! }], title: title || text, href: `/p/${encodeURIComponent(project)}/paper#${encodeURIComponent(id || sectionId!)}` });
+        const value = receipt({ requestId, operation: "add_paper_todo_at_section", resources: [{ kind: "paper-todo", id: id || "unknown" }, { kind: "paper-section", id: sectionId! }], diskHash: result.diskHash, value: result.value });
+        recordWebMcpActivity(project, { ...context, requestId }, { operation: "add_paper_todo_at_section", resources: [{ kind: "paper-todo", id: id || "unknown" }, { kind: "paper-section", id: sectionId! }], title: title || text, href: `/p/${encodeURIComponent(project)}/paper#${encodeURIComponent(id || sectionId!)}` });
         return okResult(value, { revision: result.revision, diskHash: result.diskHash, remote: pendingRemote() });
       } catch (error) { return caught(error); }
     });
@@ -1121,35 +1129,6 @@ async function executeBibliography(args: unknown): Promise<OperationResult<unkno
     return okResult({ project, raw, value: typeof value === "string" ? value.slice(0, MAX_READ_CHARS) : value, truncated: typeof value === "string" && value.length > MAX_READ_CHARS });
   } catch (error) { return caught(error); }
 }
-
-const PROJECT_FIELDS = {
-  title: { type: "string" }, venue: { type: "string" }, tagline: { type: "string" }, overview: { type: "string" }, researchKind: { type: "string" }, color: { type: "string" }, icon: { type: "string" }, label: { type: "string" }, engine: { type: "string", enum: ["pdflatex", "xelatex", "lualatex"] }, mainFile: { type: "string" }, texliveVersion: { type: "string" }, links: { type: "array" }, collaborators: { type: "array" }, archivedAt: { type: ["string", "null"] }, expectedHash: diskHashSchema, requestId: { type: "string" },
-};
-
-const PAPER_SECTION_REF_CONTEXT_SCHEMA = {
-  type: "object",
-  properties: {
-    file: { type: "string" },
-    title: { type: "string" },
-    level: { type: "integer", minimum: 1, maximum: 6 },
-    headingPath: { type: "array", items: { type: "string" } },
-    bodyHash: { type: "string" },
-    label: { type: "string" },
-    sourceHash: { type: "string" },
-    sourceRange: {
-      type: "object",
-      properties: { from: { type: "integer", minimum: 0 }, to: { type: "integer", minimum: 0 } },
-      required: ["from", "to"],
-      additionalProperties: false,
-    },
-    order: { type: "integer", minimum: 0 },
-  },
-  additionalProperties: false,
-};
-
-const MAP_NODE_PATCH_SCHEMA = {
-  title: { type: "string" }, text: { type: "string" }, caption: { type: "string", description: "Model-facing card note, hidden from the rendered card, up to 500 words." }, labels: { type: "array", items: { type: "string" } }, refs: { type: "array", items: { type: "object", properties: { kind: { type: "string" }, id: { type: "string" }, label: { type: "string" }, url: { type: "string" }, imageWidth: { type: "integer", minimum: 25, maximum: 100, description: "Map-local image width, percent of card content area." }, mapId: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$", description: "Map identity for mindmap-node references." }, sectionContext: PAPER_SECTION_REF_CONTEXT_SCHEMA }, required: ["kind", "id"] } }, metadata: { type: ["object", "null"] }, contentFormat: { type: "string", enum: ["plain", "markdown", "tex"] }, tableLayout: { type: "string", enum: ["wide", "scroll"] }, shape: { type: "string", enum: ["branch", "leaf", "callout"] }, color: { type: "string" }, progress: { type: ["integer", "null"] }, priority: { type: ["string", "null"], enum: ["P0", "P1", "P2", "P3", null] }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, requestId: { type: "string" },
-};
 
 const BATCH_SCHEMA = {
   project: projectIdSchema, mapId: mapIdSchema, selectedIds: { type: "array", minItems: 1, maxItems: 2_000, items: { type: "string" } }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, previewToken: { type: "string" }, changes: { type: "object" }, deleteMode: { type: "string", enum: ["cards", "branches"] }, move: { type: "object" }, requestId: { type: "string" },
@@ -1385,12 +1364,12 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
     });
   }),
   ...instructionsTools(),
-  tool("read_project_skill", "Read project skill", "Read a project, workspace or bundled skill returned by get_project_state.", objectSchema({ project: projectIdSchema, id: { type: "string", minLength: 1 } }, ["project", "id"]), async raw => {
+  tool("read_project_skill", "Read project skill", sharedToolDescription("read_project_skill"), objectSchema({ project: projectIdSchema, ...SHARED_WEBMCP_SCHEMAS.read_project_skill.properties }, ["project", ...(SHARED_WEBMCP_SCHEMAS.read_project_skill.required || [])]), async raw => {
     const args = asObject(raw)!;
     const result = readAnySkill(projectContentDir(projectArg(args)), stringArg(args, "id")!);
     return result ? okResult({ ...result.skill, body: result.body }) : failResult("invalid_path", "Unknown skill.", false);
   }, { readOnlyHint: true }),
-  tool("get_source_bundle", "Read saved source bundle", "Read bounded saved TeX source, segments and hashes. Browser calls read live editor state.", objectSchema(sourceSchema, ["project"]), executeReadPaperSource, { readOnlyHint: true }),
+  tool("get_source_bundle", "Read saved source bundle", "Read bounded saved TeX source, segments and hashes. Browser calls read live editor state.", objectSchema(sourceSchema, ["project"]), executeGetSourceBundle, { readOnlyHint: true }),
   tool("get_paper_compile", "Read compile status", "Read latest attempted build and latest successful artifact state.", objectSchema({ project: projectIdSchema }, ["project"]), executeCompileStatus, { readOnlyHint: true }),
   tool("get_bibliography", "Read bibliography", "Read bibliography entries or raw BibTeX.", objectSchema({ project: projectIdSchema, raw: { type: "boolean" } }, ["project"]), executeBibliography, { readOnlyHint: true }),
   tool("get_paper_outline", "Read paper outline", "Read saved manuscript headings and current section identities.", objectSchema({ project: projectIdSchema }, ["project"]), async raw => okResult(getProjectState(projectArg(asObject(raw)!))?.paper?.outline || []), { readOnlyHint: true }),
@@ -1415,47 +1394,39 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
     return ref ? okResult({ id: args.id, ref, url: artifactHref(project, ref) }) : failResult("invalid_path", "Unknown attached image.", false);
   }, { readOnlyHint: true }),
   tool("list_projects", "List projects", "List project slugs and titles available to this authenticated MCP connection.", objectSchema(), async () => executeListProjects(), { readOnlyHint: true }),
-  tool("get_project_state", "Read project state", "Read bounded project orientation, paper outline, TODO coverage, mindmaps, skills, and durable activity. Saved repository state is returned.", objectSchema({ project: projectIdSchema, detail: { type: "string", enum: ["summary", "full"] }, todoLimit: { type: "integer", minimum: 0, maximum: 200 } }, ["project"]), executeGetProjectState, { readOnlyHint: true }),
-  tool("sync_project", "Review and resolve Git synchronization", "Inspect branch, local/base/remote commit IDs, changed files, and recovery refs. review_pull returns base/local/remote contents for every conflicting file. Resolve whole files with local, remote, or edited merged text, then apply_pull with the returned token. Local changes arriving during review require a fresh review. The project checkout is preserved while reviewing.", objectSchema({ project: projectIdSchema, ...syncProjectProperties }, ["project", "action"]), async (args) => {
+  tool("get_project_state", "Read project state", sharedToolDescription("get_project_state"), objectSchema({ project: projectIdSchema, ...SHARED_WEBMCP_SCHEMAS.get_project_state.properties }, ["project", ...(SHARED_WEBMCP_SCHEMAS.get_project_state.required || [])]), executeGetProjectState, { readOnlyHint: true }),
+  tool("sync_project", "Review and resolve Git synchronization", sharedToolDescription("sync_project"), objectSchema({ project: projectIdSchema, ...SHARED_WEBMCP_SCHEMAS.sync_project.properties }, ["project", ...(SHARED_WEBMCP_SCHEMAS.sync_project.required || [])]), async (args) => {
     const record = asObject(args);
     if (!record) return failResult("invalid_arguments", "Arguments must be an object.", false);
     try { const project = projectArg(record); const { project: _project, ...input } = record; return syncProjectCommand(projectContentDir(project), input); }
     catch (error) { return caught(error); }
   }, { destructiveHint: true, idempotentHint: false }),
-  tool("search_project", "Search project", "Search paper headings, source, TODOs, comments, map cards, labels, and refs. Results include stable ids and hrefs.", objectSchema({ project: projectIdSchema, query: { type: "string", minLength: 1 } }, ["project", "query"]), executeSearchProject, { readOnlyHint: true }),
-  tool("get_mindmap", "Read mindmap", "Read a bounded page of one persisted map. mapId draft identifies the Primary map. Use revision and diskHash for writes.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: MAX_PAGE_SIZE } }, ["project", "mapId"]), executeGetMindmap, { readOnlyHint: true }),
+  tool("search_project", "Search project", sharedToolDescription("search_project"), objectSchema({ project: projectIdSchema, ...SHARED_WEBMCP_SCHEMAS.search_project.properties }, ["project", ...(SHARED_WEBMCP_SCHEMAS.search_project.required || [])]), executeSearchProject, { readOnlyHint: true }),
+  tool("get_mindmap", "Read mindmap", mindmapToolDescription("get_mindmap"), objectSchema({ project: projectIdSchema, mapId: mapIdSchema, ...MINDMAP_WEBMCP_TOOL_SCHEMAS.get_mindmap.properties, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: MAX_PAGE_SIZE } }, ["project", "mapId", ...(MINDMAP_WEBMCP_TOOL_SCHEMAS.get_mindmap.required || [])]), executeGetMindmap, { readOnlyHint: true }),
   tool("list_mindmaps", "List mindmaps", "List persisted map identities and revisions without loading card bodies.", objectSchema({ project: projectIdSchema }, ["project"]), executeListMindmaps, { readOnlyHint: true }),
   tool("read_paper_section", "Read paper section", "Read one TeX section with its exact section hash. Use the hash for an exact section patch.", objectSchema({ project: projectIdSchema, sectionId: { type: "string" }, maxChars: { type: "integer", minimum: 1, maximum: MAX_READ_CHARS } }, ["project", "sectionId"]), executeReadPaperSection, { readOnlyHint: true }),
-  tool("read_paper_source", "Read paper source", "Read a bounded source-bundle range with included file paths and hashes.", objectSchema({ project: projectIdSchema, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: MAX_READ_CHARS } }, ["project"]), executeReadPaperSource, { readOnlyHint: true }),
   tool("read_wiki_page", "Read wiki page", "Read an existing wiki page. Wiki mutations are unavailable in this release.", objectSchema({ project: projectIdSchema, slug: { type: "string" } }, ["project", "slug"]), executeReadWikiPage, { readOnlyHint: true }),
-  tool("get_capabilities", "Read capabilities", "Read cached runtime capability information.", objectSchema(), async () => executeCapabilities(), { readOnlyHint: true }),
-  tool("read_bibliography", "Read bibliography", "Read parsed bibliography entries or bounded raw BibTeX.", objectSchema({ project: projectIdSchema, raw: { type: "boolean" } }, ["project"]), executeBibliography, { readOnlyHint: true }),
-  tool("update_project", "Update project metadata", "Update project metadata or compiler settings with the project hash. The local save and remote state are separate.", objectSchema({ project: projectIdSchema, ...PROJECT_FIELDS }, ["project", "expectedHash"]), executeUpdateProject, { destructiveHint: false }),
-  tool("patch_mindmap_node", "Patch map card", "Patch one map-owned card with revision and optional disk-hash compare-and-swap. TODO title and text remain TeX-owned.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, id: { type: "string" }, ...MAP_NODE_PATCH_SCHEMA }, ["project", "mapId", "id", "expectedRevision"]), executePatchMindmapNode),
-  tool("add_mindmap_node", "Add map card", "Add one agent draft under an existing parent with a revision compare-and-swap. The human accepts it with Save card or removes it with Delete. Edits preserve draft status.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, parentId: { type: "string" }, id: { type: "string" }, title: { type: "string" }, text: { type: "string" }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, requestId: { type: "string" } }, ["project", "mapId", "parentId", "expectedRevision"]), executeAddMindmapNode),
-  tool("move_mindmap_node", "Move map card", "Move one card to a parent or sibling position. Cycles and root movement are rejected.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, id: { type: "string" }, parentId: { type: "string" }, beforeId: { type: "string" }, afterId: { type: "string" }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, requestId: { type: "string" } }, ["project", "mapId", "id", "parentId", "expectedRevision"]), executeMoveMindmapNode),
+  tool("get_capabilities", "Read capabilities", sharedToolDescription("get_capabilities"), SHARED_WEBMCP_SCHEMAS.get_capabilities, async () => executeCapabilities(), { readOnlyHint: true }),
+  tool("update_project", "Update project metadata", sharedToolDescription("update_project"), objectSchema({ project: projectIdSchema, ...SHARED_WEBMCP_SCHEMAS.update_project.properties, requestId: { type: "string" } }, ["project", ...(SHARED_WEBMCP_SCHEMAS.update_project.required || [])]), executeUpdateProject, { destructiveHint: false }),
+  tool("patch_mindmap_node", "Patch map card", mindmapToolDescription("patch_mindmap_node"), objectSchema({ project: projectIdSchema, mapId: mapIdSchema, ...MINDMAP_WEBMCP_TOOL_SCHEMAS.patch_mindmap_node.properties, expectedDiskHash: diskHashSchema, requestId: { type: "string" } }, ["project", "mapId", ...(MINDMAP_WEBMCP_TOOL_SCHEMAS.patch_mindmap_node.required || [])]), executePatchMindmapNode),
+  tool("add_mindmap_node", "Add map card", mindmapToolDescription("add_mindmap_node"), objectSchema({ project: projectIdSchema, mapId: mapIdSchema, ...MINDMAP_WEBMCP_TOOL_SCHEMAS.add_mindmap_node.properties, id: { type: "string", description: "Optional unique card id. Omit to generate one." }, expectedDiskHash: diskHashSchema, requestId: { type: "string" } }, ["project", "mapId", ...(MINDMAP_WEBMCP_TOOL_SCHEMAS.add_mindmap_node.required || [])]), executeAddMindmapNode),
+  tool("move_mindmap_node", "Move map card", mindmapToolDescription("move_mindmap_node"), objectSchema({ project: projectIdSchema, mapId: mapIdSchema, ...MINDMAP_WEBMCP_TOOL_SCHEMAS.move_mindmap_node.properties, expectedDiskHash: diskHashSchema, requestId: { type: "string" } }, ["project", "mapId", ...(MINDMAP_WEBMCP_TOOL_SCHEMAS.move_mindmap_node.required || [])]), executeMoveMindmapNode),
   tool("preview_mindmap_batch", "Preview map batch", "Preview exact affected cards, descendants, TODO-card count, branch roots, and a revision-bound token. This never writes.", objectSchema(BATCH_SCHEMA, ["project", "mapId", "selectedIds", "expectedRevision"]), executePreviewMindmapBatch, { readOnlyHint: true }),
   tool("apply_mindmap_batch", "Apply map batch", "Apply one validated atomic batch for card fields, selected-branch movement, or deletion. Deletion requires a current preview token.", objectSchema(BATCH_SCHEMA, ["project", "mapId", "selectedIds", "expectedRevision", "previewToken"]), executeApplyMindmapBatch, { destructiveHint: true }),
   tool("delete_mindmap_node", "Delete selected cards", "Delete selected cards and promote surviving children to the nearest surviving ancestor. Use a preview token.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, id: { type: "string" }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, previewToken: { type: "string" }, requestId: { type: "string" } }, ["project", "mapId", "id", "expectedRevision", "previewToken"]), (args, context) => executeDeleteMindmap(args, context, "cards"), { destructiveHint: true }),
   tool("delete_mindmap_branch", "Delete selected branches", "Delete selected cards and all descendants, including collapsed descendants. Use a preview token.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, id: { type: "string" }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, previewToken: { type: "string" }, requestId: { type: "string" } }, ["project", "mapId", "id", "expectedRevision", "previewToken"]), (args, context) => executeDeleteMindmap(args, context, "branches"), { destructiveHint: true }),
-  tool("add_paper_todo", "Add paper TODO", "Insert a TeX-owned TODO at a current section using the current source-bundle hash. Reuse todoId and requestId for retries.", objectSchema({ project: projectIdSchema, sectionId: { type: "string" }, title: { type: "string" }, text: { type: "string" }, todoId: { type: "string" }, expectedBundleHash: diskHashSchema, requestId: { type: "string" } }, ["project", "sectionId", "text", "expectedBundleHash"]), executeAddTodo),
+  tool("add_paper_todo_at_section", "Add paper TODO", "Insert a TeX-owned TODO at a current section using the current source-bundle hash. Reuse todoId and requestId for retries.", objectSchema({ project: projectIdSchema, sectionId: { type: "string" }, title: { type: "string" }, text: { type: "string" }, todoId: { type: "string" }, expectedBundleHash: diskHashSchema, requestId: { type: "string" } }, ["project", "sectionId", "text", "expectedBundleHash"]), executeAddPaperTodoAtSection),
   tool("convert_card_to_todo", "Convert card to paper TODO", "Convert an ordinary map card into a TeX-owned TODO and bind the card atomically. Pass sectionId for an explicit current paper section, or omit it for a neutral insertion in the manuscript root. Use expectedRevision plus optional map and paper hashes for conflict checks, and requestId for retries.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, id: { type: "string" }, sectionId: { type: "string", description: "Optional current section id from get_project_state. Omit for neutral insertion in the manuscript root." }, expectedRevision: revisionSchema, expectedDiskHash: diskHashSchema, expectedBundleHash: diskHashSchema, requestId: { type: "string" } }, ["project", "mapId", "id", "expectedRevision"]), executeConvertCardToTodo),
-  tool("patch_paper_section", "Patch paper section", "Replace one section body using its exact section hash. Preserve other sections, TODOs, comments, markers, tables, and figures.", objectSchema({ project: projectIdSchema, sectionId: { type: "string" }, baseHash: diskHashSchema, tex: { type: "string", maxLength: 1_000_000 }, level: { type: "integer", minimum: 1, maximum: 6 }, appendix: { type: "boolean" }, requestId: { type: "string" } }, ["project", "sectionId", "baseHash", "tex"]), executePaperPatch),
+  tool("replace_paper_section", "Replace paper section", "Replace one section body using its exact section hash. Preserve other sections, TODOs, comments, markers, tables, and figures.", objectSchema({ project: projectIdSchema, sectionId: { type: "string" }, baseHash: diskHashSchema, tex: { type: "string", maxLength: 1_000_000 }, level: { type: "integer", minimum: 1, maximum: 6 }, appendix: { type: "boolean" }, requestId: { type: "string" } }, ["project", "sectionId", "baseHash", "tex"]), executeReplacePaperSection),
   tool("complete_todo", "Complete paper TODO", "Set a TeX TODO completion timestamp while retaining its text and map cards.", objectSchema({ project: projectIdSchema, todoId: { type: "string" }, expectedBundleHash: diskHashSchema, requestId: { type: "string" } }, ["project", "todoId", "expectedBundleHash"]), (args, context) => executeTodoState(args, context, true)),
   tool("reopen_todo", "Reopen paper TODO", "Clear a TeX TODO completion timestamp while retaining its text and map cards.", objectSchema({ project: projectIdSchema, todoId: { type: "string" }, expectedBundleHash: diskHashSchema, requestId: { type: "string" } }, ["project", "todoId", "expectedBundleHash"]), (args, context) => executeTodoState(args, context, false)),
   tool("get_activity", "Read activity", "Read durable authored operation history after applying the selected day filter and before pagination.", objectSchema({ project: projectIdSchema, days: { type: "integer", minimum: 1, maximum: 365 }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 200 } }, ["project"]), executeActivity, { readOnlyHint: true }),
   tool("set_activity_window", "Set activity window", "Persist the selected map's rolling activity window from 1 to 365 days.", objectSchema({ project: projectIdSchema, mapId: mapIdSchema, days: { type: "integer", minimum: 1, maximum: 365 }, expectedRevision: revisionSchema, requestId: { type: "string" } }, ["project", "mapId", "days", "expectedRevision"]), executeSetActivityWindow),
   tool("compile_paper", "Compile paper", "Start a five-minute-bounded compiler job from an immutable source snapshot. The last successful artifact remains addressable if this job fails.", objectSchema({ project: projectIdSchema }, ["project"]), executeCompile),
-  tool("get_compile_status", "Read compile status", "Read latest attempted build and latest successful artifact state.", objectSchema({ project: projectIdSchema }, ["project"]), executeCompileStatus, { readOnlyHint: true }),
   tool("get_git_status", "Read Git status", "Read local branch, remote, ahead/behind, changed paths, and latest commit.", objectSchema({ project: projectIdSchema }, ["project"]), executeGitStatus, { readOnlyHint: true }),
   tool("commit_git", "Create local Git commit", "Commit accepted manuscript and OpenBar paths locally without waiting for network access. The receipt includes exact committed file hashes.", objectSchema({ project: projectIdSchema, message: { type: "string", maxLength: 240 }, requestId: { type: "string" } }, ["project"]), executeGitCommit),
   tool("sync_git", "Synchronize Git remote", "Fetch before comparing ahead/behind, then push explicitly to the validated Git remote and current branch. Existing local commits remain available after failure.", objectSchema({ project: projectIdSchema, commitHash: { type: "string" } }, ["project"]), executeGitSync),
 ];
-
-for (const [name, target] of [["replace_paper_section", "patch_paper_section"], ["add_paper_todo_at_section", "add_paper_todo"]]) {
-  const original = MCP_TOOL_REGISTRY.find(tool => tool.name === target)!;
-  MCP_TOOL_REGISTRY.push({ ...original, name, description: `${original.description} Saved-state equivalent of the browser ${name} operation.` });
-}
 
 const REGISTRY_BY_NAME = new Map(MCP_TOOL_REGISTRY.map((entry) => [entry.name, entry]));
 

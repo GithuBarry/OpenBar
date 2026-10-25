@@ -20,7 +20,7 @@ export type MindmapSession = {
 /** Semantic node fields that the inspector and agent tools may edit. */
 export type MindmapNodePatch = Pick<
   MindmapNode,
-  "agentDraft" | "title" | "caption" | "shape" | "metadata" | "contentFormat" | "tableLayout" | "color" | "refs" | "tags" | "progress"
+  "agentDraft" | "title" | "caption" | "caution" | "shape" | "metadata" | "contentFormat" | "tableLayout" | "color" | "refs" | "tags" | "progress"
 > & { text?: string; priority?: MindmapNode["priority"] };
 
 function semanticPatch(patch: MindmapNodePatch): MindmapNodePatch {
@@ -29,6 +29,7 @@ function semanticPatch(patch: MindmapNodePatch): MindmapNodePatch {
   if (Object.prototype.hasOwnProperty.call(patch, "title")) next.title = patch.title;
   if (Object.prototype.hasOwnProperty.call(patch, "text")) next.text = patch.text;
   if (Object.prototype.hasOwnProperty.call(patch, "caption")) next.caption = patch.caption;
+  if (Object.prototype.hasOwnProperty.call(patch, "caution")) next.caution = patch.caution;
   if (Object.prototype.hasOwnProperty.call(patch, "shape")) next.shape = patch.shape;
   if (Object.prototype.hasOwnProperty.call(patch, "metadata")) next.metadata = patch.metadata;
   if (Object.prototype.hasOwnProperty.call(patch, "contentFormat")) next.contentFormat = patch.contentFormat;
@@ -45,6 +46,7 @@ function patchTouchesActivity(patch: MindmapNodePatch): boolean {
   return Object.prototype.hasOwnProperty.call(patch, "title")
     || Object.prototype.hasOwnProperty.call(patch, "text")
     || Object.prototype.hasOwnProperty.call(patch, "caption")
+    || Object.prototype.hasOwnProperty.call(patch, "caution")
     || Object.prototype.hasOwnProperty.call(patch, "progress")
     || Object.prototype.hasOwnProperty.call(patch, "tags")
     || Object.prototype.hasOwnProperty.call(patch, "metadata")
@@ -55,7 +57,7 @@ function patchTouchesActivity(patch: MindmapNodePatch): boolean {
 
 export type MindmapTreeAction =
   | { type: "paste-images"; id: string; images: Array<{ ref: NonNullable<MindmapNode["refs"]>[number]; childId: string }> }
-  | { type: "add-node"; parentId: string; id: string; title?: string; text?: string; todoId?: string; agentDraft?: boolean }
+  | { type: "add-node"; parentId: string; id: string; title?: string; text?: string; caution?: string; todoId?: string; agentDraft?: boolean }
   | { type: "move-sibling"; id: string; direction: -1 | 1 }
   | { type: "edit-text"; id: string; text: string }
   | { type: "edit-card"; id: string; title: string; text: string; contentFormat?: MindmapNode["contentFormat"] }
@@ -238,6 +240,7 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
               id: action.id,
               ...(action.todoId ? {} : { title }),
               text,
+              ...(action.caution !== undefined ? { caution: action.caution } : {}),
               ...(action.todoId ? { todoId: action.todoId } : {}),
               ...(action.agentDraft ? { agentDraft: true } : {}),
               parentId: action.parentId,

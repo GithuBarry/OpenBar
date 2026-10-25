@@ -22,9 +22,22 @@ export interface Skill {
 
 export const SKILLS: Skill[] = [
   {
+    id: "anti-defensive-writing",
+    title: "Direct, precise writing",
+    when: "Writing or revising card text, manuscript prose, and explanations for clarity and a direct authorial voice.",
+    source: "https://github.com/Kiterlin/anti-defensive-writing/blob/main/SKILL.md",
+    body: `Express yourself directly, clearly, and with judgment. Reserve disclaimers, vague qualifiers, and defensive wording for genuine factual uncertainty. This applies especially to prominent Mindmap text.
+
+Lead with the subject, answer, and evidence. State scope positively and name the source of factual uncertainty precisely.
+
+For mindmap cards, put defensive caveats, exclusions, and precautionary commentary in the map-owned caution scratchpad, revealed from its small hover icon. Use Extended notes for supporting explanation.
+
+Optional further guidance: https://github.com/Kiterlin/anti-defensive-writing/blob/main/SKILL.md`,
+  },
+  {
     id: "anti-sycophancy",
     title: "Anti-sycophancy self-check",
-    when: "Before any substantive response: claims about code/data/state, recommendations, position reversals, or completion reports.",
+    when: "Reviewing factual claims, recommendations, position changes, or completion reports for evidence and calibrated confidence.",
     source: "OpenBar research practice",
     body: `Run these five checks silently before responding. The target is *calibrated confidence*, not toughness.
 
@@ -39,7 +52,7 @@ Inverse guard: don't manufacture disagreement or uncertainty to look rigorous. A
   {
     id: "lean-research-coder",
     title: "Lean research coder (ponytail)",
-    when: "Whenever writing or changing code. Active by default.",
+    when: "Implementing or refactoring research code with a minimal, auditable design.",
     source: "Lean engineering practice",
     body: `Write the laziest solution that actually works — minimal, shortest, but never careless. Walk this ladder and STOP at the first rung that holds:
 

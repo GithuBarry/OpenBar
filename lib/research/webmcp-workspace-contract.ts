@@ -95,7 +95,7 @@ async function executeWorkspaceTool(
         const project = await host.actions.openProject(slug);
         if (!project) return failResult("invalid_arguments", `Unknown project "${slug}".`, { retryable: false });
         host.navigate(`/p/${encodeURIComponent(slug)}/paper`);
-        return okResult(project);
+        return okResult({ ...project, status: "scheduled", readyWhen: "Wait for the project URL and its page-local tool catalog. Browser bridge clients can call window.openbarAgent.waitForNavigation(href)." });
       }
     }
   } catch (error) {

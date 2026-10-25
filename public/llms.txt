@@ -1,122 +1,14 @@
-# OpenBar agent instructions
+# OpenBar
 
-## First action for inspecting or editing a project
+OpenBar is a research-paper and mindmap workspace with native MCP and WebMCP tools.
 
-Discover the tool catalog and call get_project_state before inspecting project
-content or answering "how would you edit this card?". Hypothetical edit questions
-require read-only discovery and an exact tool-based plan. An actual requested
-change authorizes the corresponding write.
+- Project context and available skills: get_project_state
+- Load a relevant skill: read_project_skill
+- HTTP MCP: /api/mcp
+- REST tool discovery: /api/tools
+- OpenAPI schemas: /openapi.json
+- Connection setup: /agents
+- Deployment and transport reference: /llms-deployment.txt
 
-Browser JavaScript on the project page:
-1. await window.openbarAgent.listTools()
-2. await window.openbarAgent.executeTool("get_project_state", {detail: "full"})
-3. await window.openbarAgent.executeTool("get_mindmap", {})
-4. Inspect the returned nodes and patch_mindmap_node input schema.
-5. Describe the edit using patch_mindmap_node with id, expectedRevision, and the
-   requested title/text fields. On an actual edit request, execute that call,
-   check ok, then read get_mindmap again to verify persistence.
-Use the returned node identity to resolve "first card". State your interpretation.
-TODO card title/text edits use the paper TODO tool described in the catalog.
-
-For HTTP MCP or REST, the equivalent card reads/writes also require project
-(the URL segment after /p/) and mapId from get_project_state. Read the selected
-transport's schema. A browser revision and a saved-state revision can differ.
-
-A web-reader URL safety error is specific to that reader. Try a reachable local
-HTTP client or browser JavaScript transport. Browser JavaScript can use the
-window.openbarAgent bridge in a standard browser. Headless clients can use
-authenticated REST immediately, or initialize the MCP connection below.
-With an authorized local checkout, use the configured OPENBARRY_ACCESS_TOKEN
-from the process environment or .env.local, keeping its value private.
-Report the attempted transport and exact connection error when blocked.
-
-Use UI interaction for visual verification and capabilities beyond the tool
-catalog. For supported card edits, give the tool name, node ID, concurrency
-fields, changed fields, and verification step in your answer.
-
-OpenBar edits repository-backed research papers and their mindmaps.
-
-Human and agent guide: /agents
-Project URLs: /p/<project-slug>/mindmap and /p/<project-slug>/paper
-Agent discovery: every page includes visually hidden MCP and WebMCP instructions
-in its initial HTML and accessibility tree, plus HTTP Link headers to this guide.
-The "MCP / WebMCP" button on project pages shows the registered tools.
-
-Browser agents: use a WebMCP integration supporting document.modelContext or navigator.modelContext on
-HTTPS or localhost. Discover the active page's registered tools through the
-integration. Start with get_project_state, detail="full", then search_project
-and navigate_project. The current page supplies the project identity.
-
-Headless MCP clients: use Streamable HTTP at /api/mcp on this origin.
-Authentication is required: Authorization: Bearer <OPENBARRY_ACCESS_TOKEN>,
-or an allowed Cloudflare Access identity. Ask the workspace owner for credentials.
-Initialize, retain Mcp-Session-Id, send notifications/initialized, then tools/list.
-Call get_project_state with {"project":"<project-slug>","detail":"full"}.
-Read AGENTS.md and useful project skills returned by project state.
-Use returned IDs, revisions, and hashes for writes. Check local persistence and
-remote synchronization receipts separately.
-
-Git conflicts: get_project_state includes sync status, local/base/remote
-commit IDs, changed paths, and Git recovery refs. Call sync_project with
-{"action":"inspect","refresh":true}, then {"action":"review_pull"} to prepare
-a review. HTTP MCP also requires project="<slug>". The review returns its token
-and the base, local, and remote contents for every conflicting file. Apply with
-{"action":"apply_pull","token":"...","resolutions":[{"path":"main.tex","choice":"merged","text":"<complete file>"}]}.
-Choices local and remote select the entire saved file. cancel_pull closes a
-review. A changed local HEAD or tracked working tree requires a fresh review.
-Reviews operate on saved repository files. Save live browser drafts first.
-Force pull and force push in the human interface require two confirmations and
-preserve both Git versions under refs/openbar/recovery. Force push checks the
-reviewed remote commit with a lease.
-
-The canvas stays visible while Unplaced TODOs are dragged from the side tray
-onto a parent card. Priority uses Clear/P0/P1/P2/P3 buttons. Progress uses Clear
-and seven pie states. Ordinary cards support Plain, Markdown (including tables),
-and TeX. Each card holds one image. Paste or drop an image onto a card or its
-editor. Further images become child cards. Click the image for the full viewer.
-Drag its corner to resize, or use its focused resize handle's arrow keys.
-Use patch_mindmap_node with refs[].imageWidth (25–100 percent) to resize through
-tools. Preserve the reference's other fields. To attach another image through
-tools, create a child with add_mindmap_node, then attach_mindmap_image there.
-Removing an image detaches its reference and preserves the shared project asset.
-Undo restores the image. A multi-image paste is one undo step.
-
-Portable browser automation: await window.openbarAgent.executeTool(name, args).
-Discover full schemas with window.openbarAgent.listTools(). This bridge works
-in standard browsers and exposes the same live page operations as native WebMCP.
-After navigate_project returns status="scheduled", await
-window.openbarAgent.waitForNavigation(result.value.href) before page-local calls.
-
-REST clients: GET /api/tools for schemas, POST /api/tools/<tool-name> with a JSON
-arguments object. GET /api/projects lists projects. GET /openapi.json supplies
-OpenAPI 3.1 discovery. Use the same bearer authentication as HTTP MCP.
-MCP structuredContent, its text content, REST and browser operations all use
-{ok:true,value,...} or {ok:false,code,message,retryable,...} result envelopes.
-Call get_agent_capabilities for current headless tools and transport details.
-HTTP operations use saved-state hashes. Browser operations may require live
-editor revisions. Read the schema of the selected transport before writing.
-
-Stdio-only clients: run node scripts/mcp-stdio.mjs from the OpenBar checkout,
-with OPENBARRY_URL=https://<your-host> and OPENBARRY_ACCESS_TOKEN in the child
-process environment. Use node directly to keep stdout strictly JSON-RPC.
-The bridge uses the same HTTP endpoint and saved-state operations.
-
-MCP supports protocol versions 2025-03-26, 2025-06-18 and 2025-11-25.
-Keep the negotiated version and session header on subsequent calls. A session
-expires after 30 minutes of inactivity. On HTTP 404 initialize a fresh session.
-GET /api/mcp returns 405 because this server uses JSON responses. Read job state
-with get_paper_compile. Resources and prompts are available through MCP.
-
-Network: Tailscale addresses require the client's machine to join the private
-network. Cloud-hosted clients require an owner-configured reachable deployment.
-Browser agents on another origin require OPENBARRY_AGENT_ORIGINS and the correct
-embedding tools permission. Authorization remains required for HTTP calls.
-OAuth-only clients require an external identity-provider deployment. The current
-bearer-token setup supports headless clients directly and through the stdio bridge.
-
-Card authorship: Write every card as self-contained material for an external reader, including cards prompted by @agent or @agents. State the question or topic, essential context, answer or current uncertainty, and relevant evidence or file references. Keep conversational replies and personal acknowledgments in the task. Preserve the project-specific meaning and available evidence.
-Agent-created cards stay marked Agent draft through edits and refreshes. The human
-accepts them using the small Save card control at the upper right, or deletes them.
-Every card, including TODO-backed cards, may carry map-owned Extended notes.
-Extended notes open in a floating window beside the card.
-When Git has incoming commits or conflicts, review and synchronize to resume editing.
+Tool descriptions and schemas carry each operation's contract. Project instructions
+and skill bodies load when requested through the tools.

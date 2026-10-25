@@ -23,7 +23,7 @@ export async function discoveryRpc(method: string, params: Record<string, unknow
     let project: string, id: string | undefined
     try { project = decodeURIComponent(match[1]); id = match[3] ? decodeURIComponent(match[3]) : undefined }
     catch { return { error: { code: -32602, message: "Malformed resource URI." } } }
-    const name = match[2] === "state" ? "get_project_state" : match[2] === "source" ? "read_paper_source" : "read_project_skill"
+    const name = match[2] === "state" ? "get_project_state" : match[2] === "source" ? "get_source_bundle" : "read_project_skill"
     const result = await executeMcpTool(name, { project, ...(id ? { id } : {}) }, { actor })
     if (!result.ok) return { error: { code: -32002, message: result.message, data: result } }
     return { result: { contents: [{ uri, mimeType: "application/json", text: JSON.stringify(result) }] } }
@@ -32,7 +32,7 @@ export async function discoveryRpc(method: string, params: Record<string, unknow
   if (method === "prompts/get") {
     const args = params.arguments as Record<string, unknown> | undefined
     if (params.name !== "start_project" || typeof args?.project !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(args.project)) return { error: { code: -32602, message: "Use start_project with a project slug." } }
-    return { result: { description: "OpenBar project orientation", messages: [{ role: "user", content: { type: "text", text: `${AGENT_GUIDANCE}\nRead get_project_state with ${JSON.stringify({ project: args.project, detail: "full" })}. Follow the project instructions and read relevant skills before editing.` } }] } }
+    return { result: { description: "OpenBar project orientation", messages: [{ role: "user", content: { type: "text", text: `Call get_project_state with ${JSON.stringify({ project: args.project })} for current project identities and available instructions and skills. Tool descriptions and schemas describe each operation.` } }] } }
   }
   return null
 }

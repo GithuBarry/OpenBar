@@ -103,6 +103,7 @@ export const mindmapNodeSchema = z
     title: z.string().optional(),
     text: z.string().default(""),
     caption: z.string().max(20_000).refine(captionWithinLimit, "Card notes must be 500 words or fewer.").optional(),
+    caution: z.string().optional(),
     todoId: z.string().optional(),
     parentId: z.string().nullable(),
     shape: z.enum(["root", "branch", "leaf", "note", "callout"]).optional(),

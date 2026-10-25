@@ -3,7 +3,6 @@
  */
 
 import {
-  INSTRUCTIONS_WEBMCP_TOOL_NAMES,
   PROJECT_WEBMCP_TOOL_NAMES,
   SHARED_WEBMCP_SCHEMAS,
   SETUP_WEBMCP_TOOL_NAMES,
@@ -22,7 +21,7 @@ export type CurrentLocation = {
   pageId?: string;
 };
 
-export { INSTRUCTIONS_WEBMCP_TOOL_NAMES, PROJECT_WEBMCP_TOOL_NAMES, SETUP_WEBMCP_TOOL_NAMES };
+export { PROJECT_WEBMCP_TOOL_NAMES, SETUP_WEBMCP_TOOL_NAMES };
 
 export type ProjectStateQuery = {
   detail?: "summary" | "full";
@@ -95,7 +94,6 @@ const READ_ONLY = new Set<string>([
 
 type SharedToolName =
   | (typeof PROJECT_WEBMCP_TOOL_NAMES)[number]
-  | (typeof INSTRUCTIONS_WEBMCP_TOOL_NAMES)[number]
   | (typeof SETUP_WEBMCP_TOOL_NAMES)[number];
 
 export type SharedWebMcpProfile = "full" | "public-demo";
@@ -112,7 +110,7 @@ const TOOL_META: Record<SharedToolName, { title: string; description: string }> 
   get_project_state: {
     title: "Read project state",
     description:
-      "Read this first when entering an OpenBar project or after losing context. Default detail=summary returns location, paper title, section TODO counts, Primary Unplaced count, recent activity, mindmaps (id, title, primary, nodeCount, href), shared expectations, skills, and AGENTS.md path/hash. TODOs include stable source location fields when available. Pass detail=full for the full expectations block, AGENTS bodies, and every TODO. Read relevant paper context before editing, preserve unfinished scientific structures and Primary coverage, use seven independent progress states, and distinguish local save, remote sync, compile success, and research completion. The sync field includes Git status, commit IDs, changed paths and recovery refs. Use sync_project to review and resolve Git conflicts. Then search_project or navigate_project for detail. Does not modify files.",
+      "Read this first when entering a project or recovering context. Returns map/source identities, TODO coverage, Git sync state, current location, and instruction/skill metadata. detail=full loads project rules, AGENTS.md bodies, and the full TODO listing by default.",
   },
   search_project: {
     title: "Search the project",
@@ -127,7 +125,7 @@ const TOOL_META: Record<SharedToolName, { title: string; description: string }> 
   read_project_skill: {
     title: "Read a project skill",
     description:
-      "Read one project-local SKILL.md, workspace skill, or bundled OpenBar skill by id from get_project_state. Use this after orientation when the project names a research habit. Does not modify files.",
+      "Load one project, workspace, or bundled skill by its catalog ID when its description fits the task.",
   },
   get_capabilities: {
     title: "Read runtime capabilities",
@@ -151,13 +149,13 @@ const TOOL_META: Record<SharedToolName, { title: string; description: string }> 
   },
 };
 
+export function sharedToolDescription(name: SharedToolName): string {
+  return TOOL_META[name].description;
+}
+
 export function buildSharedWebMcpTools(host: SharedWebMcpHost, profile: SharedWebMcpProfile = "full"): PaperWebMcpTool[] {
   const names = profile === "public-demo" ? PUBLIC_DEMO_PROJECT_TOOLS : PROJECT_WEBMCP_TOOL_NAMES;
   return names.map((name) => sharedTool(host, name));
-}
-
-export function buildInstructionsWebMcpTools(host: SharedWebMcpHost): PaperWebMcpTool[] {
-  return INSTRUCTIONS_WEBMCP_TOOL_NAMES.map((name) => sharedTool(host, name));
 }
 
 export function buildSetupWebMcpTools(host: SharedWebMcpHost): PaperWebMcpTool[] {
@@ -168,7 +166,7 @@ function sharedTool(host: SharedWebMcpHost, name: SharedToolName): PaperWebMcpTo
   return {
     name,
     title: TOOL_META[name]?.title || name.replaceAll("_", " "),
-    description: TOOL_META[name]?.description || `Shared operation ${name}. Project is fixed by the open page.`,
+    description: sharedToolDescription(name),
     inputSchema: SHARED_WEBMCP_SCHEMAS[name]!,
     annotations: {
       readOnlyHint: READ_ONLY.has(name),

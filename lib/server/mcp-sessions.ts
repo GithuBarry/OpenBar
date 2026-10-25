@@ -1,9 +1,17 @@
-export type McpSession = { actor: string; lastSeen: number; protocolVersion: string }
+export type McpSession = {
+  actor: string
+  lastSeen: number
+  protocolVersion: string
+  requests?: Map<string, AbortController>
+}
 export const MCP_SESSION_TTL_MS = 30 * 60_000
 
 export function pruneMcpSessions(sessions: Map<string, McpSession>, now = Date.now()): void {
   for (const [id, session] of sessions) {
-    if (now - session.lastSeen >= MCP_SESSION_TTL_MS) sessions.delete(id)
+    if (now - session.lastSeen >= MCP_SESSION_TTL_MS) {
+      for (const controller of session.requests?.values() || []) controller.abort()
+      sessions.delete(id)
+    }
   }
 }
 

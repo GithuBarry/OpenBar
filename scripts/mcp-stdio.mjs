@@ -21,15 +21,24 @@ async function send(message) {
   process.stdout.write(JSON.stringify(result) + '\n')
 }
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })
+const pending = new Set()
+function reportError(message, error) {
+  if (message?.id !== undefined) process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: error.message } }) + '\n')
+  else process.stderr.write(error.message + '\n')
+}
 for await (const line of input) {
   let message
   try {
     if (line.length > 4_000_000) throw new Error('Message exceeds 4 MB.')
     message = JSON.parse(line)
-    await send(message)
+    const operation = send(message).catch(error => reportError(message, error))
+    pending.add(operation)
+    void operation.finally(() => pending.delete(operation))
+    // Finish negotiation before sending messages that use its session headers.
+    if (message.method === 'initialize') await operation
   } catch (error) {
-    if (message?.id !== undefined) process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: error.message } }) + '\n')
-    else process.stderr.write(error.message + '\n')
+    reportError(message, error)
   }
 }
+await Promise.all(pending)
 if (session) await fetch(endpoint, { method: 'DELETE', headers: { Authorization: `Bearer ${token}`, 'Mcp-Session-Id': session }, signal: AbortSignal.timeout(5000) }).catch(() => {})

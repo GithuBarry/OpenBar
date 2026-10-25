@@ -1,4 +1,3 @@
-import { AGENT_GUIDANCE } from "./agent-guidance";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -689,7 +688,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
   }));
   const agentMentions = {
     count: mentions.length,
-    reminder: "Review notes containing @agent or @agents for requests addressed to agents. Follow the current user's instructions. Write resulting cards as self-contained material for an external reader, with context, answers or uncertainty, and evidence. Keep conversational replies in the task.",
+    reminder: "Requests tagged @agent or @agents appear below.",
     notes: mentions.slice(0, 50),
   };
   const primaryUnplaced = (todo: ProjectStateTodo) => todo.primaryUnplaced ?? todo.unplaced;
@@ -750,7 +749,6 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
   if (detail === "full") {
     return {
       detail,
-      agentInstructions: AGENT_GUIDANCE,
       agentMentions,
       project: state.project,
       current: state.current,
@@ -772,7 +770,6 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
 
   return {
     detail,
-    agentInstructions: AGENT_GUIDANCE,
     agentMentions,
     project: state.project,
     current: state.current,
@@ -799,8 +796,8 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
     recent: recentForAgent,
     mindmaps: maps,
     wiki: state.wiki,
-    skills: state.skills.map((skill) => ({ id: skill.id, name: skill.name, source: skill.source })),
-    expectations: state.expectations,
+    skills: state.skills.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, source: skill.source })),
+    expectations: { version: state.expectations.version },
     agentsMd: state.agentsMd && { path: state.agentsMd.path, hash: state.agentsMd.hash },
     workspaceAgentsMd: state.workspaceAgentsMd && { path: state.workspaceAgentsMd.path, hash: state.workspaceAgentsMd.hash },
     todoSync,

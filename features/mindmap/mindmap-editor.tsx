@@ -102,6 +102,7 @@ import {
   todosFromPaperState,
 } from "@/lib/research/todo-map";
 import { CardImages, hasImageTransfer, imageFilesFromTransfer } from "./card-images";
+import { CardCaution } from "./card-caution";
 import { MindmapCanvas } from "./mindmap-canvas";
 import { MindmapChangesView } from "./mindmap-changes";
 import { TexCodeMirror, type TexCodeMirrorHandle } from "@/features/paper/tex-codemirror";
@@ -149,6 +150,7 @@ const MINDMAP_NODE_FIELDS: ReadonlyArray<keyof MindmapNode> = [
   "title",
   "text",
   "caption",
+  "caution",
   "todoId",
   "parentId",
   "shape",
@@ -602,6 +604,7 @@ export function MindmapEditor({
             progress: node.progress,
             priority: node.priority,
             caption: node.caption,
+            caution: node.caution,
             tableLayout: node.tableLayout,
             createdAt: node.createdAt,
             updatedAt: node.updatedAt,
@@ -617,9 +620,9 @@ export function MindmapEditor({
     },
     focusNode: (id) => dispatch({ type: "select", id }),
     hasTodo: (todoId) => Boolean(paperState?.paper?.todos.some((todo) => todo.id === todoId)),
-    addNode: async (parentId, text, expectedRevision, title) => {
+    addNode: async (parentId, text, expectedRevision, title, caution) => {
       const id = newNodeId();
-      await persistWebMcpMutation({ type: "add-node", parentId, id, text, title, agentDraft: true }, expectedRevision);
+      await persistWebMcpMutation({ type: "add-node", parentId, id, text, title, caution, agentDraft: true }, expectedRevision);
       return id;
     },
     moveNode: async (id, parentId, beforeId, afterId, expectedRevision) => {
@@ -653,6 +656,7 @@ export function MindmapEditor({
         title?: string;
         text?: string;
         caption?: string;
+        caution?: string;
         tags?: string[];
         refs?: ArtifactRef[];
         metadata?: Record<string, unknown>;
@@ -666,6 +670,7 @@ export function MindmapEditor({
       if (patch.title !== undefined) nodePatch.title = patch.title;
       if (patch.text !== undefined) nodePatch.text = patch.text;
       if (patch.caption !== undefined) nodePatch.caption = patch.caption;
+      if (patch.caution !== undefined) nodePatch.caution = patch.caution;
       if (patch.labels) nodePatch.tags = patch.labels;
       if (patch.refs) nodePatch.refs = patch.refs;
       if (patch.metadata !== undefined) nodePatch.metadata = patch.metadata || undefined;
@@ -674,7 +679,7 @@ export function MindmapEditor({
       if (patch.presentation) {
         if (patch.presentation.contentFormat !== undefined) nodePatch.contentFormat = patch.presentation.contentFormat;
         if (patch.presentation.shape !== undefined) nodePatch.shape = patch.presentation.shape;
-        if (patch.presentation.color !== undefined) nodePatch.color = patch.presentation.color;
+        if (Object.prototype.hasOwnProperty.call(patch.presentation, "color")) nodePatch.color = patch.presentation.color;
         if (patch.presentation.progress === null) nodePatch.progress = undefined;
         else if (patch.presentation.progress !== undefined) nodePatch.progress = patch.presentation.progress;
       }
@@ -2278,6 +2283,16 @@ export function MindmapEditor({
                 />
                 <small>{captionWordCount(selected.caption)} / {MAX_MINDMAP_CAPTION_WORDS} words · model context</small>
               </div>
+              <div className="mindmap-field">
+                <span>Caution scratchpad</span>
+                <textarea
+                  value={selected.caution || ""}
+                  placeholder="Exclusions, defensive qualifications, and precautionary notes"
+                  aria-label="Caution scratchpad"
+                  onChange={event => dispatch({ type: "patch-node", id: selected.id, patch: { caution: event.target.value } })}
+                />
+                <small>Revealed by hovering the small card icon.</small>
+              </div>
             </div>
           </div>
           </fieldset>
@@ -2980,6 +2995,7 @@ function CanvasNode({
       }}
     >
       {node.agentDraft && <div className={styles.draftHeading}>Agent draft</div>}
+      <CardCaution text={node.caution} />
       {node.todoId && (
         <div className={styles.todoHeading}>
           <span className={styles.todoKind}><FileText size={12} aria-hidden="true" />Paper TODO</span>

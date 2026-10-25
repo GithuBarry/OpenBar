@@ -1,11 +1,6 @@
 # Agent access: MCP and WebMCP
 
-OpenBar exposes structured tools for reading and editing research projects. Before inspecting project content or answering a hypothetical edit question, discover the catalog and call `get_project_state`. For card edits, read `get_mindmap` and the `patch_mindmap_node` schema, then give the exact tool-based plan with the returned ID and revision. Execute writes when the user requests an actual change. Read the running site's `/llms.txt` for the complete connection contract and `/agents` for setup.
-
-- Browser agents: discover native WebMCP tools, or call `await window.openbarAgent.listTools()` through browser JavaScript. On a project page, begin with `await window.openbarAgent.executeTool("get_project_state", {detail: "full"})`.
-- Headless agents: connect an MCP client to `/api/mcp` on the running OpenBar origin. Authenticate with `Authorization: Bearer <OPENBARRY_ACCESS_TOKEN>` or the configured Cloudflare Access identity. Initialize, retain `Mcp-Session-Id`, send `notifications/initialized`, and call `tools/list`. Begin with `get_project_state` using `{"project":"<project-slug>","detail":"full"}`.
-- REST clients: discover authenticated tools at `/api/tools` and schemas at `/openapi.json`.
-- Prefer these structured tools for project reads and edits. Read project instructions and useful skills returned by project state. Use returned IDs, revisions, and hashes for writes. Use the browser for visual verification and capabilities beyond the tool catalog.
+OpenBar exposes native MCP and WebMCP tools for research projects. Start with `get_project_state`. Tool descriptions and schemas define each operation. Project state lists instructions and skills for reading when relevant. `/agents` covers connection setup, `/llms-deployment.txt` covers deployment and transports, and `/llms.txt` is an optional index.
 
 <!-- BEGIN:nextjs-agent-rules -->
 
@@ -43,4 +38,6 @@ OpenBar edits an Overleaf-style research-paper repository.
 - Research meaning has no built-in maturity, claim/evidence, or priority workflow.
 
 - Write every card as self-contained material for an external reader, including cards prompted by @agent or @agents. State the question or topic, essential context, answer or current uncertainty, and relevant evidence or file references. Keep conversational replies and personal acknowledgments in the task. Preserve the project-specific meaning and available evidence.
+- Keep visible card titles and bodies focused on their subject through direct positive statements. Put defensive caveats, exclusions, scope disclaimers, and precautionary commentary in the optional map-owned `caution` scratchpad. Readers reveal it by hovering or focusing a small icon. Use Extended notes for substantive supporting explanation. State results and unresolved scientific questions directly in the card. Human editing and agent tools both support the scratchpad on ordinary and TODO-backed cards.
+- Express yourself directly, clearly, and with judgment. Reserve disclaimers, vague qualifiers, and defensive wording for genuine factual uncertainty. This applies especially to prominent Mindmap text.
 - Agent-created cards remain marked Agent draft until a human explicitly saves or deletes them. The retired Note shape migrates to Agent draft.

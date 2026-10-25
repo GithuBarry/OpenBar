@@ -9,13 +9,12 @@ import type { JsonSchemaObject } from "./webmcp-paper-contract";
 
 export const PROJECT_WEBMCP_TOOL_NAMES = [
   "get_project_state",
+  "read_project_skill",
   "sync_project",
   "search_project",
   "navigate_project",
   "update_project",
 ] as const;
-
-export const INSTRUCTIONS_WEBMCP_TOOL_NAMES = ["read_project_skill"] as const;
 
 export const WORKSPACE_WEBMCP_TOOL_NAMES = ["list_projects", "search_projects", "open_project"] as const;
 
@@ -101,7 +100,7 @@ export const SHARED_WEBMCP_SCHEMAS: Record<string, JsonSchemaObject> = {
     detail: {
       type: "string",
       enum: ["summary", "full"],
-      description: "summary is the default compact orientation. full includes AGENTS.md bodies and every TODO.",
+      description: "summary is the default compact orientation. full includes AGENTS.md bodies and every TODO by default.",
     },
     todoLimit: {
       type: "integer",

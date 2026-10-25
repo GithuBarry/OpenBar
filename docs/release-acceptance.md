@@ -64,7 +64,7 @@ the matching bearer token.
 
 1. Send `initialize` and retain `Mcp-Session-Id`.
 2. Call `tools/list` and confirm project reads, bounded paper and mindmap reads, batch preview and apply, activity, compile, and Git tools appear.
-3. Call `get_project_state`, `get_mindmap`, and `read_paper_source` with bounded limits.
+3. Call `get_project_state`, `get_mindmap`, and `get_source_bundle` with bounded limits.
 4. Call one revision-checked map patch with a request id. Retry the same request id and confirm one durable receipt.
 5. Call `read_wiki_page` and confirm the registry contains no wiki mutation tool.
 6. Remove or change the bearer token and confirm the endpoint returns HTTP 401 or 503 according to configuration state.

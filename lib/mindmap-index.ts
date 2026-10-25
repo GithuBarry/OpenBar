@@ -31,6 +31,7 @@ export function persistableMindmapNode(node: MindmapNode): MindmapNode {
   };
   // Extended notes are map-owned context for ordinary and TODO-backed cards.
   if (node.caption?.trim()) next.caption = node.caption.trim();
+  if (node.caution?.trim()) next.caution = node.caution.trim();
   if (!node.todoId?.trim() && node.title !== undefined) next.title = node.title;
   if (node.todoId?.trim()) next.todoId = node.todoId.trim();
   if (node.shape) next.shape = node.shape === "note" ? "leaf" : node.shape;

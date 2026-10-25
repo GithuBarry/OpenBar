@@ -1,0 +1,34 @@
+# OpenBar deployment and connection setup
+
+Tool descriptions and schemas supply the operation contracts. This page covers
+connection settings for clients and deployment operators.
+
+## Native clients
+
+- Browser WebMCP: open the project in a supported browser over HTTPS or localhost.
+  OpenBar registers the active page's tools with the browser's model context API.
+- HTTP MCP: configure the client with <OpenBar origin>/api/mcp and the deployment's
+  authentication. Standard MCP clients handle protocol and session negotiation.
+- Authentication: the deployment accepts its configured OPENBARRY_ACCESS_TOKEN as
+  a bearer token or an allowed Cloudflare Access identity. The operator supplies
+  the origin and credentials.
+
+## Other clients
+
+- REST: /api/tools lists current schemas, /api/tools/<name> executes a tool,
+  and /openapi.json exposes the OpenAPI contract. Use the same authentication.
+- Stdio: launch node scripts/mcp-stdio.mjs from an authorized OpenBar checkout,
+  with OPENBARRY_URL and OPENBARRY_ACCESS_TOKEN in the process environment.
+- Browser automation: window.openbarAgent.listTools() discovers tools and
+  window.openbarAgent.executeTool(name, args) calls them. The bridge also exposes
+  waitForNavigation(href) for page transitions.
+
+## Deployment settings
+
+Private network addresses require access to that network. Remote clients need a
+reachable origin. Cross-origin browser integrations use OPENBARRY_AGENT_ORIGINS
+and the embedding tools permission. OAuth-only clients require an identity-provider
+integration. These settings belong to the deployment operator.
+
+The /agents page provides human setup help. The optional /llms.txt index links
+available interfaces. Project context and skills are available through the tools.

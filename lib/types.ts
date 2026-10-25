@@ -57,6 +57,8 @@ export interface MindmapNode {
   text: string;
   /** Map-owned model-facing context hidden from the rendered card, including on TODO cards. */
   caption?: string;
+  /** Caution scratchpad: exclusions, caveats, defensive qualifications, hidden by default and revealed from a small icon. */
+  caution?: string;
   /** When set, this card is a view of the TeX `\obtodo` with this id. */
   todoId?: string;
   parentId: string | null;
@@ -76,7 +78,7 @@ export interface MindmapNode {
   refs?: ArtifactRef[];
   order?: number;
   createdAt?: string;
-  /** Last mindmap-owned content change (text, caption, refs, progress, tags, metadata). */
+  /** Last mindmap-owned content change (text, caption, caution, refs, progress, tags, metadata). */
   updatedAt?: string;
 }
 

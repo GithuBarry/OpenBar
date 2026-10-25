@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 type JsonRpcRequest = {
   jsonrpc?: unknown;
-  id?: string | number | null;
+  id?: string | number;
   method?: unknown;
   params?: unknown;
 };
@@ -25,7 +25,7 @@ function headers(sessionId?: string): Headers {
   const result = new Headers({
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
-    "Link": '</agents>; rel="help", </llms.txt>; rel="alternate"; type="text/plain"',
+    "Link": '</agents>; rel="help", </llms-deployment.txt>; rel="help"; type="text/plain", </llms.txt>; rel="alternate"; type="text/plain"',
   });
   if (sessionId) result.set("Mcp-Session-Id", sessionId);
   return result;
@@ -37,8 +37,16 @@ function json(body: unknown, status = 200, sessionId?: string): Response {
   return new Response(JSON.stringify(body), { status, headers: responseHeaders });
 }
 
-function rpcError(id: string | number | null | undefined, code: number, message: string, data?: unknown): Response {
-  return json({ jsonrpc: "2.0", id: id ?? null, error: { code, message, ...(data === undefined ? {} : { data }) } }, 200);
+function rpcError(id: string | number | null | undefined, code: number, message: string, data?: unknown, sessionId?: string): Response {
+  return json({ jsonrpc: "2.0", id: id ?? null, error: { code, message, ...(data === undefined ? {} : { data }) } }, 200, sessionId);
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function requestKey(id: string | number): string {
+  return `${typeof id}:${String(id)}`;
 }
 
 function isValidRequest(value: unknown): value is JsonRpcRequest {
@@ -79,20 +87,30 @@ function mcpToolResult(result: { ok: boolean; value?: unknown; [key: string]: un
   }, 200, sessionId);
 }
 
-async function handleRpc(request: Request, value: unknown, actor: string, sessionId?: string): Promise<Response> {
-  if (!isValidRequest(value)) return rpcError(null, -32600, "Invalid JSON-RPC request.");
+async function handleRpc(value: unknown, actor: string, sessionId?: string): Promise<Response> {
+  if (!isValidRequest(value)) return rpcError(null, -32600, "Invalid JSON-RPC request.", undefined, sessionId);
   const id = value.id;
   const method = value.method as string;
-  const params = value.params && typeof value.params === "object" ? value.params as Record<string, unknown> : {};
+  if (value.params !== undefined && !isObject(value.params)) return rpcError(id, -32602, "params must be an object.", undefined, sessionId);
+  const params = isObject(value.params) ? value.params : {};
+  const session = sessionId ? sessions.get(sessionId) : undefined;
   if (id === undefined) {
+    if (method === "notifications/cancelled" && session) {
+      const cancelledId = params.requestId;
+      if (typeof cancelledId === "string" || typeof cancelledId === "number") session.requests?.get(requestKey(cancelledId))?.abort();
+    }
     return new Response(null, { status: 202, headers: headers(sessionId) });
   }
   if (method === "ping") return json({ jsonrpc: "2.0", id: id ?? null, result: {} }, 200, sessionId);
   if (method === "initialize") {
-    const requested = typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-03-26";
+    if (session) return rpcError(id, -32600, "This session is already initialized.", undefined, sessionId);
+    if (typeof params.protocolVersion !== "string" || !isObject(params.capabilities) || !isObject(params.clientInfo) || typeof params.clientInfo.name !== "string" || typeof params.clientInfo.version !== "string") {
+      return rpcError(id, -32602, "initialize requires protocolVersion, capabilities, and clientInfo with name and version.");
+    }
+    const requested = params.protocolVersion;
     const protocolVersion = SUPPORTED_PROTOCOLS.has(requested) ? requested : "2025-11-25";
     const nextSessionId = sessionId || randomUUID();
-    sessions.set(nextSessionId, { actor, lastSeen: Date.now(), protocolVersion });
+    sessions.set(nextSessionId, { actor, lastSeen: Date.now(), protocolVersion, requests: new Map() });
     return json({
       jsonrpc: "2.0",
       id: id ?? null,
@@ -109,15 +127,23 @@ async function handleRpc(request: Request, value: unknown, actor: string, sessio
   }
   if (method === "tools/call") {
     const name = typeof params.name === "string" ? params.name : "";
-    if (!name) return rpcError(id, -32602, "tools/call requires params.name.", { code: "invalid_arguments" });
+    if (!name || !listMcpTools().some((tool) => tool.name === name)) return rpcError(id, -32602, name ? `Unknown tool "${name}".` : "tools/call requires params.name.", { code: "invalid_arguments" }, sessionId);
     const args = params.arguments === undefined ? {} : params.arguments;
-    const contextRequestId = sessionId && (typeof id === "string" || typeof id === "number") ? `${sessionId}:${String(id)}` : undefined;
-    const result = await executeMcpTool(name, args, { actor, requestId: contextRequestId, signal: request.signal });
-    return mcpToolResult(result, id, sessionId);
+    if (!isObject(args)) return rpcError(id, -32602, "tools/call arguments must be an object.", { code: "invalid_arguments" }, sessionId);
+    const key = requestKey(id);
+    if (session?.requests?.has(key)) return rpcError(id, -32600, "This request ID is already executing.", undefined, sessionId);
+    const controller = new AbortController();
+    session?.requests?.set(key, controller);
+    try {
+      const result = await executeMcpTool(name, args, { actor, requestId: sessionId ? `${sessionId}:${key}` : undefined, signal: controller.signal });
+      return mcpToolResult(result, id, sessionId);
+    } finally {
+      session?.requests?.delete(key);
+    }
   }
   const discovery = await discoveryRpc(method, params, actor);
   if (discovery) return json({ jsonrpc: "2.0", id: id ?? null, ...discovery }, 200, sessionId);
-  return rpcError(id, -32601, `Method "${method}" is not supported by OpenBar MCP.`);
+  return rpcError(id, -32601, `Method "${method}" is not supported by OpenBar MCP.`, undefined, sessionId);
 }
 
 async function handlePost(request: Request): Promise<Response> {
@@ -137,13 +163,21 @@ async function handlePost(request: Request): Promise<Response> {
     return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "MCP request must contain valid JSON." } }, 400, session.id);
   }
   if (Array.isArray(body)) return json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Send one JSON-RPC message per HTTP request." } }, 400);
-  const response = await handleRpc(request, body, session.session?.actor || access.actor, session.id);
+  if (isObject(body) && typeof body.method === "string" && body.method !== "initialize" && !session.session) return json({ error: "Initialize a session before sending MCP messages.", code: "session_required" }, 400);
+  if (isObject(body) && body.jsonrpc === "2.0" && body.method === undefined && (typeof body.id === "string" || typeof body.id === "number") && (("result" in body) !== ("error" in body))) {
+    return new Response(null, { status: 202, headers: headers(session.id) });
+  }
+  const response = await handleRpc(body, session.session?.actor || access.actor, session.id);
   return response;
 }
 
 async function handleGet(request: Request): Promise<Response> {
   const access = await authorizeMcpRequest(request);
   if (!access.ok) return json({ error: access.message, code: "mcp_access_required" }, access.status);
+  pruneSessions();
+  const { id, session } = sessionFrom(request);
+  if (id && !session) return json({ error: "Unknown or expired MCP session.", code: "invalid_session" }, 404);
+  if (session && !touchMcpSession(session, access.actor)) return json({ error: "Session belongs to another identity.", code: "invalid_session" }, 403);
   return new Response(null, { status: 405, headers: { Allow: "POST, DELETE, OPTIONS" } });
 }
 
@@ -154,7 +188,10 @@ async function handleDelete(request: Request): Promise<Response> {
   const { id, session } = sessionFrom(request);
   if (id && !session) return json({ error: "Unknown or expired MCP session.", code: "invalid_session" }, 404);
   if (session && session.actor !== access.actor) return json({ error: "Session belongs to another identity.", code: "invalid_session" }, 403);
-  if (id) sessions.delete(id);
+  if (id) {
+    for (const controller of session?.requests?.values() || []) controller.abort();
+    sessions.delete(id);
+  }
   return new Response(null, { status: 204, headers: headers(id || undefined) });
 }
 

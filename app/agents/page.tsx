@@ -12,6 +12,7 @@ export default function AgentAccessPage() {
         <h1 className="text-3xl font-semibold">Tools and agent access</h1>
         <p className="font-medium">{AGENT_GUIDANCE}</p>
         <p className="text-muted">OpenBar supports people, browser agents, and headless clients. The Tools button in each project opens the current browser-tool status and this guide.</p>
+        <p className="text-muted">Tool descriptions and schemas define each operation. Project context and relevant skills are available through the tools as needed.</p>
       </header>
       <section className="space-y-3" aria-labelledby="interface-help">
         <h2 id="interface-help" className="text-xl font-semibold">Use the interface</h2>
@@ -23,7 +24,7 @@ export default function AgentAccessPage() {
         <h2 id="browser-help" className="text-xl font-semibold">Connect a browser agent</h2>
         <p>Open the project over HTTPS or localhost in a browser integration that supports <code>document.modelContext</code> or Chrome’s <code>navigator.modelContext</code>. OpenBar registers WebMCP tools for the active page. Open <strong>Tools</strong> to inspect the registered tool names and connection diagnostics.</p>
         <p>Standard browser automation can call <code>window.openbarAgent.listTools()</code> and <code>await window.openbarAgent.executeTool(name, args)</code>. These tools use the live page and editor. After navigation, call <code>await window.openbarAgent.waitForNavigation(href)</code> before using destination tools.</p>
-        <p>Use your integration’s tool discovery. Call <code>get_project_state</code> with <code>{'{"detail":"full"}'}</code> to read the project and its instructions. Use <code>search_project</code> and <code>navigate_project</code>, then the tools listed for the paper or mindmap. The active browser page supplies the project identity.</p>
+        <p>Discover tools through your browser integration. <code>get_project_state</code> returns project context and instruction and skill metadata. Load relevant detail through the tools as needed. The active browser page supplies the project identity.</p>
         <p>Use the labeled interface for visual verification or a capability missing from the tool catalog. Prefer WebMCP for supported operations.</p>
       </section>
       <section className="space-y-3" aria-labelledby="headless-help">
@@ -32,14 +33,14 @@ export default function AgentAccessPage() {
         <ol className="list-decimal space-y-2 pl-5">
           <li>Send <code>initialize</code>, retain the returned <code>Mcp-Session-Id</code>, and send <code>notifications/initialized</code>.</li>
           <li>Call <code>tools/list</code> for the current names, descriptions, and input schemas.</li>
-          <li>Call <code>get_project_state</code> with <code>{'{"project":"<slug>","detail":"full"}'}</code>. The slug is the segment after <code>/p/</code> in a project URL.</li>
+          <li>Call <code>get_project_state</code> with <code>{'{"project":"<slug>"}'}</code> for project context and available instruction and skill metadata. The slug is the segment after <code>/p/</code> in a project URL.</li>
           <li>Use the returned map IDs, revisions, and file hashes in subsequent operations. Inspect local-save and remote-sync results separately.</li>
         </ol>
         <p>For Git conflicts, inspect the <code>sync</code> field in project state. Use <code>sync_project</code> with <code>review_pull</code> to receive the base, local, and Git contents for each conflicting file. Resolve whole files and call <code>apply_pull</code> with the returned token. Changes arriving during review require a fresh review.</p>
         <p>HTTP MCP operates saved repository state. Browser WebMCP additionally exposes the live page and editing session.</p>
         <p>REST clients can read <code>/api/tools</code> and send JSON arguments to <code>/api/tools/&lt;name&gt;</code> with the same bearer token. <Link href="/openapi.json" className="text-accent underline">OpenAPI discovery</Link> describes every endpoint. MCP and REST results use <code>{'{"ok":true,"value":...}'}</code> with revision and save details.</p>
         <p>Stdio clients can launch <code>node scripts/mcp-stdio.mjs</code> with <code>OPENBARRY_URL</code> and <code>OPENBARRY_ACCESS_TOKEN</code> in their environment. Tailscale addresses require access to your private network. External browser origins require configuration in <code>OPENBARRY_AGENT_ORIGINS</code>.</p>
-        <p><Link href="/llms.txt" className="text-accent underline">Plain-text discovery guide</Link></p>
+        <p><Link href="/llms.txt" className="text-accent underline">Optional agent index</Link>{" · "}<Link href="/llms-deployment.txt" className="text-accent underline">Deployment and connection reference</Link></p>
       </section>
     </main>
   );
