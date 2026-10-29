@@ -2,11 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
-import { Info } from "lucide-react";
+import { AlertTriangle, Info } from "lucide-react";
+
+import { CAUTION_LEVEL_LABELS, type MindmapCaution } from "@/lib/mindmap/caution";
 
 import styles from "./card-caution.module.css";
 
-export function CardCaution({ text }: { text?: string }) {
+export function CardCaution({ caution }: { caution?: MindmapCaution }) {
   const [open, setOpen] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -14,6 +16,8 @@ export function CardCaution({ text }: { text?: string }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const restoreFocus = useRef(false);
   const suppressFocusOpen = useRef(false);
+  const visibleLevels = (["critical", "important"] as const).filter(level => caution?.[level]?.trim());
+  const highestLevel = visibleLevels[0];
 
   const clearCloseTimer = () => {
     if (closeTimer.current !== null) clearTimeout(closeTimer.current);
@@ -39,7 +43,15 @@ export function CardCaution({ text }: { text?: string }) {
     if (closeTimer.current !== null) clearTimeout(closeTimer.current);
   }, []);
 
-  if (!text?.trim()) return null;
+  useEffect(() => {
+    if (!highestLevel) {
+      if (closeTimer.current !== null) clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+      setOpen(false);
+    }
+  }, [highestLevel]);
+
+  if (!highestLevel) return null;
 
   return <Popover.Root open={open} onOpenChange={setOpen}>
     <Popover.Trigger asChild>
@@ -47,7 +59,8 @@ export function CardCaution({ text }: { text?: string }) {
         ref={triggerRef}
         type="button"
         className={`${styles.trigger} nodrag nopan`}
-        aria-label="Caution scratchpad"
+        data-severity={highestLevel}
+        aria-label={`${CAUTION_LEVEL_LABELS[highestLevel]} caution notes`}
         title=""
         onPointerEnter={event => { if (event.pointerType !== "touch") show(); }}
         onPointerLeave={event => { if (event.pointerType !== "touch") hide(); }}
@@ -69,7 +82,7 @@ export function CardCaution({ text }: { text?: string }) {
           event.stopPropagation();
         }}
       >
-        <Info size={13} aria-hidden="true" />
+        {highestLevel === "critical" ? <AlertTriangle size={13} aria-hidden="true" /> : <Info size={13} aria-hidden="true" />}
       </button>
     </Popover.Trigger>
     <Popover.Portal>
@@ -81,7 +94,7 @@ export function CardCaution({ text }: { text?: string }) {
         sideOffset={8}
         collisionPadding={12}
         role="tooltip"
-        aria-label="Caution scratchpad"
+        aria-label="Caution notes"
         onOpenAutoFocus={event => event.preventDefault()}
         onCloseAutoFocus={event => {
           event.preventDefault();
@@ -114,8 +127,15 @@ export function CardCaution({ text }: { text?: string }) {
           }
         }}
       >
-        <div className={styles.heading}>Caution scratchpad</div>
-        <div ref={bodyRef} className={styles.body} tabIndex={0}>{text}</div>
+        <div className={styles.heading}>Caution notes</div>
+        <div ref={bodyRef} className={styles.body} tabIndex={0}>
+          {visibleLevels.map(level => (
+            <section key={level} className={styles.level} data-severity={level}>
+              <h3 className={styles.levelTitle}>{CAUTION_LEVEL_LABELS[level]}</h3>
+              <div>{caution![level]}</div>
+            </section>
+          ))}
+        </div>
       </Popover.Content>
     </Popover.Portal>
   </Popover.Root>;

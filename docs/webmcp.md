@@ -254,6 +254,12 @@ Saved map mutations return map metadata with `updatedNodes` and
 `removedNodeIds`, covering changed cards, sibling order, and promoted children.
 `get_mindmap` reads the complete map through its existing pagination.
 
+Card `caution` groups notes by importance: `critical`, `important`, `minor`, and
+`background`. Each optional bucket holds text. Supplying `caution` replaces all
+buckets, and `{}` clears them. Critical and important notes appear through red
+and amber hover icons. Minor and background notes remain in closed card settings
+under More actions → Caution notes. Existing scalar notes migrate into `minor`.
+
 ### Request replay recovery
 
 Every idempotent mutation reserves its `requestId`, project, operation and

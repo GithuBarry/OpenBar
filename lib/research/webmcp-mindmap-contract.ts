@@ -10,6 +10,7 @@ import { safeUrl } from "@/lib/safe-url";
 import { artifactHref } from "./artifact-link";
 import { attachMindmapImage, captionMindmapImage, detachMindmapImage } from "@/lib/mindmap/image-refs";
 import { captionWithinLimit } from "@/lib/mindmap/card-content";
+import { cautionValidationError, normalizeMindmapCaution, type MindmapCaution } from "@/lib/mindmap/caution";
 import type { ArtifactRef, Mindmap, MindmapNode, MindmapNodeShape } from "@/lib/types";
 import { MAX_MINDMAP_LABELS, MAX_MINDMAP_LABEL_CHARS, normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import { isPrimaryMindmap as isPrimaryMindmapRole } from "./todo-map";
@@ -33,7 +34,7 @@ export type MindmapNodeContentPatch = {
   title?: string;
   text?: string;
   caption?: string;
-  caution?: string;
+  caution?: MindmapCaution;
   labels?: string[];
   refs?: ArtifactRef[];
   metadata?: Record<string, unknown> | null;
@@ -105,7 +106,7 @@ export type LiveMindmapSnapshot = {
 export type MindmapWebMcpHost = {
   getSnapshot: () => LiveMindmapSnapshot;
   focusNode: (id: string) => void;
-  addNode: (parentId: string, text?: string, expectedRevision?: number, title?: string, caution?: string) => string | Promise<string>;
+  addNode: (parentId: string, text?: string, expectedRevision?: number, title?: string, caution?: MindmapCaution) => string | Promise<string>;
   moveNode: (id: string, parentId: string, beforeId?: string, afterId?: string, expectedRevision?: number) => void | Promise<void>;
   deleteNode: (id: string, expectedRevision?: number) => void | Promise<void>;
   deleteBranch?: (id: string, expectedRevision?: number) => void | Promise<void>;
@@ -129,11 +130,23 @@ function objectSchema(properties: Record<string, unknown> = {}, required: string
   return { type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false };
 }
 
+const cautionSchema = {
+  type: "object",
+  description: "Replace all caution buckets. Classify each qualification at the lowest justified importance. Critical and important appear on hover. Minor and background appear in advanced settings. An empty object clears caution.",
+  properties: {
+    critical: { type: "string", description: "Changes the core conclusion or action." },
+    important: { type: "string", description: "Affects interpretation or the next step." },
+    minor: { type: "string", description: "A narrow edge case." },
+    background: { type: "string", description: "Generic defensive commentary." },
+  },
+  additionalProperties: false,
+};
+
 export const MINDMAP_WEBMCP_TOOL_SCHEMAS: Record<MindmapWebMcpToolName, JsonSchemaObject> = {
   get_mindmap: objectSchema(),
   focus_mindmap_node: objectSchema({ id: { type: "string" } }, ["id"]),
   add_mindmap_node: objectSchema(
-    { parentId: { type: "string", description: "Existing parent card id from get_mindmap." }, title: { type: "string", description: "Visible card title." }, text: { type: "string", description: "Visible body about the card subject." }, caution: { type: "string", description: "Caution scratchpad: exclusions, caveats, defensive qualifications, hidden by default and revealed from a small icon." }, expectedRevision: { type: "integer", minimum: 0, description: "Current map revision from get_mindmap." } },
+    { parentId: { type: "string", description: "Existing parent card id from get_mindmap." }, title: { type: "string", description: "Visible card title." }, text: { type: "string", description: "Visible body about the card subject." }, caution: cautionSchema, expectedRevision: { type: "integer", minimum: 0, description: "Current map revision from get_mindmap." } },
     ["parentId", "expectedRevision"],
   ),
   move_mindmap_node: objectSchema(
@@ -165,7 +178,7 @@ export const MINDMAP_WEBMCP_TOOL_SCHEMAS: Record<MindmapWebMcpToolName, JsonSche
       title: { type: "string", description: "Visible title for an ordinary card." },
       text: { type: "string", description: "Visible body for an ordinary card." },
       caption: { type: "string", description: "Extended notes: substantive supporting explanation, opened from the card bottom, up to 500 words." },
-      caution: { type: "string", description: "Caution scratchpad: exclusions, caveats, defensive qualifications, hidden by default and revealed from a small icon." },
+      caution: cautionSchema,
       labels: { type: "array", items: { type: "string" }, maxItems: MAX_MINDMAP_LABELS },
       refs: {
         type: "array",
@@ -379,6 +392,12 @@ function parseRefsArg(value: unknown): OperationResult<ArtifactRef[]> {
   return okResult(refs);
 }
 
+export function parseCautionArg(value: unknown): OperationResult<MindmapCaution> {
+  const error = cautionValidationError(value);
+  if (error) return failResult("invalid_arguments", error, false);
+  return okResult(normalizeMindmapCaution(value as MindmapCaution) || {});
+}
+
 export function parsePresentationArg(
   value: unknown,
   rootId: string,
@@ -475,13 +494,18 @@ export async function executeMindmapWebMcpTool(
       if (!hasNode(args.parentId)) return failResult("invalid_arguments", `Unknown parent "${String(args.parentId ?? "")}".`, false);
       if (args.title !== undefined && typeof args.title !== "string") return failResult("invalid_arguments", "title must be a string.", false);
       if (args.text !== undefined && typeof args.text !== "string") return failResult("invalid_arguments", "text must be a string.", false);
-      if (args.caution !== undefined && typeof args.caution !== "string") return failResult("invalid_arguments", "caution must be a string.", false);
+      let caution: MindmapCaution | undefined;
+      if (args.caution !== undefined) {
+        const parsed = parseCautionArg(args.caution);
+        if (!parsed.ok) return parsed;
+        caution = parsed.value;
+      }
       const result = await runPersistedMutation(host, () => host.addNode(
         String(args.parentId ?? ""),
         typeof args.text === "string" ? args.text : undefined,
         snapshot.revision,
         typeof args.title === "string" ? args.title : undefined,
-        typeof args.caution === "string" ? args.caution : undefined,
+        caution,
       ));
       return result.ok ? okResult({ id: result.value }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
     }
@@ -571,8 +595,9 @@ export async function executeMindmapWebMcpTool(
         patch.caption = args.caption;
       }
       if (args.caution !== undefined) {
-        if (typeof args.caution !== "string") return failResult("invalid_arguments", "caution must be a string.", false);
-        patch.caution = args.caution;
+        const parsed = parseCautionArg(args.caution);
+        if (!parsed.ok) return parsed;
+        patch.caution = parsed.value;
       }
       if (args.labels !== undefined) {
         const labels = parseLabelsArg(args.labels);
@@ -777,7 +802,7 @@ export function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Select a saved mindmap card on the open map. Use navigate_project first if the mindmap page is not open.";
   }
   if (name === "add_mindmap_node") {
-    return "Create a card under an existing parent using the current map revision. Write a self-contained topic, result, or question in direct positive language. Put defensive caveats and exclusions in caution. The card stays Agent draft until human Save or Delete. Optional writing skill: anti-defensive-writing via read_project_skill.";
+    return "Create a card under an existing parent using the current map revision. Keep its main point and material uncertainty in title/text. Classify qualifications in caution at the lowest justified importance. The card stays Agent draft until human Save or Delete. Optional writing skill: anti-defensive-writing via read_project_skill.";
   }
   if (name === "move_mindmap_node") {
     return "Move a saved mindmap card to a new parent or sibling position on this map only. Does not change TeX or other maps.";
@@ -792,7 +817,7 @@ export function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Visually highlight cards whose meaningful content changed since a date. Omit since for the past seven days. Pan, zoom, and collapse do not count.";
   }
   if (name === "patch_mindmap_node") {
-    return "Edit supplied fields on one card using its current revision. Keep visible title and text self-contained and direct. Put defensive caveats and exclusions in caution, and supporting explanation in caption (Extended notes). Edit TODO title and text through update_todo. Optional writing skill: anti-defensive-writing via read_project_skill.";
+    return "Edit supplied fields on one card using its current revision. Keep the main point and material uncertainty in title/text, supporting explanation in caption (Extended notes), and qualifications classified at the lowest justified importance in caution. Caution replaces all buckets. Edit TODO title/text through update_todo. Optional writing skill: anti-defensive-writing via read_project_skill.";
   }
   if (name === "attach_mindmap_image") return "Attach one existing project image asset to an empty card. For an occupied card, use add_mindmap_node to create a child and attach there. Use read_mindmap_image to inspect it; this changes only this map's reference list.";
   if (name === "detach_mindmap_image") return "Detach one image reference from this card without deleting the shared project asset.";

@@ -1,6 +1,7 @@
 import { byOrder, indexMindmap, type MindmapIndex } from "@/lib/mindmap-index";
 import { normalizeMindmap } from "@/lib/mindmap/mindmap";
 import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
+import { normalizeMindmapCaution, type MindmapCaution } from "@/lib/mindmap/caution";
 import type { Mindmap, MindmapNode } from "@/lib/types";
 
 export { byOrder, indexMindmap };
@@ -29,7 +30,7 @@ function semanticPatch(patch: MindmapNodePatch): MindmapNodePatch {
   if (Object.prototype.hasOwnProperty.call(patch, "title")) next.title = patch.title;
   if (Object.prototype.hasOwnProperty.call(patch, "text")) next.text = patch.text;
   if (Object.prototype.hasOwnProperty.call(patch, "caption")) next.caption = patch.caption;
-  if (Object.prototype.hasOwnProperty.call(patch, "caution")) next.caution = patch.caution;
+  if (Object.prototype.hasOwnProperty.call(patch, "caution")) next.caution = normalizeMindmapCaution(patch.caution, { trim: false });
   if (Object.prototype.hasOwnProperty.call(patch, "shape")) next.shape = patch.shape;
   if (Object.prototype.hasOwnProperty.call(patch, "metadata")) next.metadata = patch.metadata;
   if (Object.prototype.hasOwnProperty.call(patch, "contentFormat")) next.contentFormat = patch.contentFormat;
@@ -57,7 +58,7 @@ function patchTouchesActivity(patch: MindmapNodePatch): boolean {
 
 export type MindmapTreeAction =
   | { type: "paste-images"; id: string; images: Array<{ ref: NonNullable<MindmapNode["refs"]>[number]; childId: string }> }
-  | { type: "add-node"; parentId: string; id: string; title?: string; text?: string; caution?: string; todoId?: string; agentDraft?: boolean }
+  | { type: "add-node"; parentId: string; id: string; title?: string; text?: string; caution?: MindmapCaution; todoId?: string; agentDraft?: boolean }
   | { type: "move-sibling"; id: string; direction: -1 | 1 }
   | { type: "edit-text"; id: string; text: string }
   | { type: "edit-card"; id: string; title: string; text: string; contentFormat?: MindmapNode["contentFormat"] }
@@ -240,7 +241,7 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
               id: action.id,
               ...(action.todoId ? {} : { title }),
               text,
-              ...(action.caution !== undefined ? { caution: action.caution } : {}),
+              ...(action.caution !== undefined ? { caution: normalizeMindmapCaution(action.caution) } : {}),
               ...(action.todoId ? { todoId: action.todoId } : {}),
               ...(action.agentDraft ? { agentDraft: true } : {}),
               parentId: action.parentId,

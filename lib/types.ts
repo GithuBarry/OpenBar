@@ -41,6 +41,7 @@ export interface Project {
 export type MindmapNodeShape = "root" | "branch" | "leaf" | "note" | "callout";
 
 import type { MindmapProgress } from "@/lib/mindmap/progress";
+import type { MindmapCaution } from "@/lib/mindmap/caution";
 
 export type { MindmapProgress } from "@/lib/mindmap/progress";
 
@@ -57,8 +58,8 @@ export interface MindmapNode {
   text: string;
   /** Map-owned model-facing context hidden from the rendered card, including on TODO cards. */
   caption?: string;
-  /** Caution scratchpad: exclusions, caveats, defensive qualifications, hidden by default and revealed from a small icon. */
-  caution?: string;
+  /** Map-owned qualifications by importance. Critical and important appear on hover. */
+  caution?: MindmapCaution;
   /** When set, this card is a view of the TeX `\obtodo` with this id. */
   todoId?: string;
   parentId: string | null;

@@ -40,6 +40,7 @@ import { escapeTexText, paperTitleCommand } from "./tex-encode";
 import { resolveProjectAsset, ASSET_EXTENSIONS } from "./asset-resolver";
 import { mindmapDiskHash } from "@/lib/mindmap/mindmap";
 import { stripLegacyCollapsedField } from "@/lib/mindmap/collapse-preferences";
+import { migrateStoredCaution } from "@/lib/mindmap/caution";
 
 export const TEX_SCHEMAS = {
   project: "openbarry/project@1",
@@ -236,7 +237,14 @@ export function readMindmapRecord(projectDir: string, id = DRAFT_MINDMAP_ID): Mi
     TEX_SCHEMAS.mindmap,
     identity.id === DRAFT_MINDMAP_ID ? "mindmap" : identity.id,
   );
-  return record ? normalizeStoredMindmap(record, identity.id) : null;
+  return record ? normalizeStoredMindmap({
+    ...record,
+    nodes: record.nodes.map(node => {
+      const { caution, ...rest } = node;
+      const migrated = migrateStoredCaution(caution);
+      return { ...rest, ...(migrated ? { caution: migrated } : {}) };
+    }),
+  }, identity.id) : null;
 }
 
 export function writeMindmapRecord(projectDir: string, mindmap: Mindmap): void {

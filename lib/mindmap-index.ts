@@ -1,4 +1,5 @@
 import type { Mindmap, MindmapNode } from "@/lib/types";
+import { normalizeMindmapCaution } from "@/lib/mindmap/caution";
 
 export type MindmapIndex = {
   nodeById: Map<string, MindmapNode>;
@@ -31,7 +32,8 @@ export function persistableMindmapNode(node: MindmapNode): MindmapNode {
   };
   // Extended notes are map-owned context for ordinary and TODO-backed cards.
   if (node.caption?.trim()) next.caption = node.caption.trim();
-  if (node.caution?.trim()) next.caution = node.caution.trim();
+  const caution = normalizeMindmapCaution(node.caution);
+  if (caution) next.caution = caution;
   if (!node.todoId?.trim() && node.title !== undefined) next.title = node.title;
   if (node.todoId?.trim()) next.todoId = node.todoId.trim();
   if (node.shape) next.shape = node.shape === "note" ? "leaf" : node.shape;

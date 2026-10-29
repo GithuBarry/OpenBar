@@ -103,6 +103,7 @@ import {
 } from "@/lib/research/todo-map";
 import { CardImages, hasImageTransfer, imageFilesFromTransfer } from "./card-images";
 import { CardCaution } from "./card-caution";
+import { CautionEditor } from "./caution-editor";
 import { MindmapCanvas } from "./mindmap-canvas";
 import { MindmapChangesView } from "./mindmap-changes";
 import { TexCodeMirror, type TexCodeMirrorHandle } from "@/features/paper/tex-codemirror";
@@ -656,7 +657,7 @@ export function MindmapEditor({
         title?: string;
         text?: string;
         caption?: string;
-        caution?: string;
+        caution?: MindmapNode["caution"];
         tags?: string[];
         refs?: ArtifactRef[];
         metadata?: Record<string, unknown>;
@@ -2283,16 +2284,6 @@ export function MindmapEditor({
                 />
                 <small>{captionWordCount(selected.caption)} / {MAX_MINDMAP_CAPTION_WORDS} words · model context</small>
               </div>
-              <div className="mindmap-field">
-                <span>Caution scratchpad</span>
-                <textarea
-                  value={selected.caution || ""}
-                  placeholder="Exclusions, defensive qualifications, and precautionary notes"
-                  aria-label="Caution scratchpad"
-                  onChange={event => dispatch({ type: "patch-node", id: selected.id, patch: { caution: event.target.value } })}
-                />
-                <small>Revealed by hovering the small card icon.</small>
-              </div>
             </div>
           </div>
           </fieldset>
@@ -2431,9 +2422,9 @@ export function MindmapEditor({
           </fieldset>
           </InspectorSection>
 
-          {(selected.id !== mindmap.rootId || Boolean(selected.todoId && selectedTodo && !selectedMissing && paperSourceHash)) && (
           <InspectorSection id="more" open={Boolean(inspectorSections.more)} onToggle={() => toggleInspectorSection("more")}>
           <fieldset disabled={readOnly || convertingCardId === selected.id} className="mindmap-card-menu-fields">
+          <CautionEditor key={selected.id} value={selected.caution} onChange={(caution) => dispatch({ type: "patch-node", id: selected.id, patch: { caution } })} />
           <div className="mindmap-card-menu-danger">
             {selected.id !== mindmap.rootId && <button type="button" className="mindmap-text-button" onClick={() => { setMoveQuery(""); setSearchIndex(0); setMoveOpen(true); }}>Move card…</button>}
             <button type="button" className="mindmap-text-button" onClick={() => addChild(selected.id)}>Add child card</button>
@@ -2489,7 +2480,6 @@ export function MindmapEditor({
           </div>
           </fieldset>
           </InspectorSection>
-          )}
         </aside>
       )}
     </section>
@@ -2995,7 +2985,7 @@ function CanvasNode({
       }}
     >
       {node.agentDraft && <div className={styles.draftHeading}>Agent draft</div>}
-      <CardCaution text={node.caution} />
+      <CardCaution caution={node.caution} />
       {node.todoId && (
         <div className={styles.todoHeading}>
           <span className={styles.todoKind}><FileText size={12} aria-hidden="true" />Paper TODO</span>

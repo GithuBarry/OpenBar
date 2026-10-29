@@ -30,7 +30,7 @@ export const SKILLS: Skill[] = [
 
 Lead with the subject, answer, and evidence. State scope positively and name the source of factual uncertainty precisely.
 
-For mindmap cards, put defensive caveats, exclusions, and precautionary commentary in the map-owned caution scratchpad, revealed from its small hover icon. Use Extended notes for supporting explanation.
+For mindmap cards, put the main point and material factual uncertainty in title/text, supporting explanation in caption (Extended notes), and defensive qualifications in the caution buckets: critical, important, minor, or background. Assign the lowest level justified by a concrete consequence. Critical and important notes have colored hover icons. Minor and background notes stay in closed card settings.
 
 Optional further guidance: https://github.com/Kiterlin/anti-defensive-writing/blob/main/SKILL.md`,
   },

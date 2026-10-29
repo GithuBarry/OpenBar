@@ -17,7 +17,7 @@ import { attachMindmapImage, detachMindmapImage, captionMindmapImage } from "@/l
 import { captionWithinLimit, MAX_VISIBLE_MINDMAP_WORDS, visibleMindmapWordCount } from "@/lib/mindmap/card-content";
 
 import { buildInstructionsWebMcpTools } from "./webmcp-instructions-contract";
-import { MINDMAP_WEBMCP_TOOL_SCHEMAS, mindmapToolDescription, parsePresentationArg } from "./webmcp-mindmap-contract";
+import { MINDMAP_WEBMCP_TOOL_SCHEMAS, mindmapToolDescription, parseCautionArg, parsePresentationArg } from "./webmcp-mindmap-contract";
 import { SHARED_WEBMCP_SCHEMAS } from "./mcp-tool-schemas";
 import { sharedToolDescription } from "./webmcp-shared-contract";
 
@@ -751,7 +751,7 @@ async function executePatchMindmapNode(args: unknown, context: McpCommandContext
       const current = map.nodes.find((node) => node.id === nodeId);
       if (!current) throw new McpCommandError("invalid_arguments", `Unknown mindmap card "${nodeId}".`, false);
       const patch: Record<string, unknown> = {};
-      for (const key of ["title", "text", "caption", "caution", "metadata", "refs"] as const) if (record[key] !== undefined) patch[key] = record[key];
+      for (const key of ["title", "text", "caption", "metadata", "refs"] as const) if (record[key] !== undefined) patch[key] = record[key];
       if (record.refs !== undefined) {
         const refs = artifactRefSchema.array().safeParse(record.refs);
         if (!refs.success || refs.data.filter(ref => ref.kind === "figure").length > 1) return failResult("invalid_arguments", "Use valid references with one image per card and imageWidth from 25 to 100. Add child cards for additional images.", false);
@@ -762,7 +762,11 @@ async function executePatchMindmapNode(args: unknown, context: McpCommandContext
         if (typeof record.caption !== "string") throw new McpCommandError("invalid_arguments", "caption must be a string.", false);
         if (!captionWithinLimit(record.caption)) throw new McpCommandError("invalid_arguments", "Card notes must be 500 words or fewer.", false);
       }
-      if (record.caution !== undefined && typeof record.caution !== "string") throw new McpCommandError("invalid_arguments", "caution must be a string.", false);
+      if (record.caution !== undefined) {
+        const parsed = parseCautionArg(record.caution);
+        if (!parsed.ok) return parsed;
+        patch.caution = parsed.value;
+      }
       if (record.presentation !== undefined) {
         const parsed = parsePresentationArg(record.presentation, map.rootId, nodeId!);
         if (!parsed.ok) return parsed;
@@ -796,13 +800,14 @@ async function executeAddMindmapNode(args: unknown, context: McpCommandContext):
       assertRevision(map, expectedRevision);
       assertDiskHash(map, typeof record.expectedDiskHash === "string" ? record.expectedDiskHash : undefined);
       if (!map.nodes.some((node) => node.id === parentId)) throw new McpCommandError("invalid_arguments", `Unknown parent card "${parentId}".`, false);
-      if (record.caution !== undefined && typeof record.caution !== "string") throw new McpCommandError("invalid_arguments", "caution must be a string.", false);
+      const caution = record.caution === undefined ? undefined : parseCautionArg(record.caution);
+      if (caution && !caution.ok) return caution;
       const id = typeof record.id === "string" && record.id.trim() ? record.id.trim() : newNodeId();
-      const next = applyMindmapAction(map, { type: "add-node", agentDraft: true, id, parentId: parentId!, title: typeof record.title === "string" ? record.title : undefined, text: typeof record.text === "string" ? record.text : "", caution: typeof record.caution === "string" ? record.caution : undefined }).mindmap;
+      const next = applyMindmapAction(map, { type: "add-node", agentDraft: true, id, parentId: parentId!, title: typeof record.title === "string" ? record.title : undefined, text: typeof record.text === "string" ? record.text : "", caution: caution?.ok ? caution.value : undefined }).mindmap;
       const result = await writeMap(project, map, next, requestId, "add_mindmap_node", [{ kind: "mindmap-node", id, mapId }], [{ field: "added", after: id }]);
       if (result.ok && visibleMindmapWordCount(typeof record.title === "string" ? record.title : "", typeof record.text === "string" ? record.text : "") > MAX_VISIBLE_MINDMAP_WORDS) {
         const value = result.value;
-        if (value && typeof value === "object") (value as Record<string, unknown>).creationWarning = "Visible content exceeds 100 words. Keep the visible card focused on its subject. Put exclusions, defensive qualifications, and precautionary notes in the caution scratchpad, and supporting explanations in Extended notes.";
+        if (value && typeof value === "object") (value as Record<string, unknown>).creationWarning = "Visible content exceeds 100 words. Keep the main point and material uncertainty visible. Put supporting explanations in Extended notes and classify qualifications in caution at the lowest justified importance.";
       }
       return result;
     });
