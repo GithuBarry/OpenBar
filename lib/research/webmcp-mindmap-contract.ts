@@ -2,14 +2,15 @@
  * Mindmap page WebMCP tools. Schemas match the browser WebMCP mindmap contract.
  */
 
+import { MINDMAP_INPUTS } from "./command-inputs";
+import { commandJsonSchemas, parseCommandInput } from "./command-schema";
 import { failResult, okResult, WEBMCP_ERROR_CODES, type OperationResult, type RemoteSyncOutcome } from "./operation-result";
-import { MINDMAP_WEBMCP_TOOL_NAMES, parseWebMcpArgs, unknownWebMcpArgument, type JsonSchemaObject, type MindmapWebMcpToolName } from "./webmcp-paper-contract";
+import { MINDMAP_WEBMCP_TOOL_NAMES, type MindmapWebMcpToolName } from "./webmcp-paper-contract";
 import type { SharedWebMcpActions, CurrentLocation } from "./webmcp-shared-contract";
 import { ARTIFACT_KINDS, coercePaperSectionRefContext, isArtifactKind } from "./artifact-link";
 import { safeUrl } from "@/lib/safe-url";
 import { artifactHref } from "./artifact-link";
 import { attachMindmapImage, captionMindmapImage, detachMindmapImage } from "@/lib/mindmap/image-refs";
-import { captionWithinLimit } from "@/lib/mindmap/card-content";
 import { cautionValidationError, normalizeMindmapCaution, type MindmapCaution } from "@/lib/mindmap/caution";
 import type { ArtifactRef, Mindmap, MindmapNode, MindmapNodeShape } from "@/lib/types";
 import { MAX_MINDMAP_LABELS, MAX_MINDMAP_LABEL_CHARS, normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
@@ -97,7 +98,7 @@ export type LiveMindmapSnapshot = {
   /** Browser-local persistence state for the live map draft. */
   localSaveState?: "dirty" | "saving" | "saved" | "conflict";
   /** Project Git synchronization state for the latest queued checkpoint. */
-  remoteSaveState?: "checking" | "pending" | "syncing" | "synced" | "changed" | "unavailable" | "failed";
+  remoteSaveState?: "checking" | "pending" | "syncing" | "synced" | "changed" | "blocked" | "unconfigured" | "unavailable" | "failed";
   /** Last local-save-to-Git outcome, including an actionable failure. */
   remoteSync?: RemoteSyncOutcome;
   editingBlocked?: boolean;
@@ -106,7 +107,7 @@ export type LiveMindmapSnapshot = {
 export type MindmapWebMcpHost = {
   getSnapshot: () => LiveMindmapSnapshot;
   focusNode: (id: string) => void;
-  addNode: (parentId: string, text?: string, expectedRevision?: number, title?: string, caution?: MindmapCaution) => string | Promise<string>;
+  addNode: (parentId: string, text?: string, expectedRevision?: number, title?: string, caution?: MindmapCaution, caption?: string) => string | Promise<string>;
   moveNode: (id: string, parentId: string, beforeId?: string, afterId?: string, expectedRevision?: number) => void | Promise<void>;
   deleteNode: (id: string, expectedRevision?: number) => void | Promise<void>;
   deleteBranch?: (id: string, expectedRevision?: number) => void | Promise<void>;
@@ -126,164 +127,7 @@ export type MindmapWebMcpHost = {
   current?: () => CurrentLocation | undefined;
 };
 
-function objectSchema(properties: Record<string, unknown> = {}, required: string[] = []): JsonSchemaObject {
-  return { type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false };
-}
-
-const cautionSchema = {
-  type: "object",
-  description: "Replace all caution buckets. Classify each qualification at the lowest justified importance. Critical and important appear on hover. Minor and background appear in advanced settings. An empty object clears caution.",
-  properties: {
-    critical: { type: "string", description: "Changes the core conclusion or action." },
-    important: { type: "string", description: "Affects interpretation or the next step." },
-    minor: { type: "string", description: "A narrow edge case." },
-    background: { type: "string", description: "Generic defensive commentary." },
-  },
-  additionalProperties: false,
-};
-
-export const MINDMAP_WEBMCP_TOOL_SCHEMAS: Record<MindmapWebMcpToolName, JsonSchemaObject> = {
-  get_mindmap: objectSchema(),
-  focus_mindmap_node: objectSchema({ id: { type: "string" } }, ["id"]),
-  add_mindmap_node: objectSchema(
-    { parentId: { type: "string", description: "Existing parent card id from get_mindmap." }, title: { type: "string", description: "Visible card title." }, text: { type: "string", description: "Visible body about the card subject." }, caution: cautionSchema, expectedRevision: { type: "integer", minimum: 0, description: "Current map revision from get_mindmap." } },
-    ["parentId", "expectedRevision"],
-  ),
-  move_mindmap_node: objectSchema(
-    {
-      id: { type: "string" },
-      parentId: { type: "string" },
-      beforeId: { type: "string" },
-      afterId: { type: "string" },
-      expectedRevision: { type: "integer", minimum: 0 },
-    },
-    ["id", "parentId", "expectedRevision"],
-  ),
-  delete_mindmap_node: objectSchema(
-    { id: { type: "string" }, expectedRevision: { type: "integer", minimum: 0 } },
-    ["id", "expectedRevision"],
-  ),
-  delete_mindmap_branch: objectSchema(
-    { id: { type: "string" }, expectedRevision: { type: "integer", minimum: 0 } },
-    ["id", "expectedRevision"],
-  ),
-  set_mindmap_collapsed: objectSchema(
-    { id: { type: "string" }, collapsed: { type: "boolean" }, expectedRevision: { type: "integer", minimum: 0 } },
-    ["id", "collapsed", "expectedRevision"],
-  ),
-  patch_mindmap_node: objectSchema(
-    {
-      id: { type: "string", description: "Existing card id from get_mindmap." },
-      expectedRevision: { type: "integer", minimum: 0, description: "Current map revision from get_mindmap." },
-      title: { type: "string", description: "Visible title for an ordinary card." },
-      text: { type: "string", description: "Visible body for an ordinary card." },
-      caption: { type: "string", description: "Extended notes: substantive supporting explanation, opened from the card bottom, up to 500 words." },
-      caution: cautionSchema,
-      labels: { type: "array", items: { type: "string" }, maxItems: MAX_MINDMAP_LABELS },
-      refs: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            kind: { type: "string", enum: ARTIFACT_KINDS },
-            id: { type: "string" },
-            label: { type: "string" },
-            url: { type: "string" },
-            imageWidth: { type: "integer", minimum: 25, maximum: 100, description: "Image width as a percentage of card content width." },
-            mapId: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$", description: "Map identity for mindmap-node references." },
-            sectionContext: {
-              type: "object",
-              properties: {
-                file: { type: "string" },
-                title: { type: "string" },
-                level: { type: "integer", minimum: 1, maximum: 6 },
-                headingPath: { type: "array", items: { type: "string" } },
-                bodyHash: { type: "string" },
-                label: { type: "string" },
-                sourceHash: { type: "string" },
-                sourceRange: {
-                  type: "object",
-                  properties: { from: { type: "integer", minimum: 0 }, to: { type: "integer", minimum: 0 } },
-                  required: ["from", "to"],
-                  additionalProperties: false,
-                },
-                order: { type: "integer", minimum: 0 },
-              },
-              additionalProperties: false,
-            },
-          },
-          required: ["kind", "id"],
-          additionalProperties: false,
-        },
-      },
-      metadata: {
-        type: ["object", "null"],
-        description: "JSON object owned by this mindmap card. Pass an empty object or null to clear it.",
-        additionalProperties: true,
-      },
-      presentation: {
-        type: "object",
-        properties: {
-          contentFormat: { type: "string", enum: ["plain", "markdown", "tex"] },
-          tableLayout: { type: "string", enum: ["wide", "scroll"] },
-          shape: { type: "string", enum: ["branch", "leaf", "callout"] },
-          color: { type: "string" },
-          progress: { type: ["integer", "null"], minimum: 0, maximum: 6 },
-        },
-        additionalProperties: false,
-      },
-      priority: { type: ["string", "null"], enum: ["P0", "P1", "P2", "P3", null] },
-    },
-    ["id", "expectedRevision"],
-  ),
-  attach_mindmap_image: objectSchema(
-    {
-      id: { type: "string" },
-      assetId: { type: "string", minLength: 1, description: "Existing project figure asset path, normally from an upload result." },
-      label: { type: "string" },
-      expectedRevision: { type: "integer", minimum: 0 },
-    },
-    ["id", "assetId", "expectedRevision"],
-  ),
-  detach_mindmap_image: objectSchema(
-    { id: { type: "string" }, assetId: { type: "string" }, expectedRevision: { type: "integer", minimum: 0 } },
-    ["id", "assetId", "expectedRevision"],
-  ),
-  caption_mindmap_image: objectSchema(
-    { id: { type: "string" }, assetId: { type: "string" }, label: { type: "string" }, expectedRevision: { type: "integer", minimum: 0 } },
-    ["id", "assetId", "label", "expectedRevision"],
-  ),
-  read_mindmap_image: objectSchema({ id: { type: "string" }, assetId: { type: "string" } }, ["id", "assetId"]),
-  highlight_mindmap_activity: objectSchema({
-    since: { type: "string", description: "ISO calendar date (YYYY-MM-DD). Omit for the past seven days." },
-    clear: { type: "boolean", description: "Clear the activity highlight from the open map." },
-  }),
-  place_todo_card: objectSchema(
-    {
-      todoId: { type: "string", description: "The todoId returned by the paper page add_todo tool." },
-      parentId: { type: "string", description: "The existing card that should own this TODO card." },
-      expectedRevision: { type: "integer", minimum: 0 },
-    },
-    ["todoId", "parentId", "expectedRevision"],
-  ),
-  convert_card_to_todo: objectSchema(
-    {
-      id: { type: "string" },
-      sectionId: { type: "string", description: "Optional current section id from the paper outline. Omit to place the TODO at a neutral location in the manuscript root." },
-      expectedRevision: { type: "integer", minimum: 0 },
-      requestId: { type: "string", description: "Stable retry key. Reusing it returns the original local result." },
-    },
-    ["id", "expectedRevision"],
-  ),
-  complete_todo: objectSchema({ todoId: { type: "string" } }, ["todoId"]),
-  reopen_todo: objectSchema({ todoId: { type: "string" } }, ["todoId"]),
-  focus_todo_in_paper: objectSchema({ todoId: { type: "string" } }, ["todoId"]),
-  set_mindmap_font_size: objectSchema({ fontSize: { type: "integer", minimum: 10, maximum: 20 }, expectedRevision: { type: "integer", minimum: 0 } }, ["fontSize", "expectedRevision"]),
-  rename_mindmap: objectSchema(
-    { title: { type: "string" }, expectedRevision: { type: "integer", minimum: 0 } },
-    ["title", "expectedRevision"],
-  ),
-};
+export const MINDMAP_WEBMCP_TOOL_SCHEMAS = commandJsonSchemas(MINDMAP_INPUTS);
 
 function assertRevision(expected: unknown, current: number): OperationResult<number> {
   if (typeof expected !== "number" || expected !== current) {
@@ -395,7 +239,7 @@ function parseRefsArg(value: unknown): OperationResult<ArtifactRef[]> {
 export function parseCautionArg(value: unknown): OperationResult<MindmapCaution> {
   const error = cautionValidationError(value);
   if (error) return failResult("invalid_arguments", error, false);
-  return okResult(normalizeMindmapCaution(value as MindmapCaution) || {});
+  return okResult(normalizeMindmapCaution(value as MindmapCaution, { trim: false }) || {});
 }
 
 export function parsePresentationArg(
@@ -434,8 +278,8 @@ export function parsePresentationArg(
   if (rec.progress !== undefined) {
     if (rec.progress === null) {
       patch.progress = null;
-    } else if (typeof rec.progress !== "number" || !Number.isInteger(rec.progress) || rec.progress < 0 || rec.progress > 6) {
-      return failResult("invalid_arguments", "progress must be an integer from 0 to 6, or null to hide.", false);
+    } else if (rec.progress !== "ditched" && (typeof rec.progress !== "number" || !Number.isInteger(rec.progress) || rec.progress < 0 || rec.progress > 6)) {
+      return failResult("invalid_arguments", "progress must be an integer from 0 to 6, \"ditched\", or null to hide.", false);
     } else {
       patch.progress = rec.progress as MindmapNode["progress"];
     }
@@ -464,12 +308,11 @@ export async function executeMindmapWebMcpTool(
   name: string,
   rawArgs?: unknown,
 ): Promise<OperationResult<unknown>> {
-  const parsedArgs = parseWebMcpArgs(rawArgs);
-  if (!parsedArgs.ok) return failResult(WEBMCP_ERROR_CODES.invalid_arguments, parsedArgs.message, { retryable: false });
+  const input = MINDMAP_INPUTS[name as MindmapWebMcpToolName];
+  if (!input) return failResult("invalid_arguments", `Unknown mindmap tool "${name}".`, false);
+  const parsedArgs = parseCommandInput(input, rawArgs, true);
+  if (!parsedArgs.ok) return parsedArgs;
   const args = parsedArgs.value;
-  const schema = MINDMAP_WEBMCP_TOOL_SCHEMAS[name as MindmapWebMcpToolName];
-  const unknown = schema ? unknownWebMcpArgument(args, schema) : undefined;
-  if (unknown) return failResult(WEBMCP_ERROR_CODES.invalid_arguments, `Unknown argument "${unknown}".`, { retryable: false });
   const snapshot = host.getSnapshot();
   if (snapshot.editingBlocked && !["get_mindmap", "focus_mindmap_node", "read_mindmap_image", "focus_todo_in_paper", "set_mindmap_collapsed", "highlight_mindmap_activity"].includes(name)) return failResult("remote_conflict", "Editing is paused. Review and synchronize Git updates to resume.", true);
   const hasNode = (id: unknown): id is string => typeof id === "string" && snapshot.nodes.some((node) => node.id === id);
@@ -494,6 +337,7 @@ export async function executeMindmapWebMcpTool(
       if (!hasNode(args.parentId)) return failResult("invalid_arguments", `Unknown parent "${String(args.parentId ?? "")}".`, false);
       if (args.title !== undefined && typeof args.title !== "string") return failResult("invalid_arguments", "title must be a string.", false);
       if (args.text !== undefined && typeof args.text !== "string") return failResult("invalid_arguments", "text must be a string.", false);
+      if (args.caption !== undefined && typeof args.caption !== "string") return failResult("invalid_arguments", "caption must be a string.", false);
       let caution: MindmapCaution | undefined;
       if (args.caution !== undefined) {
         const parsed = parseCautionArg(args.caution);
@@ -506,6 +350,7 @@ export async function executeMindmapWebMcpTool(
         snapshot.revision,
         typeof args.title === "string" ? args.title : undefined,
         caution,
+        typeof args.caption === "string" ? args.caption : undefined,
       ));
       return result.ok ? okResult({ id: result.value }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
     }
@@ -591,7 +436,6 @@ export async function executeMindmapWebMcpTool(
       }
       if (args.caption !== undefined) {
         if (typeof args.caption !== "string") return failResult("invalid_arguments", "caption must be a string.", false);
-        if (!captionWithinLimit(args.caption)) return failResult("invalid_arguments", "Card notes must be 500 words or fewer.", false);
         patch.caption = args.caption;
       }
       if (args.caution !== undefined) {
@@ -796,13 +640,13 @@ export function buildMindmapWebMcpTools(host: MindmapWebMcpHost) {
 
 export function mindmapToolDescription(name: MindmapWebMcpToolName): string {
   if (name === "get_mindmap") {
-    return "Read cards, hierarchy, TODO bindings, notes, caution scratchpads, and current revision. TeX owns TODO title, text, and completion. Each map owns placement, labels, refs, progress, appearance, Extended notes, and caution.";
+    return "Read the map and its current revision. TODO title, text, and completion come from TeX. Other card fields belong to this map.";
   }
   if (name === "focus_mindmap_node") {
     return "Select a saved mindmap card on the open map. Use navigate_project first if the mindmap page is not open.";
   }
   if (name === "add_mindmap_node") {
-    return "Create a card under an existing parent using the current map revision. Keep its main point and material uncertainty in title/text. Classify qualifications in caution at the lowest justified importance. The card stays Agent draft until human Save or Delete. Optional writing skill: anti-defensive-writing via read_project_skill.";
+    return "Create a card under an existing parent using the current map revision. Keep visible text brief. Put supporting detail in caption/background. The card stays Agent draft until human Save or Delete.";
   }
   if (name === "move_mindmap_node") {
     return "Move a saved mindmap card to a new parent or sibling position on this map only. Does not change TeX or other maps.";
@@ -817,7 +661,7 @@ export function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Visually highlight cards whose meaningful content changed since a date. Omit since for the past seven days. Pan, zoom, and collapse do not count.";
   }
   if (name === "patch_mindmap_node") {
-    return "Edit supplied fields on one card using its current revision. Keep the main point and material uncertainty in title/text, supporting explanation in caption (Extended notes), and qualifications classified at the lowest justified importance in caution. Caution replaces all buckets. Edit TODO title/text through update_todo. Optional writing skill: anti-defensive-writing via read_project_skill.";
+    return "Edit supplied fields on one card using its current revision. Keep visible text brief. Put supporting detail in caption/background. Edit TODO title/text through update_todo.";
   }
   if (name === "attach_mindmap_image") return "Attach one existing project image asset to an empty card. For an occupied card, use add_mindmap_node to create a child and attach there. Use read_mindmap_image to inspect it; this changes only this map's reference list.";
   if (name === "detach_mindmap_image") return "Detach one image reference from this card without deleting the shared project asset.";

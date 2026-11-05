@@ -1,8 +1,6 @@
-/**
- * Bounded external process runner for Pandoc, Git, and TeX.
- */
+/** Bounded external process execution for manuscript converters. */
 
-import { spawn } from "node:child_process";
+import { redactSensitiveText } from "@/lib/server/git-url";
 
 export type RunToolOptions = {
   cwd?: string;
@@ -10,6 +8,7 @@ export type RunToolOptions = {
   maxOutputBytes?: number;
   env?: NodeJS.ProcessEnv;
   input?: string;
+  cancelSignal?: AbortSignal;
 };
 
 export type RunToolResult = {
@@ -24,59 +23,32 @@ export type RunToolResult = {
 };
 
 export async function runTool(bin: string, args: string[], options: RunToolOptions = {}): Promise<RunToolResult> {
-  const timeoutMs = options.timeoutMs ?? 30_000;
-  const maxOutputBytes = options.maxOutputBytes ?? 2_000_000;
-  const started = Date.now();
-  return new Promise((resolve) => {
-    const child = spawn(bin, args, {
-      cwd: options.cwd,
-      env: options.env || process.env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let truncated = false;
-    let timedOut = false;
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
-    const take = (current: string, chunk: Buffer): string => {
-      const next = current + chunk.toString("utf8");
-      if (Buffer.byteLength(next, "utf8") <= maxOutputBytes) return next;
-      truncated = true;
-      return Buffer.from(next, "utf8").subarray(0, maxOutputBytes).toString("utf8");
-    };
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout = take(stdout, chunk);
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr = take(stderr, chunk);
-    });
-    if (options.input) child.stdin.end(options.input, "utf8");
-    else child.stdin.end();
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-      killTimer = setTimeout(() => child.kill("SIGKILL"), 3_000);
-    }, timeoutMs);
-    const finish = (code: number | null, signal: NodeJS.Signals | null) => {
-      clearTimeout(timeout);
-      if (killTimer) clearTimeout(killTimer);
-      resolve({
-        ok: !timedOut && code === 0,
-        code,
-        signal,
-        stdout,
-        stderr,
-        durationMs: Date.now() - started,
-        timedOut,
-        truncated,
-      });
-    };
-    child.on("error", (error) => {
-      stderr = (error as NodeJS.ErrnoException).code === "ENOENT" ? `${bin} is not installed` : error.message;
-      finish(null, null);
-    });
-    child.on("close", finish);
+  const { execa } = await import("execa");
+  const result = await execa(bin, args, {
+    cwd: options.cwd,
+    env: options.env,
+    extendEnv: options.env === undefined,
+    input: options.input,
+    stdin: options.input === undefined ? "ignore" : "pipe",
+    encoding: "buffer",
+    stripFinalNewline: false,
+    timeout: options.timeoutMs ?? 30_000,
+    forceKillAfterDelay: 3_000,
+    maxBuffer: options.maxOutputBytes ?? 2_000_000,
+    cancelSignal: options.cancelSignal,
+    reject: false,
   });
+  return {
+    ok: !result.failed,
+    code: result.exitCode ?? null,
+    signal: result.signal ?? null,
+    stdout: (result.stdout && Buffer.from(result.stdout).toString("utf8")) || "",
+    stderr: (result.stderr && Buffer.from(result.stderr).toString("utf8")) || (result.code === "ENOENT"
+      ? `${bin} is not installed` : redactSensitiveText(result.originalMessage || "")),
+    durationMs: result.durationMs,
+    timedOut: result.timedOut,
+    truncated: result.isMaxBuffer,
+  };
 }
 
 export function toolFailureExcerpt(result: RunToolResult, category: string): {

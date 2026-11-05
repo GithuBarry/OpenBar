@@ -2,36 +2,47 @@
 
 import { useId } from "react";
 
-import { CAUTION_LEVELS, CAUTION_LEVEL_LABELS, type CautionLevel, type MindmapCaution } from "@/lib/mindmap/caution";
+import { CAUTION_LEVEL_LABELS, type MindmapCaution } from "@/lib/mindmap/caution";
+import { InspectorSummary } from "./inspector-summary";
 
-const descriptions: Record<CautionLevel, string> = {
-  critical: "Could change the central conclusion or require a different action.",
-  important: "Affects interpretation or the next step.",
-  minor: "Applies to a narrow edge case.",
-  background: "Generic qualifications or precautionary commentary.",
-};
-
-export function CautionEditor({ value, onChange }: {
+export function CautionEditor({ value, caption, onChange, onCaptionChange }: {
   value?: MindmapCaution;
+  caption?: string;
   onChange: (value: MindmapCaution) => void;
+  onCaptionChange: (value: string) => void;
 }) {
   const descriptionId = useId();
+  const hasNotes = Boolean(caption?.trim() || value?.background?.trim() || value?.critical?.trim() || value?.important?.trim());
   return <details data-caution-editor>
-    <summary className="cursor-pointer text-xs font-medium text-muted">Caution notes</summary>
+    <InspectorSummary label="Notes" hasContent={hasNotes} />
     <div className="mt-3 space-y-3">
-      <p className="text-xs text-muted">Critical and important notes use a colored hover icon. Minor and background notes stay in these settings.</p>
-      {CAUTION_LEVELS.map((level) => <details key={level} data-caution-level={level}>
-        <summary className={`cursor-pointer text-xs font-medium ${level === "critical" ? "text-danger" : level === "important" ? "text-warn" : "text-muted"}`}>{CAUTION_LEVEL_LABELS[level]}</summary>
+      <label className="mindmap-field">
+        <span>Collapsed notes</span>
+        <textarea value={caption || ""} aria-label="Collapsed notes" aria-describedby={`${descriptionId}-caption`}
+          onChange={event => onCaptionChange(event.target.value)} />
+        <small id={`${descriptionId}-caption`}>Opens through the card’s collapsed disclosure.</small>
+      </label>
+      <label className="mindmap-field">
+        <span>Background notes</span>
+        <textarea value={value?.background || ""} aria-label="Background notes" aria-describedby={`${descriptionId}-background`}
+          onChange={event => onChange({ ...value, background: event.target.value })} />
+        <small id={`${descriptionId}-background`}>Defensive explanations and scope notes. Collapsed in their own card section.</small>
+      </label>
+      <details>
+        <summary className="cursor-pointer text-xs font-medium text-muted">Visible annotations</summary>
+        {(["critical", "important"] as const).map(level => <div key={level} data-caution-level={level}>
         <label className="mindmap-field mt-2">
+          <span className={level === "critical" ? "text-danger" : "text-warn"}>{CAUTION_LEVEL_LABELS[level]}</span>
           <textarea
             value={value?.[level] || ""}
             aria-label={`${CAUTION_LEVEL_LABELS[level]} caution notes`}
             aria-describedby={`${descriptionId}-${level}`}
             onChange={(event) => onChange({ ...value, [level]: event.target.value })}
           />
-          <small id={`${descriptionId}-${level}`}>{descriptions[level]}</small>
+          <small id={`${descriptionId}-${level}`}>Displayed in the main card.</small>
         </label>
-      </details>)}
+      </div>)}
+      </details>
     </div>
   </details>;
 }

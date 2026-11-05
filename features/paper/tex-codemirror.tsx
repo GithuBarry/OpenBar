@@ -13,7 +13,7 @@ import {
   isolateHistory,
   indentWithTab,
 } from "@codemirror/commands";
-import { codeFolding, foldEffect, foldGutter, foldKeymap, foldService, HighlightStyle, indentUnit, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
+import { codeFolding, foldEffect, foldGutter, foldKeymap, foldService, HighlightStyle, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { search, searchKeymap } from "@codemirror/search";
 import {
   Annotation,
@@ -31,56 +31,37 @@ import {
   EditorView,
   keymap,
   lineNumbers,
+  MatchDecorator,
   placeholder as cmPlaceholder,
+  ViewPlugin,
+  type ViewUpdate,
 } from "@codemirror/view";
-import { stex } from "@codemirror/legacy-modes/mode/stex";
 import { tags } from "@lezer/highlight";
 
+import { boundaryLineNumbers } from "./boundary-line-numbers";
+import { autocompletion, completionKeymap, acceptCompletion } from "@codemirror/autocomplete";
+import { latex, latexCompletionSource } from "codemirror-lang-latex";
+import { projectCompletions, type PaperCompletionContext } from "./latex-completion";
 import { metadataMarkers } from "./metadata-markers";
 import { obMarkerDecorations, headingCountSeed } from "./ob-cm-decorations";
 import { bannerRanges } from "@/lib/tex-project/source-bundle-format";
 import { cn } from "@/lib/utils";
 import { formatInlineSelection, type InlineFormat, type InlineSyntax } from "@/lib/mindmap/text-formatting";
+import { AGENT_MENTION_PATTERN } from "@/lib/research/agent-mentions";
 
 export type { EditorView } from "@codemirror/view";
 
-function headingFoldService(state: EditorState, lineStart: number, _lineEnd: number) {
-  const line = state.doc.lineAt(lineStart);
-  if (/^% === openbarry:file /.test(line.text)) {
-    let to = state.doc.length;
-    for (let num = line.number + 1; num <= state.doc.lines; num++) {
-      const next = state.doc.line(num);
-      if (/^% === openbarry:file /.test(next.text)) {
-        to = next.from;
-        break;
-      }
-    }
-    if (to <= line.to) return null;
-    return { from: line.to, to };
-  }
-  const match = /^\s*\\(title|section|subsection|subsubsection|paragraph|subparagraph)\*?/.exec(line.text);
-  if (!match) return null;
-  const rank: Record<string, number> = {
-    title: 1,
-    section: 2,
-    subsection: 3,
-    subsubsection: 4,
-    paragraph: 5,
-    subparagraph: 6,
-  };
-  const level = rank[match[1]!] || 2;
-  let to = state.doc.length;
-  for (let num = line.number + 1; num <= state.doc.lines; num++) {
-    const next = state.doc.line(num);
-    const found = /^\s*\\(title|section|subsection|subsubsection|paragraph|subparagraph)\*?/.exec(next.text);
-    if (found && (rank[found[1]!] || 2) <= level) {
-      to = next.from;
-      break;
-    }
-  }
-  if (to <= line.to) return null;
-  return { from: line.to, to };
-}
+const latexSyntax = () => latex({ enableLinting: false, enableTooltips: false, enableAutocomplete: false, autoCloseTags: false, autoCloseBrackets: false });
+
+const mentionMatcher = new MatchDecorator({
+  regexp: new RegExp(AGENT_MENTION_PATTERN.source, "gi"),
+  decoration: Decoration.mark({ class: "ob-cm-agent-mention" }),
+});
+const agentMentionDecorations = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+  constructor(view: EditorView) { this.decorations = mentionMatcher.createDeco(view); }
+  update(update: ViewUpdate) { this.decorations = mentionMatcher.updateDeco(update, this.decorations); }
+}, { decorations: plugin => plugin.decorations });
 
 const PACKAGE_LINE = /^\s*\\(?:usepackage|RequirePackage)\b/;
 const PACKAGE_SPACER = /^\s*(?:%.*)?$/;
@@ -177,7 +158,7 @@ function focusContextField(initialContext: TexFocusContext | null) {
 
 const obHighlightStyle = HighlightStyle.define([
   { tag: tags.comment, color: "rgb(var(--faint))", fontStyle: "italic" },
-  { tag: tags.keyword, color: "rgb(var(--accent) / 0.9)" },
+  { tag: [tags.keyword, tags.heading], color: "rgb(var(--accent) / 0.9)" },
   { tag: tags.atom, color: "rgb(var(--accent) / 0.9)" },
   { tag: tags.tagName, color: "rgb(var(--accent) / 0.9)" },
   { tag: tags.meta, color: "rgb(var(--muted))" },
@@ -243,7 +224,7 @@ const obEditorTheme = EditorView.theme({
   ".cm-line .ob-cm-claim-body, .cm-line .ob-cm-claim-body *": { color: "rgb(var(--ink))" },
   ".ob-cm-todo, .ob-cm-todo *": { color: "rgb(var(--warn))" },
   ".cm-line .ob-cm-todo-body, .cm-line .ob-cm-todo-body *": { color: "rgb(var(--ink))" },
-  ".ob-cm-comment, .ob-cm-comment *": { color: "rgb(var(--muted))" },
+  ".ob-cm-comment, .ob-cm-comment *": { color: "rgb(var(--comment-color, var(--muted)))" },
   ".ob-cm-annotation-brace": {
     color: "rgb(var(--warn)) !important",
   },
@@ -273,6 +254,12 @@ const obEditorTheme = EditorView.theme({
 });
 
 const obCompactTheme = EditorView.theme({
+  ".ob-cm-agent-mention": {
+    color: "rgb(var(--accent))",
+    backgroundColor: "rgb(var(--accent) / .12)",
+    borderRadius: "3px",
+    boxShadow: "0 0 0 1px rgb(var(--accent) / .2)",
+  },
   "&": {
     height: "auto !important",
     backgroundColor: "transparent",
@@ -324,7 +311,7 @@ const obCompactTheme = EditorView.theme({
   ".cm-line .ob-cm-claim-body, .cm-line .ob-cm-claim-body *": { color: "rgb(var(--ink))" },
   ".ob-cm-todo, .ob-cm-todo *": { color: "rgb(var(--warn))" },
   ".cm-line .ob-cm-todo-body, .cm-line .ob-cm-todo-body *": { color: "rgb(var(--ink))" },
-  ".ob-cm-comment, .ob-cm-comment *": { color: "rgb(var(--muted))" },
+  ".ob-cm-comment, .ob-cm-comment *": { color: "rgb(var(--comment-color, var(--muted)))" },
   ".ob-cm-annotation-brace": {
     color: "rgb(var(--warn)) !important",
   },
@@ -391,6 +378,7 @@ function surroundSelection(view: EditorView, open: string, close: string, placeh
 }
 
 function applyInlineFormat(view: EditorView, syntax: InlineSyntax, kind: InlineFormat): boolean {
+  if (view.state.readOnly) return false;
   const selection = view.state.selection.main;
   const change = formatInlineSelection(view.state.doc.toString(), selection.from, selection.to, syntax, kind);
   if (!change) return false;
@@ -462,6 +450,7 @@ export type TexCodeMirrorProps = {
   variant?: "pane" | "compact" | "nested";
   texHighlighting?: boolean;
   lineOffset?: number;
+  getCompletionContext?: () => PaperCompletionContext;
   headingCounts?: Map<string, number>;
   focusContext?: TexFocusContext | null;
 };
@@ -502,9 +491,12 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
     variant = "pane",
     texHighlighting = true,
     lineOffset = 0,
+    getCompletionContext,
     headingCounts,
     focusContext = null,
   }, ref) {
+    const completionContextRef = useRef(getCompletionContext);
+    completionContextRef.current = getCompletionContext;
     const hostRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const placeholderCompRef = useRef(new Compartment());
@@ -605,6 +597,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
       const host = hostRef.current;
       if (!host) return;
 
+      const completion = autocompletion({ override: [latexCompletionSource(true), projectCompletions(() => completionContextRef.current?.() ?? { source: viewRef.current?.state.doc.toString() || valueRef.current, citationKeys: [] })] });
       const placeholderComp = placeholderCompRef.current;
       const seedComp = seedCompRef.current;
       const compact = variantRef.current === "compact";
@@ -615,8 +608,9 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
           doc: valueRef.current,
           extensions: [
             readOnlyCompRef.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
-            languageCompRef.current.of(texHighlighting ? StreamLanguage.define(stex) : []),
+            languageCompRef.current.of(texHighlighting ? [latexSyntax(), completion] : []),
             syntaxHighlighting(obHighlightStyle),
+            ...(compact ? [agentMentionDecorations] : []),
             history(),
             drawSelection(),
             ...(compact ? [] : [
@@ -624,12 +618,13 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
               lineCompRef.current.of(lineNumbers({ formatNumber: (number) => String(number + lineOffset) })),
               foldGutter(),
               foldService.of(packageFoldService),
-              foldService.of(headingFoldService),
             ]),
             EditorView.lineWrapping,
             EditorState.tabSize.of(2),
             indentUnit.of("  "),
             keymap.of([
+              { key: "Tab", run: acceptCompletion },
+              ...completionKeymap,
               {
                 key: "Mod-Enter",
                 run: () => {
@@ -665,7 +660,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
             ...(compact ? [] : [search()]),
             seedComp.of(headingCountSeed.of(new Map(headingCountsRef.current))),
             obMarkerDecorations,
-            ...(variantRef.current === "nested" ? [metadataMarkers] : []),
+            ...(variantRef.current === "nested" ? [metadataMarkers, boundaryLineNumbers] : []),
             focusField,
             bannerField,
             EditorState.transactionFilter.of((tr) => {
@@ -761,7 +756,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
 
     useEffect(() => {
       viewRef.current?.dispatch({
-        effects: languageCompRef.current.reconfigure(texHighlighting ? StreamLanguage.define(stex) : []),
+        effects: languageCompRef.current.reconfigure(texHighlighting ? [latexSyntax(), autocompletion({ override: [latexCompletionSource(true), projectCompletions(() => completionContextRef.current?.() ?? { source: viewRef.current?.state.doc.toString() || valueRef.current, citationKeys: [] })] })] : []),
       });
     }, [texHighlighting]);
 

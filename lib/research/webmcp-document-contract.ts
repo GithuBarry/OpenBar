@@ -2,9 +2,11 @@
  * Wiki WebMCP tools.
  */
 
+import { DOCUMENT_INPUTS } from "./command-inputs";
+import { commandJsonSchemas, parseCommandInput } from "./command-schema";
 import { failResult, okResult, type OperationResult } from "./operation-result";
 import { DOCUMENT_WEBMCP_SCHEMAS, DOCUMENT_WEBMCP_TOOL_NAMES } from "./mcp-tool-schemas";
-import { parseWebMcpArgs, unknownWebMcpArgument, type JsonSchemaObject, type PaperWebMcpTool } from "./webmcp-paper-contract";
+import { type PaperWebMcpTool } from "./webmcp-paper-contract";
 import type { SharedWebMcpActions, CurrentLocation } from "./webmcp-shared-contract";
 
 export { DOCUMENT_WEBMCP_TOOL_NAMES };
@@ -43,51 +45,7 @@ type DocumentWebMcpToolName =
   | (typeof WIKI_PAGE_TOOLS)[number]
   | (typeof WIKI_INDEX_TOOLS)[number];
 
-const WIKI_UPDATE_SCHEMA: JsonSchemaObject = {
-  type: "object",
-  properties: {
-    id: { type: "string" },
-    baseHash: { type: "string" },
-    body: { type: "string" },
-    title: { type: "string" },
-    tags: { type: "array", items: { type: "string" } },
-  },
-  required: ["id", "baseHash", "body"],
-  additionalProperties: false,
-};
-
-const WIKI_CREATE_SCHEMA: JsonSchemaObject = {
-  type: "object",
-  properties: {
-    title: { type: "string" },
-    slug: { type: "string" },
-    body: { type: "string" },
-  },
-  required: ["title"],
-  additionalProperties: false,
-};
-
-const WIKI_DELETE_SCHEMA: JsonSchemaObject = {
-  type: "object",
-  properties: { id: { type: "string" }, baseHash: { type: "string" } },
-  required: ["id", "baseHash"],
-  additionalProperties: false,
-};
-
-const WIKI_RENAME_SCHEMA: JsonSchemaObject = {
-  type: "object",
-  properties: { id: { type: "string" }, to: { type: "string" }, baseHash: { type: "string" } },
-  required: ["id", "to", "baseHash"],
-  additionalProperties: false,
-};
-
-function schemaFor(name: DocumentWebMcpToolName): JsonSchemaObject {
-  if (name === "update_wiki_page") return WIKI_UPDATE_SCHEMA;
-  if (name === "create_wiki_page") return WIKI_CREATE_SCHEMA;
-  if (name === "delete_wiki_page") return WIKI_DELETE_SCHEMA;
-  if (name === "rename_wiki_page") return WIKI_RENAME_SCHEMA;
-  return DOCUMENT_WEBMCP_SCHEMAS[name]!;
-}
+const DOCUMENT_SCHEMAS = commandJsonSchemas(DOCUMENT_INPUTS);
 
 function wikiSlug(title: string, slug?: string): string {
   const raw = (slug || title).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -111,7 +69,7 @@ export function buildDocumentWebMcpTools(host: DocumentWebMcpHost): PaperWebMcpT
         : name === "rename_wiki_page"
           ? "Rename the open wiki page slug."
           : `Primary ${host.kind} document operation ${name}. Project and document are fixed by the open page.`,
-    inputSchema: schemaFor(name),
+    inputSchema: DOCUMENT_SCHEMAS[name],
     annotations: {
       readOnlyHint: name === "read_document" || name === "render_preview",
       untrustedContentHint: true,
@@ -125,12 +83,9 @@ async function executeDocumentWebMcpTool(
   name: DocumentWebMcpToolName,
   rawArgs: unknown,
 ): Promise<OperationResult<unknown>> {
-  const parsedArgs = parseWebMcpArgs(rawArgs);
+  const parsedArgs = parseCommandInput(DOCUMENT_INPUTS[name], rawArgs, true);
   if (!parsedArgs.ok) return failResult("invalid_arguments", parsedArgs.message, { retryable: false });
   const args = parsedArgs.value;
-  const schema = schemaFor(name);
-  const unknown = unknownWebMcpArgument(args, schema);
-  if (unknown) return failResult("invalid_arguments", `Unknown argument "${unknown}".`, { retryable: false });
   if (args.kind !== undefined && (typeof args.kind !== "string" || args.kind !== host.kind)) {
     return failResult("invalid_arguments", `kind must match the open ${host.kind} page.`, { retryable: false });
   }

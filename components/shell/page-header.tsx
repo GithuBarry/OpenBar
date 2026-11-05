@@ -133,7 +133,7 @@ export function PageHeader({
                 type="button"
                 onClick={saveChanges}
                 disabled={saving}
-                className="btn-primary px-2.5 py-0.5 text-xs"
+                className="p-button p-button-primary btn-primary px-2.5 py-0.5 text-xs"
               >
                 {saving ? "Saving…" : "Save (Enter)"}
               </button>
@@ -145,7 +145,7 @@ export function PageHeader({
                   setSaveError(null);
                   setEditing(false);
                 }}
-                className="btn-ghost px-2 py-0.5 text-xs text-muted"
+                className="p-button p-button-borderless btn-ghost px-2 py-0.5 text-xs text-muted"
               >
                 Cancel (Esc)
               </button>
@@ -154,7 +154,7 @@ export function PageHeader({
         ) : (
           <div className="group relative">
             <div className="flex items-center gap-2">
-              <h1 className="truncate text-base font-semibold tracking-tight text-ink">
+              <h1 className="ob-project-title ob-brand-font truncate text-base tracking-tight text-ink">
                 {project ? projectTitle || project.title : title}
               </h1>
               {project && !readOnlyProject && (
@@ -164,8 +164,9 @@ export function PageHeader({
                     setSaveError(null);
                     setEditing(true);
                   }}
-                  className="rounded p-1 text-faint opacity-0 transition-opacity hover:bg-surface-2 hover:text-ink group-hover:opacity-100"
-                  title="Click to edit project title and description"
+                  className="ob-project-edit shrink-0 rounded p-1 text-faint opacity-0 transition-opacity hover:bg-surface-2 hover:text-ink group-hover:opacity-100 focus-visible:opacity-100"
+                  aria-label="Edit project details"
+                  title="Edit project details"
                 >
                   <Edit3 size={13} />
                 </button>
@@ -186,7 +187,7 @@ export function PageHeader({
                   setEditing(true);
                 }}
                 className={cn(
-                  "truncate text-xs text-muted",
+                  "hidden truncate text-xs text-muted sm:block",
                   project && !readOnlyProject && "cursor-pointer transition-colors hover:text-ink",
                 )}
                 title={project && !readOnlyProject ? "Click to edit description" : undefined}

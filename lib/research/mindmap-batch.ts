@@ -169,7 +169,7 @@ function applyMove(mindmap: Mindmap, input: MindmapBatchInput): Mindmap {
     }
   }
   const rootIds = new Set(roots.map((node) => node.id));
-  const siblings = mindmap.nodes.filter((node) => node.parentId === destination.id && !rootIds.has(node.id));
+  const siblings = (index.childrenByParent.get(destination.id) || []).filter((node) => !rootIds.has(node.id));
   let insertAt = siblings.length;
   if (input.move.beforeId) {
     const before = siblings.findIndex((node) => node.id === input.move!.beforeId);

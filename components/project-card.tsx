@@ -5,7 +5,7 @@ import { ChoiceButtons } from "./choice-buttons";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
-import { BookOpenText, Edit3, Network, Plus, X } from "lucide-react";
+import { ArrowUpRight, BookOpenText, Edit3, LoaderCircle, Network, Plus, X } from "lucide-react";
 
 import { saveProjectAction } from "@/app/actions";
 import { safeUrl } from "@/lib/safe-url";
@@ -20,6 +20,20 @@ function formatDate(iso?: string) {
   } catch {
     return iso;
   }
+}
+
+function formatEditedDate(iso: string | undefined, now: number | null) {
+  if (!iso || now === null) return formatDate(iso);
+  const elapsed = now - Date.parse(iso);
+  if (!Number.isFinite(elapsed) || elapsed < 0 || elapsed >= 14 * 24 * 60 * 60 * 1000) return formatDate(iso);
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? "minute" : "minutes"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} ${days === 1 ? "day" : "days"} ago`;
+  return "1 week ago";
 }
 
 function Field({
@@ -65,7 +79,7 @@ function Field({
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           rows={3}
-          className="input min-h-[4.5rem] resize-y text-sm leading-6"
+          className="p-field input min-h-[4.5rem] resize-y text-sm leading-6"
         />
       ) : (
         <input
@@ -75,7 +89,7 @@ function Field({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className="input text-sm"
+          className="p-field input text-sm"
         />
       )}
     </div>
@@ -85,9 +99,13 @@ function Field({
 export function ProjectCard({
   project,
   todos,
+  dragHandle,
+  pendingMessage,
 }: {
   project: Project;
   todos: number;
+  dragHandle?: React.ReactNode;
+  pendingMessage?: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -95,7 +113,6 @@ export function ProjectCard({
   const [title, setTitle] = useState(project.title);
   const [tagline, setTagline] = useState(project.tagline);
   const [overview, setOverview] = useState(project.overview);
-  const [researchKind, setResearchKind] = useState(project.researchKind ?? "");
   const [color, setColor] = useState(project.color ?? "");
   const [icon, setIcon] = useState(project.icon ?? "");
   const [label, setLabel] = useState(project.label ?? "");
@@ -104,15 +121,22 @@ export function ProjectCard({
   const [links, setLinks] = useState<ProjectLink[]>(project.links ?? []);
   const [archived, setArchived] = useState(Boolean(project.archivedAt));
   const [error, setError] = useState<string | null>(null);
+  const [savingMessage, setSavingMessage] = useState("Saving project…");
+  const [now, setNow] = useState<number | null>(null);
   const [focusField, setFocusField] = useState<"icon" | "title">("title");
   const iconInputRef = useRef<HTMLInputElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     setTitle(project.title);
     setTagline(project.tagline);
     setOverview(project.overview);
-    setResearchKind(project.researchKind ?? "");
     setColor(project.color ?? "");
     setIcon(project.icon ?? "");
     setLabel(project.label ?? "");
@@ -131,6 +155,8 @@ export function ProjectCard({
 
   const persist = (patch: Partial<Project>, close = true) => {
     setError(null);
+    const archiveChanged = "archivedAt" in patch && Boolean(patch.archivedAt) !== Boolean(project.archivedAt);
+    setSavingMessage(archiveChanged ? patch.archivedAt ? "Archiving project…" : "Restoring project…" : "Saving project…");
     startTransition(async () => {
       try {
         await saveProjectAction({
@@ -158,7 +184,6 @@ export function ProjectCard({
       title: title.trim() || project.title,
       tagline: tagline.trim(),
       overview: overview.trim(),
-      researchKind: researchKind.trim(),
       color: color.trim(),
       icon: icon.trim(),
       label: label.trim() || undefined,
@@ -173,7 +198,6 @@ export function ProjectCard({
     setTitle(project.title);
     setTagline(project.tagline);
     setOverview(project.overview);
-    setResearchKind(project.researchKind ?? "");
     setColor(project.color ?? "");
     setIcon(project.icon ?? "");
     setLabel(project.label ?? "");
@@ -190,9 +214,11 @@ export function ProjectCard({
     setEditing(true);
   };
 
+  const busyMessage = pendingMessage || (pending ? savingMessage : undefined);
+
   return (
-    <article className="card ob-home-card flex flex-col p-5">
-      <div className="relative">
+    <article data-project-slug={project.slug} className="card ob-home-card relative flex flex-col overflow-hidden px-5 py-4">
+      <div className="relative" aria-busy={Boolean(busyMessage)} inert={Boolean(busyMessage)}>
       <form
         className={cn("ob-card-face flex flex-col gap-3", editing ? "relative" : "is-away absolute inset-0 overflow-hidden")}
         inert={!editing}
@@ -239,16 +265,7 @@ export function ProjectCard({
             removable={Boolean(overview)}
             onRemove={() => setOverview("")}
           />
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Field
-              id={`project-${project.slug}-research-kind`}
-              label="Research kind"
-              value={researchKind}
-              onChange={setResearchKind}
-              placeholder="method, benchmark, theory…"
-              removable={Boolean(researchKind)}
-              onRemove={() => setResearchKind("")}
-            />
+          <div className="grid gap-2">
             <Field
               id={`project-${project.slug}-color`}
               label="Accent color"
@@ -307,20 +324,20 @@ export function ProjectCard({
                     onChange={(event) => setLinks((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item))}
                     placeholder="Label"
                     aria-label={`Link ${index + 1} label`}
-                    className="input text-sm"
+                    className="p-field input text-sm"
                   />
                   <input
                     value={link.url}
                     onChange={(event) => setLinks((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, url: event.target.value } : item))}
                     placeholder="https://…"
                     aria-label={`Link ${index + 1} URL`}
-                    className="input text-sm"
+                    className="p-field input text-sm"
                   />
                   <ChoiceButtons label={`Link ${index + 1} kind`} value={link.kind} options={[{value:"web",label:"Web"},{value:"repo",label:"Repo"},{value:"arxiv",label:"arXiv"},{value:"overleaf",label:"Git"},{value:"latex",label:"LaTeX"}]} onChange={(value) => setLinks((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, kind: value as ProjectLink["kind"] } : item))} />
                   <button
                     type="button"
                     onClick={() => setLinks((current) => current.filter((_, itemIndex) => itemIndex !== index))}
-                    className="btn-ghost px-1.5 text-xs"
+                    className="p-button p-button-borderless btn-ghost px-1.5 text-xs"
                     aria-label={`Remove link ${index + 1}`}
                   >
                     <X size={13} />
@@ -335,10 +352,10 @@ export function ProjectCard({
           </label>
           {error && <p className="text-xs text-danger">{error}</p>}
           <div className="flex items-center gap-2">
-            <button type="submit" disabled={pending} className="btn-primary px-2.5 py-1 text-xs">
+            <button type="submit" disabled={pending} className="p-button p-button-primary btn-primary px-2.5 py-1 text-xs">
               {pending ? "Saving…" : "Save"}
             </button>
-            <button type="button" onClick={cancel} className="btn-ghost px-2 py-1 text-xs">
+            <button type="button" onClick={cancel} className="p-button p-button-borderless btn-ghost px-2 py-1 text-xs">
               Cancel
             </button>
           </div>
@@ -349,32 +366,32 @@ export function ProjectCard({
         aria-hidden={editing}
       >
           <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 items-start gap-1.5">
+            <div className="flex min-w-0 items-center gap-1.5">
               <button
                 type="button"
                 onClick={() => openEditor("icon")}
-                className="ob-press shrink-0 rounded px-0.5 text-lg leading-none hover:bg-surface-2"
+                className="ob-press inline-flex h-7 min-w-6 shrink-0 items-center justify-center rounded px-0.5 text-lg leading-none hover:bg-surface-2"
                 title="Edit project icon"
                 aria-label="Edit project icon"
               >
                 {project.icon ?? "🧪"}
               </button>
               <Link href={`/p/${project.slug}/paper`} className="group min-w-0">
-                <h2 className="truncate font-serif text-lg font-semibold transition-colors duration-ui group-hover:text-accent">
+                <h2 className="ob-brand-font truncate text-lg transition-colors duration-ui group-hover:text-accent">
                   {project.title}
                 </h2>
               </Link>
             </div>
-            <div className="flex shrink-0 items-center gap-1">
-              {project.label && <span className="chip text-[11px]">{project.label}</span>}
-              {project.archivedAt && <span className="chip text-[11px]">Archived</span>}
+            <div className="-mr-1 -mt-0.5 flex shrink-0 items-center gap-0.5">
+              {dragHandle}
               <button
                 type="button"
                 onClick={() => openEditor("title")}
-                className="ob-press rounded p-1 text-faint transition-colors hover:bg-surface-2 hover:text-ink"
+                className="ob-press inline-grid h-8 w-8 place-items-center rounded-md text-faint transition-colors hover:bg-accent-soft hover:text-accent focus-visible:bg-accent-soft focus-visible:text-accent [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:w-10"
                 title="Edit project"
+                aria-label={`Edit ${project.title}`}
               >
-                <Edit3 size={13} />
+                <Edit3 size={16} aria-hidden="true" />
               </button>
             </div>
           </div>
@@ -402,29 +419,54 @@ export function ProjectCard({
           )}
 
           {todos > 0 && (
-            <div className="mt-3 text-xs text-muted">
+            <div className="mt-2 text-xs text-muted">
               <span className="font-mono font-semibold text-ink">{todos}</span> open {todos === 1 ? "TODO" : "TODOs"}
             </div>
           )}
 
-          <div className="mt-3 flex items-center justify-between border-t border-line/60 pt-2.5 text-[11px] text-faint">
-            {project.venue ? <span className="truncate">{project.venue}</span> : <span>Created {formatDate(project.createdAt)}</span>}
-            <span>Edited {formatDate(project.updatedAt)}</span>
+          <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] leading-5 text-faint">
+            {(project.label || project.venue) && <span className="min-w-0 text-muted [overflow-wrap:anywhere]">{[project.label, project.venue].filter(Boolean).join(", ")}</span>}
+            <time className="ml-auto" dateTime={project.lastEditedAt || project.updatedAt} title={`Latest saved project change: ${new Date(project.lastEditedAt || project.updatedAt).toLocaleString()}${project.createdAt ? `, created ${formatDate(project.createdAt)}` : ""}`}>Edited {formatEditedDate(project.lastEditedAt || project.updatedAt, now)}</time>
           </div>
 
-          <nav className="mt-2.5 flex flex-wrap gap-1.5 text-xs">
+          <nav aria-label={`${project.title} links`} className="mt-2.5 flex flex-wrap gap-1.5 text-xs">
             <Quick href={`/p/${project.slug}/paper`} icon={<BookOpenText size={13} />} label="Paper" />
             <Quick href={`/p/${project.slug}/mindmap`} icon={<Network size={13} />} label="Mindmap" />
+            {(project.links ?? []).map((link, index) => <ExternalProjectLink key={`${link.url}-${index}`} link={link} projectTitle={project.title} />)}
           </nav>
       </div>
       </div>
+      {busyMessage && <div className="ob-home-card-loading" role="status" aria-live="polite">
+        <LoaderCircle size={22} className="motion-safe:animate-spin" aria-hidden="true" />
+        <span>{busyMessage}</span>
+      </div>}
     </article>
   );
 }
 
+function ExternalProjectLink({ link, projectTitle }: { link: ProjectLink; projectTitle: string }) {
+  const href = safeUrl(link.url)
+  if (!href) return null
+  const hostname = new URL(href).hostname
+  const label = link.label.trim() || hostname
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`${label} for ${projectTitle} (opens in a new tab)`}
+      title={`${label} (${hostname})`}
+      className="p-button p-button-default btn-outline min-w-0 max-w-full text-xs"
+    >
+      <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{label}</span>
+      <ArrowUpRight size={13} className="shrink-0" aria-hidden="true" />
+    </a>
+  )
+}
+
 function Quick({ href, icon, label }: { href: string; icon: React.ReactNode; label: string }) {
   return (
-    <Link href={href} className="ob-press inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-2.5 py-1 text-muted transition-colors duration-ui hover:bg-accent-soft hover:text-accent">
+    <Link href={href} className="p-button p-button-default btn-outline text-xs">
       {icon}
       {label}
     </Link>

@@ -8,6 +8,7 @@ import { safeUrl } from "@/lib/safe-url";
 import type { BibEntry } from "@/lib/bibtex";
 
 type CitationRecord = Record<string, unknown>;
+const cslByEntry = new WeakMap<BibEntry, CitationRecord>();
 
 type ParsedBibtexEntry = {
   type?: unknown;
@@ -44,18 +45,6 @@ function cslNames(value: unknown): string {
     })
     .filter(Boolean)
     .join(" and ");
-}
-
-function dateParts(value: string): number[] | undefined {
-  const match = value.trim().match(/^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?/);
-  if (!match) return undefined;
-  return match.slice(1).filter(Boolean).map(Number);
-}
-
-function cslIssued(value: string | undefined): { "date-parts": number[][] } | undefined {
-  if (!value) return undefined;
-  const parts = dateParts(value);
-  return parts?.length ? { "date-parts": [parts] } : undefined;
 }
 
 function cslToFields(entry: CitationRecord, source: ParsedBibtexEntry): Record<string, string> {
@@ -116,62 +105,29 @@ export function parseBibtexCitationJs(raw: string): BibEntry[] | null {
     return sourceEntries.map((source, index) => {
       const record = asRecord(data[index]);
       const sourceType = asText(source.type);
-      return {
+      const entry = {
         key: asText(record.id) || asText(record["citation-key"]) || asText(source.label) || "",
         type: (asText(record.type) || sourceType || "misc").replace(/^article-journal$/, "article"),
         fields: cslToFields(record, source),
       };
+      cslByEntry.set(entry, record);
+      return entry;
     }).filter((entry) => entry.key);
   } catch {
     return null;
   }
 }
 
+/** Format the original normalized CSL record while its parsed entry is in use. */
 export function formatBibliographyHtml(entry: BibEntry): string | null {
+  const record = cslByEntry.get(entry);
+  if (!record) return null;
   try {
-    const url = safeUrl(entry.fields.url) || (entry.fields.doi ? safeUrl(`https://doi.org/${entry.fields.doi}`) : undefined);
-    const authors = bibtexNamesToCsl(entry.fields.author);
-    const editors = bibtexNamesToCsl(entry.fields.editor);
-    const issued = cslIssued(entry.fields.year || entry.fields.date);
-    const citeData: CitationRecord = {
-      id: entry.key,
-      type: entry.type === "article" ? "article-journal" : entry.type,
-      title: entry.fields.title,
-      URL: url,
-      DOI: entry.fields.doi,
-      "container-title": entry.fields.journal || entry.fields.booktitle,
-      publisher: entry.fields.publisher || entry.fields.school || entry.fields.institution || entry.fields.howpublished,
-      note: entry.fields.note,
-      issued,
-      ...(authors.length ? { author: authors } : {}),
-      ...(editors.length ? { editor: editors } : {}),
-    };
-    const cite = new Cite(citeData);
+    const url = safeUrl(asText(record.URL));
+    const cite = new Cite({ ...record, URL: url });
     const html = String(cite.format("bibliography", { format: "html", template: "apa", lang: "en-US" }) || "");
-    if (!html.trim()) return null;
-    const cleaned = stripScripts(html)
-      .replace(/\s*href=["']javascript:[^"']*["']/gi, "")
-      .replace(/javascript:/gi, "");
-    if (/javascript:/i.test(cleaned)) return null;
-    return cleaned.trim();
+    return html.trim() ? stripScripts(html).trim() : null;
   } catch {
     return null;
   }
-}
-
-function bibtexNamesToCsl(raw?: string): CitationRecord[] {
-  const names: CitationRecord[] = [];
-  for (const name of (raw || "").split(/\s+and\s+/i)) {
-    const trimmed = name.trim();
-    if (!trimmed) continue;
-    if (trimmed.includes(",")) {
-      const [family, given] = trimmed.split(",", 2).map((part) => part.trim());
-      names.push({ family, given });
-      continue;
-    }
-    const parts = trimmed.split(/\s+/);
-    const family = parts.pop() || "";
-    names.push({ family, given: parts.join(" ") });
-  }
-  return names;
 }

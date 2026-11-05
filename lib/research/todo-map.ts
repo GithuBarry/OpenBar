@@ -51,6 +51,8 @@ export type MindmapCardContent = {
 
 export type TodoReconciliation = {
   bound: BoundTodoCard[];
+  boundByNode: Map<string, BoundTodoCard>;
+  missingByNode: Map<string, MissingTodoCard>;
   unplaced: UnplacedTodoCard[];
   missing: MissingTodoCard[];
   warnings: TodoSyncWarning[];
@@ -109,9 +111,9 @@ export function joinMindmapCardContent(content: MindmapCardContent): string {
 
 export function mindmapCardContentForNode(node: MindmapNode, reconciliation: TodoReconciliation): MindmapCardContent {
   if (!node.todoId) return ordinaryMindmapCardContent(node);
-  const bound = reconciliation.bound.find((item) => item.node.id === node.id);
+  const bound = reconciliation.boundByNode.get(node.id);
   if (bound) return mindmapCardContentForTodo(bound.todo);
-  const missing = reconciliation.missing.find((item) => item.node.id === node.id);
+  const missing = reconciliation.missingByNode.get(node.id);
   if (missing) {
     const fallback = ordinaryMindmapCardContent(node);
     return {
@@ -141,10 +143,8 @@ export function reconcileTodos(mindmap: Mindmap | null, todos: PaperTodo[]): Tod
   if (idless.length) warnings.push({ kind: "idless-todo", count: idless.length });
 
   const texById = countBy(identified, texTodoIdentity);
-  const duplicateTexIds: string[] = [];
   for (const [id, group] of texById) {
     if (group.length > 1) {
-      duplicateTexIds.push(id);
       warnings.push({ kind: "duplicate-tex-id", todoId: id });
     }
   }
@@ -162,17 +162,15 @@ export function reconcileTodos(mindmap: Mindmap | null, todos: PaperTodo[]): Tod
   const bound: BoundTodoCard[] = [];
   const missing: MissingTodoCard[] = [];
   const boundIds = new Set<string>();
-  const boundNodeIds = new Set<string>();
 
   for (const [todoId, nodes] of bindByTodo) {
     const todo = uniqueTex.get(todoId);
-    if (!todo || duplicateTexIds.includes(todoId) || nodes.length > 1) {
+    if (!todo || nodes.length > 1) {
       for (const node of nodes) missing.push({ node, todoId });
       continue;
     }
     const node = nodes[0]!;
     boundIds.add(todoId);
-    boundNodeIds.add(node.id);
     const content = mindmapCardContentForTodo(todo);
     bound.push({
       node,
@@ -196,22 +194,14 @@ export function reconcileTodos(mindmap: Mindmap | null, todos: PaperTodo[]): Tod
     });
   }
 
-  for (const node of bindings) {
-    const todoId = node.todoId!.trim();
-    if (boundNodeIds.has(node.id)) continue;
-    if (missing.some((item) => item.node.id === node.id)) continue;
-    missing.push({ node, todoId });
-    warnings.push({ kind: "missing-source", todoId, nodeId: node.id });
-  }
-
   for (const item of missing) {
-    if (!warnings.some((warning) => warning.kind === "missing-source" && warning.nodeId === item.node.id)) {
-      warnings.push({ kind: "missing-source", todoId: item.todoId, nodeId: item.node.id });
-    }
+    warnings.push({ kind: "missing-source", todoId: item.todoId, nodeId: item.node.id });
   }
 
   return {
     bound,
+    boundByNode: new Map(bound.map(item => [item.node.id, item])),
+    missingByNode: new Map(missing.map(item => [item.node.id, item])),
     unplaced,
     missing,
     warnings,
@@ -239,32 +229,34 @@ export function displayBodyForNode(node: MindmapNode, reconciliation: TodoReconc
 }
 
 export function nodeIsComplete(node: MindmapNode, reconciliation: TodoReconciliation): boolean {
-  return reconciliation.bound.some((item) => item.node.id === node.id && item.completed);
+  return Boolean(reconciliation.boundByNode.get(node.id)?.completed);
 }
 
 export function nodeActivityAt(node: MindmapNode, reconciliation: TodoReconciliation): string {
-  const bound = reconciliation.bound.find((item) => item.node.id === node.id);
+  const bound = reconciliation.boundByNode.get(node.id);
   if (bound) return bound.activityAt;
   return node.updatedAt || node.createdAt || "";
 }
 
-export function todoCounts(reconciliation: TodoReconciliation, parentId: string, mindmap: Mindmap): { complete: number; total: number } {
-  const { childrenByParent } = indexMindmap(mindmap);
-  const walk = (id: string): { complete: number; total: number } => {
-    let complete = 0;
-    let total = 0;
-    for (const child of childrenByParent.get(id) || []) {
-      if (child.todoId) {
-        total += 1;
-        if (nodeIsComplete(child, reconciliation)) complete += 1;
-      }
-      const nested = walk(child.id);
-      complete += nested.complete;
-      total += nested.total;
-    }
-    return { complete, total };
-  };
-  return walk(parentId);
+/** Count descendant TODOs once, from leaves to roots, including deep maps. */
+export function todoCountsByParent(reconciliation: TodoReconciliation, mindmap: Mindmap): Map<string, { complete: number; total: number }> {
+  const { nodeById, childrenByParent } = indexMindmap(mindmap);
+  const counts = new Map(mindmap.nodes.map(node => [node.id, { complete: 0, total: 0 }]));
+  const remaining = new Map(mindmap.nodes.map(node => [node.id, childrenByParent.get(node.id)?.length || 0]));
+  const queue = mindmap.nodes.filter(node => remaining.get(node.id) === 0);
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const node = queue[cursor]!;
+    const parent = node.parentId ? nodeById.get(node.parentId) : undefined;
+    if (!parent) continue;
+    const own = counts.get(node.id)!;
+    const target = counts.get(parent.id)!;
+    target.total += own.total + (node.todoId ? 1 : 0);
+    target.complete += own.complete + (node.todoId && nodeIsComplete(node, reconciliation) ? 1 : 0);
+    const left = remaining.get(parent.id)! - 1;
+    remaining.set(parent.id, left);
+    if (left === 0) queue.push(parent);
+  }
+  return counts;
 }
 
 export function todosFromPaperState(

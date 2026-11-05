@@ -36,6 +36,7 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
   return (
     <div className="flex h-screen min-h-0 flex-col overflow-hidden">
       <PageHeader
+        className={styles.pageHeader}
         title={`${project.title} Mindmap`}
         subtitle={isPrimary ? "Primary research map" : "Planning map"}
         project={project}
@@ -43,6 +44,7 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
         icon={<Network size={18} />}
         actions={
           <div className={styles.headerActions}>
+            <Link href={`/p/${slug}/paper`} className={styles.paperLink} aria-label="Open paper"><BookOpenText size={14} /><span>Paper</span></Link>
             <MindmapSwitcher
               project={slug}
               activeId={activeId}
@@ -53,7 +55,6 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
                 createdAt: map.createdAt,
               }))}
             />
-            <Link href={`/p/${slug}/paper`} className={styles.paperLink} aria-label="Open paper"><BookOpenText size={14} /><span>Paper</span></Link>
           </div>
         }
       />

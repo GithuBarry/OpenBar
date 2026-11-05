@@ -11,18 +11,21 @@ import { ThemeToggle } from "@/components/shell/theme-toggle";
 import { WorkspaceMark } from "@/components/workspace-mark";
 import { getWorkspaceSettings } from "@/lib/workspace";
 import { requireWorkbenchPage } from "@/lib/server/project-access";
+import packageJson from "@/package.json";
 
 export const metadata: Metadata = {
-  title: "About",
-  description: "How OpenBar keeps the manuscript, the mindmap, and browser WebMCP on the same research state.",
+  title: "About and setup",
+  description: "Set up OpenBar, create your first paper, check PDF compilation, and connect an agent.",
 };
 
+const NODE_VERSION = packageJson.engines.node.replace(/^>=/, "")
+const PNPM_VERSION = packageJson.packageManager.split("@")[1]
+
 const DAILY_FLOW = [
-  ["Start from the workspace", "A browser agent opens / and uses list_projects, search_projects, or open_project to choose a paper."],
-  ["Orient to the project", "After the paper opens, get_project_state returns the manuscript, TODO coverage, maps, skills, and repository instructions."],
-  ["Navigate to the work", "search_project finds paper, TODO, comment, or map locations. navigate_project opens the matching page or focus."],
-  ["Use the active page", "Paper, mindmap, and instructions tools act on live editor state, selected cards, page navigation, focus, and visible actions."],
-  ["Compile for a handoff", "Use the PDF when checking layout, page budget, and the exact paper artifact shared with collaborators."],
+  ["Create a paper", "In your private workspace, choose New project, enter a title, and select Create. OpenBar opens the paper with an Introduction and a starter TODO."],
+  ["Write and check saving", "Edit the manuscript, wait for the save indicator, then reload to confirm your edit is saved. Open Instructions to add the project’s AGENTS.md and any useful skills."],
+  ["Check the shared TODO", "Open Mindmap and find the starter TODO in the Primary map or Primary Unplaced. Completing it updates the paper and every map that uses it."],
+  ["Compile the paper", "Return to Paper and select Recompile, then open PDF. Check that the PDF reflects your text. A compilation error includes the TeX log for diagnosing missing packages or source errors."],
 ] as const;
 
 export default async function AboutPage() {
@@ -30,43 +33,74 @@ export default async function AboutPage() {
   const workspace = getWorkspaceSettings();
 
   return (
-    <main className="min-h-screen bg-canvas text-ink">
+    <main id="main-content" tabIndex={-1} className="ob-main-brand min-h-screen bg-canvas text-ink">
       <header className="ob-chrome-header sticky top-0 z-10">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-4">
           <WorkspaceMark name={workspace.name} tagline={workspace.tagline} compactTagline="Serving Draft" />
           <div className="flex items-center gap-3">
-            <Link href="/" className="btn-ghost text-xs">Open workspace <ArrowRight size={13} /></Link>
+            <Link href="/" className="p-button p-button-borderless btn-ghost text-xs">Open workspace <ArrowRight size={13} /></Link>
             <ThemeToggle />
           </div>
         </div>
       </header>
 
-      <section className="mx-auto max-w-6xl px-6 pb-10 pt-14 sm:pt-20">
+      <section className="mx-auto max-w-6xl px-6 py-10 sm:py-12">
         <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-accent">Research workbench</p>
         <h1 className="mt-4 max-w-4xl font-serif text-4xl font-semibold leading-[1.04] tracking-tight sm:text-6xl">
-          A shared place for the paper, the plan, and the agent that operates both.
+          Set up your research workspace.
         </h1>
         <p className="mt-6 max-w-3xl text-base leading-7 text-muted sm:text-lg">
-          {workspace.name} turns the research paper into an agent-operable research plan. Browser WebMCP keeps the agent in the same visible workspace as the researcher. Open work stays next to the relevant prose, and the mindmap keeps flexible topics, shared TODOs, and paper structure connected.
+          {workspace.name} keeps your paper, shared TODOs, mindmaps, and agent instructions together. Use an existing workspace, or run your own copy with the steps below.
         </p>
-        <div className="mt-8 flex flex-wrap gap-2">
-          <span className="chip">Repository-backed research state</span>
-          <span className="chip">Editable by people and agents</span>
-          <span className="chip">Browser WebMCP interface</span>
+        <nav aria-label="Setup guide" className="mt-6 flex flex-wrap gap-3 text-sm">
+          <a href="#local-setup" className="text-accent underline underline-offset-4">Install locally</a>
+          <a href="#first-paper" className="text-accent underline underline-offset-4">Start your first paper</a>
+          <a href="#agent-setup" className="text-accent underline underline-offset-4">Connect an agent</a>
+        </nav>
+      </section>
+
+      <section id="local-setup" aria-labelledby="local-setup-heading" className="scroll-mt-24 border-y border-line bg-surface/50">
+        <div className="mx-auto max-w-6xl px-6 py-10">
+          <div className="flex items-center gap-2 text-accent"><Settings2 size={17} /><p className="text-sm font-semibold">Local setup</p></div>
+          <h2 id="local-setup-heading" className="mt-3 font-serif text-3xl font-semibold tracking-tight">Run OpenBar on your computer.</h2>
+          <p className="mt-3 text-sm leading-6 text-muted">These commands use a macOS, Linux, or WSL terminal. If someone already hosts your workspace, go straight to <a href="#first-paper" className="text-accent underline">your first paper</a>.</p>
+          <ol className="mt-6 grid gap-5 lg:grid-cols-2">
+            <li className="min-w-0 rounded-xl border border-line bg-canvas p-5">
+              <h3 className="text-sm font-semibold">1. Install the app</h3>
+              <p className="mt-2 text-sm leading-6 text-muted">Install Git and <a href="https://nodejs.org/en/download" className="text-accent underline">Node.js {NODE_VERSION}</a>, the version pinned in <code>.nvmrc</code>. Then run:</p>
+              <pre className="mt-3 overflow-x-auto rounded-lg border border-line bg-surface-2 p-4 font-mono text-xs leading-6 text-ink"><code>{`git clone https://github.com/GithuBarry/OpenBar.git\ncd OpenBar\nnpm install --global pnpm@${PNPM_VERSION}\npnpm install --frozen-lockfile`}</code></pre>
+            </li>
+            <li className="min-w-0 rounded-xl border border-line bg-canvas p-5">
+              <h3 className="text-sm font-semibold">2. Install the document tools</h3>
+              <p className="mt-2 text-sm leading-6 text-muted">PDF compilation uses TeX Live, including <code>latexmk</code>, <code>pdflatex</code>, and your paper’s LaTeX packages. macOS users can install <a href="https://tug.org/mactex/" className="text-accent underline">MacTeX</a>. For Linux and WSL, use <a href="https://tug.org/texlive/" className="text-accent underline">TeX Live</a> or your system package manager.</p>
+              <p className="mt-2 text-sm leading-6 text-muted"><a href="https://pandoc.org/installing.html" className="text-accent underline">Pandoc</a> and <code>latexpand</code> support document conversion. <code>synctex</code> supports jumping between the PDF and its source. Install the tools in the environment where OpenBar runs.</p>
+              <pre className="mt-3 overflow-x-auto rounded-lg border border-line bg-surface-2 p-4 font-mono text-xs leading-6 text-ink"><code>{"latexmk -v\npdflatex -version\npandoc --version\nlatexpand --help"}</code></pre>
+            </li>
+            <li className="min-w-0 rounded-xl border border-line bg-canvas p-5">
+              <h3 className="text-sm font-semibold">3. Choose where papers are saved</h3>
+              <p className="mt-2 text-sm leading-6 text-muted">The default is the <code>content</code> folder in your OpenBar checkout. Projects live in <code>content/projects/&lt;slug&gt;</code>. To use another folder, add this setting to <code>.env.local</code> in the checkout, using your own absolute path:</p>
+              <pre className="mt-3 overflow-x-auto rounded-lg border border-line bg-surface-2 p-4 font-mono text-xs leading-6 text-ink"><code>{'OPENBARRY_CONTENT="/absolute/path/to/openbar-content"'}</code></pre>
+              <p className="mt-2 text-sm leading-6 text-muted">Give the OpenBar process write access and back up the entire content folder, including hidden <code>.OpenBar</code> directories. The app repository’s ignore rules keep private project content separate from app commits. Restart OpenBar after changing the setting.</p>
+            </li>
+            <li className="min-w-0 rounded-xl border border-line bg-canvas p-5">
+              <h3 className="text-sm font-semibold">4. Start and check the workspace</h3>
+              <pre className="mt-3 overflow-x-auto rounded-lg border border-line bg-surface-2 p-4 font-mono text-xs leading-6 text-ink"><code>{"pnpm dev --hostname 127.0.0.1"}</code></pre>
+              <p className="mt-2 text-sm leading-6 text-muted">Keep the terminal running and open <a href="http://localhost:3000" className="text-accent underline">localhost:3000</a>. Use the address printed in the terminal if port 3000 is occupied.</p>
+              <p className="mt-2 text-sm leading-6 text-muted">Open <code>/api/health</code> on that same local address. Check <code>writableContent: true</code>, <code>tools.git: true</code>, <code>tools.latexmk: true</code>, and <code>tools.pdflatex: true</code>. Each tool’s <code>false</code> value identifies an installation or executable-path issue. A successful paper compile is the final check.</p>
+            </li>
+          </ol>
         </div>
       </section>
 
-      <section className="border-y border-line bg-surface/60">
-        <AboutFeatureGrid />
-      </section>
-
-      <section className="mx-auto grid max-w-6xl gap-10 px-6 py-14 lg:grid-cols-[0.9fr_1.1fr]">
+      <section id="first-paper" aria-labelledby="first-paper-heading" className="mx-auto grid max-w-6xl scroll-mt-24 gap-6 px-6 py-10 lg:grid-cols-[0.9fr_1.1fr]">
         <div>
-          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-accent">Daily workflow</p>
-          <h2 className="mt-3 font-serif text-3xl font-semibold tracking-tight">Work in a loop that stays close to the source.</h2>
+          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-accent">First paper</p>
+          <h2 id="first-paper-heading" className="mt-3 font-serif text-3xl font-semibold tracking-tight">Check the whole writing loop.</h2>
           <p className="mt-4 text-sm leading-6 text-muted">
-            The product favors a small number of durable actions. Each step produces a file, an edited section, or a compiled artifact that a collaborator can inspect later.
+            A new project starts with local file saving. For Git history, initialize a repository inside the project. Remote synchronization also needs a configured remote. The save indicator reports these stages separately.
           </p>
+          <Link href="/" className="p-button p-button-default btn-outline mt-4 text-sm">Open workspace <ArrowRight size={14} /></Link>
+          <p className="mt-4 text-sm leading-6 text-muted">An existing OpenBar project can be copied into the content folder’s <code>projects</code> directory. Keep its manuscript, bibliography, figures, and hidden <code>.OpenBar</code> metadata together, then reload the workspace.</p>
         </div>
         <ol className="space-y-4">
           {DAILY_FLOW.map(([title, body], index) => (
@@ -81,29 +115,27 @@ export default async function AboutPage() {
         </ol>
       </section>
 
-      <section className="border-y border-line bg-surface/50">
-        <div className="mx-auto grid max-w-6xl gap-8 px-6 py-14 lg:grid-cols-2">
-          <div className="rounded-xl border border-line bg-canvas p-6">
-            <div className="flex items-center gap-2 text-accent"><Settings2 size={17} /><span className="text-sm font-semibold">Local setup</span></div>
-            <p className="mt-3 text-sm leading-6 text-muted">Use the repository as the source of truth, then run the local workspace against that content.</p>
-            <pre className="mt-4 overflow-x-auto rounded-lg border border-line bg-surface-2 p-4 font-mono text-xs leading-6 text-ink"><code>{"pnpm install\npnpm dev"}</code></pre>
-            <p className="mt-4 text-sm leading-6 text-muted">
-              Open the local workspace on port 3000. PDF compilation uses the installed TeX toolchain. Pandoc supports the explicit document-conversion path.
-            </p>
+      <section id="agent-setup" aria-labelledby="agent-setup-heading" className="scroll-mt-24 border-y border-line bg-surface/50">
+        <div className="mx-auto max-w-6xl px-6 py-10">
+          <div className="flex items-center gap-2 text-accent"><LockKeyhole size={17} /><p className="text-sm font-semibold">Agent access</p></div>
+          <h2 id="agent-setup-heading" className="mt-3 font-serif text-3xl font-semibold tracking-tight">Connect the agent you use.</h2>
+          <div className="mt-5 grid gap-5 lg:grid-cols-2">
+            <div className="rounded-xl border border-line bg-canvas p-5">
+              <h3 className="text-sm font-semibold">Browser agent</h3>
+              <p className="mt-2 text-sm leading-6 text-muted">Open a project over HTTPS or localhost in a browser integration that supports WebMCP. Select <strong>Tools</strong> to see the current tool catalog and connection status. The active page supplies the project identity and live editor state.</p>
+              <p className="mt-2 text-sm leading-6 text-muted">Have the agent start with <code>get_project_state</code>, read the relevant instructions and skills, and use the tools for the paper or mindmap currently open.</p>
+            </div>
+            <div className="rounded-xl border border-line bg-canvas p-5">
+              <h3 className="text-sm font-semibold">MCP client</h3>
+              <p className="mt-2 text-sm leading-6 text-muted">Add a Streamable HTTP connection using your workspace address followed by <code>/api/mcp</code>. Your workspace owner supplies the configured <code>OPENBARRY_ACCESS_TOKEN</code> as a bearer token, or an allowed Cloudflare Access identity. HTTP MCP requires this authentication on localhost too.</p>
+              <p className="mt-2 text-sm leading-6 text-muted">Start with <code>get_project_state</code> and the project slug from its <code>/p/&lt;slug&gt;/paper</code> URL. HTTP MCP reads and edits saved project files. A Tailscale address requires the client to have access to that private network.</p>
+            </div>
           </div>
-          <div className="rounded-xl border border-line bg-canvas p-6">
-            <div className="flex items-center gap-2 text-accent"><LockKeyhole size={17} /><span className="text-sm font-semibold">Agent Ready</span></div>
-            <p className="mt-3 text-sm leading-6 text-muted">
-              Agent Ready reports browser WebMCP registration on the active project page. The home page registers workspace tools. Project pages add the four project context tools, including complete project metadata editing. Paper, mindmap, and instructions pages add tools for the page currently open.
-            </p>
-            <p className="mt-4 text-sm leading-6 text-muted">
-              A compatible browser agent follows the workspace journey through this active catalog. WebMCP handles live editor state, selected cards, navigation, focus, and visible page actions. Page-local tools leave the catalog as the page changes. Set <code className="rounded bg-surface-2 px-1 py-0.5 text-[12px]">OPENBARRY_CONTENT</code> when the content folder is mounted elsewhere.
-            </p>
-          </div>
+          <Link href="/agents" className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-accent underline underline-offset-4">Agent connection guide and troubleshooting <ArrowRight size={14} /></Link>
         </div>
       </section>
 
-      <section className="mx-auto grid max-w-6xl gap-8 px-6 py-14 lg:grid-cols-[1.15fr_0.85fr]">
+      <section className="mx-auto grid max-w-6xl gap-6 px-6 py-10 lg:grid-cols-[1.15fr_0.85fr]">
         <div>
           <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-accent">How state stays durable</p>
           <h2 className="mt-3 font-serif text-3xl font-semibold tracking-tight">Research work stays in files you can inspect and edit.</h2>
@@ -112,14 +144,19 @@ export default async function AboutPage() {
           </p>
         </div>
         <aside className="rounded-xl border border-line bg-surface p-6">
-          <p className="text-sm font-semibold">Release posture</p>
+          <p className="text-sm font-semibold">Hosting for collaborators</p>
           <p className="mt-2 text-sm leading-6 text-muted">
-            OpenBar keeps the paper workflow repository-backed and ready for browser collaboration.
+            Shared hosting needs a protected HTTPS address, persistent content storage, and backups. Cloudflare Access can protect browser sessions. Trusted private-network hosting can use the operator’s local-access configuration. The bundled Cloudflare demo uses disposable content that resets with the container.
           </p>
+          <a href="https://github.com/GithuBarry/OpenBar/blob/main/deploy/README.md" className="mt-3 inline-block text-sm text-accent underline">Deployment instructions</a>
           <p className="mt-4 text-sm leading-6 text-muted">
             The repository code uses the MIT License. Review project content before sharing a workspace.
           </p>
         </aside>
+      </section>
+
+      <section className="border-t border-line bg-surface/60" aria-label="What OpenBar provides">
+        <AboutFeatureGrid />
       </section>
     </main>
   );

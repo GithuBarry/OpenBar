@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { createPortal } from "react-dom"
+import { FastTooltip } from "@/components/fast-tooltip";
+import { Modal } from "@/components/modal"
 import { ArrowDownRight, ExternalLink, FileText, Maximize2, RotateCcw, Trash2, X, ZoomIn, ZoomOut } from "lucide-react"
 import type { ArtifactRef } from "@/lib/types"
 import { artifactHref } from "@/lib/research/artifact-link"
@@ -60,21 +61,20 @@ function CardImage({ project, image, readOnly, onView, onResize, onRemove }: {
   const caption = image.label || image.id.split("/").pop() || "Card image"
   return <figure ref={figure} className={styles.image} style={{ width: width + "%" }} data-card-image={image.id}>
     <button type="button" className={styles.preview} aria-label={"View image: " + caption} onClick={onView}>
-      {isPdf(image) ? <span className={styles.placeholder}><FileText size={28} />PDF · Open preview</span>
-        : failed ? <span className={styles.placeholder}>Preview unavailable · Open image</span>
+      {isPdf(image) ? <span className={styles.placeholder}><FileText size={28} />Open PDF preview</span>
+        : failed ? <span className={styles.placeholder}>Open image (preview unavailable)</span>
         : <img src={artifactHref(project, image)} alt={caption} loading="lazy" draggable={false} onError={() => setFailed(true)} />}
     </button>
     <div className={styles.tools}>
-      <button type="button" aria-label={"Expand image: " + caption} title="View full image" onClick={onView}><Maximize2 size={14} /></button>
+      <FastTooltip label="View full image"><button type="button" aria-label={"Expand image: " + caption} onClick={onView}><Maximize2 size={14} /></button></FastTooltip>
       {!readOnly && <>
-        <button type="button" aria-label={"Reset image size: " + caption} title="Full card width" onClick={() => onResize(100)}><RotateCcw size={14} /></button>
-        <button type="button" aria-label={"Remove image from card: " + caption} title="Remove from card · Undo available" onClick={onRemove}><Trash2 size={14} /></button>
+        <FastTooltip label="Full card width"><button type="button" aria-label={"Reset image size: " + caption} onClick={() => onResize(100)}><RotateCcw size={14} /></button></FastTooltip>
+        <FastTooltip label="Remove from card (undo available)"><button type="button" aria-label={"Remove image from card: " + caption} onClick={onRemove}><Trash2 size={14} /></button></FastTooltip>
       </>}
     </div>
     {image.label && <figcaption title={image.label}>{image.label}</figcaption>}
-    {!readOnly && <button type="button" className={styles.resize} role="slider" aria-label={"Image width: " + caption}
+    {!readOnly && <FastTooltip label="Drag to resize or use arrow keys"><button type="button" className={styles.resize} role="slider" aria-label={"Image width: " + caption}
       aria-valuemin={25} aria-valuemax={100} aria-valuenow={Math.round(width)} aria-valuetext={Math.round(width) + "% of card width"}
-      title="Drag to resize · Arrow keys adjust width"
       onPointerDown={event => {
         const parentWidth = figure.current?.parentElement?.getBoundingClientRect().width
         if (!parentWidth) return
@@ -101,7 +101,7 @@ function CardImage({ project, image, readOnly, onView, onResize, onRemove }: {
           : ["ArrowLeft", "ArrowDown"].includes(event.key) ? Math.max(25, width - 5)
           : ["ArrowRight", "ArrowUp"].includes(event.key) ? Math.min(100, width + 5) : null
         if (next !== null) { event.preventDefault(); onResize(next) }
-      }}><ArrowDownRight size={13} /></button>}
+      }}><ArrowDownRight size={13} /></button></FastTooltip>}
   </figure>
 }
 
@@ -110,20 +110,11 @@ function ImageViewer({ project, active, onClose }: {
   active: ArtifactRef
   onClose: () => void
 }) {
-  const dialog = useRef<HTMLDialogElement>(null)
   const [zoom, setZoom] = useState(1)
-  useEffect(() => {
-    const element = dialog.current
-    const previous = document.activeElement as HTMLElement | null
-    element?.showModal()
-    return () => { element?.close(); previous?.focus() }
-  }, [])
-  useEffect(() => setZoom(1), [active.id])
+  const [failed, setFailed] = useState(false)
+  useEffect(() => { setZoom(1); setFailed(false) }, [active.id])
   const href = artifactHref(project, active)
-  return createPortal(<dialog ref={dialog} className={styles.viewer} aria-label="Card image viewer" aria-modal="true"
-    onCancel={onClose}
-    onClick={event => { if (event.target === event.currentTarget) onClose() }}
-    onKeyDown={event => event.stopPropagation()}>
+  return <Modal open onClose={onClose} title="Card image viewer" className={styles.viewer}>
     <header>
       <span className={styles.viewerTitle}>{active.label || active.id.split("/").pop()}</span>
       {!isPdf(active) && <>
@@ -131,14 +122,15 @@ function ImageViewer({ project, active, onClose }: {
         <button type="button" onClick={() => setZoom(1)} aria-label="Fit image">{Math.round(zoom * 100)}%</button>
         <button type="button" aria-label="Zoom in" disabled={zoom >= 4} onClick={() => setZoom(value => Math.min(4, value + .5))}><ZoomIn size={18} /></button>
       </>}
-      <a href={href} target="_blank" rel="noreferrer" aria-label="Open original image" title="Open original"><ExternalLink size={18} /></a>
+      <FastTooltip label="Open original"><a href={href} target="_blank" rel="noreferrer" aria-label="Open original image"><ExternalLink size={18} /></a></FastTooltip>
       <button type="button" aria-label="Close image viewer" autoFocus onClick={onClose}><X size={20} /></button>
     </header>
     <div className={styles.viewerBody}>
-      {isPdf(active) ? <iframe src={href} title={active.label || "PDF preview"} /> :
+      {isPdf(active) ? <iframe src={href} title={active.label || "PDF preview"} /> : failed ?
+        <p className={styles.placeholder} role="status">Image unavailable. The card’s image reference is preserved.</p> :
         <div className={styles.zoomSurface} style={{ width: zoom * 100 + "%", height: zoom * 100 + "%" }}>
-          <img src={href} alt={active.label || "Card image"} draggable={false} />
+          <img src={href} alt={active.label || "Card image"} draggable={false} onError={() => setFailed(true)} />
         </div>}
     </div>
-  </dialog>, document.body)
+  </Modal>
 }

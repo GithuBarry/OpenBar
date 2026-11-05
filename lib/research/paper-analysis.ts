@@ -255,6 +255,7 @@ function todoDiagnostics(todos: PaperTodo[]): PaperDiagnostic[] {
 
 export function analyzePaper(source: string): PaperAnalysis {
   const ast = parseTex(source);
+  const liveAnchors = new Map(findMacroMatches(source, ["obtodo", "obmarker", ...Object.keys(NOTE_MACROS)]).map(match => [match.index, match]));
   const liveMacros: TexMacro[] = [];
   walkLive(ast, (node) => {
     if (isMacro(node)) liveMacros.push(node);
@@ -277,6 +278,7 @@ export function analyzePaper(source: string): PaperAnalysis {
   for (const node of liveMacros) {
     if (seen.has(node)) continue;
     const name = macroNameOf(node);
+    if ((name === "obtodo" || name === "obmarker" || NOTE_MACROS[name]) && !liveAnchors.has(offsetOf(node, "start") ?? -1)) continue;
     if (HEADING_COMMANDS.includes(name)) {
       currentSection = nodesToPlainText(mandatoryArgs(node)[0] ?? []).trim() || currentSection;
     }
@@ -322,9 +324,8 @@ export function analyzePaper(source: string): PaperAnalysis {
   attachCommentMatches(source, comments);
   // AST macro positions can end before the optional attributes and body.
   // Source edits need the complete lexical macro range.
-  const todoMatches = new Map(findMacroMatches(source, ["obtodo"]).map(match => [match.index, match]));
   for (const todo of todos) {
-    const match = todoMatches.get(todo.start);
+    const match = liveAnchors.get(todo.start);
     if (match) todo.end = match.index + match.length;
   }
 

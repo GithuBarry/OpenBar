@@ -1,0 +1,11 @@
+.popover { width: min(360px, calc(100vw - 24px)); padding: 16px; border: 1px solid rgb(var(--line)); border-radius: 12px; background: rgb(var(--surface)); color: rgb(var(--ink)); box-shadow: 0 12px 40px rgb(0 0 0 / .16); font: 12px/1.5 var(--font-sans); }
+.heading { display: flex; align-items: flex-start; gap: 12px; }
+.heading strong { flex: 1; font-size: 14px; line-height: 1.45; }
+.heading button { font-size: 20px; color: rgb(var(--muted)); }
+.popover p { margin: 8px 0; }
+.venue, .popover code { color: rgb(var(--muted)); font-size: 11px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 14px; padding-top: 10px; border-top: 1px solid rgb(var(--line)); }
+.actions a, .actions button { color: rgb(var(--accent)); font-size: 11px; }
+.actions a:focus-visible, .actions button:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 3px; }
+.preview :global([data-ob-annotation]) { cursor: pointer; }
+.preview :global([data-ob-annotation]:focus-visible) { outline: 2px solid rgb(var(--accent)); outline-offset: 3px; }

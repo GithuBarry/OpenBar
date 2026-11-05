@@ -74,7 +74,7 @@ export function WikiIndex({ slug, pages }: { slug: string; pages: WikiPage[] }) 
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search pages"
-            className="input h-8 w-48 text-sm"
+            className="p-field input h-8 w-48 text-sm"
             aria-label="Search wiki pages"
           />
         )}
@@ -85,15 +85,15 @@ export function WikiIndex({ slug, pages }: { slug: string; pages: WikiPage[] }) 
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               placeholder="Page title"
-              className="input h-8 w-56 text-sm"
+              className="p-field input h-8 w-56 text-sm"
             />
-            <button type="submit" className="btn-primary text-xs" disabled={saving || !title.trim()}>
+            <button type="submit" className="p-button p-button-primary btn-primary text-xs" disabled={saving || !title.trim()}>
               {saving ? <LoaderCircle size={12} className="animate-spin" /> : "Create"}
             </button>
-            <button type="button" className="btn-ghost text-xs" onClick={() => setOpen(false)}>Cancel</button>
+            <button type="button" className="p-button p-button-borderless btn-ghost text-xs" onClick={() => setOpen(false)}>Cancel</button>
           </form>
         ) : (
-          <button type="button" className="btn-outline text-xs" disabled title="Wiki editing is currently unavailable">
+          <button type="button" className="p-button p-button-default btn-outline text-xs" disabled title="Wiki editing is currently unavailable">
             <Plus size={12} /> New page
           </button>
         )}

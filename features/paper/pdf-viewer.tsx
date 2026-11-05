@@ -1,15 +1,20 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Maximize2, Minus, Plus } from "lucide-react";
 import {
-  AnnotationLayer,
+  AnnotationMode,
   getDocument,
   GlobalWorkerOptions,
-  TextLayer,
   type PDFDocumentProxy,
 } from "pdfjs-dist";
 
 import { synctexEditAction } from "@/app/actions";
+import { FastTooltip } from "@/components/fast-tooltip";
+
+import type { PDFViewer } from "pdfjs-dist/types/web/pdf_viewer";
+
+import styles from "./pdf-viewer.module.css";
 
 GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
 
@@ -37,179 +42,225 @@ export function PdfJsViewer({
   compact?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const [pages, setPages] = useState<number>(0);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const viewerRef = useRef<PDFViewer | null>(null);
+  const [pages, setPages] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [documentVersion, setDocumentVersion] = useState(0);
-  const docRef = useRef<PDFDocumentProxy | null>(null);
+  const [ready, setReady] = useState(0);
+  const [zoom, setZoom] = useState<number | null>(null);
+  const [renderedZoom, setRenderedZoom] = useState(1);
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const latest = useRef({ project, artifactId, onJumpToSource, page });
+  latest.current = { project, artifactId, onJumpToSource, page };
+  const locationRef = useRef<{ pageNumber: number; left: number; top: number } | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    let loaded: PDFDocumentProxy | null = null;
+    const container = scrollerRef.current;
+    const host = hostRef.current;
+    const stage = stageRef.current;
+    if (!container || !host || !stage) return;
+    const controller = new AbortController();
+    let viewer: PDFViewer | null = null;
+    let loadingTask: ReturnType<typeof getDocument> | undefined;
+    let observer: ResizeObserver | undefined;
+    let initialized = false;
+    let previousWidth = container.clientWidth;
+    const savedLocation = locationRef.current;
     setPages(0);
     setError(null);
-    const task = getDocument({ url: src, withCredentials: true });
-    void task.promise.then(async (pdf) => {
-      if (cancelled) {
-        await pdf.cleanup();
-        return;
-      }
-      const previous = docRef.current;
-      docRef.current = pdf;
-      loaded = pdf;
-      void previous?.cleanup();
-      setPages(pdf.numPages);
-      setError(null);
-      setDocumentVersion((version) => version + 1);
-    }).catch((reason) => {
-      if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not open the PDF.");
-    });
-    return () => {
-      cancelled = true;
-      void task.destroy();
-      if (docRef.current === loaded) {
-        void loaded?.cleanup();
-        docRef.current = null;
-      }
-    };
-  }, [src]);
 
-  useEffect(() => {
-    const host = hostRef.current;
-    const pdf = docRef.current;
-    if (!host || !pdf || pages === 0) return;
-    let cancelled = false;
-    const layers: Array<{ canvas: HTMLCanvasElement; text?: TextLayer; annotation?: AnnotationLayer }> = [];
-    const renderTasks: Array<{ cancel: () => void }> = [];
-    const pageNumbers = page
-      ? [Math.max(1, Math.min(pages, page))]
-      : Array.from({ length: pages }, (_, index) => index + 1);
-    const deviceScale = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-    const linkService = {
-      addLinkAttributes(link: HTMLAnchorElement, url: string, newWindow = false) {
-        if (!url) return;
-        link.href = url;
-        link.rel = "noreferrer noopener";
-        if (newWindow) link.target = "_blank";
-      },
-      getDestinationHash: () => "#",
-      goToDestination: () => undefined,
-      getAnchorUrl: (hash: string) => hash || "#",
-      executeNamedAction: () => undefined,
-    };
-    const render = async () => {
-      host.replaceChildren();
-      for (const pageNumber of pageNumbers) {
-        if (cancelled) return;
-        const page = await pdf.getPage(pageNumber);
-        const viewport = page.getViewport({ scale: 1.15 });
-        const wrapper = document.createElement("div");
-        wrapper.dataset.page = String(pageNumber);
-        wrapper.className = compact
-          ? "pdf-viewer-page relative mb-2 w-full max-w-2xl overflow-hidden rounded border border-line bg-white shadow-xs"
-          : "pdf-viewer-page relative mb-3 w-full max-w-3xl overflow-hidden rounded border border-line bg-white shadow-xs";
-        wrapper.style.aspectRatio = `${viewport.width} / ${viewport.height}`;
-        wrapper.style.width = `${viewport.width}px`;
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.floor(viewport.width * deviceScale);
-        canvas.height = Math.floor(viewport.height * deviceScale);
-        canvas.className = "relative z-0 block h-auto w-full cursor-crosshair";
-        canvas.style.aspectRatio = `${viewport.width} / ${viewport.height}`;
-        const context = canvas.getContext("2d");
-        if (!context) continue;
-        const renderTask = page.render({
-          canvas,
-          canvasContext: context,
-          viewport,
-          transform: deviceScale === 1 ? undefined : [deviceScale, 0, 0, deviceScale, 0, 0],
-        });
-        renderTasks.push(renderTask);
-        await renderTask.promise;
-        if (cancelled) {
-          renderTask.cancel();
-          return;
-        }
-        const textLayerDiv = document.createElement("div");
-        textLayerDiv.className = "textLayer";
-        const annotationLayerDiv = document.createElement("div");
-        annotationLayerDiv.className = "annotationLayer";
-        wrapper.appendChild(canvas);
-        wrapper.appendChild(textLayerDiv);
-        wrapper.appendChild(annotationLayerDiv);
-        host.appendChild(wrapper);
-        // TextLayer consumes the stream with getReader, including browsers whose
-        // ReadableStream implementation has no async iterator.
-        const textLayer = new TextLayer({ textContentSource: page.streamTextContent(), container: textLayerDiv, viewport });
-        const layer: (typeof layers)[number] = { canvas, text: textLayer };
-        layers.push(layer);
-        await textLayer.render();
-        if (cancelled) return;
-        const annotations = await page.getAnnotations({ intent: "display" });
-        const annotationLayer = new AnnotationLayer({
-          div: annotationLayerDiv,
-          accessibilityManager: null,
-          annotationCanvasMap: null,
-          annotationEditorUIManager: null,
-          page,
-          viewport,
-          structTreeLayer: null,
-          commentManager: null,
-          annotationStorage: undefined,
-          linkService: linkService as never,
-        });
-        layer.annotation = annotationLayer;
-        await annotationLayer.render({
-          annotations,
-          div: annotationLayerDiv,
-          page,
-          viewport,
-          linkService: linkService as never,
-          renderForms: false,
-        });
-        canvas.addEventListener("click", (event) => {
-          const rect = canvas.getBoundingClientRect();
-          const viewportX = (event.clientX - rect.left) * (viewport.width / rect.width);
-          const viewportY = (event.clientY - rect.top) * (viewport.height / rect.height);
-          const [pdfX, pdfY] = viewport.convertToPdfPoint(viewportX, viewportY);
-          void synctexEditAction(project, pageNumber, pdfX, pdfY, artifactId).then((result) => {
-            if (result.ok) onJumpToSource?.(result.edit.file, result.edit.line);
+    // The viewer bundle reads the core's global export. Load it after the core,
+    // inside the browser effect, so server rendering never evaluates DOM APIs.
+    const start = async () => {
+      const { PDFViewer, PDFSinglePageViewer, PDFLinkService, EventBus } = await import("pdfjs-dist/web/pdf_viewer.mjs");
+      if (controller.signal.aborted) return;
+      const eventBus = new EventBus();
+      const linkService = new PDFLinkService({ eventBus, externalLinkRel: "noreferrer noopener" });
+      const Viewer = page ? PDFSinglePageViewer : PDFViewer;
+      viewer = new Viewer({
+        container,
+        viewer: host,
+        eventBus,
+        linkService,
+        annotationMode: AnnotationMode.ENABLE,
+        // PDFViewer accepts this lifecycle signal in the installed 6.3.289
+        // implementation. Its generated declarations omit the option.
+        ...{ abortSignal: controller.signal },
+      });
+      viewerRef.current = viewer;
+      linkService.setViewer(viewer);
+      const resizeCompact = () => {
+        if (!compact || !viewer || !initialized) return;
+        const current = viewer.getPageView(viewer.currentPageNumber - 1);
+        if (current) stage.style.height = `${Math.ceil(current.div.getBoundingClientRect().height + 2)}px`;
+      };
+      const reportRender = ({ error: reason }: { error?: unknown }) => {
+        if (controller.signal.aborted) return;
+        if (reason) setError(reason instanceof Error ? reason.message : "Could not render the PDF.");
+        resizeCompact();
+      };
+      eventBus.on("pagerendered", reportRender);
+      eventBus.on("scalechanging", ({ scale }: { scale: number }) => {
+        setRenderedZoom(scale);
+        resizeCompact();
+      });
+      eventBus.on("pagechanging", resizeCompact);
+      eventBus.on("updateviewarea", ({ location }: { location: { pageNumber: number; left: number; top: number } }) => {
+        if (initialized) locationRef.current = { pageNumber: location.pageNumber, left: location.left, top: location.top };
+      });
+      eventBus.on("pagesinit", () => {
+        if (!viewer || controller.signal.aborted) return;
+        initialized = true;
+        viewer.currentPageNumber = Math.max(1, Math.min(viewer.pagesCount, latest.current.page ?? savedLocation?.pageNumber ?? 1));
+        if (container.clientWidth > 0) viewer.currentScaleValue = zoomRef.current === null ? "page-width" : String(zoomRef.current);
+        if (savedLocation && !latest.current.page) {
+          viewer.scrollPageIntoView({
+            pageNumber: Math.min(viewer.pagesCount, savedLocation.pageNumber),
+            destArray: [null, { name: "XYZ" }, savedLocation.left, savedLocation.top, null],
+            ignoreDestinationZoom: true,
+            allowNegativeOffset: true,
           });
+        }
+        resizeCompact();
+        setReady(version => version + 1);
+      });
+      observer = new ResizeObserver(() => {
+        if (!viewer || !initialized) return;
+        if (previousWidth !== container.clientWidth) {
+          previousWidth = container.clientWidth;
+          if (zoomRef.current === null && container.clientWidth > 0) viewer.currentScaleValue = "page-width";
+        }
+        resizeCompact();
+        viewer.update();
+      });
+      observer.observe(container);
+      observer.observe(host);
+
+      container.addEventListener("click", event => {
+        const target = event.target;
+        if (!(target instanceof Element) || target.closest("a, button, input, textarea, select")) return;
+        if (window.getSelection()?.isCollapsed === false) return;
+        const element = target.closest<HTMLElement>(".page[data-page-number]");
+        if (!element || !viewer) return;
+        const number = Number(element.dataset.pageNumber);
+        const view = viewer.getPageView(number - 1);
+        if (!view?.pdfPage) return;
+        const rect = element.getBoundingClientRect();
+        const [pdfX, pdfY] = view.viewport.convertToPdfPoint(
+          (event.clientX - rect.left - element.clientLeft) * view.viewport.width / element.clientWidth,
+          (event.clientY - rect.top - element.clientTop) * view.viewport.height / element.clientHeight,
+        );
+        // SyncTeX uses points from the top-left. PDF destinations use points
+        // from the bottom-left, with the page box providing the origin.
+        const [left, , , top] = view.pdfPage.view;
+        const { project: currentProject, artifactId: currentArtifact, onJumpToSource: jump } = latest.current;
+        const clickedViewer = viewer;
+        void synctexEditAction(currentProject, number, pdfX - left, top - pdfY, currentArtifact).then(result => {
+          if (!controller.signal.aborted && viewer === clickedViewer && result.ok) jump?.(result.edit.file, result.edit.line);
+        }).catch(reason => {
+          if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Could not locate the PDF source.");
         });
-      }
+      }, { signal: controller.signal });
+
+      loadingTask = getDocument({ url: src, withCredentials: true });
+      const pdf = await loadingTask.promise;
+      if (controller.signal.aborted) return;
+      setPages(pdf.numPages);
+      linkService.setDocument(pdf);
+      viewer.setDocument(pdf);
     };
-    void render().catch((reason) => {
-      if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not render the PDF.");
+    void start().catch(reason => {
+      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Could not open the PDF.");
     });
     return () => {
-      cancelled = true;
-      for (const task of renderTasks) task.cancel();
-      for (const layer of layers) {
-        layer.text?.cancel();
-        layer.annotation?.destroy();
-        layer.canvas.replaceWith();
-      }
+      // Capture a scroll that happened just before React replaced the artifact,
+      // including moves whose animation-frame scroll observer is still queued.
+      if (initialized && viewer?.pdfDocument) viewer.update();
+      controller.abort();
+      observer?.disconnect();
+      // The installed implementation uses null to cancel page views and reset.
+      if (viewer) (viewer.setDocument as (document: PDFDocumentProxy | null) => void)(null);
+      if (viewerRef.current === viewer) viewerRef.current = null;
+      void loadingTask?.destroy();
     };
-  }, [artifactId, compact, documentVersion, onJumpToSource, page, pages, project]);
+  }, [src, Boolean(page), compact]);
 
   useEffect(() => {
-    if (!sourceTarget || !hostRef.current) return;
-    const target = hostRef.current.querySelector(`[data-page="${sourceTarget.page}"]`) as HTMLElement | null;
-    target?.scrollIntoView({ block: "center" });
-  }, [sourceTarget]);
+    const viewer = viewerRef.current;
+    if (!viewer?.pdfDocument || !ready) return;
+    const container = scrollerRef.current;
+    if (zoom === null && !container?.clientWidth) return;
+    const horizontalCenter = container && container.scrollWidth > container.clientWidth
+      ? (container.scrollLeft + container.clientWidth / 2) / container.scrollWidth
+      : 0.5;
+    viewer.currentScaleValue = zoom === null ? "page-width" : String(zoom);
+    if (container) container.scrollLeft = Math.max(0, horizontalCenter * container.scrollWidth - container.clientWidth / 2);
+  }, [zoom, ready]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer?.pdfDocument || !ready || !page) return;
+    viewer.currentPageNumber = Math.max(1, Math.min(viewer.pagesCount, page));
+  }, [page, ready]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!sourceTarget || !viewer?.pdfDocument || !ready) return;
+    const pdfDocument = viewer.pdfDocument;
+    let cancelled = false;
+    const navigate = async () => {
+      const targetPage = Math.max(1, Math.min(viewer.pagesCount, sourceTarget.page));
+      const pdfPage = await pdfDocument.getPage(targetPage);
+      if (cancelled || viewerRef.current !== viewer) return;
+      const [left, , , top] = pdfPage.view;
+      viewer.scrollPageIntoView({
+        pageNumber: targetPage,
+        destArray: [null, { name: "XYZ" }, left + sourceTarget.x, top - sourceTarget.y, null],
+        ignoreDestinationZoom: true,
+        allowNegativeOffset: true,
+        center: "vertical",
+      });
+    };
+    void navigate().catch(reason => {
+      if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not locate the PDF position.");
+    });
+    return () => { cancelled = true; };
+  }, [sourceTarget, ready]);
+
+  const changeZoom = (factor: number) => setZoom(current => Math.min(4, Math.max(0.1, (current ?? renderedZoom) * factor)));
 
   return (
-    <div className={compact ? "relative min-h-0 overflow-hidden" : "relative h-full min-h-0 overflow-auto bg-canvas/40 p-4"}>
+    <div className={`${styles.viewer}${compact ? ` ${styles.compact}` : ""}`}>
       {observationMessage && (
-        <p className="mb-3 text-[11px] font-medium text-warn" role="status">{observationMessage}</p>
+        <p className={styles.notice} role="status">{observationMessage}</p>
       )}
       {stale && (
-        <p className="mb-3 text-[11px] font-medium text-warn">Showing the last successful PDF. Source has changed.</p>
+        <p className={styles.notice}>Showing the last successful PDF. Source has changed.</p>
       )}
-      {error && <p className="text-sm text-danger">{error}</p>}
-      <div className="mb-2 flex items-center justify-between gap-2 text-[10px] text-faint">
+      {error && <p className={styles.error} role="alert">{error}</p>}
+      <div className={styles.toolbar} role="toolbar" aria-label="PDF viewing">
         {pages > 0 && <span>{compact ? "PDF figure" : `${pages} page${pages === 1 ? "" : "s"}`}</span>}
-        <a className="text-accent hover:underline" href={src} target="_blank" rel="noreferrer">Open PDF</a>
+        <div className={styles.zoomControls}>
+          <FastTooltip label="Zoom out">
+            <button type="button" aria-label="Zoom out" disabled={pages === 0 || renderedZoom <= 0.1} onClick={() => changeZoom(1 / 1.2)}><Minus size={13} /></button>
+          </FastTooltip>
+          <output aria-label="PDF zoom" className={styles.zoomReadout}>{Math.round(renderedZoom * 100)}%</output>
+          <FastTooltip label="Zoom in">
+            <button type="button" aria-label="Zoom in" disabled={pages === 0 || renderedZoom >= 4} onClick={() => changeZoom(1.2)}><Plus size={13} /></button>
+          </FastTooltip>
+          <FastTooltip label="Fit to width">
+            <button type="button" aria-label="Fit to width" aria-pressed={zoom === null} disabled={pages === 0} className={styles.fitButton} onClick={() => { setZoom(null); if (scrollerRef.current) scrollerRef.current.scrollLeft = 0; }}><Maximize2 size={12} /><span>Fit</span></button>
+          </FastTooltip>
+        </div>
+        <a href={src} target="_blank" rel="noreferrer">Open PDF</a>
       </div>
-      <div ref={hostRef} />
+      <div ref={stageRef} className={styles.stage}>
+      <div ref={scrollerRef} className={styles.scrollport} aria-label="PDF pages" tabIndex={0}>
+        <div ref={hostRef} className={`pdfViewer ${styles.pages}`} />
+      </div>
+      </div>
     </div>
   );
 }

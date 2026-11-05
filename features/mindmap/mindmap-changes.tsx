@@ -142,13 +142,13 @@ function activityDetail(item: RecentActivityItem): string | undefined {
     ? item.resources
       .slice(0, 6)
       .map((resource) => `${readableResourceKind(resource.kind)} ${resource.id}`)
-      .join(" · ")
+      .join(", ")
     : undefined;
   const changeDetail = item.changes?.length
     ? item.changes
       .slice(0, 6)
       .map((change) => `${change.field}: ${shortValue(change.before)} → ${shortValue(change.after)}`)
-      .join(" · ")
+      .join(", ")
     : undefined;
   return [changeDetail, resourceDetail].filter(Boolean).join(" | ") || undefined;
 }
@@ -172,7 +172,7 @@ function gitEntry(project: string, commit: MindmapChangesHistoryEntry): GitEntry
     href: `/p/${encodeURIComponent(project)}/paper`,
     title: commit.message || commit.hash.slice(0, 8),
     description: `Git commit by ${commit.author || "Unknown actor"}.`,
-    detail: commit.files.length ? commit.files.slice(0, 8).join(" · ") : commit.hash.slice(0, 8),
+    detail: commit.files.length ? commit.files.slice(0, 8).join(", ") : commit.hash.slice(0, 8),
     commit,
   };
 }
@@ -315,7 +315,7 @@ export function MindmapChangesView({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            className="btn-outline"
+            className="p-button p-button-default btn-outline"
             disabled={visible.length === 0}
             onClick={() => {
               setAdvisorText(advisorDraft);
@@ -326,7 +326,7 @@ export function MindmapChangesView({
             Prepare advisor summary
           </button>
           {advisorOpen && (
-            <button type="button" className="btn-outline" onClick={() => void copyMeetingSummary()}>
+            <button type="button" className="p-button p-button-default btn-outline" onClick={() => void copyMeetingSummary()}>
               Copy meeting summary
             </button>
           )}

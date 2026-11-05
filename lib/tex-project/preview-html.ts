@@ -13,11 +13,16 @@ import { toHtml } from "hast-util-to-html";
 import katex from "katex";
 
 import { headingOccurrenceKey, texHeadingLevel } from "@/features/paper/heading-keys";
+import { commentKindAppearance } from "@/lib/comment-kinds";
+import { parseAnchorAttrs } from "@/lib/marker-codec";
+import { todoIsComplete } from "@/lib/todo-meta";
 import { resolveAssetUrl } from "@/lib/marker-codec";
 import { formatReference, refId, type BibEntry } from "@/lib/bibtex";
 import { extractPreviewMacroBindings } from "./pandoc-macros";
 import { inlineBundleIncludesMapped } from "./source-bundle-format";
 import { parseTexForDisplay, type TexRoot } from "./tex-ast";
+import { headingInvocation } from "./section-ranges";
+import { maskTexLiterals } from "./tex-literals";
 
 export type PreviewBlock =
   | {
@@ -85,6 +90,10 @@ function silent(): Node {
   return htmlLike({ tag: "span", attributes: { className: "ob-tex-silent" }, content: [] });
 }
 
+function texLabelId(label: string): string {
+  return `ob-tex-label-${encodeURIComponent(label.trim())}`;
+}
+
 function citeKeys(raw: string): string[] {
   return raw
     .split(/[;,]/)
@@ -118,6 +127,61 @@ function pruneEmptyTableRows(node: unknown, insideTable = false): void {
     });
   }
   for (const child of element.children) pruneEmptyTableRows(child, inTable);
+}
+
+/** Promote TeX spanning-cell metadata onto the containing HTML table cells. */
+function hydrateTableSpans(hast: unknown): void {
+  walkHast(hast, table => {
+    if (table.tagName !== "table") return;
+    const rows: HastElement[] = [];
+    for (const child of table.children || []) {
+      const element = child as HastElement;
+      if (element.tagName === "tr") rows.push(element);
+      else if (["thead", "tbody", "tfoot"].includes(element.tagName || "")) {
+        rows.push(...(element.children || []).filter(row => (row as HastElement).tagName === "tr") as HastElement[]);
+      }
+    }
+    const occupiedUntil = new Map<number, number>();
+    rows.forEach((row, rowIndex) => {
+      let column = 0;
+      row.children = (row.children || []).filter(child => {
+        const cell = child as HastElement;
+        if (cell.tagName !== "td" && cell.tagName !== "th") return true;
+        // TeX retains an empty & placeholder under a multirow cell.
+        if ((occupiedUntil.get(column) || 0) > rowIndex && emptyTablePlaceholder(cell)) {
+          column += 1;
+          return false;
+        }
+        let rowSpan = 1;
+        let colSpan = 1;
+        walkHast(cell, element => {
+          const rows = Number(attr(element, "data-ob-rowspan"));
+          const columns = Number(attr(element, "data-ob-colspan"));
+          if (Number.isInteger(rows) && rows > 1) rowSpan = Math.min(rows, 1000);
+          if (Number.isInteger(columns) && columns > 1) colSpan = Math.min(columns, 1000);
+        });
+        if (rowSpan > 1) {
+          rowSpan = Math.min(rowSpan, rows.length - rowIndex);
+          cell.properties = { ...cell.properties, rowSpan };
+          for (let offset = 0; offset < colSpan; offset += 1) occupiedUntil.set(column + offset, rowIndex + rowSpan);
+        }
+        if (colSpan > 1) cell.properties = { ...cell.properties, colSpan };
+        column += colSpan;
+        return true;
+      });
+    });
+  });
+}
+
+function emptyTablePlaceholder(node: unknown): boolean {
+  if (!node || typeof node !== "object") return false;
+  const element = node as HastElement;
+  if (element.type === "text") return !element.value?.trim();
+  if (element.type === "comment") return true;
+  if (element.type !== "element") return false;
+  if (element.tagName !== "td" && element.tagName !== "th"
+    && (element.tagName !== "span" || classOf(element) !== "ob-tex-silent")) return false;
+  return (element.children || []).every(emptyTablePlaceholder);
 }
 
 function attr(element: HastElement, name: string): string {
@@ -232,7 +296,13 @@ function buildReplacements(
 
   const heading = (command: string) => (node: Macro) => {
     const titleNodes = lastArg(node);
-    const titleText = printRaw(titleNodes).trim();
+    // Child macros have already become HTML by this stage. Navigation uses
+    // the original heading argument shared with the source editor.
+    const offset = node.position?.start.offset;
+    const invocation = typeof offset === "number" ? headingInvocation(previewSource, offset) : null;
+    const titleText = invocation
+      ? previewSource.slice(invocation.titleFrom, invocation.titleTo).trim()
+      : printRaw(titleNodes).trim();
     const level = texHeadingLevel(command);
     if (command === "title") {
       return htmlLike({
@@ -274,7 +344,7 @@ function buildReplacements(
       }
       chips.push(htmlLike({
         tag: "a",
-        attributes: { className: "ob-cite", href: `#${refId(canon)}` },
+        attributes: { className: "ob-cite", href: `#${refId(canon)}`, "data-cite-key": bibByKey.get(canon)?.key || key, "aria-label": `Reference ${num}: ${bibByKey.get(canon)?.fields.title || key}` },
         content: [htmlLike({
           tag: "span",
           attributes: { className: "ob-cite-num" },
@@ -340,10 +410,35 @@ function buildReplacements(
   };
 
   const replacements: Record<string, (node: Macro) => Node> = {
-    obclaim: (node: Macro) => htmlLike({ tag: "span", attributes: { className: "ob-claim-inline" }, content: lastArg(node) }),
+    obclaim: (node: Macro) => htmlLike({ tag: "span", attributes: {
+      className: "ob-claim-inline", tabIndex: "0", role: "button", "aria-haspopup": "dialog",
+      "data-ob-annotation": "Claim", "data-annotation-source": printRaw(node),
+    }, content: lastArg(node) }),
     obevidence: (node: Macro) => htmlLike({ tag: "span", attributes: { className: "ob-evidence-inline" }, content: lastArg(node) }),
-    obcomment: (node: Macro) => htmlLike({ tag: "span", attributes: { className: "ob-comment-inline", title: "Comment" }, content: lastArg(node) }),
-    obtodo: (node: Macro) => htmlLike({ tag: "span", attributes: { className: "ob-todo-inline", title: "TODO" }, content: lastArg(node) }),
+    obcomment: (node: Macro) => {
+      const kind = parseAnchorAttrs(printRaw(argNodes(node, 0))).kind;
+      const appearance = commentKindAppearance(kind);
+      return htmlLike({ tag: "span", attributes: {
+        className: `ob-comment-inline ob-comment-tone-${appearance.tone}`,
+        tabIndex: "0", role: "button", "aria-haspopup": "dialog",
+        "data-ob-annotation": appearance.label, "data-annotation-source": printRaw(node),
+        "data-comment-kind": appearance.label,
+      }, content: lastArg(node) });
+    },
+    obtodo: (node: Macro) => {
+      const attrs = parseAnchorAttrs(printRaw(argNodes(node, 0)));
+      const completed = todoIsComplete(attrs);
+      return htmlLike({ tag: "span", attributes: {
+        className: "ob-todo-inline", "data-completed": String(completed),
+      }, content: [
+        htmlLike({ tag: "input", attributes: {
+          type: "checkbox", className: "ob-todo-checkbox", "data-ob-todo-id": attrs.id || "",
+          "aria-label": `TODO completed${attrs.title ? `: ${attrs.title}` : ""}`,
+          disabled: "disabled", ...(completed ? { checked: "checked" } : {}),
+        }, content: [] }),
+        htmlLike({ tag: "span", attributes: { className: "ob-todo-text" }, content: lastArg(node) }),
+      ] });
+    },
     obmarker: (node: Macro) => htmlLike({
       tag: "span",
       attributes: { className: `ob-marker-${printRaw(argNodes(node, 0)).replace(/[^a-z0-9-]/gi, "") || "note"}` },
@@ -364,6 +459,16 @@ function buildReplacements(
     parencite: cite,
     textcite: cite,
     obcite: cite,
+    label: (node: Macro) => htmlLike({
+      tag: "span", attributes: { id: texLabelId(printRaw(lastArg(node))) }, content: [],
+    }),
+    ...Object.fromEntries(["ref", "eqref"].map(command => [command, (node: Macro) => {
+      const label = printRaw(lastArg(node)).trim();
+      return htmlLike({ tag: "a", attributes: {
+        className: "ob-tex-ref", href: `#${texLabelId(label)}`,
+        "data-tex-reference": label, "data-tex-reference-command": command,
+      }, content: [str(label)] });
+    }])),
     includegraphics,
     input: inputLike,
     include: inputLike,
@@ -374,6 +479,21 @@ function buildReplacements(
       attributes: { className: "ob-tex-caption" },
       content: lastArg(node),
     }),
+    footnote: (node: Macro) => htmlLike({
+      tag: "small",
+      attributes: { className: "ob-tex-footnote" },
+      content: [str(" ("), ...lastArg(node), str(")")],
+    }),
+    ...Object.fromEntries(["fbox", "fcolorbox"].map(command => [command, (node: Macro) => htmlLike({
+      tag: "span",
+      attributes: { className: "ob-tex-box inline-block max-w-full border border-line px-3 py-2" },
+      content: lastArg(node),
+    })])),
+    parbox: (node: Macro) => htmlLike({
+      tag: "span",
+      attributes: { className: "ob-tex-parbox" },
+      content: lastArg(node),
+    }),
     documentclass: () => silent(),
     usepackage: () => silent(),
     maketitle: () => silent(),
@@ -381,6 +501,16 @@ function buildReplacements(
     shortstack: (node: Macro) => htmlLike({
       tag: "span",
       attributes: { className: "ob-tex-shortstack" },
+      content: lastArg(node),
+    }),
+    multirow: (node: Macro) => htmlLike({
+      tag: "span",
+      attributes: { "data-ob-rowspan": printRaw(node.args?.find(arg => arg.openMark === "{")?.content || []) },
+      content: lastArg(node),
+    }),
+    multicolumn: (node: Macro) => htmlLike({
+      tag: "span",
+      attributes: { "data-ob-colspan": printRaw(argNodes(node, 0)) },
       content: lastArg(node),
     }),
     textsc: (node: Macro) => htmlLike({
@@ -447,13 +577,19 @@ function textOf(node: unknown): string {
 
 function renderMath(source: string, display: boolean): string {
   try {
-    return katex.renderToString(source, { displayMode: display, throwOnError: false });
+    return katex.renderToString(source, {
+      displayMode: display,
+      throwOnError: false,
+      macros: { "\\label": { tokens: [], numArgs: 1 } },
+    });
   } catch {
     return source;
   }
 }
 
 function hydrateMathAndBibliography(hast: unknown, options: HastPreviewOptions, headingKey: string): void {
+  const equationLabels = new Map<string, string>();
+  let equationNumber = 0;
   walkHast(hast, (element) => {
     const classes = classOf(element).split(/\s+/);
     if (classes.includes("inline-math")) {
@@ -462,8 +598,20 @@ function hydrateMathAndBibliography(hast: unknown, options: HastPreviewOptions, 
       element.properties = { ...element.properties, className: `${classOf(element)} ob-rendered-math`.trim() };
     }
     if (classes.includes("display-math")) {
-      const html = renderMath(textOf(element), true);
-      element.children = [{ type: "raw", value: html }];
+      const source = textOf(element);
+      const html = renderMath(source, true);
+      const labels = [...source.matchAll(/\\label\s*\{([^{}]+)\}/g)].map(match => match[1]!.trim());
+      const automaticNumbers = [...html.matchAll(/class="eqn-num"/g)].length;
+      const explicitTag = /\\tag\*?\s*\{([^{}]+)\}/.exec(source)?.[1];
+      // KaTeX's automatic numbers use a document-wide CSS counter. A single
+      // numbered display has an unambiguous label-to-number association.
+      const number = explicitTag || (automaticNumbers === 1 ? String(equationNumber + 1) : undefined);
+      equationNumber += automaticNumbers;
+      if (number) for (const label of labels) equationLabels.set(label, number);
+      element.children = [
+        ...labels.map(label => ({ type: "element", tagName: "span", properties: { id: texLabelId(label) }, children: [] })),
+        { type: "raw", value: html },
+      ];
       element.properties = { ...element.properties, className: `${classOf(element)} ob-rendered-math`.trim() };
     }
     if (classes.includes("ob-hast-bib")) {
@@ -475,6 +623,13 @@ function hydrateMathAndBibliography(hast: unknown, options: HastPreviewOptions, 
       element.tagName = "div";
       element.children = html ? [{ type: "raw", value: html }] : [];
     }
+  });
+  walkHast(hast, element => {
+    const label = attr(element, "data-tex-reference");
+    const number = equationLabels.get(label);
+    if (!number) return;
+    const text = attr(element, "data-tex-reference-command") === "eqref" ? `(${number})` : number;
+    element.children = [{ type: "text", value: text }];
   });
 }
 
@@ -514,18 +669,12 @@ function pdfFigureFromHast(node: unknown): { src: string; page?: number } | null
   return { src, ...(pageMatch ? { page: Number(pageMatch[1]) } : {}) };
 }
 
-/** Find a PDF figure at any depth (figure environments usually wrap it). */
-function nestedPdfFigureFromHast(node: unknown): { src: string; page?: number } | null {
+/** Collect every PDF panel in document order. */
+function nestedPdfFiguresFromHast(node: unknown): Array<{ src: string; page?: number }> {
   const direct = pdfFigureFromHast(node);
-  if (direct) return direct;
-  if (!node || typeof node !== "object") return null;
-  const element = node as HastElement;
-  if (!Array.isArray(element.children)) return null;
-  for (const child of element.children) {
-    const found = nestedPdfFigureFromHast(child);
-    if (found) return found;
-  }
-  return null;
+  if (direct) return [direct];
+  const children = node && typeof node === "object" ? (node as HastElement).children : undefined;
+  return children?.flatMap(nestedPdfFiguresFromHast) || [];
 }
 
 /** Clone a HAST subtree while removing the structured PDF object. */
@@ -560,17 +709,17 @@ function blocksFromHast(hast: unknown): { blocks: PreviewBlock[]; headingKeys: s
       groups.push({ kind: "figure", key: `figure-${groups.length}`, ...figure });
       continue;
     }
-    const nestedFigure = nestedPdfFigureFromHast(child);
-    if (nestedFigure) {
+    const nestedFigures = nestedPdfFiguresFromHast(child);
+    if (nestedFigures.length) {
       flush();
       const remainder = withoutPdfObjects(child);
       const caption = remainder ? serializeRoot([remainder]) : "";
-      groups.push({
+      nestedFigures.forEach((panel, index) => groups.push({
         kind: "figure",
         key: `figure-${groups.length}`,
-        ...nestedFigure,
-        ...(caption.trim() ? { caption } : {}),
-      });
+        ...panel,
+        ...(index === nestedFigures.length - 1 && caption.trim() ? { caption } : {}),
+      }));
       continue;
     }
     const element = child as HastElement;
@@ -590,7 +739,7 @@ function blocksFromHast(hast: unknown): { blocks: PreviewBlock[]; headingKeys: s
     if (group.kind === "figure") {
       return {
         key: group.key || `figure-${index}`,
-        hash: fnv1a(`${group.src}#${group.page || 1}`),
+        hash: fnv1a(`${group.src}#${group.page || 1}#${group.caption || ""}`),
         kind: "figure",
         src: group.src,
         ...(group.page ? { page: group.page } : {}),
@@ -615,12 +764,15 @@ function attachSourceRanges(
   mapOffset: (offset: number) => number = (offset) => offset,
   mapFilePath?: (offset: number) => string | undefined,
 ): PreviewBlock[] {
-  const headings = [...source.matchAll(/\\(section|subsection|subsubsection|paragraph|subparagraph)\*?\s*\{([^{}\n]*)\}/g)]
-    .map((match) => ({
-      from: match.index ?? 0,
-      command: match[1]!,
-      title: match[2]!,
-    }));
+  const visible = maskTexLiterals(source);
+  const headings = [...visible.matchAll(/\\(section|subsection|subsubsection|paragraph|subparagraph)\*?(?![A-Za-z])/g)]
+    .flatMap((match) => {
+      const from = match.index ?? 0;
+      const invocation = headingInvocation(visible, from);
+      return invocation ? [{
+        from, command: match[1]!, title: source.slice(invocation.titleFrom, invocation.titleTo),
+      }] : [];
+    });
   const counts = new Map<string, number>();
   const ranges = headings.map((heading, index) => ({
     key: headingOccurrenceKey(texHeadingLevel(heading.command), heading.title, counts),
@@ -691,6 +843,7 @@ function recoverPreviewBySection(source: string, options: PreviewHtmlOptions, di
       });
       const hast = processor.runSync(tree);
       pruneEmptyTableRows(hast);
+      hydrateTableSpans(hast);
       const rendered = blocksFromHast(hast);
       for (const block of rendered.blocks) {
         blocks.push({ ...block, key: `${block.key}-${index}`, sourceFrom: from, sourceTo: to });
@@ -726,6 +879,7 @@ export function renderPreviewDocument(source: string, options: PreviewHtmlOption
     });
     const hast = processor.runSync(tree);
     pruneEmptyTableRows(hast);
+    hydrateTableSpans(hast);
     const headingKey = headingOccurrenceKey(2, "References", headingCounts);
     patchBibliographyPlaceholders(hast, cites.order, headingKey);
     hydrateMathAndBibliography(hast, options, headingKey);

@@ -4,7 +4,7 @@ import { Check, CircleAlert, LoaderCircle } from "lucide-react";
 import { FastTooltip } from "./fast-tooltip";
 import { cn } from "@/lib/utils";
 
-type RemoteState = "checking" | "pending" | "syncing" | "synced" | "changed" | "blocked" | "unavailable" | "failed";
+type RemoteState = "checking" | "pending" | "syncing" | "synced" | "changed" | "blocked" | "unconfigured" | "unavailable" | "failed";
 
 export function SaveSyncStatus({ saved, saving, conflict = false, error, remote, onRetry, compact = false }: {
   saved: boolean;
@@ -28,14 +28,15 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
                   : remote === "failed" ? "Git sync failed"
                     : "Saved locally";
   const detail = [
-    saved ? "One check: saved to project files." : "Saving your latest edits to project files.",
-    synced ? "Two checks: the saved changes are confirmed on the Git remote."
+    saved ? "Saved to project files." : "Saving your latest edits to project files.",
+    synced ? "The saved changes are confirmed on the Git remote."
+      : remote === "unconfigured" ? "Connect an Overleaf repository to enable Git synchronization."
       : remote === "checking" ? "Checking the latest Git status."
         : remote === "syncing" ? "Uploading the saved changes to Git."
           : "The saved changes are waiting for Git synchronization.",
     error,
   ].filter(Boolean).join("\n");
-  const canRetry = saved && !saving && !conflict && remote !== "synced" && remote !== "syncing" && remote !== "checking" && remote !== "changed" && !!onRetry;
+  const canRetry = saved && !saving && !conflict && ["pending", "blocked", "unavailable", "failed"].includes(remote) && !!onRetry;
   return <FastTooltip label={`${detail}${canRetry ? "\nClick to retry Git sync." : ""}`}>
     <button type="button" onClick={canRetry ? onRetry : undefined}
       aria-label={label} aria-disabled={!canRetry} data-save-stage={synced ? "remote" : saved ? "local" : "unsaved"}

@@ -4,6 +4,7 @@ import { RotateCcw, SlidersHorizontal } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { ChoiceButtons } from "@/components/choice-buttons";
+import { FastTooltip } from "@/components/fast-tooltip";
 import { AnchoredPop } from "@/components/pop";
 
 export type PaperReaderFont = "serif" | "sans";
@@ -60,11 +61,11 @@ export function PaperAppearance({
 
   return (
     <div className="relative shrink-0">
+      <FastTooltip label="Appearance">
       <button
         ref={anchorRef}
         type="button"
         className="ob-press inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] text-muted hover:bg-surface-2 hover:text-ink"
-        title="Appearance"
         aria-label="Appearance"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
@@ -72,6 +73,7 @@ export function PaperAppearance({
         <SlidersHorizontal size={12} />
         <span className="hidden sm:inline">Appearance</span>
       </button>
+      </FastTooltip>
       <AnchoredPop
         open={open}
         anchorRef={anchorRef}
@@ -80,7 +82,7 @@ export function PaperAppearance({
         className="ob-paper-appearance-pop"
       >
         <div className="mb-2 flex items-center justify-between gap-2">
-          <p className="text-[11px] font-semibold text-ink">Appearance</p>
+          <p className="text-sm font-semibold text-ink">Appearance</p>
           <button
             type="button"
             className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-[10px] text-muted hover:bg-surface-2 hover:text-ink"
@@ -90,7 +92,9 @@ export function PaperAppearance({
             <RotateCcw size={10} /> Reset
           </button>
         </div>
-        <p className="ob-paper-appearance-section">Reader</p>
+        <div className="ob-paper-appearance-columns">
+        <section aria-label="Reader appearance">
+        <h3 className="ob-paper-appearance-section">Reader</h3>
         <div className="ob-paper-appearance-row">
           <span>Font size</span>
           <TextSizeSlider label="Reader text size" value={readerFontScale * 17} onChange={(value) => onReaderFontScaleChange(value / 17)} />
@@ -103,16 +107,22 @@ export function PaperAppearance({
           <span>Typeface</span>
           <ChoiceButtons label="Reader typeface" value={font} options={[{value: "serif" as const, label: "Serif"}, {value: "sans" as const, label: "Sans"}]} onChange={onFontChange} />
         </div>
-        <p className="ob-paper-appearance-section">Editor</p>
+        </section>
+        <section aria-label="Editor appearance">
+        <h3 className="ob-paper-appearance-section">Editor</h3>
         <div className="ob-paper-appearance-row">
           <span>Font size</span>
           <TextSizeSlider label="Editor text size" value={editorFontScale * 14} onChange={(value) => onEditorFontScaleChange(value / 14)} />
         </div>
-        <p className="ob-paper-appearance-section">Layout</p>
+        </section>
+        </div>
+        <section className="ob-paper-appearance-shared" aria-label="Shared appearance">
+        <h3 className="ob-paper-appearance-section">Shared layout</h3>
         <div className="ob-paper-appearance-row">
           <span>Workspace width</span>
           <ChoiceButtons label="Workspace width" value={width} options={WIDTH_OPTIONS} onChange={onWidthChange} />
         </div>
+        </section>
         <p className="ob-paper-appearance-help">Saved for this project on this device.</p>
       </AnchoredPop>
     </div>

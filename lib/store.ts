@@ -27,10 +27,6 @@ import {
   readProjectRecord,
   nativeBodyRel,
   resolveNativeBodyAbs,
-  renamePaperSection,
-  setPaperSectionHeading,
-  addPaperSection,
-  removePaperSection,
   texPaths,
   writeDocument,
   patchDocumentState,
@@ -64,6 +60,7 @@ import {
   type PaperSectionRefTarget,
 } from "./research/artifact-link";
 import { filterProjectsForPublicDemo } from "./server/demo-mode";
+import { projectLastEditedAt } from "./research/project-edited";
 import {
   Mindmap,
   Project,
@@ -143,7 +140,7 @@ export function listProjects(): Project[] {
   const projects = slugs
     .map((slug) => getProject(slug))
     .filter((p): p is Project => p != null);
-  return projects.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  return projects.sort((a, b) => (b.lastEditedAt || b.updatedAt || "").localeCompare(a.lastEditedAt || a.updatedAt || ""));
 }
 
 /** Project catalog for pages and browser WebMCP. Keep listProjects raw for scripts and checks. */
@@ -169,6 +166,7 @@ function listedProjectFallback(slug: string, dir: string, raw: unknown): Project
   if (text("venue")) project.venue = text("venue");
   if (text("label")) project.label = text("label");
   project.diskHash = projectFileHash(dir);
+  project.lastEditedAt = projectLastEditedAt(dir, texPaths(dir).paperFile, project.updatedAt);
   return project;
 }
 
@@ -208,6 +206,7 @@ export function getProject(slug: string): Project | null {
     overview: parsed.overview || "",
     links: parsed.links || [],
     diskHash: projectFileHash(dir),
+    lastEditedAt: projectLastEditedAt(dir, texPaths(dir).paperFile, parsed.updatedAt),
   };
 }
 
@@ -517,39 +516,6 @@ export function getPaperEditorState(slug: string): PaperEditorState | null {
       diagnostics: sourceContext.diagnostics,
     },
   };
-}
-
-function paperTitle(slug: string): string {
-  return getProject(slug)?.title || slug;
-}
-
-function requireTexDir(slug: string): string {
-  const dir = projectDir(slug);
-  if (!hasTexProject(dir)) throw new Error(`Project ${slug} has no primary TeX manuscript.`);
-  return dir;
-}
-
-export function renameEditablePaperSection(slug: string, id: string, title: string): TexPaper {
-  return renamePaperSection(requireTexDir(slug), paperTitle(slug), id, title);
-}
-
-export function setEditablePaperSectionHeading(
-  slug: string,
-  id: string,
-  heading: { level?: number; appendix?: boolean },
-): TexPaper {
-  return setPaperSectionHeading(requireTexDir(slug), paperTitle(slug), id, heading);
-}
-
-export function addEditablePaperSection(
-  slug: string,
-  spec: { title: string; afterId?: string; level?: number; appendix?: boolean },
-): TexPaper {
-  return addPaperSection(requireTexDir(slug), paperTitle(slug), spec);
-}
-
-export function removeEditablePaperSection(slug: string, id: string): TexPaper {
-  return removePaperSection(requireTexDir(slug), paperTitle(slug), id);
 }
 
 export function projectContentDir(slug: string): string {

@@ -6,7 +6,7 @@ export interface MacroMatch {
   length: number;
 }
 
-const VERBATIM_ENVIRONMENTS = new Set(["verbatim", "Verbatim", "lstlisting", "minted", "comment"]);
+import { TEX_LITERAL_ENVIRONMENTS } from "@/lib/tex-project/tex-literals";
 
 function isEscaped(source: string, index: number): boolean {
   let backslashes = 0;
@@ -14,7 +14,7 @@ function isEscaped(source: string, index: number): boolean {
   return backslashes % 2 === 1;
 }
 
-function skipBalanced(source: string, start: number, open: string, close: string): number | undefined {
+function skipBalanced(source: string, start: number, open: string, close: string, quotedValues = open === "["): number | undefined {
   let depth = 1;
   let inComment = false;
   let quote: string | undefined;
@@ -37,7 +37,7 @@ function skipBalanced(source: string, start: number, open: string, close: string
       cursor += 1;
       continue;
     }
-    if (char === '"' || char === "'") {
+    if (quotedValues && (char === '"' || char === "'") && source.slice(start + 1, cursor).trimEnd().endsWith("=")) {
       quote = char;
       continue;
     }
@@ -52,10 +52,53 @@ function skipBalanced(source: string, start: number, open: string, close: string
 
 function skipVerbatimEnvironment(source: string, index: number): number | undefined {
   const begin = /^\\begin\{([^}]+)\}/.exec(source.slice(index));
-  if (!begin || !VERBATIM_ENVIRONMENTS.has(begin[1]!)) return undefined;
+  if (!begin || !TEX_LITERAL_ENVIRONMENTS.has(begin[1]!)) return undefined;
   const endToken = `\\end{${begin[1]}}`;
   const end = source.indexOf(endToken, index + begin[0].length);
   return end < 0 ? source.length : end + endToken.length;
+}
+
+function skipDefinition(source: string, index: number): number | undefined {
+  const command = /^\\(newcommand|renewcommand|providecommand|DeclareRobustCommand|(?:New|Renew|Provide|Declare)(?:Expandable)?DocumentCommand|newenvironment|renewenvironment|provideenvironment|(?:New|Renew|Provide|Declare)DocumentEnvironment|def|gdef|edef|xdef)\*?(?![A-Za-z@])/.exec(source.slice(index));
+  if (!command) return undefined;
+  let cursor = index + command[0].length;
+  const trivia = () => {
+    while (cursor < source.length) {
+      if (/\s/.test(source[cursor]!)) cursor += 1;
+      else if (source[cursor] === "%") {
+        const end = source.indexOf("\n", cursor);
+        cursor = end < 0 ? source.length : end + 1;
+      } else break;
+    }
+  };
+  const group = () => {
+    trivia();
+    if (source[cursor] !== "{") return false;
+    cursor = skipBalanced(source, cursor, "{", "}") ?? source.length;
+    return true;
+  };
+  trivia();
+  if (source[cursor] === "{") group();
+  else {
+    const name = /^\\(?:[A-Za-z@]+|.)/.exec(source.slice(cursor));
+    if (!name) return undefined;
+    cursor += name[0].length;
+  }
+  if (/^(?:def|gdef|edef|xdef)$/.test(command[1]!)) {
+    while (cursor < source.length && source[cursor] !== "{") {
+      trivia();
+      if (source[cursor] !== "{") cursor += 1;
+    }
+  } else {
+    trivia();
+    while (source[cursor] === "[") {
+      cursor = skipBalanced(source, cursor, "[", "]", false) ?? source.length;
+      trivia();
+    }
+  }
+  const bodies = /Document/.test(command[1]!) ? (/Environment/.test(command[1]!) ? 3 : 2) : /environment/.test(command[1]!) ? 2 : 1;
+  for (let body = 0; body < bodies; body += 1) if (!group()) return cursor;
+  return cursor;
 }
 
 export function findMacroMatches(src: string, macroNames: string[]): MacroMatch[] {
@@ -80,6 +123,11 @@ export function findMacroMatches(src: string, macroNames: string[]): MacroMatch[
       continue;
     }
     if (src[i] === "\\" && !isEscaped(src, i)) {
+      const definitionEnd = skipDefinition(src, i);
+      if (definitionEnd !== undefined) {
+        i = definitionEnd;
+        continue;
+      }
       const matchName = src.slice(i + 1).match(/^[A-Za-z0-9@*]+/);
       if (matchName && nameSet.has(matchName[0])) {
         const name = matchName[0];
@@ -179,7 +227,7 @@ export function serializeAnchorAttrs(attrs: Record<string, string>): string {
   return keys
     .map((key) => {
       const value = attrs[key]!.trim();
-      if (!/[\s,\[\]"]/.test(value)) return `${key}=${value}`;
+      if (!/[\s,\[\]"']/.test(value)) return `${key}=${value}`;
       const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\]/g, "\\]");
       return `${key}="${escaped}"`;
     })

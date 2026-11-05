@@ -82,11 +82,11 @@ export function WorkspaceIdentity({ workspace, readOnly = false }: { workspace: 
             aria-label="Workspace name"
             className="min-w-0 flex-1 rounded border border-accent bg-surface px-2 py-1 font-serif text-xl font-semibold leading-tight text-ink outline-none"
           />
-          <button type="submit" disabled={pending} className="btn-primary px-2 py-1 text-xs">
+          <button type="submit" disabled={pending} className="p-button p-button-primary btn-primary px-2 py-1 text-xs">
             {pending ? <LoaderCircle size={13} className="animate-spin" /> : <Check size={13} />}
             Save
           </button>
-          <button type="button" onClick={close} className="btn-ghost px-1.5 py-1 text-xs" aria-label="Cancel workspace edit">
+          <button type="button" onClick={close} className="p-button p-button-borderless btn-ghost px-1.5 py-1 text-xs" aria-label="Cancel workspace edit">
             <X size={14} />
           </button>
         </div>

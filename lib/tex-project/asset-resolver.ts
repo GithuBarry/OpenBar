@@ -8,7 +8,6 @@ import path from "node:path";
 import { fileTypeFromBuffer } from "file-type";
 
 export const ASSET_EXTENSIONS = new Set([".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"]);
-export const ASSET_ROOTS = ["figures", "figure_candidates"];
 
 const MAGIC_TYPES = new Set([
   "application/pdf",
@@ -38,26 +37,36 @@ export function normalizeAssetRequest(relativePath: string): string | null {
   return normalized;
 }
 
+/** Resolve manuscript-relative images, with the upload directory as a fallback for bare names. */
+export function resolveProjectAssetPath(relativePath: string, manuscriptDir: string): string | null {
+  const normalized = normalizeAssetRequest(relativePath);
+  if (!normalized) return null;
+  try {
+    const root = fs.realpathSync.native(path.resolve(manuscriptDir));
+    const candidates = [path.resolve(root, normalized)];
+    if (!normalized.includes("/")) candidates.push(path.join(root, "figures", normalized));
+    for (const candidate of candidates) {
+      if (!candidate.startsWith(root + path.sep)) continue;
+      if (!fs.existsSync(/*turbopackIgnore: true*/ candidate)) continue;
+      const real = fs.realpathSync.native(candidate);
+      if (!real.startsWith(root + path.sep)) continue;
+      if (!ASSET_EXTENSIONS.has(path.extname(real).toLowerCase())) continue;
+      if (fs.statSync(real).isFile()) return real;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function resolveProjectAsset(
   projectDir: string,
   relativePath: string,
   manuscriptDir: string,
 ): Promise<string | null> {
-  const normalized = normalizeAssetRequest(relativePath);
-  if (!normalized) return null;
+  const real = resolveProjectAssetPath(relativePath, manuscriptDir);
+  if (!real) return null;
   try {
-    const root = fs.realpathSync.native(path.resolve(manuscriptDir));
-    const texRelative = ASSET_ROOTS.some((dir) => normalized.startsWith(`${dir}/`));
-    const base = texRelative ? root : path.join(root, "figures");
-    const candidate = path.resolve(base, normalized);
-    if (candidate !== root && !candidate.startsWith(root + path.sep)) return null;
-    if (!fs.existsSync(/*turbopackIgnore: true*/ candidate)) return null;
-    const real = fs.realpathSync.native(candidate);
-    if (real !== root && !real.startsWith(root + path.sep)) return null;
-    const rel = posix(path.relative(root, real));
-    if (!ASSET_ROOTS.some((dir) => rel.startsWith(`${dir}/`))) return null;
-    if (!ASSET_EXTENSIONS.has(path.extname(real).toLowerCase())) return null;
-    if (!fs.statSync(real).isFile()) return null;
     const bytes = fs.readFileSync(real);
     const ext = path.extname(real).toLowerCase();
     if (ext === ".svg") {

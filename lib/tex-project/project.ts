@@ -10,7 +10,6 @@ import {
   getDataBlock,
   getEditBlock,
   normalizeTexBody,
-  patchEditBlock,
   readDataFile,
   safeFileSegment,
   serializeDataFile,
@@ -19,7 +18,6 @@ import {
   upsertDataBlock,
   withWriteLock,
   writeDataFile,
-  writeEditBlock,
   writeTextAtomic,
   type SectionMeta,
   TexEnvelopeError,
@@ -30,23 +28,18 @@ import { composePaperTex, looksLikeMarkdownPaper, PAPER_REFERENCES_INPUT, readTe
 import { prepareDocumentBody, inferDocumentFormat } from "./document-body";
 import { locateTexRoot, traverseInputGraph, orderedSourceRanges } from "./source-graph";
 import { normalizeTeXInputPath } from "./source-bundle-format";
-import {
-  hashFile,
-  patchSectionHeadingFile,
-  patchSectionTitleFile,
-  withPaperStructureLock,
-} from "./structural-edits";
+import { withProjectWriteLock } from "@/lib/research/project-lock";
 import { escapeTexText, paperTitleCommand } from "./tex-encode";
-import { resolveProjectAsset, ASSET_EXTENSIONS } from "./asset-resolver";
+import { resolveProjectAsset, resolveProjectAssetPath, ASSET_EXTENSIONS } from "./asset-resolver";
 import { mindmapDiskHash } from "@/lib/mindmap/mindmap";
 import { stripLegacyCollapsedField } from "@/lib/mindmap/collapse-preferences";
-import { migrateStoredCaution } from "@/lib/mindmap/caution";
+import { migrateStoredCardNotes } from "@/lib/mindmap/caution";
+import { maskTexLiterals } from "./tex-literals";
 
 export const TEX_SCHEMAS = {
   project: "openbarry/project@1",
   mindmap: "openbarry/mindmap@1",
   bibliography: "openbarry/bibliography@1",
-  record: "openbarry/record@1",
   document: "openbarry/document@1",
   /** Frozen envelope id. Paper and TeX document edit-block bodies are TeX. */
   markdown: "openbarry/markdown@1",
@@ -239,11 +232,7 @@ export function readMindmapRecord(projectDir: string, id = DRAFT_MINDMAP_ID): Mi
   );
   return record ? normalizeStoredMindmap({
     ...record,
-    nodes: record.nodes.map(node => {
-      const { caution, ...rest } = node;
-      const migrated = migrateStoredCaution(caution);
-      return { ...rest, ...(migrated ? { caution: migrated } : {}) };
-    }),
+    nodes: record.nodes.map(migrateStoredCardNotes),
   }, identity.id) : null;
 }
 
@@ -326,46 +315,6 @@ export function deleteMindmapRecord(projectDir: string, id: string): void {
   if (fs.existsSync(file)) fs.rmSync(file);
 }
 
-export function recordFile(projectDir: string, collection: string, id: string): string {
-  return path.join(texPaths(projectDir).openBarDir, safeFileSegment(collection, "record collection"), `${safeFileSegment(id, "record id")}.tex`);
-}
-
-export function listRecordIds(projectDir: string, collection: string): string[] {
-  const dir = path.join(texPaths(projectDir).openBarDir, safeFileSegment(collection, "record collection"));
-  try {
-    return fs.readdirSync(dir)
-      .filter((file) => file.endsWith(".tex"))
-      .map((file) => file.slice(0, -4))
-      .filter((id) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id))
-      .sort();
-  } catch {
-    return [];
-  }
-}
-
-export function readRecord<T>(projectDir: string, collection: string, id: string): T | null {
-  return readDataFile<T>(recordFile(projectDir, collection, id), TEX_SCHEMAS.record, id);
-}
-
-export function writeRecord(projectDir: string, collection: string, id: string, data: unknown, heading?: string): void {
-  ensureTexProjectDirectories(projectDir);
-  writeDataFile(recordFile(projectDir, collection, id), TEX_SCHEMAS.record, id, data, heading || `OpenBar ${collection} record.`);
-}
-
-export function deleteRecord(projectDir: string, collection: string, id: string): void {
-  try {
-    fs.unlinkSync(recordFile(projectDir, collection, id));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-}
-
-export function listRecords<T>(projectDir: string, collection: string): T[] {
-  return listRecordIds(projectDir, collection)
-    .map((id) => readRecord<T>(projectDir, collection, id))
-    .filter((record): record is T => record !== null);
-}
-
 export function readTexPaper(projectDir: string, projectId: string, title: string): TexPaper | null {
   const paths = texPaths(projectDir);
   if (!fs.existsSync(paths.paperFile)) return null;
@@ -405,12 +354,6 @@ export function readPaperSections(file: string, filePath = path.basename(file)):
   });
 }
 
-export function readPaperSection(file: string): PaperSection {
-  const section = readPaperSections(file)[0];
-  if (!section) throw new Error(`No LaTeX heading in ${file}.`);
-  return section;
-}
-
 export interface PaperSectionPatch {
   id: string;
   baseHash: string;
@@ -419,16 +362,9 @@ export interface PaperSectionPatch {
   appendix?: boolean;
 }
 
-function paperWriteLockFile(projectDir: string): string {
-  return texPaths(projectDir).paperFile;
-}
-
-function withPaperLock<T>(projectDir: string, operation: () => T): T {
-  return withPaperStructureLock(paperWriteLockFile(projectDir), operation);
-}
-
 function applySectionPatch(source: string, section: PaperSection, patch: PaperSectionPatch): string {
-  let next = `${source.slice(0, section.bodyFrom)}\n${normalizeTexBody(patch.tex)}${source.slice(section.to)}`;
+  const body = normalizeTexBody(patch.tex);
+  let next = `${source.slice(0, section.bodyFrom)}${body.startsWith("\n") ? "" : "\n"}${body}${source.slice(section.to)}`;
   if (patch.level !== undefined && patch.level !== section.level) {
     const from = section.from!;
     next = next.slice(0, from) + next.slice(from).replace(/^\\(?:section|subsection|subsubsection|paragraph|subparagraph)/,
@@ -453,7 +389,7 @@ export function patchPaperSection(
  */
 export function patchPaperSections(projectDir: string, patches: PaperSectionPatch[]): PaperSection[] {
   if (!patches.length) return [];
-  return withPaperLock(projectDir, () => {
+  return withProjectWriteLock(projectDir, () => {
     const current = patches.map((patch) => {
       const section = findPaperSection(projectDir, patch.id);
       if (!section) throw new Error(`Unknown paper section: ${patch.id}`);
@@ -554,77 +490,6 @@ function patchAppendixMode(projectDir: string, id: string, enabled: boolean): vo
   }
 }
 
-function requirePaper(projectDir: string, title: string): TexPaper {
-  const paper = readTexPaper(projectDir, "", title);
-  if (!paper) throw new Error("This project has no TeX paper.");
-  return paper;
-}
-
-export function renamePaperSection(projectDir: string, title: string, id: string, nextTitle: string): TexPaper {
-  const trimmed = nextTitle.trim();
-  if (!trimmed) throw new Error("Section title cannot be empty.");
-  const paths = texPaths(projectDir);
-  return withPaperStructureLock(paperWriteLockFile(projectDir), () => {
-    const section = findPaperSection(projectDir, id);
-    if (!section) throw new Error(`Unknown paper section: ${id}`);
-    const styBefore = hashFile(paths.styleFile);
-    patchSectionTitleFile(section.file, trimmed, section.level, section.from);
-    if (hashFile(paths.styleFile) !== styBefore) throw new Error("Rename must not rewrite openbarry.sty.");
-
-    return requirePaper(projectDir, title);
-  });
-}
-
-export function setPaperSectionHeading(
-  projectDir: string,
-  title: string,
-  id: string,
-  heading: { level?: number; appendix?: boolean },
-): TexPaper {
-  return withPaperStructureLock(paperWriteLockFile(projectDir), () => {
-    const section = findPaperSection(projectDir, id);
-    if (!section) throw new Error(`Unknown paper section: ${id}`);
-    const resolvedLevel = Math.min(6, Math.max(2, heading.level ?? section.level)) as SectionMeta["level"];
-    patchSectionHeadingFile(section.file, {
-      level: resolvedLevel,
-      appendix: heading.appendix ?? section.appendix,
-    }, section.from);
-    if (heading.appendix !== undefined) patchAppendixMode(projectDir, id, heading.appendix);
-    return requirePaper(projectDir, title);
-  });
-}
-
-export function addPaperSection(
-  projectDir: string,
-  title: string,
-  spec: { title: string; afterId?: string; level?: number; appendix?: boolean },
-): TexPaper {
-  return withPaperStructureLock(paperWriteLockFile(projectDir), () => {
-    const paper = requirePaper(projectDir, title);
-    const anchor = spec.afterId ? paper.sections.find(section => section.id === spec.afterId) : paper.sections.at(-1);
-    if (spec.afterId && !anchor) throw new Error(`Unknown paper section: ${spec.afterId}`);
-    const file = anchor?.file || texPaths(projectDir).paperFile;
-    const source = fs.readFileSync(file, "utf8");
-    const at = anchor?.to ?? source.search(/\\end\s*\{document\}/);
-    const offset = at < 0 ? source.length : at;
-    const text = `\n${spec.appendix ? "\\appendix\n" : ""}\\${sectionCommandForLevel(spec.level ?? 2)}{${escapeTexText(spec.title.trim() || "New section")}}\n\n`;
-    writeTextAtomic(file, stripSectionComments(source.slice(0, offset) + text + source.slice(offset)));
-    return requirePaper(projectDir, title);
-  });
-}
-
-export function removePaperSection(projectDir: string, title: string, id: string): TexPaper {
-  return withPaperStructureLock(paperWriteLockFile(projectDir), () => {
-    const paper = requirePaper(projectDir, title);
-    if (paper.sections.length <= 1) throw new Error("A paper needs at least one section.");
-    const section = paper.sections.find(section => section.id === id);
-    if (!section) throw new Error(`Unknown paper section: ${id}`);
-    const source = fs.readFileSync(section.file, "utf8");
-    writeTextAtomic(section.file, stripSectionComments(source.slice(0, section.from) + source.slice(section.to)));
-    return requirePaper(projectDir, title);
-  });
-}
-
 export function writePaperProject(
   projectDir: string,
   title: string,
@@ -676,6 +541,34 @@ export { composePaperTex, splitPaperTex };
 
 export function readBibliographyRaw(projectDir: string): string {
   const paths = texPaths(projectDir);
+  // Imported papers name their own BibTeX inputs. Resolve declarations from
+  // the active TeX include graph using the compiler's manuscript directory.
+  const declaredSources: string[] = [];
+  const seenFiles = new Set<string>();
+  const manuscriptRoot = fs.realpathSync.native(paths.manuscriptDir);
+  for (const node of traverseInputGraph(paths.manuscriptDir).nodes) {
+    const source = maskTexLiterals(node.source);
+    const declarations = source.matchAll(/\\(bibliography|addbibresource)\s*(?:\[[^\]]*\]\s*)?\{([^{}]*)\}/g);
+    for (const declaration of declarations) {
+      const names = declaration[1] === "bibliography" ? declaration[2]!.split(",") : [declaration[2]!];
+      for (const name of names) {
+        const trimmed = name.trim();
+        if (!trimmed || /[\\#$]/.test(trimmed) || path.isAbsolute(trimmed)) continue;
+        const relative = path.extname(trimmed) ? trimmed : `${trimmed}.bib`;
+        if (path.extname(relative).toLowerCase() !== ".bib") continue;
+        try {
+          const file = fs.realpathSync.native(path.resolve(manuscriptRoot, relative));
+          const withinRoot = path.relative(manuscriptRoot, file);
+          if (withinRoot === ".." || withinRoot.startsWith(`..${path.sep}`) || path.isAbsolute(withinRoot)
+            || seenFiles.has(file) || !fs.statSync(file).isFile()) continue;
+          seenFiles.add(file);
+          const content = fs.readFileSync(file, "utf8");
+          if (content.trim()) declaredSources.push(content);
+        } catch { /* A partial paper can retain references to missing files. */ }
+      }
+    }
+  }
+  if (declaredSources.length) return declaredSources.join("\n");
   const bibliographySources = paths.manuscriptDir === paths.projectDir
     ? [path.join(paths.projectDir, "references.bib"), path.join(paths.openBarDir, "references.bib")]
     : [path.join(paths.openBarDir, "references.bib"), path.join(paths.manuscriptDir, "references.bib"), path.join(paths.projectDir, "references.bib")];
@@ -892,36 +785,6 @@ export function writeDocument<T extends Record<string, unknown>>(
   });
 }
 
-export function patchDocument(
-  projectDir: string,
-  kind: "wiki",
-  id: string,
-  baseHash: string,
-  markdown: string,
-): StoredDocument<Record<string, unknown>> {
-  ensureTexProjectDirectories(projectDir);
-  return withWriteLock(documentFile(projectDir, kind, id), () => {
-    const current = readDocument<Record<string, unknown>>(projectDir, kind, id);
-    if (!current) throw new Error(`Unknown ${kind} document: ${id}`);
-    const format = inferDocumentFormat(markdown, typeof current.metadata.format === "string" ? current.metadata.format : current.format);
-    const preparedBody = prepareDocumentBody(markdown, format === "html" ? "html" : format);
-    if (format === "markdown" || format === "html") {
-      if (current.stateHash !== baseHash) {
-        throw new TexEnvelopeError(`The "${id}" document changed outside this editor. Reload it before saving.`);
-      }
-      writeDocumentUnlocked(projectDir, kind, id, { ...current.metadata, format }, preparedBody.body);
-      return readDocument<Record<string, unknown>>(projectDir, kind, id)!;
-    }
-    if (current.stateHash !== baseHash) {
-      throw new TexEnvelopeError(`The "${id}" document changed outside this editor. Reload it before saving.`);
-    }
-    const editable = getEditBlock(fs.readFileSync(/*turbopackIgnore: true*/ current.file, "utf8"), safeFileSegment(id, `${kind} id`));
-    if (!editable) throw new TexEnvelopeError(`${current.file} is missing editable block "${id}".`);
-    writeEditBlock(current.file, id, editable.hash, preparedBody.body);
-    return readDocument<Record<string, unknown>>(projectDir, kind, id)!;
-  });
-}
-
 /**
  * Atomically update a document's native body and metadata from one body hash.
  * Format changes remain explicit conversion operations, so routine web edits
@@ -1007,17 +870,6 @@ export function patchDocumentState<T extends Record<string, unknown>>(
   });
 }
 
-export function patchDocumentTex(
-  projectDir: string,
-  kind: "wiki",
-  id: string,
-  baseHash: string,
-  tex: string,
-): void {
-  const file = documentFile(projectDir, kind, id);
-  patchEditBlock(file, id, baseHash, tex);
-}
-
 export interface UploadedFigure {
   filename: string;
   id: string;
@@ -1073,32 +925,11 @@ export function uploadFigureAsset(projectDir: string, originalName: string, byte
  * Resolve an includegraphics path to a file on disk.
  *
  * TeX (and `/api/p/.../asset/...`) paths are manuscript-relative
- * (`figures/overview.pdf`, `figure_candidates/.../x.pdf`). Bare filenames
- * (`plot.png`) still resolve inside `manuscript/figures`.
- * Never serves sections, bib, sty, or anything outside those image trees.
+ * (`plots/overview.pdf`, `figs/.../x.pdf`). Bare filenames also resolve inside
+ * `manuscript/figures`. Real paths stay within the manuscript directory.
  */
 export function resolveFigureAsset(projectDir: string, relativePath: string): string | null {
-  const paths = texPaths(projectDir);
-  try {
-    const manuscriptDir = fs.realpathSync.native(path.resolve(paths.manuscriptDir));
-    const posix = path.normalize(relativePath).replaceAll("\\", "/").replace(/^(\.\.(\/|$))+/, "");
-    if (path.posix.isAbsolute(posix) || posix.split("/").includes("..")) return null;
-    if (!FIGURE_EXTENSIONS.has(path.posix.extname(posix).toLowerCase())) return null;
-    const texRelative = posix.startsWith("figures/") || posix.startsWith("figure_candidates/");
-    const root = texRelative ? manuscriptDir : path.join(manuscriptDir, "figures");
-    const candidate = path.resolve(root, posix);
-    if (candidate !== manuscriptDir && !candidate.startsWith(manuscriptDir + path.sep)) return null;
-    if (!fs.existsSync(candidate)) return null;
-    const real = fs.realpathSync.native(candidate);
-    if (real !== manuscriptDir && !real.startsWith(manuscriptDir + path.sep)) return null;
-    const rel = path.relative(manuscriptDir, real).split(path.sep).join("/");
-    if (!rel.startsWith("figures/") && !rel.startsWith("figure_candidates/")) return null;
-    if (!FIGURE_EXTENSIONS.has(path.extname(real).toLowerCase())) return null;
-    if (!fs.statSync(real).isFile()) return null;
-    return real;
-  } catch {
-    return null;
-  }
+  return resolveProjectAssetPath(relativePath, texPaths(projectDir).manuscriptDir);
 }
 
 export async function resolveFigureAssetAsync(projectDir: string, relativePath: string): Promise<string | null> {
@@ -1119,16 +950,6 @@ export function paperSourceHash(projectDir: string): string {
 
 function normalizeTitle(value: string): string {
   return value.trim().toLocaleLowerCase();
-}
-
-function listSectionFiles(dir: string): string[] {
-  try {
-    return fs.readdirSync(dir)
-      .filter((file) => file.endsWith(".tex"))
-      .map((file) => path.join(dir, file));
-  } catch {
-    return [];
-  }
 }
 
 function clearTexFiles(dir: string): void {

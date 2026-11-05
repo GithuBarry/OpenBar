@@ -34,11 +34,12 @@ export function OverleafSyncNotice({ project, message, editingPaused, disabled, 
     { label: "Confirmed conflicts", files: details.conflictedFiles || [] },
   ] : []
   const report = [message, editingPaused ? "Editing is paused." : "", status ? `${status.behind || 0} incoming commits, ${status.ahead || 0} local commits` : "", ...fileGroups.map(group => `${group.label}:\n${group.files.join("\n") || "None in the last checked state"}`), status?.changedFiles?.length ? `Unsaved repository files:\n${status.changedFiles.join("\n")}` : "", detailsError].filter(Boolean).join("\n\n")
-  return <EditorNotice project={project} title="Git synchronization" label={editingPaused ? "Editing paused · sync Git" : "Git · needs attention"} message={editingPaused ? "Git has newer changes. Review and synchronize to resume editing." : message} report={report} paused={editingPaused} triggerLabel="Git sync details" onOpen={() => void readDetails()}>
+  if (!editingPaused) return null
+  return <EditorNotice project={project} title="Git synchronization" label={editingPaused ? "Editing paused, sync Git" : "Git needs attention"} message={editingPaused ? "Git has newer changes. Review and synchronize to resume editing." : message} report={report} paused={editingPaused} triggerLabel="Git sync details" onOpen={() => void readDetails()}>
     {status?.isOverleafRemote && <div className={styles.changeSummary}>
-      <span>{status.behind || 0} incoming commits · {status.ahead || 0} local commits</span>
+      <span>{status.behind || 0} incoming commits, {status.ahead || 0} local commits</span>
       {fileGroups.filter(group => group.files.length > 0).map(group => <details key={group.label} open={group.files.length <= 5}>
-        <summary>{group.label} · {group.files.length}</summary>
+        <summary>{group.label} ({group.files.length})</summary>
         <ul>{group.files.map(file => <li key={file}>{file}</li>)}</ul>
       </details>)}
       {(status.changedFiles?.length || 0) > 0 && <small>{status.changedFiles!.length} locally modified files</small>}

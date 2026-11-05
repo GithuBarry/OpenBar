@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import styles from "./choice-buttons.module.css";
 
 export function ChoiceButtons<T extends string | number>({ label, value, options, onChange, disabled = false }: {
@@ -9,7 +10,11 @@ export function ChoiceButtons<T extends string | number>({ label, value, options
   onChange: (value: T) => void;
   disabled?: boolean;
 }) {
-  return <div className={styles.group} role="group" aria-label={label}>
-    {options.map((option) => <button key={option.value} type="button" disabled={disabled} aria-pressed={value === option.value} onClick={() => onChange(option.value)}>{option.label}</button>)}
+  const name = useId();
+  return <div className={`p-segmented ${styles.group}`} role="radiogroup" aria-label={label}>
+    {options.map((option) => <label key={option.value} className="p-segment">
+      <input type="radio" name={name} checked={value === option.value} disabled={disabled} onChange={() => onChange(option.value)} />
+      <span>{option.label}</span>
+    </label>)}
   </div>;
 }

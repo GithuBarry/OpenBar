@@ -19,6 +19,7 @@ import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import type { Mindmap, Project, WikiPage } from "@/lib/types";
 import { buildSourceContextIndex, type LocatedPaperMarker, type LocatedPaperNote, type LocatedPaperTodo, type SourceContextIndex } from "./source-context";
 import type { SourceDiagnostic } from "@/lib/tex-project/source-graph";
+import { collectAgentMentions } from "./agent-mentions";
 import {
   findPrimaryMindmap,
   isPrimaryMindmap,
@@ -115,6 +116,7 @@ export type SearchHit = {
 };
 
 export type ProjectState = {
+  agentMentions: ReturnType<typeof collectAgentMentions>;
   project: {
     slug: string;
     title: string;
@@ -159,6 +161,7 @@ export type ProjectState = {
   mindmaps: Array<{ id: string; title: string; primary: boolean; href: string; nodeCount: number }>;
   wiki: Array<{ slug: string; title: string; href: string; updatedAt: string }>;
   recent: RecentActivityItem[];
+  humanDecisions: Array<{ kind: "removed_mindmap_card"; at: string; mapId: string; nodeId: string; title?: string; text?: string; agentDraft: boolean }>;
   skills: ProjectSkill[];
   expectations: OpenBarExpectations;
   agentsMd?: { path: string; body: string; hash: string };
@@ -493,7 +496,7 @@ export function deriveRecentActivity(input: {
       if (!at || Date.parse(at) < since) continue;
       items.push({
         kind: node.todoId ? "todo" : "card",
-        title: rec.bound.find((item) => item.node.id === node.id)?.displayText || ordinaryMindmapCardContent(node).title || node.id,
+        title: rec.boundByNode.get(node.id)?.displayText || ordinaryMindmapCardContent(node).title || node.id,
         nodeId: node.id,
         mapId,
         at,
@@ -574,7 +577,30 @@ export function buildProjectState(input: {
     })
     : undefined;
   const agents = input.agentsMd;
+  const currentNodes = new Set(input.mindmaps.flatMap((map) => map.nodes.map((node) => `${map.id || DRAFT_MINDMAP_ID}:${node.id}`)));
+  const decisions: ProjectState["humanDecisions"] = [];
+  const seenDecisions = new Set<string>();
+  for (const event of input.activity || []) {
+    if (event.actor !== "human" || event.operation !== "human_removed_mindmap_cards") continue;
+    for (const change of event.changes || []) {
+      if (!change.field.startsWith("node:") || !change.before || typeof change.before !== "object") continue;
+      const nodeId = change.field.slice(5);
+      const mapId = event.resources.find((resource) => resource.id === nodeId && resource.mapId)?.mapId;
+      if (!mapId) continue;
+      const key = `${mapId}:${nodeId}`;
+      if (seenDecisions.has(key) || currentNodes.has(key)) continue;
+      seenDecisions.add(key);
+      const card = change.before as { title?: unknown; text?: unknown; agentDraft?: unknown };
+      decisions.push({ kind: "removed_mindmap_card", at: event.at, mapId, nodeId,
+        ...(typeof card.title === "string" && card.title ? { title: card.title } : {}),
+        ...(typeof card.text === "string" && card.text ? { text: card.text } : {}),
+        agentDraft: card.agentDraft === true });
+      if (decisions.length >= 50) break;
+    }
+    if (decisions.length >= 50) break;
+  }
   return {
+    agentMentions: collectAgentMentions(slug, input.mindmaps, paper?.todos || []),
     project: {
       slug,
       title: input.project.title,
@@ -615,6 +641,7 @@ export function buildProjectState(input: {
       activity: input.activity,
       activityWindowDays: primary?.activityWindowDays,
     }),
+    humanDecisions: decisions,
     skills: input.skills,
     expectations: openBarExpectations(),
     ...(agents ? { agentsMd: { path: agents.path, body: agents.body, hash: hashAgents(agents.body) } } : {}),
@@ -676,21 +703,17 @@ export function getProjectState(slug: string, current?: CurrentLocation): Projec
   });
 }
 
+export function getProjectAgentMentions(slug: string) {
+  const paper = getEditableTexPaper(slug);
+  const todos = paper ? analyzePaper(paper.source).todos.map(todo => ({ ...todo, completed: !paperTodoIsOpen(todo) })) : [];
+  return collectAgentMentions(slug, listMindmaps(slug), todos);
+}
+
 export function projectStateForAgent(state: ProjectState, query: ProjectStateQuery = {}): unknown {
   const detail = query.detail === "full" ? "full" : "summary";
   const todoLimit = query.todoLimit ?? (detail === "full" ? Infinity : 8);
   const paper = state.paper;
-  const mentions = listMindmaps(state.project.slug).flatMap((map) => map.nodes.flatMap((node) => {
-    const todo = node.todoId ? paper?.todos.find((item) => item.id === node.todoId) : undefined;
-    const text = todo ? `${todo.title || ""}\n${todo.text}` : `${node.title || ""}\n${node.text}`;
-    if (!/(?<![\w@])@agents?(?![\w])/i.test(text)) return [];
-    return [{ mapId: map.id, nodeId: node.id, text: text.trim().slice(0, 1200), href: mindmapHref(state.project.slug, map.id, node.id) }];
-  }));
-  const agentMentions = {
-    count: mentions.length,
-    reminder: "Requests tagged @agent or @agents appear below.",
-    notes: mentions.slice(0, 50),
-  };
+  const agentMentions = state.agentMentions;
   const primaryUnplaced = (todo: ProjectStateTodo) => todo.primaryUnplaced ?? todo.unplaced;
   const openTodos = paper?.todos.filter((todo) => !todo.completed) || [];
   const unplaced = paper?.todos.filter(primaryUnplaced) || [];
@@ -758,6 +781,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
       },
       todos: todoRows(paper?.todos || []),
       recent: state.recent,
+      humanDecisions: state.humanDecisions,
       mindmaps: maps,
       wiki: state.wiki,
       skills: state.skills,
@@ -794,6 +818,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
     },
     todos: todoLimit > 0 ? todoRows([...unplaced, ...openTodos.filter((todo) => !primaryUnplaced(todo))]) : undefined,
     recent: recentForAgent,
+    humanDecisions: state.humanDecisions,
     mindmaps: maps,
     wiki: state.wiki,
     skills: state.skills.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, source: skill.source })),
@@ -908,6 +933,18 @@ export function searchProjectContent(input: {
         href: mindmapHref(slug, mapId, node.id),
       });
     }
+  }
+
+  for (const page of input.wiki || []) {
+    const hay = [page.title, page.slug, page.body, ...(page.tags || [])].join("\n");
+    if (!hay.toLowerCase().includes(needle)) continue;
+    hits.push({
+      id: `wiki:${page.slug}`,
+      kind: "wiki",
+      title: page.title,
+      snippet: snippetAround(hay, query),
+      href: `/p/${encodeURIComponent(slug)}/wiki/${encodeURIComponent(page.slug)}`,
+    });
   }
 
   const seen = new Set<string>();

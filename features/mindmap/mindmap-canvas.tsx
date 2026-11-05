@@ -8,6 +8,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useNodesInitialized,
   applyNodeChanges,
   Position,
   type Edge,
@@ -79,6 +80,7 @@ function FlowCanvas({
   nodes,
   renderCard,
   readOnly,
+  selectMultiple = false,
   virtualize,
   onSelect,
   onDoubleClick,
@@ -91,6 +93,7 @@ function FlowCanvas({
   nodes: MindmapFlowNode[];
   renderCard: (id: string) => ReactNode;
   readOnly: boolean;
+  selectMultiple?: boolean;
   virtualize?: boolean;
   onSelect: (id: string, additive: boolean) => void;
   onDoubleClick: (id: string) => void;
@@ -99,13 +102,15 @@ function FlowCanvas({
   onPaneClick?: () => void;
   focusRequest?: { id: string; sequence: number } | null;
 }) {
-  const { setCenter, getZoom, setViewport } = useReactFlow();
+  const { setCenter, getZoom, setViewport, viewportInitialized } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const lastFocusRef = useRef<number | null>(null);
   const draggingIdRef = useRef<string | null>(null);
   const initialViewRef = useRef(false);
   const rasterFrame = useRef<number | null>(null);
-  const beginViewportMove = useCallback(() => {
+  const beginViewportMove = useCallback((event: MouseEvent | TouchEvent | null) => {
+    if (event) initialViewRef.current = true;
     if (rasterFrame.current !== null) cancelAnimationFrame(rasterFrame.current);
     const viewport = canvasRef.current?.querySelector<HTMLElement>(".react-flow__viewport");
     if (viewport) viewport.style.willChange = "transform";
@@ -122,28 +127,21 @@ function FlowCanvas({
   }, [getZoom]);
   useEffect(() => () => { if (rasterFrame.current !== null) cancelAnimationFrame(rasterFrame.current); }, []);
   useEffect(() => {
-    if (initialViewRef.current || focusRequest) return;
-    const timer = window.setTimeout(() => {
-      const root = nodes.find((node) => node.id === mindmap.rootId);
-      const pane = canvasRef.current;
-      if (!root || !pane) return;
-      initialViewRef.current = true;
-      const left = pane.clientWidth < 600 ? Math.max(24, (pane.clientWidth - root.width) / 2) : 48;
-      void setViewport({ x: left - root.x, y: pane.clientHeight / 2 - root.y - root.height / 2, zoom: 1 });
-    }, 100);
-    return () => window.clearTimeout(timer);
-  }, [nodes, mindmap.rootId, focusRequest, setViewport]);
+    if (!viewportInitialized || !nodesInitialized || initialViewRef.current || focusRequest) return;
+    const root = nodes.find((node) => node.id === mindmap.rootId);
+    const pane = canvasRef.current;
+    if (!root || !pane) return;
+    const left = pane.clientWidth < 600 ? Math.max(24, (pane.clientWidth - root.width) / 2) : 48;
+    void setViewport({ x: left - root.x, y: pane.clientHeight / 2 - root.y - root.height / 2, zoom: 1 });
+  }, [viewportInitialized, nodesInitialized, nodes, mindmap.rootId, focusRequest, setViewport]);
   useEffect(() => {
-    if (!focusRequest || lastFocusRef.current === focusRequest.sequence) return;
+    if (!viewportInitialized || !nodesInitialized || !focusRequest || lastFocusRef.current === focusRequest.sequence) return;
     const node = nodes.find((item) => item.id === focusRequest.id);
     if (!node) return;
-    const timer = window.setTimeout(() => {
-      lastFocusRef.current = focusRequest.sequence;
-      initialViewRef.current = true;
-      void setCenter(node.x + node.width / 2, node.y + node.height / 2, { zoom: Math.max(0.75, getZoom()), duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180 });
-    }, 120);
-    return () => window.clearTimeout(timer);
-  }, [focusRequest, nodes, setCenter, getZoom]);
+    lastFocusRef.current = focusRequest.sequence;
+    initialViewRef.current = true;
+    void setCenter(node.x + node.width / 2, node.y + node.height / 2, { zoom: Math.max(0.75, getZoom()), duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180 });
+  }, [viewportInitialized, nodesInitialized, focusRequest, nodes, setCenter, getZoom]);
 
   const baseFlowNodes: Node<CardData>[] = useMemo(
     () => nodes.map((node) => ({
@@ -151,7 +149,7 @@ function FlowCanvas({
       type: "card",
       position: { x: node.x, y: node.y },
       selected: node.selected,
-      draggable: !readOnly && node.id !== mindmap.rootId,
+      draggable: !readOnly && !selectMultiple && node.id !== mindmap.rootId,
       initialWidth: node.width,
       initialHeight: node.height,
       sourcePosition: Position.Right,
@@ -159,7 +157,7 @@ function FlowCanvas({
         style: { width: node.width, height: node.height },
         data: { render: renderCard, renderVersion: node.renderVersion },
       })),
-    [mindmap.rootId, nodes, readOnly, renderCard],
+    [mindmap.rootId, nodes, readOnly, renderCard, selectMultiple],
   );
   const [controlledNodes, setControlledNodes] = useState<Node<CardData>[]>(baseFlowNodes);
   useEffect(() => {
@@ -218,11 +216,14 @@ function FlowCanvas({
       className="mindmap-viewport mindmap-rf"
       onPointerDownCapture={(event) => {
         if (event.button !== 0) return;
+        initialViewRef.current = true;
         const target = event.target as Element;
         if (target.closest('button, a, input, textarea, select, .cm-editor')) return;
         const card = target.closest<HTMLElement>('[data-mind-node]');
         if (card?.dataset.mindNode) onSelect(card.dataset.mindNode, event.shiftKey);
       }}
+      onWheelCapture={() => { initialViewRef.current = true; }}
+      onKeyDownCapture={() => { initialViewRef.current = true; }}
       onlyRenderVisibleElements={virtualize}
       onMoveStart={beginViewportMove}
       onMoveEnd={finishViewportMove}
@@ -300,6 +301,7 @@ export function MindmapCanvas(props: {
   nodes: MindmapFlowNode[];
   renderCard: (id: string) => ReactNode;
   readOnly: boolean;
+  selectMultiple?: boolean;
   virtualize?: boolean;
   onSelect: (id: string, additive: boolean) => void;
   onDoubleClick: (id: string) => void;

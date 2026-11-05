@@ -117,21 +117,21 @@ export function WikiPageClient({ page, pages = [] }: { page: WikiPage; pages?: W
         {saved && <span className="text-xs text-ok">Saved</span>}
         {editing ? (
           <>
-            <button type="button" className="btn-outline text-xs" onClick={cancel} disabled={pending}>
+            <button type="button" className="p-button p-button-default btn-outline text-xs" onClick={cancel} disabled={pending}>
               <X size={13} /> Cancel
             </button>
-            <button type="button" className="btn-primary text-xs" onClick={save} disabled={pending}>
+            <button type="button" className="p-button p-button-primary btn-primary text-xs" onClick={save} disabled={pending}>
               {pending ? <LoaderCircle size={13} className="animate-spin" /> : <Save size={13} />}
               Save
             </button>
           </>
         ) : (
           <>
-            <button type="button" className="btn-outline text-xs" onClick={rename} disabled title="Wiki editing is currently unavailable">Rename</button>
-            <button type="button" className="btn-outline text-xs" onClick={remove} disabled title="Wiki editing is currently unavailable">
+            <button type="button" className="p-button p-button-default btn-outline text-xs" onClick={rename} disabled title="Wiki editing is currently unavailable">Rename</button>
+            <button type="button" className="p-button p-button-default btn-outline text-xs" onClick={remove} disabled title="Wiki editing is currently unavailable">
               <Trash2 size={13} /> Delete
             </button>
-            <button type="button" className="btn-outline text-xs" onClick={() => setEditing(true)} disabled title="Wiki editing is currently unavailable">
+            <button type="button" className="p-button p-button-default btn-outline text-xs" onClick={() => setEditing(true)} disabled title="Wiki editing is currently unavailable">
               <Edit3 size={13} /> Edit
             </button>
           </>
@@ -148,12 +148,12 @@ export function WikiPageClient({ page, pages = [] }: { page: WikiPage; pages?: W
         >
           <label className="block text-xs text-muted">
             Title
-            <input className="input mt-1 !w-full" value={title} onChange={(event) => setTitle(event.target.value)} />
+            <input className="p-field input mt-1 !w-full" value={title} onChange={(event) => setTitle(event.target.value)} />
           </label>
           <label className="block text-xs text-muted">
             Markdown
             <textarea
-              className="input mt-1 min-h-[28rem] !w-full resize-y font-mono text-xs leading-5"
+              className="p-field input mt-1 min-h-[28rem] !w-full resize-y font-mono text-xs leading-5"
               rows={18}
               value={body}
               spellCheck={false}
@@ -164,7 +164,7 @@ export function WikiPageClient({ page, pages = [] }: { page: WikiPage; pages?: W
             <summary className="cursor-pointer text-xs text-muted">Details</summary>
             <label className="mt-2 block text-xs text-muted">
               Tags
-              <input className="input mt-1 !w-full" value={tags} placeholder="methods, evaluation" onChange={(event) => setTags(event.target.value)} />
+              <input className="p-field input mt-1 !w-full" value={tags} placeholder="methods, evaluation" onChange={(event) => setTags(event.target.value)} />
             </label>
           </details>
           {error && <p className="text-xs text-danger" role="alert">{error}</p>}

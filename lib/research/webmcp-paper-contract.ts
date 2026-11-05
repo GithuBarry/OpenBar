@@ -9,13 +9,15 @@
  * schemas, or CAS / identity checks.
  */
 
+import { PAPER_INPUTS } from "./command-inputs";
+import { commandJsonSchemas, parseCommandInput } from "./command-schema";
+
 import {
   failResult,
   okResult,
   WEBMCP_ERROR_CODES,
 } from "./operation-result";
 import type { RemoteSyncOutcome } from "./operation-result";
-import { PAPER_MUTATION_SCHEMAS } from "./mcp-tool-schemas";
 import { analyzePaper } from "./paper-analysis";
 import { findMacroMatches, parseAnchorAttrs } from "@/lib/marker-codec";
 import { patchSectionTableCell } from "@/lib/tex-project/table-fragments";
@@ -246,98 +248,9 @@ export type PaperWebMcpTool = {
   ) => Promise<OperationResult<unknown>>;
 };
 
-function objectSchema(properties: Record<string, unknown> = {}, required: string[] = []): JsonSchemaObject {
-  return {
-    type: "object",
-    properties,
-    ...(required.length ? { required } : {}),
-    additionalProperties: false,
-  };
-}
-
-const sectionIdSchema = {
-  type: "string",
-  pattern: SECTION_ID_PATTERN,
-  description: "Current section id from get_paper_outline. The open page supplies the project; do not pass project.",
-};
-
-const expectedRevisionSchema = {
-  type: "integer",
-  minimum: 0,
-  description: "Live editor revision from the last get_paper_state or read_paper_section call.",
-};
-
 export const MAX_WEBMCP_TEXT_CHARS = 200_000;
 
-const maxCharsSchema = {
-  type: "integer",
-  minimum: 1,
-  maximum: MAX_WEBMCP_TEXT_CHARS,
-  description: `Maximum UTF-16 code units to return. The default is ${MAX_WEBMCP_TEXT_CHARS}. Use range reads for larger files.`,
-};
-
-export const PAPER_WEBMCP_TOOL_SCHEMAS: Record<PaperWebMcpToolName, JsonSchemaObject> = {
-  get_paper_state: objectSchema(),
-  get_paper_outline: objectSchema(),
-  read_paper_section: objectSchema({ sectionId: sectionIdSchema, maxChars: maxCharsSchema }, ["sectionId"]),
-  preview_paper_todo: objectSchema(
-    {
-      sectionId: sectionIdSchema,
-      title: { type: "string" },
-      text: { type: "string" },
-      todoId: { type: "string", pattern: SECTION_ID_PATTERN },
-    },
-    ["sectionId", "text"],
-  ),
-  add_paper_todo_at_section: objectSchema(
-    {
-      sectionId: sectionIdSchema,
-      title: { type: "string" },
-      text: { type: "string" },
-      todoId: { type: "string", pattern: SECTION_ID_PATTERN, description: "Reuse preview_paper_todo.todoId for an idempotent retry." },
-      expectedRevision: expectedRevisionSchema,
-    },
-    ["sectionId", "text", "expectedRevision"],
-  ),
-  relocate_paper_todo: objectSchema(
-    { todoId: sectionIdSchema, sectionId: sectionIdSchema, expectedRevision: expectedRevisionSchema },
-    ["todoId", "sectionId", "expectedRevision"],
-  ),
-  navigate_paper_section: objectSchema({ sectionId: sectionIdSchema }, ["sectionId"]),
-  set_paper_reader_mode: objectSchema(
-    {
-      mode: {
-        type: "string",
-        enum: ["document", "pdf"],
-        description: "Show the live document or the compiled PDF in the paper reader.",
-      },
-    },
-    ["mode"],
-  ),
-  replace_paper_section: objectSchema(
-    {
-      sectionId: sectionIdSchema,
-      expectedRevision: expectedRevisionSchema,
-      tex: { type: "string", description: "Replacement TeX body for the section, excluding the heading line." },
-    },
-    ["sectionId", "expectedRevision", "tex"],
-  ),
-  patch_paper_table: PAPER_MUTATION_SCHEMAS.patch_paper_table,
-  remove_paper_todo: objectSchema(
-    {
-      todoId: sectionIdSchema,
-      expectedRevision: expectedRevisionSchema,
-    },
-    ["todoId", "expectedRevision"],
-  ),
-  lint_paper: objectSchema(),
-  compile_paper: objectSchema(),
-  get_paper_compile: objectSchema({ jobId: { type: "string", description: "Optional compile job id to compare with the live result." } }),
-  get_bibliography: objectSchema({
-    raw: { type: "boolean", description: "When true, include the exact BibTeX text." },
-    maxChars: maxCharsSchema,
-  }),
-};
+export const PAPER_WEBMCP_TOOL_SCHEMAS = commandJsonSchemas(PAPER_INPUTS);
 
 const TOOL_META: Record<PaperWebMcpToolName, { title: string; description: string; readOnly: boolean }> = {
   get_paper_state: {
@@ -442,36 +355,6 @@ export function isPaperWebMcpToolName(name: string): name is PaperWebMcpToolName
 
 export function isMindmapWebMcpToolName(name: string): name is MindmapWebMcpToolName {
   return (MINDMAP_WEBMCP_TOOL_NAMES as readonly string[]).includes(name);
-}
-
-export function normalizeWebMcpArgs(value: unknown): Record<string, unknown> {
-  const parsed = parseWebMcpArgs(value);
-  return parsed.ok ? parsed.value : {};
-}
-
-export function parseWebMcpArgs(value: unknown):
-  | { ok: true; value: Record<string, unknown> }
-  | { ok: false; message: string } {
-  if (value == null) return { ok: true, value: {} };
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return { ok: true, value: parsed as Record<string, unknown> };
-      }
-      return { ok: false, message: "Tool arguments must be a JSON object." };
-    } catch {
-      return { ok: false, message: "Tool arguments must be a JSON object." };
-    }
-  }
-  if (typeof value === "object" && !Array.isArray(value)) {
-    return { ok: true, value: value as Record<string, unknown> };
-  }
-  return { ok: false, message: "Tool arguments must be a JSON object." };
-}
-
-export function unknownWebMcpArgument(args: Record<string, unknown>, schema: JsonSchemaObject): string | undefined {
-  return Object.keys(args).find((key) => !Object.prototype.hasOwnProperty.call(schema.properties, key));
 }
 
 export function parseWebMcpMaxChars(
@@ -684,11 +567,9 @@ async function executeNamed(
   rawArgs: unknown,
   options?: { signal?: AbortSignal },
 ): Promise<OperationResult<unknown>> {
-  const parsedArgs = parseWebMcpArgs(rawArgs);
+  const parsedArgs = parseCommandInput(PAPER_INPUTS[name], rawArgs, true);
   if (!parsedArgs.ok) return failResult(WEBMCP_ERROR_CODES.invalid_arguments, parsedArgs.message, { retryable: false });
   const args = parsedArgs.value;
-  const unknown = unknownWebMcpArgument(args, PAPER_WEBMCP_TOOL_SCHEMAS[name]);
-  if (unknown) return failResult(WEBMCP_ERROR_CODES.invalid_arguments, `Unknown argument "${unknown}".`, { retryable: false });
   const snapshot = host.getSnapshot();
 
   switch (name) {
@@ -820,6 +701,7 @@ async function executeNamed(
           args.text,
           typeof args.title === "string" ? args.title : undefined,
           typeof args.todoId === "string" ? args.todoId : undefined,
+          options?.signal,
         );
         return paperMutationSuccess(host, placement);
       } catch (error) {
@@ -848,7 +730,7 @@ async function executeNamed(
         });
       }
       try {
-        const placement = await host.relocateTodo(args.todoId, args.sectionId);
+        const placement = await host.relocateTodo(args.todoId, args.sectionId, options?.signal);
         return paperMutationSuccess(host, placement);
       } catch (error) {
         return paperMutationFailure(host, error);
@@ -1102,7 +984,7 @@ async function executeNamed(
       return okResult({
         ...compile,
         ...(args.jobId !== undefined ? { jobIdMatches: compile.jobId === args.jobId } : {}),
-        pdfCurrent: compile.state === "success" && compile.stale !== true && Boolean(compile.sourceHash && compile.sourceHash === snapshot.persistedHash),
+        pdfCurrent: !snapshot.dirty && !snapshot.pendingSave && compile.state === "success" && compile.stale !== true && Boolean(compile.artifactBuildInputHash && compile.artifactBuildInputHash === compile.buildInputHash),
       }, { revision: snapshot.revision });
     }
     case "get_bibliography": {

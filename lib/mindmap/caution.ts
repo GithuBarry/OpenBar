@@ -1,4 +1,4 @@
-export const CAUTION_LEVELS = ["critical", "important", "minor", "background"] as const;
+export const CAUTION_LEVELS = ["critical", "important", "background"] as const;
 
 export type CautionLevel = (typeof CAUTION_LEVELS)[number];
 export type MindmapCaution = Partial<Record<CautionLevel, string>>;
@@ -6,7 +6,6 @@ export type MindmapCaution = Partial<Record<CautionLevel, string>>;
 export const CAUTION_LEVEL_LABELS: Record<CautionLevel, string> = {
   critical: "Critical",
   important: "Important",
-  minor: "Minor",
   background: "Background",
 };
 
@@ -32,9 +31,24 @@ export function normalizeMindmapCaution(value: MindmapCaution | undefined, { tri
   return Object.keys(normalized).length ? normalized : undefined;
 }
 
-/** Migrate stored scalar scratchpads once, before records enter current state. */
-export function migrateStoredCaution(value: unknown): MindmapCaution | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value === "string") return normalizeMindmapCaution({ minor: value });
-  return normalizeMindmapCaution(value as MindmapCaution);
+/** Convert retired note formats at the storage boundary, preserving their text. */
+export function migrateStoredCardNotes<T extends { caption?: string; caution?: unknown }>(node: T): Omit<T, "caution"> & { caution?: MindmapCaution } {
+  const { caution, ...rest } = node;
+  if (caution === undefined) return rest;
+  let folded: unknown;
+  let current: MindmapCaution | undefined;
+  if (typeof caution === "string") {
+    folded = caution;
+  } else if (caution && typeof caution === "object" && !Array.isArray(caution)) {
+    const { minor, ...remaining } = caution as Record<string, unknown>;
+    folded = minor;
+    current = normalizeMindmapCaution(remaining as MindmapCaution, { trim: false });
+  } else {
+    throw new TypeError("caution must be an object.");
+  }
+  if (folded !== undefined && typeof folded !== "string") throw new TypeError("Legacy minor caution must be a string.");
+  const caption = typeof folded === "string" && folded.length
+    ? [rest.caption, folded].filter(value => value !== undefined && value !== "").join("\n\n")
+    : rest.caption;
+  return { ...rest, ...(caption !== undefined ? { caption } : {}), ...(current ? { caution: current } : {}) };
 }

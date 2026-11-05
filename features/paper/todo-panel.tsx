@@ -1,8 +1,9 @@
 "use client";
 
+import { Select } from "@/components/select";
 import { AnchoredPop } from "@/components/pop";
 import { RichText } from "@/components/rich-text";
-import { ArrowUpRight, Check, MoreHorizontal, Pencil, Plus, Search } from "lucide-react";
+import { ArrowUpRight, MoreHorizontal, Pencil, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { EditorTodo } from "@/features/paper/tex-source";
@@ -90,7 +91,7 @@ export function TodoPanel({
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search TODOs"
             aria-label="Search TODOs"
-            className="input todo-search-input h-7 w-full text-xs"
+            className="p-field input todo-search-input h-7 w-full text-xs"
           />
         </label>
         <div className="flex rounded-md border border-line p-0.5 text-[11px]">
@@ -131,7 +132,7 @@ export function TodoPanel({
             onChange={(event) => setCreateTitle(event.target.value)}
             placeholder="Title (optional when body is filled)"
             aria-label="New TODO title"
-            className="input mb-1.5 h-7 w-full px-2 text-xs"
+            className="p-field input mb-1.5 h-7 w-full px-2 text-xs"
           />
           <TexCodeMirror
             variant="compact"
@@ -154,7 +155,7 @@ export function TodoPanel({
           <div className="mt-1.5 flex items-center gap-1">
             <button
               type="button"
-              className="btn-primary px-2 py-0.5 text-[11px]"
+              className="p-button p-button-primary btn-primary px-2 py-0.5 text-[11px]"
               onClick={() => {
                 const title = createTitle.trim();
                 const text = createBody.trim();
@@ -166,7 +167,7 @@ export function TodoPanel({
                 setCreating(false);
               }}
             >Save TODO</button>
-            <button type="button" className="btn-ghost px-2 py-0.5 text-[11px]" onClick={() => setCreating(false)}>Cancel</button>
+            <button type="button" className="p-button p-button-borderless btn-ghost px-2 py-0.5 text-[11px]" onClick={() => setCreating(false)}>Cancel</button>
             {createError && <span className="text-[11px] text-danger" role="alert">{createError}</span>}
           </div>
         </div>
@@ -323,18 +324,16 @@ function TodoRow({
   return (
     <li data-paper-todo={todo.id} className={cn("group min-w-0 rounded-lg border px-2 py-2", editing ? "border-accent/40 bg-surface" : "border-line/60 bg-surface hover:border-line")}>
       <div className="flex min-w-0 items-start gap-2">
-        <button
-          type="button"
-          className={cn(
-            "mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
-            done ? "border-ok bg-ok text-white" : "border-line bg-surface hover:border-accent",
-          )}
-          aria-label={done ? "Reopen TODO" : "Complete TODO"}
+        <label className="inline-flex h-7 w-7 shrink-0 items-center justify-center max-sm:h-9 max-sm:w-9">
+        <input
+          type="checkbox"
+          checked={done}
+          className="h-4 w-4 rounded border-line accent-accent"
+          aria-label={`TODO completed: ${title}`}
           disabled={pending || removing || editing}
-          onClick={() => (done ? onReopen() : onComplete())}
-        >
-          {done && <Check size={10} />}
-        </button>
+          onChange={() => (done ? onReopen() : onComplete())}
+        />
+        </label>
         <div className="min-w-0 flex-1">
           {editing ? (
             <div className="space-y-1.5">
@@ -362,7 +361,7 @@ function TodoRow({
               <div className="flex gap-1">
                 <button
                   type="button"
-                  className="btn-outline px-2 py-0.5 text-[11px]"
+                  className="p-button p-button-default btn-outline px-2 py-0.5 text-[11px]"
                   disabled={editBusy}
                   onClick={() => { void commitDraft(); }}
                 >
@@ -370,13 +369,13 @@ function TodoRow({
                 </button>
                 <button
                   type="button"
-                  className="btn-outline px-2 py-0.5 text-[11px]"
+                  className="p-button p-button-default btn-outline px-2 py-0.5 text-[11px]"
                   disabled={editBusy}
                   onClick={cancelDraft}
                 >
                   Cancel
                 </button>
-                <span className="ml-auto hidden self-center text-[10px] text-faint sm:inline">Ctrl/⌘ Enter to save · Esc to cancel</span>
+                <span className="ml-auto hidden self-center text-[10px] text-faint sm:inline">Ctrl/⌘ Enter to save, Esc to cancel</span>
               </div>
               {editError && <p className="text-[11px] text-danger" role="alert">{editError}</p>}
             </div>
@@ -388,13 +387,13 @@ function TodoRow({
                   <TodoTexText text={detail} />
                 </span>
               )}
-              <span className="mt-0.5 block text-[10px] text-faint">{todo.section}{unplaced ? " · Unplaced" : ""}</span>
+              <span className="mt-0.5 block text-[10px] text-faint">{todo.section}{unplaced ? " (Unplaced)" : ""}</span>
             </button>
           )}
           {details && (
             <p className="mt-1 font-mono text-[10px] text-faint">
               {todo.id || "no id"}
-              {todo.createdAt ? ` · ${todo.createdAt}` : ""}
+              {todo.createdAt ? `, ${todo.createdAt}` : ""}
             </p>
           )}
         </div>
@@ -420,23 +419,11 @@ function TodoRow({
                 {unplaced && todo.id && placementTargets.length > 0 && onPlace && (
                   <label className="mt-1 block text-[10px] font-medium uppercase tracking-wide text-faint">
                     Place on map
-                    <select
-                      defaultValue=""
-                      aria-label="Primary map parent"
-                      className="input mt-1 h-7 w-full px-1.5 py-0 text-[11px] normal-case tracking-normal"
-                      onChange={(event) => {
-                        const parentId = event.target.value;
-                        if (parentId) {
-                          onPlace(todo.id!, parentId);
-                          setPlacing(false);
-                        }
-                      }}
-                    >
-                      <option value="">Choose a card…</option>
-                      {placementTargets.map((target) => (
-                        <option key={target.id} value={target.id}>{target.label}</option>
-                      ))}
-                    </select>
+                    <Select label="Primary map parent" placeholder="Choose a card…"
+                      className="mt-1 h-7 w-full text-[11px] normal-case tracking-normal"
+                      options={placementTargets.map(target => ({ value: target.id, label: target.label }))}
+                      onValueChange={parentId => { onPlace(todo.id!, parentId); setPlacing(false) }}
+                    />
                   </label>
                 )}
                 <button type="button" className="ob-menu-item w-full text-left" onClick={() => setDetails((value) => !value)}>

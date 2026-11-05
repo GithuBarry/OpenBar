@@ -1,5 +1,12 @@
-.group { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
-.group > button { display: inline-flex; align-items: center; justify-content: center; min-height: 28px; padding: 4px 8px; border: 1px solid rgb(var(--line)); border-radius: 6px; font: 500 11px/1.3 var(--font-sans); color: rgb(var(--muted)); background: rgb(var(--surface)); white-space: nowrap; cursor: pointer; }
-.group > button[aria-pressed="true"] { background: rgb(var(--accent) / .12); color: rgb(var(--accent)); border-color: rgb(var(--accent) / .45); }
-.group > button:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; }
-.group > button:disabled { opacity: .5; cursor: default; }
+.group:global(.p-segmented) { display: flex; flex-wrap: wrap; width: fit-content; max-width: 100%; height: auto; gap: 2px; padding: 2px; --p-color-current: rgb(var(--accent)); --p-seg-min-width: 0; --p-seg-padding-x: 9px; --p-seg-font-size: 11px; --p-seg-radius: 5px; }
+.group:global(.p-segmented)::before { display: none; }
+.group :global(.p-segment) { min-height: 26px; }
+.group :global(.p-segment)::before { display: none; }
+.group :global(.p-segment > span) { line-height: 1.25; }
+.group:global(.p-segmented) :global(.p-segment > input:checked + span) { background: var(--p-seg-pill); color: rgb(var(--accent-ink)); }
+.group:global(.p-segmented) :global(.p-segment:active > input:checked:not(:disabled) + span) { background: var(--p-seg-pill-pressed); }
+@supports selector(:has(*)) {
+  .group:global(.p-segmented):has(input:checked) :global(.p-segment > input:checked + span) { background: var(--p-seg-pill); color: rgb(var(--accent-ink)); }
+  .group:global(.p-segmented):has(input:checked) :global(.p-segment:active > input:checked:not(:disabled) + span) { background: var(--p-seg-pill-pressed); }
+}
+@media (pointer: coarse) { .group :global(.p-segment) { min-height: 44px; } }

@@ -61,7 +61,7 @@ the project identity, so calls use the live project context.
 
 | Tool | Purpose |
 | --- | --- |
-| `get_project_state` | Return location, paper title, section TODO counts, Primary Unplaced, maps, recent activity, skills, and the `AGENTS.md` path and hash. Summary is the default. Full detail includes instruction bodies and every TODO. |
+| `get_project_state` | Return location, paper title, section TODO counts, Primary Unplaced, maps, recent activity, human card-removal decisions, skills, and the `AGENTS.md` path and hash. Summary is the default. Full detail includes instruction bodies and every TODO. |
 | `search_project` | Search paper headings and TeX, TODO titles and text, comments, mindmap titles, labels, refs, shared TODO text, and wiki pages. Results include ids and hrefs for navigation. |
 | `navigate_project` | Navigate the visible project UI to a location returned by `get_project_state` or `search_project`. |
 | `update_project` | Update editable project metadata such as the icon, title, overview, research kind, color, venue, tagline, label, links, collaborators, or archive state with the current project hash. |
@@ -69,6 +69,15 @@ the project identity, so calls use the live project context.
 Call `get_project_state` after `open_project`, then search or navigate to the
 specific work. `read_project_skill` is registered on the instructions page
 and reads a project, workspace, or bundled skill by id from project state.
+
+`humanDecisions` records cards removed through the human mindmap interface,
+including their map, title, text, and whether the card was an agent draft.
+Treat these as context when proposing work. Ask before recreating substantially
+similar content unless the current request calls for it. Restored cards leave
+the current decision list. The list contains up to 50 decisions drawn from the
+last 2,000 activity records, and applies to removals recorded after this feature
+was installed. Like other activity details, card text is bounded. Agents use
+their judgment to recognize similar content.
 
 ## Authenticated Streamable HTTP MCP
 
@@ -254,11 +263,18 @@ Saved map mutations return map metadata with `updatedNodes` and
 `removedNodeIds`, covering changed cards, sibling order, and promoted children.
 `get_mindmap` reads the complete map through its existing pagination.
 
-Card `caution` groups notes by importance: `critical`, `important`, `minor`, and
-`background`. Each optional bucket holds text. Supplying `caution` replaces all
-buckets, and `{}` clears them. Critical and important notes appear through red
-and amber hover icons. Minor and background notes remain in closed card settings
-under More actions → Caution notes. Existing scalar notes migrate into `minor`.
+Card presentation uses three levels: visible, collapsed, and hover. `title`
+and `text` form the main card. `caution.critical` and `caution.important` are
+visible paragraphs with red and amber accents. `caption` opens through the
+card’s collapsed notes disclosure. `caution.background` appears in the
+collapsed Background notes section. All note fields are map-owned, including on TODO cards.
+
+Both `add_mindmap_node` and `patch_mindmap_node` accept `caption` and `caution`.
+Supplying `caution` replaces all its fields, and `{}` clears them. An empty
+`caption` clears the notes. Existing scalar caution text and retired
+`minor` text migrate into `caption`, preserving the text and its existing
+notes contents. Reading performs this conversion in memory. The next
+ordinary save persists the canonical fields.
 
 ### Request replay recovery
 
@@ -307,12 +323,21 @@ A stdio-only client can launch:
 Use the direct Node command so package-manager output stays out of the protocol.
 The bridge requires a running authenticated OpenBar server.
 
-The MCP endpoint accepts versions `2025-03-26`, `2025-06-18`, and `2025-11-25`.
-It uses JSON responses and returns 405 for optional GET event streams. Clients
-poll `get_paper_compile` for jobs. POST requests refresh session activity. A 404
-for an expired session requires initialization again. Unknown protocol versions
-receive 400. Untrusted origins receive 403. Existing bearer authentication receives
+The official MCP SDK handles HTTP framing, protocol negotiation, cancellation,
+discovery, and the stdio relay. The endpoint supports the current `2026-07-28`
+per-request protocol alongside session-based `2025-03-26`, `2025-06-18`, and
+`2025-11-25` clients. The existing tool schemas and result envelopes are shared
+by both transports.
+
+Legacy sessions use JSON responses and return 405 for optional GET event streams.
+Clients poll `get_paper_compile` for jobs. Authenticated requests refresh session
+activity. Sessions expire after 30 idle minutes and release their SDK resources.
+A 404 for an expired session requires initialization again. Unsupported protocol
+versions receive 400. Untrusted origins receive 403. Bearer authentication returns
 a Bearer challenge on 401.
+
+Stdio clients keep the bridge's standard input open while awaiting responses.
+Closing standard input shuts down the SDK transports and cancels pending work.
 
 Private-network access, trusted external browser origins, and an OAuth identity
 provider are deployment choices. The owner supplies these settings. OpenBar's

@@ -17,10 +17,6 @@ import {
   getEditableTexPaper,
   getPaperEditorState,
   getWikiPage,
-  renameEditablePaperSection,
-  setEditablePaperSectionHeading,
-  addEditablePaperSection,
-  removeEditablePaperSection,
   projectContentDir,
   saveProject,
   getProject,
@@ -45,7 +41,7 @@ import { getOverleafSyncDetails, prepareForceSync, confirmForceSync, finishForce
 import { inspectRepository } from "@/lib/tex-project/source-graph";
 import { getConversionPlan, previewManuscriptConversion } from "@/lib/tex-project/pandoc";
 import { getRuntimeCapabilities } from "@/lib/research/capabilities";
-import { okResult, type OperationResult } from "@/lib/research/operation-result";
+import { failResult, okResult, type OperationResult } from "@/lib/research/operation-result";
 import { getProjectState, projectStateForAgent, resolveProjectNavigation, searchProject } from "@/lib/research/project-state";
 import { ensureCommentId } from "@/lib/research/paper-analysis";
 import { isPrimaryMindmap } from "@/lib/research/todo-map";
@@ -78,6 +74,11 @@ import { normalizeMindmapProgress } from "@/lib/mindmap/progress";
 import { appendActivity, type ActivityChange } from "@/lib/research/activity-log";
 import {
   saveWorkspaceSettings,
+  getWorkspaceLayout,
+  moveWorkspaceProject,
+  WorkspaceLayoutError,
+  type WorkspaceLayout,
+  type MoveWorkspaceProjectInput,
   type WorkspaceSettings,
   type WorkspaceSettingsInput,
 } from "@/lib/workspace";
@@ -91,9 +92,10 @@ function bust(slug: string) {
 function recordActivity(
   slug: string,
   event: Omit<Parameters<typeof appendActivity>[1], "actor">,
+  actor: "human" | "webmcp" = "human",
 ): void {
   try {
-    appendActivity(projectContentDir(slug), { projectId: slug, ...event, actor: "human" });
+    appendActivity(projectContentDir(slug), { projectId: slug, ...event, actor });
   } catch (error) {
     // The authored operation already reached local storage. Keep the durable
     // write receipt useful when activity storage is temporarily unavailable.
@@ -195,6 +197,8 @@ const MINDMAP_ACTIVITY_NODE_FIELDS = [
   "title",
   "text",
   "caption",
+  "caution",
+  "agentDraft",
   "todoId",
   "parentId",
   "order",
@@ -294,6 +298,7 @@ export async function saveMindmapAction(
   slug: string,
   mindmap: Mindmap,
   expectedDiskHash?: string,
+  actor: "human" | "webmcp" = "human",
 ): Promise<Mindmap> {
   await requireProjectAccess(slug);
   const saved = normalizeMindmapForSave(slug, mindmap);
@@ -334,6 +339,8 @@ export async function saveMindmapAction(
     : changedNodeIds.length > 1
       ? `${mapTitle} · ${changedNodeIds.length} cards changed`
       : mapTitle;
+  const mapId = next.id || DRAFT_MINDMAP_ID;
+  const mapHref = `/p/${encodeURIComponent(slug)}/mindmap${next.id && !isPrimaryMindmap(next) ? `/${encodeURIComponent(next.id)}` : ""}`;
   recordActivity(slug, {
     operation: "save_mindmap",
     resources: [
@@ -341,9 +348,23 @@ export async function saveMindmapAction(
       ...changedNodeIds.map((id) => ({ kind: "mindmap-node", id, mapId: next.id || DRAFT_MINDMAP_ID })),
     ],
     title: activityTitle,
-    href: `/p/${encodeURIComponent(slug)}/mindmap${next.id && !isPrimaryMindmap(next) ? `/${encodeURIComponent(next.id)}` : ""}`,
+    href: mapHref,
     changes: mindmapActivityChanges(current, next),
-  });
+  }, actor);
+  if (actor === "human") {
+    const removed = [...beforeNodes.values()].filter((node) => !afterNodes.has(node.id));
+    for (let offset = 0; offset < removed.length; offset += 48) {
+      const batch = removed.slice(offset, offset + 48);
+      recordActivity(slug, {
+        operation: "human_removed_mindmap_cards",
+        resources: batch.map((node) => ({ kind: "mindmap-node", id: node.id, mapId })),
+        title: batch.length === 1 ? (batch[0].title?.trim() || batch[0].text.trim() || "Removed card") : `${batch.length} removed cards`,
+        href: mapHref,
+        deleted: true,
+        changes: batch.map((node) => ({ field: `node:${node.id}`, before: mindmapNodeActivitySnapshot(node) })),
+      });
+    }
+  }
   bust(slug);
   return next;
 }
@@ -470,69 +491,6 @@ export async function persistSourceBundleAction(
   return result;
 }
 
-export async function renamePaperSectionAction(slug: string, id: string, title: string) {
-  await requireProjectAccess(slug);
-  renameEditablePaperSection(slug, id, title);
-  recordActivity(slug, {
-    operation: "rename_paper_section",
-    resources: [{ kind: "paper-section", id }],
-    title,
-    href: `/p/${encodeURIComponent(slug)}/paper#${encodeURIComponent(id)}`,
-    changes: [{ field: "title", after: title }],
-  });
-  bust(slug);
-  return getPaperEditorState(slug);
-}
-
-export async function setPaperSectionHeadingAction(
-  slug: string,
-  id: string,
-  heading: { level?: number; appendix?: boolean },
-) {
-  await requireProjectAccess(slug);
-  setEditablePaperSectionHeading(slug, id, heading);
-  recordActivity(slug, {
-    operation: "edit_paper_section_heading",
-    resources: [{ kind: "paper-section", id }],
-    title: id,
-    href: `/p/${encodeURIComponent(slug)}/paper#${encodeURIComponent(id)}`,
-    changes: Object.entries(heading).map(([field, after]) => ({ field, after })),
-  });
-  bust(slug);
-  return getPaperEditorState(slug);
-}
-
-export async function addPaperSectionAction(
-  slug: string,
-  spec: { title: string; afterId?: string; level?: number; appendix?: boolean },
-) {
-  await requireProjectAccess(slug);
-  const paper = addEditablePaperSection(slug, spec);
-  const added = paper.sections.find((section) => section.title === spec.title) || paper.sections.at(-1);
-  recordActivity(slug, {
-    operation: "add_paper_section",
-    resources: [{ kind: "paper-section", id: added?.id || spec.title }],
-    title: added?.title || spec.title,
-    href: `/p/${encodeURIComponent(slug)}/paper#${encodeURIComponent(added?.id || spec.title)}`,
-  });
-  bust(slug);
-  return getPaperEditorState(slug);
-}
-
-export async function removePaperSectionAction(slug: string, id: string) {
-  await requireProjectAccess(slug);
-  removeEditablePaperSection(slug, id);
-  recordActivity(slug, {
-    operation: "delete_paper_section",
-    resources: [{ kind: "paper-section", id }],
-    title: id,
-    href: `/p/${encodeURIComponent(slug)}/paper#${encodeURIComponent(id)}`,
-    deleted: true,
-  });
-  bust(slug);
-  return getPaperEditorState(slug);
-}
-
 export async function requestPaperCompileAction(slug: string) {
   await requireProjectAccess(slug);
   if (!getEditableTexPaper(slug)) throw new Error("This project has no TeX paper.");
@@ -618,7 +576,28 @@ function workspaceProjectSummary(project: Project): WorkspaceProjectResult {
 
 export async function listWorkspaceProjectsAction(): Promise<WorkspaceProjectResult[]> {
   await requireWorkbenchAccess();
-  return listVisibleProjects().map(workspaceProjectSummary);
+  return getWorkspaceLayout().projects.map(workspaceProjectSummary);
+}
+
+export async function getWorkspaceLayoutAction(): Promise<WorkspaceLayout> {
+  await requireWorkbenchAccess();
+  return getWorkspaceLayout();
+}
+
+export async function moveWorkspaceProjectAction(input: MoveWorkspaceProjectInput): Promise<WorkspaceLayout> {
+  await requireWorkbenchAccess();
+  assertAdministrativeWriteAllowed("Workspace project moves");
+  const layout = await moveWorkspaceProject(input);
+  bust(input.slug);
+  return layout;
+}
+
+export async function moveWorkspaceProjectToolAction(input: MoveWorkspaceProjectInput): Promise<OperationResult<WorkspaceLayout>> {
+  try { return okResult(await moveWorkspaceProjectAction(input)); }
+  catch (error) {
+    if (error instanceof WorkspaceLayoutError) return failResult(error.code, error.message, { retryable: error.code === "stale_disk_state", ...(error.currentHash ? { currentHash: error.currentHash } : {}) });
+    throw error;
+  }
 }
 
 export async function searchWorkspaceProjectsAction(query: string): Promise<WorkspaceProjectResult[]> {
@@ -682,9 +661,9 @@ export async function resolveProjectNavigationAction(slug: string, input: { id?:
   return resolveProjectNavigation(slug, input);
 }
 
-export async function readProjectSkillAction(slug: string, id: string) {
+export async function readProjectSkillAction(slug: string, id: string, source?: "project" | "workspace" | "openbar") {
   await requireProjectAccess(slug);
-  const local = readAnySkill(projectContentDir(slug), id);
+  const local = readAnySkill(projectContentDir(slug), id, source);
   if (local) return { ...local.skill, body: local.body };
   throw new Error(`Unknown skill "${id}".`);
 }

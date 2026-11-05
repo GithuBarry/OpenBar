@@ -9,7 +9,7 @@
  *   \appendix
  *   \section{...}
  *
- * Section bodies are TeX. Do not run markdownToTex on this document.
+ * Section bodies retain their TeX source.
  */
 
 import { findMacros, isMacro, macroName, mandatoryArgs, nodesToPlainText, nodesToTex, parseTex, type TexMacro } from "./tex-ast";

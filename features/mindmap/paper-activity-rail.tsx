@@ -67,7 +67,7 @@ export function PaperActivityRail({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search"
-              className="input h-6 w-full px-1.5 py-0 text-[11px]"
+              className="p-field input h-6 w-full px-1.5 py-0 text-[11px]"
               aria-label="Search paper TODOs"
             />
           )}
@@ -89,7 +89,7 @@ export function PaperActivityRail({
                 className={`min-w-0 truncate hover:text-accent ${todo.completed ? "line-through text-faint" : ""}`}
               >
                 <span className="font-medium">{content.title || "Untitled TODO"}</span>
-                {content.body.trim() && <span className="text-muted"> · {content.body.trim()}</span>}
+                {content.body.trim() && <span className="text-muted">: {content.body.trim()}</span>}
               </Link>
                 );
               })()}

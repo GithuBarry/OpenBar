@@ -1,5 +1,14 @@
 import type { Metadata, Viewport } from "next";
 
+import "@codedgar/puppertino/colors";
+import "@codedgar/puppertino/materials";
+import "@codedgar/puppertino/buttons";
+import "@codedgar/puppertino/forms";
+import "@codedgar/puppertino/menus";
+import "@codedgar/puppertino/modals";
+import "@codedgar/puppertino/popovers";
+import "@codedgar/puppertino/segmented-controls";
+import "@codedgar/puppertino/sidebars";
 import "./globals.css";
 import { agentOrigins } from "@/lib/server/agent-origins";
 import { AGENT_GUIDANCE } from "@/lib/research/agent-guidance";
@@ -17,7 +26,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: {
       default: workspace.name,
-      template: `%s · ${workspace.name}`,
+      template: `%s | ${workspace.name}`,
     },
     description,
     metadataBase: siteUrl,
@@ -53,10 +62,7 @@ export default function RootLayout({
         <ThemeScript />
       </head>
       <body className="min-h-screen antialiased">
-        <aside aria-label="MCP and WebMCP connection instructions" data-agent-instructions className="sr-only">
-          <p>OpenBar exposes MCP and WebMCP tools. HTTP MCP: /api/mcp. Connection setup: /agents.</p>
-          <p>{AGENT_GUIDANCE}</p>
-        </aside>
+        <a className="ob-skip-link" href="#main-content">Skip to content</a>
         <Providers>{children}</Providers>
       </body>
     </html>

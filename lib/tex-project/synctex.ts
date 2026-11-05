@@ -48,8 +48,9 @@ function parseEdit(output: string, manuscriptDir: string): SyncTexEdit | null {
   if (!input || !line) return null;
   const abs = input[1]!.trim();
   const rel = path.relative(manuscriptDir, abs).split(path.sep).join("/");
+  if (!rel || rel === ".." || rel.startsWith("../") || path.isAbsolute(rel)) return null;
   return {
-    file: rel.startsWith("..") ? path.basename(abs) : rel,
+    file: rel,
     line: Number(line[1]),
     column: Number(column?.[1] || 0),
   };
@@ -62,7 +63,11 @@ export async function synctexView(projectDir: string, file: string, line: number
   const requestedArtifactId = artifactId || currentArtifactId(projectDir);
   if (!getCompiledPdf(projectDir, requestedArtifactId)) return { ok: false, code: "compile_failed", message: "The requested PDF artifact is no longer available for SyncTeX." };
   const pdf = compiledPdfFile(projectDir, requestedArtifactId);
-  const output = await runSynctex(["view", "-i", `${line}:${column}:${file}`, "-o", pdf]);
+  const root = path.resolve(texPaths(projectDir).manuscriptDir);
+  const absolute = path.resolve(root, file);
+  const relative = path.relative(root, absolute);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return { ok: false, code: "compile_failed", message: "Choose a source file inside the manuscript." };
+  const output = await runSynctex(["view", "-i", `${line}:${column}:${absolute}`, "-o", pdf]);
   if (output === null) {
     return { ok: false, code: "capability_unavailable", message: "synctex is not installed. Install TeX Live to enable PDF source navigation." };
   }

@@ -1,12 +1,14 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { FastTooltip } from "@/components/fast-tooltip";
 import { useState } from "react";
-import { LoaderCircle, Plus, Trash2, ChevronDown, Check } from "lucide-react";
+import { LoaderCircle, Plus, Trash2, ChevronDown, Check, Network } from "lucide-react";
 
 import { createMindmapAction, deleteMindmapAction } from "@/app/actions";
 import { isPrimaryMindmap } from "@/lib/research/todo-map";
 import * as Popover from "@radix-ui/react-popover";
+import { PopoverSurface } from "@/components/pop";
 import styles from "./mindmap-switcher.module.css";
 
 export type MindmapListItem = {
@@ -92,10 +94,10 @@ export function MindmapSwitcher({
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>
-        <button type="button" className={styles.trigger} aria-label="Choose mindmap" title={active?.title || "Mindmaps"}><span>{active?.title || "Mindmaps"}</span><ChevronDown size={12} /></button>
-      </Popover.Trigger>
-      <Popover.Portal><Popover.Content className={styles.menu} align="end" sideOffset={10} collisionPadding={12} aria-label="Mindmaps">
+      <FastTooltip label={active?.title || "Mindmaps"}><Popover.Trigger asChild>
+        <button type="button" className={styles.trigger} aria-label="Choose mindmap"><Network size={16} className={styles.phoneMapIcon} /><span>{active?.title || "Mindmaps"}</span><ChevronDown size={12} /></button>
+      </Popover.Trigger></FastTooltip>
+      <PopoverSurface className={styles.menu} align="end" sideOffset={10} collisionPadding={12} aria-label="Mindmaps">
         <p className={styles.heading}>Mindmaps</p>
         <div className={styles.maps}>
           {maps.map((map) => <button key={map.id} type="button" className={styles.row} onClick={() => void navigateTo(hrefFor(map.id))} aria-current={map.id === activeId ? "page" : undefined}>
@@ -108,7 +110,7 @@ export function MindmapSwitcher({
         </form> : <button type="button" className={styles.row} onClick={() => setCreating(true)}><Plus size={14} /><span>New map</span></button>}
         {active && !isPrimaryMindmap(active) && <button type="button" className={styles.delete} onClick={() => void onDelete()} disabled={saving}><Trash2 size={13} />Delete this map</button>}
         {error && <p className={styles.error} role="alert">{error}</p>}
-      </Popover.Content></Popover.Portal>
+      </PopoverSurface>
     </Popover.Root>
   );
 }

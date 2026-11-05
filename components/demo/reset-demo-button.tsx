@@ -28,7 +28,7 @@ export function ResetDemoButton({ slug }: { slug: string }) {
 
   return (
     <div className="flex items-center gap-2">
-      <button type="button" className="btn-outline text-xs" onClick={() => void reset()} disabled={pending}>
+      <button type="button" className="p-button p-button-default btn-outline text-xs" onClick={() => void reset()} disabled={pending}>
         {pending ? <LoaderCircle size={12} className="animate-spin" /> : <RotateCcw size={12} />}
         Reset demo
       </button>

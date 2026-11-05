@@ -58,7 +58,7 @@ function patchTouchesActivity(patch: MindmapNodePatch): boolean {
 
 export type MindmapTreeAction =
   | { type: "paste-images"; id: string; images: Array<{ ref: NonNullable<MindmapNode["refs"]>[number]; childId: string }> }
-  | { type: "add-node"; parentId: string; id: string; title?: string; text?: string; caution?: MindmapCaution; todoId?: string; agentDraft?: boolean }
+  | { type: "add-node"; parentId: string; id: string; title?: string; text?: string; caption?: string; caution?: MindmapCaution; todoId?: string; agentDraft?: boolean }
   | { type: "move-sibling"; id: string; direction: -1 | 1 }
   | { type: "edit-text"; id: string; text: string }
   | { type: "edit-card"; id: string; title: string; text: string; contentFormat?: MindmapNode["contentFormat"] }
@@ -241,7 +241,8 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
               id: action.id,
               ...(action.todoId ? {} : { title }),
               text,
-              ...(action.caution !== undefined ? { caution: normalizeMindmapCaution(action.caution) } : {}),
+              ...(action.caption !== undefined ? { caption: action.caption } : {}),
+              ...(action.caution !== undefined ? { caution: normalizeMindmapCaution(action.caution, { trim: false }) } : {}),
               ...(action.todoId ? { todoId: action.todoId } : {}),
               ...(action.agentDraft ? { agentDraft: true } : {}),
               parentId: action.parentId,

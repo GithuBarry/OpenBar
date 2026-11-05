@@ -1,4 +1,5 @@
-import { bundleSections, deriveSections } from "@/lib/tex-project/section-ranges";
+import { bundleSections, deriveSections, headingInvocation } from "@/lib/tex-project/section-ranges";
+import { maskTexLiterals } from "@/lib/tex-project/tex-literals";
 import { findMacroMatches, parseAnchorAttrs } from "@/lib/marker-codec";
 import { analyzePaper } from "@/lib/research/paper-analysis";
 import {
@@ -11,15 +12,14 @@ import {
   composePaperTex,
   isPaperChromeLine,
   normalizeHeadingTitle,
-  plainHeadingTitle,
   readTexDocumentTitle,
   sectionCommandForLevel,
-  TEX_HEADING_LINE,
   texHeadingLevel,
   type PaperBodySection,
 } from "@/lib/tex-project/paper-compose";
 
-import { headingOccurrenceKey } from "./heading-keys";
+import { headingDisplayTitle, headingOccurrenceKey } from "./heading-keys";
+import { extractPreviewMacroBindings } from "@/lib/tex-project/pandoc-macros";
 import {
   lookupBundlePartFrom,
   sliceRootByIncludes,
@@ -117,24 +117,44 @@ export function headingCountsFrom(source: string): Map<string, number> {
   return counts;
 }
 
+/** Keep neighboring TeX commands outside a replacement's trailing comment. */
+export function sectionReplacementBody(tex: string): string {
+  return `\n${tex.replace(/^\n+|\n+$/g, "")}\n`;
+}
+
+/** Read balanced heading arguments while retaining same-line body text. */
+function sourceHeadings(source: string): { command: string; title: string; line: number; from: number }[] {
+  const visible = maskTexLiterals(source);
+  const headings: { command: string; title: string; line: number; from: number }[] = [];
+  let offset = 0;
+  for (const [lineNumber, line] of visible.split("\n").entries()) {
+    const match = /^[\t ]*\\(section|subsection|subsubsection|paragraph|subparagraph)\*?(?![A-Za-z])/.exec(line);
+    if (match) {
+      const from = offset + match[0].indexOf("\\");
+      const invocation = headingInvocation(visible, from);
+      if (invocation) headings.push({
+        command: match[1]!, title: source.slice(invocation.titleFrom, invocation.titleTo), line: lineNumber, from,
+      });
+    }
+    offset += line.length + 1;
+  }
+  return headings;
+}
+
 export function accumulateHeadingCounts(source: string, counts: Map<string, number>): void {
-  for (const line of source.split("\n")) {
-    const match = TEX_HEADING_LINE.exec(line);
-    if (!match || match[1] === "title") continue;
-    headingOccurrenceKey(texHeadingLevel(match[1]!), plainHeadingTitle(match[2]!), counts);
+  for (const heading of sourceHeadings(source)) {
+    headingOccurrenceKey(texHeadingLevel(heading.command), heading.title, counts);
   }
 }
 
 export function listBookmarks(source: string): { title: string; slug: string; line: number; level: number }[] {
-  const lines = source.split("\n");
   const list: { title: string; slug: string; line: number; level: number }[] = [];
   const headingCounts = new Map<string, number>();
-  for (let i = 0; i < lines.length; i++) {
-    const match = TEX_HEADING_LINE.exec(lines[i] || "");
-    if (!match || match[1] === "title") continue;
-    const title = plainHeadingTitle(match[2]!);
-    const level = texHeadingLevel(match[1]!);
-    list.push({ level, title, slug: headingOccurrenceKey(level, title, headingCounts), line: i });
+  const macroBindings = extractPreviewMacroBindings(source);
+  for (const heading of sourceHeadings(source)) {
+    const title = headingDisplayTitle(heading.title, macroBindings);
+    const level = texHeadingLevel(heading.command);
+    list.push({ level, title, slug: headingOccurrenceKey(level, heading.title, headingCounts), line: heading.line });
   }
   return list;
 }
@@ -188,6 +208,13 @@ export function collectEditorTodos(source: string): EditorTodo[] {
     });
   }
   return todos.sort((a, b) => a.from - b.from);
+}
+
+export function findEditorTodo(source: string, previous: EditorTodo): EditorTodo | undefined {
+  const todos = collectEditorTodos(source);
+  if (previous.id) return todos.find(todo => todo.id === previous.id);
+  const matches = todos.filter(todo => !todo.id && todo.kind === previous.kind && todo.section === previous.section && todo.text === previous.text);
+  return matches.find(todo => todo.from === previous.from && todo.to === previous.to) || (matches.length === 1 ? matches[0] : undefined);
 }
 
 export function collectEditorComments(source: string): EditorComment[] {
@@ -261,8 +288,11 @@ export function offsetForBookmarkLine(source: string, line: number): number {
 export function offsetForHeadingKey(source: string, slug: string): number | null {
   const parts = splitBundleSource(source);
   if (!parts.length) {
-    const bookmark = listBookmarks(source).find((item) => item.slug === slug);
-    return bookmark ? offsetForBookmarkLine(source, bookmark.line) : null;
+    const counts = new Map<string, number>();
+    for (const heading of sourceHeadings(source)) {
+      if (headingOccurrenceKey(texHeadingLevel(heading.command), heading.title, counts) === slug) return heading.from;
+    }
+    return null;
   }
   const root = parts[0]!;
   const counts = new Map<string, number>();
@@ -271,15 +301,9 @@ export function offsetForHeadingKey(source: string, slug: string): number | null
     const nextSeen = new Set(seen).add(part.filePath);
     for (const slice of sliceRootByIncludes(part.body)) {
       if (slice.kind === "tex") {
-        const lines = slice.text.split("\n");
-        let local = 0;
-        for (let i = 0; i < lines.length; i++) {
-          const match = TEX_HEADING_LINE.exec(lines[i] || "");
-          if (match && match[1] !== "title") {
-            const key = headingOccurrenceKey(texHeadingLevel(match[1]!), match[2]!.trim(), counts);
-            if (key === slug) return part.bodyFrom + slice.from + local;
-          }
-          local += (lines[i] || "").length + (i < lines.length - 1 ? 1 : 0);
+        for (const heading of sourceHeadings(slice.text)) {
+          const key = headingOccurrenceKey(texHeadingLevel(heading.command), heading.title, counts);
+          if (key === slug) return part.bodyFrom + slice.from + heading.from;
         }
         continue;
       }

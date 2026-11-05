@@ -3,6 +3,7 @@ import { BookOpenText } from "lucide-react";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { PaperEditor } from "@/features/paper/paper-editor";
+import { PaperReadingShell } from "@/features/paper/paper-reading-shell";
 import { DRAFT_MINDMAP_ID, getBibliography, getBibliographyRaw, getMindmap, getPaperEditorState, getProject } from "@/lib/store";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
 import { requireProjectPage } from "@/lib/server/project-access";
@@ -32,7 +33,7 @@ export default async function PaperPage({
   const bibliography = getBibliography(slug);
 
   return (
-    <>
+    <PaperReadingShell header={
       <PageHeader
         title={project.title}
         subtitle={project.tagline || `${project.title} manuscript`}
@@ -40,7 +41,7 @@ export default async function PaperPage({
         readOnlyProject={isPublicDemoMode()}
         icon={<BookOpenText size={18} />}
       />
-      <main className="h-[calc(100vh-68px)] w-full overflow-hidden p-2 sm:p-3">
+    }>
         {paper ? (
           <PaperEditor
             key={slug}
@@ -57,7 +58,6 @@ export default async function PaperPage({
         ) : (
           <p className="rounded-lg border border-line bg-surface px-4 py-3 text-sm text-muted">This project has no TeX manuscript yet.</p>
         )}
-      </main>
-    </>
+    </PaperReadingShell>
   );
 }

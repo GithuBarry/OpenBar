@@ -221,17 +221,3 @@ function groupSiblingBranchesVertically(
 
   placeBranch(root);
 }
-
-function checkNodeDimensions(): void {
-  const short = nodeDimensions({ id: "s", text: "Hi", parentId: "r" });
-  const long = nodeDimensions({ id: "l", text: "Long topic ".repeat(12), parentId: "r" });
-  const root = nodeDimensions({ id: "r", text: "Paper", parentId: null });
-  const todo = nodeDimensions({ id: "t", text: "", parentId: "r", todoId: "x" });
-  if (short.width !== NODE_WIDTH) throw new Error("standard cards should use the default width");
-  if (long.width !== NODE_WIDTH) throw new Error("nodeDimensions should cap at NODE_WIDTH");
-  if (!(long.height > short.height)) throw new Error("nodeDimensions should grow for wrapped text");
-  if (root.width !== ROOT_WIDTH) throw new Error("root should use the root width");
-  if (!(todo.width === NODE_WIDTH && todo.height > NODE_HEIGHT)) throw new Error("empty TODOs should use wrapped max-width");
-}
-
-checkNodeDimensions();

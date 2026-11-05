@@ -2,6 +2,8 @@
 
 import type { BibEntry } from "@/lib/bibtex";
 import { renderPreviewDocument, type PreviewResult } from "@/lib/tex-project/preview-html";
+import { inlineBundleIncludes } from "@/lib/tex-project/source-bundle-format";
+import { countPaperWords } from "./paper-stats";
 
 export type PreviewChange = { from: number; to: number; insert: string };
 export type PreviewBatch = {
@@ -26,11 +28,13 @@ export type PreviewWorkerIn =
     batches: PreviewBatch[];
   };
 
+export type PaperPreviewResult = PreviewResult & { wordCount: number };
+
 export type PreviewWorkerOut = {
   type: "result" | "desync";
   generation: number;
   revision: number;
-  result?: PreviewResult;
+  result?: PaperPreviewResult;
 };
 
 let source = "";
@@ -68,7 +72,7 @@ function pump(): void {
   rendering = true;
   const revision = latestRevision;
   const snapshot = source;
-  const result = renderPreviewDocument(snapshot, { bibliography, assetBaseUrl });
+  const result = { ...renderPreviewDocument(snapshot, { bibliography, assetBaseUrl }), wordCount: countPaperWords(inlineBundleIncludes(snapshot)) };
   // Publish this completed snapshot even when another edit is queued. The
   // next message will schedule a newer render; withholding every result
   // during continuous typing makes the preview appear frozen indefinitely.

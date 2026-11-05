@@ -51,15 +51,14 @@ export function SidebarNav({ items }: { items: NavItem[] }) {
           <li key={item.href}>
             <Link
               href={item.href}
+              aria-current={active ? "page" : undefined}
               className={cn(
-                "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors",
-                active
-                  ? "bg-accent-soft font-medium text-accent"
-                  : "text-muted hover:bg-surface-3 hover:text-ink",
+                "p-sidebar-row transition-colors",
+                active && "p-selected",
               )}
             >
-              <Icon size={16} className="shrink-0" />
-              {item.label}
+              <span className="p-sidebar-icon"><Icon size={16} aria-hidden="true" /></span>
+              <span className="ob-brand-font">{item.label}</span>
             </Link>
           </li>
         );
@@ -71,7 +70,7 @@ export function SidebarNav({ items }: { items: NavItem[] }) {
       {renderItems(primary)}
       {more.length > 0 && (
         <div className="mt-4">
-          <p className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">More</p>
+          <p className="p-sidebar-header">More</p>
           {renderItems(more)}
         </div>
       )}

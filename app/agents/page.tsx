@@ -6,7 +6,7 @@ export const metadata: Metadata = { title: "Tools and agent access", description
 
 export default function AgentAccessPage() {
   return (
-    <main className="mx-auto max-w-3xl space-y-8 px-6 py-10 text-ink">
+    <main id="main-content" tabIndex={-1} className="mx-auto max-w-3xl space-y-8 px-6 py-10 text-ink">
       <Link href="/" className="text-sm text-accent">← OpenBar workspace</Link>
       <header className="space-y-3">
         <h1 className="text-3xl font-semibold">Tools and agent access</h1>
@@ -40,7 +40,7 @@ export default function AgentAccessPage() {
         <p>HTTP MCP operates saved repository state. Browser WebMCP additionally exposes the live page and editing session.</p>
         <p>REST clients can read <code>/api/tools</code> and send JSON arguments to <code>/api/tools/&lt;name&gt;</code> with the same bearer token. <Link href="/openapi.json" className="text-accent underline">OpenAPI discovery</Link> describes every endpoint. MCP and REST results use <code>{'{"ok":true,"value":...}'}</code> with revision and save details.</p>
         <p>Stdio clients can launch <code>node scripts/mcp-stdio.mjs</code> with <code>OPENBARRY_URL</code> and <code>OPENBARRY_ACCESS_TOKEN</code> in their environment. Tailscale addresses require access to your private network. External browser origins require configuration in <code>OPENBARRY_AGENT_ORIGINS</code>.</p>
-        <p><Link href="/llms.txt" className="text-accent underline">Optional agent index</Link>{" · "}<Link href="/llms-deployment.txt" className="text-accent underline">Deployment and connection reference</Link></p>
+        <p><Link href="/llms.txt" className="text-accent underline">Optional agent index</Link>{" | "}<Link href="/llms-deployment.txt" className="text-accent underline">Deployment and connection reference</Link></p>
       </section>
     </main>
   );

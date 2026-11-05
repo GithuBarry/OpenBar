@@ -1,9 +1,14 @@
+.pageHeader:global(.ob-chrome-header) { background: rgb(var(--toolbar)); }
 .headerActions { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .trigger, .paperLink { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border: 1px solid rgb(var(--line)); border-radius: 7px; background: rgb(var(--surface)); color: rgb(var(--muted)); font-size: 11px; cursor: pointer; }
-.trigger { max-width: 200px; }
+.trigger { max-width: 240px; border-color: transparent; background: transparent; padding-inline: 8px; color: rgb(var(--ink)); font-size: 12px; font-weight: 500; transition: background .15s ease, color .15s ease; }
 .trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.trigger > svg { flex-shrink: 0; }
-.trigger:hover, .paperLink:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); }
+.phoneMapIcon { display: none; }
+.trigger > svg { flex-shrink: 0; color: rgb(var(--muted)); transition: transform .15s ease; }
+.trigger:hover, .trigger[data-state="open"] { background: rgb(var(--surface-2)); }
+.trigger[data-state="open"] > svg { transform: rotate(180deg); }
+.trigger:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }
+.paperLink:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); }
 .menu { z-index: 90; width: min(300px, calc(100vw - 24px)); border: 1px solid rgb(var(--line)); border-radius: 12px; padding: 8px; background: rgb(var(--surface)); color: rgb(var(--ink)); box-shadow: 0 12px 36px rgb(0 0 0 / .12); font-family: var(--font-sans); }
 .heading { padding: 7px 8px; font-size: 10px; color: rgb(var(--faint)); }
 .maps { max-height: 280px; overflow-y: auto; padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid rgb(var(--line)); }
@@ -20,4 +25,4 @@
 .create button:disabled { opacity: .4; cursor: default; }
 .delete { display: flex; gap: 8px; padding: 10px 8px; color: rgb(var(--danger)); font-size: 11px; cursor: pointer; }
 .error { padding: 8px; font-size: 11px; line-height: 1.5; color: rgb(var(--danger)); }
-@media (max-width: 600px) { .headerActions { gap: 4px; } .trigger { max-width: 98px; height: 29px; padding-inline: 7px; } .paperLink { height: 29px; width: 29px; padding: 0; justify-content: center; } .paperLink > span { display: none; } }
+@media (max-width: 600px) { .headerActions { gap: 4px; } .trigger { width: 29px; height: 29px; justify-content: center; padding: 0; } .trigger > span, .trigger > svg:last-child, .paperLink { display: none; } .trigger > .phoneMapIcon { display: block; } }

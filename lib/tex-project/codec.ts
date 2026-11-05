@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import lockfile from "proper-lockfile";
-import { ASSET_ROOTS, normalizeAssetRequest } from "./asset-resolver";
+import { normalizeAssetRequest } from "./asset-resolver";
 
 /**
  * OpenBar's TeX envelope codec.
@@ -343,8 +343,8 @@ export function safeFileSegment(value: string, label = "path segment"): string {
 
 export function safeAssetPath(value: string): string {
   const normalized = normalizeAssetRequest(value);
-  if (!normalized || !ASSET_ROOTS.some((root) => normalized.startsWith(`${root}/`))) {
-    throw new TexEnvelopeError(`Figure must reference a safe image under an approved project asset root: ${value}`);
+  if (!normalized) {
+    throw new TexEnvelopeError(`Figure must reference a safe project-relative image path: ${value}`);
   }
   return normalized;
 }

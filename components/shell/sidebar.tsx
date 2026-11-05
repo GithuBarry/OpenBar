@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import * as Dialog from "@radix-ui/react-dialog";
+import { FastTooltip } from "@/components/fast-tooltip";
 import styles from "./sidebar.module.css";
 import { BookOpenText, Network, PanelLeft, PanelLeftClose } from "lucide-react";
 
@@ -36,12 +38,14 @@ export function Sidebar({
   const base = active ? `/p/${active.slug}` : "";
   const [open, setOpen] = useState(true);
   const [ready, setReady] = useState(false);
+  const [narrow, setNarrow] = useState(false);
 
   useEffect(() => {
     const narrow = window.matchMedia("(max-width: 767px)");
     const applyViewport = () => {
       let desktopOpen = true;
       try { desktopOpen = window.localStorage.getItem(STORAGE_KEY) !== "0"; } catch { /* Keep navigation available when storage is restricted. */ }
+      setNarrow(narrow.matches);
       setOpen(narrow.matches ? false : desktopOpen);
       setReady(true);
     };
@@ -67,26 +71,7 @@ export function Sidebar({
         { href: "/", label: "All projects", icon: "overview" as const, exact: true },
       ];
 
-  return (
-    <>
-      {ready && !open && (
-        <nav className={styles.collapsedRail} aria-label="Project navigation">
-          <button type="button" aria-label="Show sidebar" title="Show sidebar" onClick={() => changeOpen(true)}><PanelLeft size={18} /></button>
-          {active && <>
-            <Link href={`${base}/paper`} aria-label="Paper" title="Paper"><BookOpenText size={18} /></Link>
-            <Link href={`${base}/mindmap`} aria-label="Mindmap" title="Mindmap"><Network size={18} /></Link>
-          </>}
-        </nav>
-      )}
-      {ready && open && <button type="button" className={styles.backdrop} aria-label="Close sidebar" onClick={() => changeOpen(false)} />}
-      <aside
-        onKeyDown={(event) => { if (event.key === "Escape") changeOpen(false); }}
-        onClickCapture={(event) => { if (window.matchMedia("(max-width: 767px)").matches && (event.target as HTMLElement).closest("a")) changeOpen(false); }}
-        className={cn(
-          "ob-sidebar", styles.sidebar,
-          ready ? (open ? styles.open : styles.closed) : styles.initial,
-        )}
-      >
+  const content = <>
         <div className="flex min-h-16 items-center gap-2 px-3 py-3">
           <WorkspaceMark
             name={workspaceName}
@@ -95,15 +80,14 @@ export function Sidebar({
             compact
             className="min-w-0 flex-1"
           />
-          <button
+          <FastTooltip label="Hide sidebar"><button
             type="button"
             className="ob-press grid h-7 w-7 shrink-0 place-items-center rounded-md text-muted hover:bg-surface-3 hover:text-ink"
             aria-label="Hide sidebar"
-            title="Hide sidebar"
             onClick={() => changeOpen(false)}
           >
             <PanelLeftClose size={16} />
-          </button>
+          </button></FastTooltip>
         </div>
 
         <div className="px-3 pb-2">
@@ -122,7 +106,32 @@ export function Sidebar({
           </div>
           {publicDemo && activeSlug && <div className="mt-3"><ResetDemoButton slug={activeSlug} /></div>}
         </div>
-      </aside>
-    </>
+  </>;
+  return (
+    <Dialog.Root open={narrow && open} onOpenChange={changeOpen}>
+      {ready && (!open || narrow) && (
+        <nav className={styles.collapsedRail} aria-label="Project navigation">
+          <FastTooltip label="Show sidebar"><Dialog.Trigger asChild><button type="button" aria-label="Show sidebar" onClick={() => changeOpen(true)}><PanelLeft size={18} aria-hidden="true" /></button></Dialog.Trigger></FastTooltip>
+          {active && <>
+            <FastTooltip label="Paper"><Link href={`${base}/paper`} aria-label="Paper"><BookOpenText size={18} aria-hidden="true" /></Link></FastTooltip>
+            <FastTooltip label="Mindmap"><Link href={`${base}/mindmap`} aria-label="Mindmap"><Network size={18} aria-hidden="true" /></Link></FastTooltip>
+          </>}
+        </nav>
+      )}
+      {narrow ? (
+        <Dialog.Portal>
+          <Dialog.Overlay className={styles.backdrop} />
+          <Dialog.Content className={cn("p-sidebar p-sidebar-medium ob-sidebar", styles.sidebar, styles.open)} aria-describedby={undefined}
+            onClickCapture={(event) => { if ((event.target as HTMLElement).closest("a")) changeOpen(false); }}>
+            <Dialog.Title className="sr-only">Project navigation</Dialog.Title>
+            {content}
+          </Dialog.Content>
+        </Dialog.Portal>
+      ) : (
+        <aside className={cn("p-sidebar p-sidebar-medium ob-sidebar", styles.sidebar, ready ? (open ? styles.open : styles.closed) : styles.initial)}>
+          {content}
+        </aside>
+      )}
+    </Dialog.Root>
   );
 }

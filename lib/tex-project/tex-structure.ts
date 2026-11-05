@@ -1,10 +1,12 @@
+import { SKIP, visit } from "@unified-latex/unified-latex-util-visit";
+import { maskTexLiterals, TEX_LITERAL_ENVIRONMENTS } from "./tex-literals";
+
 /** LaTeX headings and environment inspection with recovery for incomplete input. */
 
 import { macroName, mandatoryArgs, nodesToPlainText, parseTex } from "./tex-ast";
 import { plainHeadingTitle, texHeadingLevel } from "./paper-compose";
 
 const HEADING_COMMANDS = new Set(["section", "subsection", "subsubsection", "paragraph", "subparagraph"]);
-const VERBATIM_ENVIRONMENTS = new Set(["verbatim", "Verbatim", "lstlisting", "minted", "alltt"]);
 
 export type TexHeading = {
   command: string;
@@ -43,21 +45,6 @@ function positionOf(value: unknown, key: "start" | "end"): { offset?: number; li
   };
 }
 
-function childArrays(value: unknown): unknown[][] {
-  if (!value || typeof value !== "object") return [];
-  const record = value as { content?: unknown; args?: unknown };
-  const children: unknown[][] = [];
-  if (Array.isArray(record.content)) children.push(record.content);
-  if (Array.isArray(record.args)) {
-    for (const arg of record.args) {
-      if (arg && typeof arg === "object" && Array.isArray((arg as { content?: unknown }).content)) {
-        children.push((arg as { content: unknown[] }).content);
-      }
-    }
-  }
-  return children;
-}
-
 function nearbyLabel(source: string, from: number): string | undefined {
   const tail = source.slice(from, Math.min(source.length, from + 500));
   const match = /\\label\s*\{([^{}\n]+)\}/.exec(tail);
@@ -78,8 +65,7 @@ function fallbackHeadingId(filePath: string, index: number, title: string): stri
 function regexHeadings(source: string): TexHeading[] {
   const result: TexHeading[] = [];
   const pattern = /\\(section|subsection|subsubsection|paragraph|subparagraph)\*?(?:\s*\[[^\]\n]*\])?\s*\{([^{}\n]*)\}/g;
-  const visible = withoutComments(source).replace(/\\begin\s*\{(verbatim|Verbatim|lstlisting|minted|alltt)\}[\s\S]*?(?:\\end\s*\{\1\}|$)/g,
-    match => match.replace(/[^\n]/g, " "));
+  const visible = maskTexLiterals(source);
   for (const match of visible.matchAll(pattern)) {
     const start = match.index ?? 0;
     const line = source.slice(0, start).split("\n").length;
@@ -102,36 +88,29 @@ export function discoverTexHeadings(source: string, filePath = "paper.tex"): Tex
   const found: TexHeading[] = [];
   const seen = new Set<number>();
   const ast = parseTex(source);
-  const visit = (nodes: unknown[]) => {
-    for (const node of nodes) {
-      const name = macroName(node);
-      const record = node as { type?: string; env?: string };
-      if (record.type === "verbatim_environment" || (record.env && VERBATIM_ENVIRONMENTS.has(record.env))) continue;
-      if (name && /^(?:newcommand|renewcommand|providecommand|DeclareRobustCommand|def|gdef|edef|xdef)$/.test(name)) continue;
-      if (name && HEADING_COMMANDS.has(name)) {
-        const args = mandatoryArgs(node);
-        const title = plainHeadingTitle(nodesToPlainText(args[0] || [])).trim();
-        const start = positionOf(node, "start").offset;
-        if (title && typeof start === "number" && !seen.has(start)) {
-          seen.add(start);
-          const label = nearbyLabel(source, start);
-          found.push({
-            command: name,
-            title,
-            level: texHeadingLevel(name),
-            line: positionOf(node, "start").line || source.slice(0, start).split("\n").length,
-            start,
-            ...(validStableId(label) ? { label } : {}),
-          });
-        }
+  visit(ast, (node) => {
+    const name = macroName(node);
+    const record = node as { type?: string; env?: string };
+    if (record.type === "verbatim_environment" || (record.env && TEX_LITERAL_ENVIRONMENTS.has(record.env))) return SKIP;
+    if (name && /^(?:newcommand|renewcommand|providecommand|DeclareRobustCommand|def|gdef|edef|xdef)$/.test(name)) return SKIP;
+    if (name && HEADING_COMMANDS.has(name)) {
+      const args = mandatoryArgs(node);
+      const title = plainHeadingTitle(nodesToPlainText(args[0] || [])).trim();
+      const start = positionOf(node, "start").offset;
+      if (title && typeof start === "number" && !seen.has(start)) {
+        seen.add(start);
+        const label = nearbyLabel(source, start);
+        found.push({
+          command: name,
+          title,
+          level: texHeadingLevel(name),
+          line: positionOf(node, "start").line || source.slice(0, start).split("\n").length,
+          start,
+          ...(validStableId(label) ? { label } : {}),
+        });
       }
-      for (const children of childArrays(node)) visit(children);
     }
-  };
-  const root = ast && typeof ast === "object" && Array.isArray((ast as { content?: unknown }).content)
-    ? (ast as { content: unknown[] }).content
-    : [];
-  visit(root);
+  });
   const headings = found.length ? found : regexHeadings(source);
   const ordered = headings
     .sort((a, b) => a.start - b.start)
@@ -164,39 +143,13 @@ export function headingPathAt(headings: TexHeading[], offset: number): string[] 
   return stack.map((item) => item.title);
 }
 
-function withoutComments(source: string): string {
-  let result = "";
-  let escaped = false;
-  let inComment = false;
-  for (const char of source) {
-    if (char === "\n") {
-      result += char;
-      escaped = false;
-      inComment = false;
-      continue;
-    }
-    if (inComment) {
-      result += " ";
-      continue;
-    }
-    if (char === "%" && !escaped) {
-      result += " ";
-      inComment = true;
-      continue;
-    }
-    result += char;
-    escaped = char === "\\" ? !escaped : false;
-  }
-  return result;
-}
-
 function lineAt(source: string, offset: number): number {
   return source.slice(0, offset).split("\n").length;
 }
 
 /** Find author-source environments that are visibly left open. */
 export function inspectTexEnvironments(source: string): TexStructureDiagnostic[] {
-  const code = withoutComments(source);
+  const code = maskTexLiterals(source);
   const token = /\\(begin|end)\s*\{([^{}\n]+)\}/g;
   const stack: Array<{ name: string; offset: number }> = [];
   const diagnostics: TexStructureDiagnostic[] = [];
@@ -211,7 +164,7 @@ export function inspectTexEnvironments(source: string): TexStructureDiagnostic[]
     }
     if (command === "begin") {
       stack.push({ name, offset });
-      if (VERBATIM_ENVIRONMENTS.has(name)) verbatim = name;
+      if (TEX_LITERAL_ENVIRONMENTS.has(name)) verbatim = name;
       continue;
     }
     const open = stack.at(-1);

@@ -1,15 +1,12 @@
-import { execFile } from "node:child_process";
+import { pathspec, simpleGit } from "simple-git";
 import fs from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
 
-import { hasTexProject, texPaths, writePaperProject, writeProjectRecord } from "./project";
+import { texPaths } from "./project";
 import { withWriteLockAsync } from "./codec";
 import { gitProcessEnv } from "@/lib/server/git-credential-store";
 import { redactGitRemote, redactSensitiveText } from "@/lib/server/git-url";
 import { withProjectWriteLockAsync } from "@/lib/research/project-lock";
-
-const execFileAsync = promisify(execFile);
 
 export interface OverleafGitStatus {
   isGitRepo: boolean;
@@ -36,13 +33,6 @@ export interface OverleafGitCommit {
   author: string;
   date: string;
   files: string[];
-}
-
-export interface TexGitRepoInspection {
-  repositoryPath: string;
-  texFiles: string[];
-  hasPaperSource: boolean;
-  status: OverleafGitStatus;
 }
 
 export interface PorcelainEntry {
@@ -139,47 +129,8 @@ export function parsePorcelainZ(output: string): PorcelainEntry[] {
   return entries;
 }
 
-export function porcelainPaths(entries: PorcelainEntry[]): string[] {
-  const paths: string[] = [];
-  const seen = new Set<string>();
-  for (const entry of entries) {
-    for (const file of [entry.path, entry.origPath]) {
-      if (!file || seen.has(file)) continue;
-      seen.add(file);
-      paths.push(file);
-    }
-  }
-  return paths;
-}
-
-export function parseNulTerminatedPaths(output: string): string[] {
-  return splitNulRecords(output);
-}
-
-/**
- * Parse `git diff --name-status -z`. Ordinary changes are `STATUS`, NUL, `PATH`, NUL.
- * Rename/copy records are `R100`, NUL, `ORIG`, NUL, `DEST`, NUL (source first).
- */
-export function parseNameStatusZ(output: string): string[] {
-  const records = splitNulRecords(output);
-  const paths: string[] = [];
-  const seen = new Set<string>();
-  const add = (file: string | undefined) => {
-    if (!file || seen.has(file)) return;
-    seen.add(file);
-    paths.push(file);
-  };
-  for (let i = 0; i < records.length; i++) {
-    const status = records[i]!;
-    if (!status) continue;
-    if (status[0] === "R" || status[0] === "C") {
-      add(records[++i]);
-      add(records[++i]);
-    } else {
-      add(records[++i]);
-    }
-  }
-  return paths;
+function porcelainPaths(entries: PorcelainEntry[]): string[] {
+  return [...new Set(entries.flatMap(entry => [entry.path, entry.origPath].filter((file): file is string => Boolean(file))))];
 }
 
 function sensitiveAmong(files: string[]): string[] {
@@ -259,37 +210,6 @@ function resolveGitDir(projectDir: string): string {
   return manuscript;
 }
 
-function listTexFiles(root: string): string[] {
-  const files: string[] = [];
-  const visit = (dir: string, depth: number) => {
-    if (depth > 5) return;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (entry.name === ".git" || entry.name === ".openbarry" || entry.name === "node_modules") continue;
-      const file = path.join(dir, entry.name);
-      if (entry.isDirectory()) visit(file, depth + 1);
-      else if (/\.(?:tex|bib|sty|cls|bst)$/i.test(entry.name)) files.push(path.relative(root, file));
-    }
-  };
-  visit(root, 0);
-  return files.sort();
-}
-
-function movePath(src: string, dest: string): void {
-  try {
-    fs.renameSync(src, dest);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
-    fs.cpSync(src, dest, { recursive: true });
-    fs.rmSync(src, { recursive: true, force: true });
-  }
-}
-
 async function resolveGitAdministrativePath(cwd: string, name: string): Promise<string> {
   const relative = (await runGit(cwd, ["rev-parse", "--git-path", name])).trim();
   if (!relative) throw new Error(`Git did not return an administrative path for ${name}.`);
@@ -307,82 +227,59 @@ async function temporaryGitIndex(cwd: string): Promise<{ directory: string; path
   return { directory, path: path.join(directory, "index") };
 }
 
-export async function inspectTexGitRepo(repositoryPath: string): Promise<TexGitRepoInspection> {
-  const texFiles = listTexFiles(repositoryPath);
-  return {
-    repositoryPath,
-    texFiles,
-    hasPaperSource: texFiles.some((file) => /(^|\/)(paper|main|ms|manuscript)\.tex$/i.test(file)),
-    status: await getOverleafGitStatus(repositoryPath),
-  };
-}
-
-export async function initializeMinimalTexRepo(
-  repositoryPath: string,
-  title: string,
-): Promise<{ ok: boolean; message: string; repositoryPath?: string }> {
-  fs.mkdirSync(repositoryPath, { recursive: true });
-  const entries = fs.readdirSync(repositoryPath).filter((entry) => entry !== ".git");
-  if (entries.length) {
-    return { ok: false, message: "Repository path must be empty before initializing a minimal TeX project." };
-  }
-
-  let stageDir: string | undefined;
-  try {
-    stageDir = fs.mkdtempSync(path.join(repositoryPath, ".openbarry-staging-"));
-    const now = new Date().toISOString();
-    const slug = path.basename(repositoryPath).toLowerCase().replace(/[^a-z0-9_-]+/g, "-") || "paper";
-    writeProjectRecord(stageDir, {
-      id: slug,
-      slug,
-      title,
-      tagline: "Starter OpenBar TeX manuscript.",
-      overview: "This manuscript was initialized as a source-backed TeX project. Replace starter markers with verified work.",
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
-      links: [],
-    });
-    writePaperProject(stageDir, title, [{
-      id: "introduction",
-      title: "Introduction",
-      level: 2,
-      order: 0,
-      label: "sec-introduction",
-      tex: "\\obmarker{todo}{Replace this starter text with the source-backed introduction.}",
-    }]);
-    if (!hasTexProject(stageDir)) {
-      return { ok: false, message: "Staged TeX project failed validation before moving into place." };
-    }
-    for (const name of fs.readdirSync(stageDir)) {
-      movePath(path.join(stageDir, name), path.join(repositoryPath, name));
-    }
-    if (!fs.existsSync(path.join(repositoryPath, ".git"))) {
-      await runGit(repositoryPath, ["init"]);
-    }
-    return { ok: true, message: "Initialized a minimal OpenBar TeX repository.", repositoryPath };
-  } catch (error) {
-    return {
-      ok: false,
-      message: `Failed to initialize TeX repository: ${gitErrorMessage(error)}`,
+/** Local summaries use simple-git's parsers and a separate environment per command. */
+function projectGit(cwd: string) {
+  const env = gitProcessEnv();
+  const controller = new AbortController();
+  let bytes = 0;
+  return simpleGit({
+    baseDir: cwd,
+    config: ["core.fsmonitor=false"],
+    trimmed: false,
+    abort: controller.signal,
+    timeout: { block: 120_000, stdOut: false, stdErr: false },
+    allowEnvironment: Object.keys(env),
+    unsafe: { allowUnsafeAskPass: true, allowUnsafeSshCommand: true, allowUnsafePager: true, allowUnsafeFsMonitor: true },
+    errors(error, result) {
+      return error || (result.exitCode !== 0 ? new Error(redactSensitiveText(Buffer.concat(result.stdErr).toString() || `Git exited with status ${result.exitCode}.`)) : undefined);
+    },
+  }).env(env as Record<string, string>).outputHandler((_command, stdout, stderr) => {
+    const limit = (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > 10 * 1024 * 1024) controller.abort();
     };
-  } finally {
-    if (stageDir) fs.rmSync(stageDir, { recursive: true, force: true });
-  }
+    stdout.on("data", limit);
+    stderr.on("data", limit);
+  });
 }
 
 async function runGit(cwd: string, args: string[], options: { indexPath?: string } = {}): Promise<string> {
-  const env = options.indexPath
-    ? { ...process.env, GIT_INDEX_FILE: options.indexPath }
-    : process.env;
-  const { stdout } = await execFileAsync("git", args, {
+  const { execa } = await import("execa");
+  const result = await execa("git", args, {
     cwd,
-    encoding: "utf8",
+    env: gitProcessEnv(options.indexPath ? { ...process.env, GIT_INDEX_FILE: options.indexPath } : process.env),
+    extendEnv: false,
+    encoding: "buffer",
+    stripFinalNewline: false,
+    stdin: "ignore",
     timeout: 120_000,
+    forceKillAfterDelay: 3_000,
+    killDescendants: true,
     maxBuffer: 10 * 1024 * 1024,
-    env: gitProcessEnv(env),
+    reject: false,
   });
-  return stdout;
+  if (result.failed) {
+    const reason = result.timedOut ? "Git exceeded the two-minute execution limit."
+      : result.isMaxBuffer ? "Git output exceeded the 10 MiB limit."
+      : result.originalMessage || `Git exited with status ${result.exitCode ?? result.signal ?? "unknown"}.`;
+    throw new Error(redactSensitiveText(Buffer.from(result.stderr).toString() || reason));
+  }
+  return Buffer.from(result.stdout).toString();
+}
+
+/** Disabling rename grouping reports both paths and preserves every filename byte. */
+async function changedGitPaths(cwd: string, args: string[], options: { indexPath?: string } = {}): Promise<string[]> {
+  return splitNulRecords(await runGit(cwd, ["diff", "--no-renames", "--name-only", "-z", ...args], options));
 }
 
 export async function getOverleafGitStatus(projectDir: string): Promise<OverleafGitStatus> {
@@ -398,24 +295,26 @@ export async function getOverleafGitStatus(projectDir: string): Promise<Overleaf
     const changedFiles = porcelainPaths(parsePorcelainZ(statusOutput));
     const isClean = changedFiles.length === 0;
 
-    let ahead = 0;
-    let behind = 0;
-    try {
-      const counts = (await runGit(cwd, ["rev-list", "--left-right", "--count", `HEAD...origin/${branch}`])).trim();
-      const [a, b] = counts.split(/\s+/).map(Number);
-      if (Number.isFinite(a)) ahead = a;
-      if (Number.isFinite(b)) behind = b;
-    } catch {
-      // Remote branch may not be tracked yet
+    let ahead: number | undefined;
+    let behind: number | undefined;
+    let comparisonError: string | undefined;
+    if (remoteUrl) {
+      try {
+        const counts = (await runGit(cwd, ["rev-list", "--left-right", "--count", `HEAD...origin/${branch}`])).trim();
+        if (!/^\d+\s+\d+$/.test(counts)) throw new Error("Git returned an invalid local and remote commit comparison.");
+        const [a, b] = counts.split(/\s+/).map(Number);
+        if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b)) throw new Error("Git returned an invalid local and remote commit comparison.");
+        ahead = a;
+        behind = b;
+      } catch (error) {
+        comparisonError = "Git comparison unavailable: " + gitErrorMessage(error);
+      }
     }
 
     let lastCommit: OverleafGitStatus["lastCommit"] = undefined;
     try {
-      const log = (await runGit(cwd, ["log", "-1", "--format=%H%x00%s%x00%an%x00%cI"])).replace(/\n+$/, "");
-      const [hash, message, author, date] = log.split("\0");
-      if (hash) {
-        lastCommit = { hash, message, author, date };
-      }
+      const { latest } = await projectGit(cwd).log({ maxCount: 1, format: { hash: "%H", message: "%s", author: "%an", date: "%cI" } });
+      if (latest) lastCommit = { hash: latest.hash, message: latest.message, author: latest.author, date: latest.date };
     } catch {
       // Empty repo
     }
@@ -430,6 +329,7 @@ export async function getOverleafGitStatus(projectDir: string): Promise<Overleaf
       behind,
       changedFiles,
       lastCommit,
+      error: comparisonError,
     };
   } catch (error) {
     return {
@@ -451,38 +351,20 @@ export async function getProjectGitHistory(
   }
   try {
     const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
-    const args = [
-      "log",
-      `-${boundedLimit}`,
-      "--date=iso-strict",
-      "--format=%H%x00%an%x00%cI%x00%s%x1e",
-      "--name-only",
-      ...(since ? [`--since=${since}T00:00:00`] : []),
-      "--",
-      ...gitPathspec(projectDir, cwd),
-    ];
-    const output = await runGit(cwd, args);
-    const commits: OverleafGitCommit[] = [];
-    const header = /(?:^|\n)([0-9a-f]{40})\0([^\0]*)\0([^\0]*)\0([^\x1e]*)\x1e\n?/g;
-    const matches = [...output.matchAll(header)];
-    for (let index = 0; index < matches.length; index += 1) {
-      const match = matches[index]!;
-      const next = matches[index + 1];
-      const start = (match.index ?? 0) + match[0].length;
-      const end = next?.index ?? output.length;
-      const files = output
-        .slice(start, end)
-        .split(/\r?\n/)
-        .map((file) => file.trim())
-        .filter(Boolean);
-      commits.push({
-        hash: match[1]!,
-        author: match[2] || "Unknown actor",
-        date: match[3] || "",
-        message: match[4]!.trim(),
-        files: [...new Set(files)],
-      });
-    }
+    const { all } = await projectGit(cwd).log({
+      maxCount: boundedLimit,
+      format: { hash: "%H", author: "%an", date: "%cI", message: "%s" },
+      ...(since ? { "--since": `${since}T00:00:00` } : {}),
+      "--name-only": null,
+      paths: pathspec(...gitPathspec(projectDir, cwd)),
+    });
+    const commits = all.map(commit => ({
+      hash: commit.hash,
+      author: commit.author || "Unknown actor",
+      date: commit.date,
+      message: commit.message,
+      files: [...new Set(commit.diff?.files.map(file => file.file) || [])],
+    }));
     return { ok: true, commits };
   } catch (error) {
     return { ok: false, commits: [], message: "Git history unavailable: " + gitErrorMessage(error) };
@@ -520,7 +402,7 @@ export async function pullOverleafGit(projectDir: string): Promise<{ ok: boolean
     return { ok: false, message: "Directory is not a git repository." };
   }
 
-  return withWriteLockAsync(path.join(cwd, ".git", "openbar-sync"), async () => {
+  return withGitSyncLock(cwd, async () => {
     try {
       const remoteUrl = (await runGit(cwd, ["config", "--get", "remote.origin.url"])).trim();
       if (!isOverleafGitRemote(remoteUrl)) {
@@ -528,7 +410,7 @@ export async function pullOverleafGit(projectDir: string): Promise<{ ok: boolean
       }
       const branch = (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
       if (!branch || branch === "HEAD") return { ok: false, message: "Select a named Git branch before pulling updates." };
-      const pending = (await runGit(cwd, ["status", "--porcelain=v1", "--untracked-files=all"])).trim();
+      const pending = (await projectGit(cwd).status(["--untracked-files=all"])).files.length;
       if (pending) return { ok: false, message: "Save or commit the local project changes before pulling Git updates." };
       const output = (await runGit(cwd, ["pull", "--ff-only", "origin", branch])).trim();
       return { ok: true, message: output || "Already up to date." };
@@ -595,9 +477,9 @@ export async function commitOverleafGit(
       return await withGitSyncLock(cwd, async () => {
         let temporaryIndex: { directory: string; path: string } | undefined;
         try {
-          const branch = (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+          const branch = (await runGit(cwd, ["symbolic-ref", "--short", "HEAD"])).trim();
           if (!branch || branch === "HEAD") return { ok: false, status: "failed", code: "detached_head", message: "Checkout a named branch before creating an OpenBar commit.", paths: [] };
-          const head = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
+          const head = (await runGit(cwd, ["rev-parse", "--verify", "HEAD"]).catch(() => "")).trim();
           const pathspec = gitPathspec(projectDir, cwd);
           const existingOutput = await runGit(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...pathspec]);
           const existingEntries = parsePorcelainZ(existingOutput);
@@ -608,6 +490,18 @@ export async function commitOverleafGit(
           const staged = preStagedPaths(existingEntries).filter(isSafeCommittedPath);
           if (staged.length) return { ok: false, status: "blocked", code: "pre_staged_work", message: "Affected paths contain pre-staged work. Review or commit the existing index before automatic synchronization: " + [...new Set(staged)].join(", ") + ".", paths: [] };
           if (!existingPaths.length) return { ok: true, status: "no_changes", message: "No local changes to commit.", branch, paths: [] };
+          const indexEntries = (output: string) => {
+            const entries = new Map<string, string>();
+            for (const record of splitNulRecords(output)) {
+              const separator = record.indexOf("\t");
+              if (separator < 0) continue;
+              const file = record.slice(separator + 1);
+              entries.set(file, (entries.get(file) || "") + record.slice(0, separator) + "\n");
+            }
+            return entries;
+          };
+          const indexPaths = existingPaths.map((file) => `:(literal)${file}`);
+          const originalIndex = indexEntries(await runGit(cwd, ["ls-files", "--stage", "-z", "--", ...indexPaths]));
           const before = new Map<string, string | undefined>();
           for (const file of existingPaths) before.set(file, await worktreeHash(cwd, file));
 
@@ -615,20 +509,54 @@ export async function commitOverleafGit(
           // index remains available for unrelated staged work throughout.
           temporaryIndex = await temporaryGitIndex(cwd);
           const indexOptions = { indexPath: temporaryIndex.path };
-          await runGit(cwd, ["read-tree", head], indexOptions);
+          await runGit(cwd, head ? ["read-tree", head] : ["read-tree", "--empty"], indexOptions);
+          const baseIndex = indexEntries(await runGit(cwd, ["ls-files", "--stage", "-z", "--", ...indexPaths], indexOptions));
           await runGit(cwd, ["add", "-A", "--", ...existingPaths.map((file) => `:(literal)${file}`)], indexOptions);
-          const stagedStatus = await runGit(cwd, ["diff", "--cached", "--name-status", "-z", "--", ...pathspec], indexOptions);
-          const stagedNameOnly = await runGit(cwd, ["diff", "--cached", "--name-only", "-z", "--", ...pathspec], indexOptions);
-          const stagedPaths = [...new Set([...parseNameStatusZ(stagedStatus), ...parseNulTerminatedPaths(stagedNameOnly)])].filter(isSafeCommittedPath);
+          const stagedPaths = (await changedGitPaths(cwd, ["--cached", "--", ...pathspec], indexOptions)).filter(isSafeCommittedPath);
           if (!stagedPaths.length) return { ok: true, status: "no_changes", message: "No local changes to commit.", branch, paths: [] };
 
           // write-tree freezes the exact bytes staged above. Later worktree saves
           // remain dirty against this captured tree and enter a later checkpoint.
           const tree = (await runGit(cwd, ["write-tree"], indexOptions)).trim();
           if (!tree) throw new Error("Git produced an empty checkpoint tree.");
-          const commitHash = (await runGit(cwd, ["commit-tree", tree, "-p", head, "-m", message])).trim();
+          const commitHash = (await runGit(cwd, ["commit-tree", tree, ...(head ? ["-p", head] : []), "-m", message])).trim();
           if (!commitHash) throw new Error("Git produced an empty checkpoint commit.");
-          await runGit(cwd, ["update-ref", `refs/heads/${branch}`, commitHash, head]);
+          const ordinaryIndexPath = await resolveGitAdministrativePath(cwd, "index");
+          const ordinaryLockPath = ordinaryIndexPath + ".lock";
+          let ordinaryLock: number | undefined;
+          let ownsOrdinaryLock = false;
+          try {
+            // Git's native lock keeps concurrent staging atomic while advancing
+            // only index entries that still match their pre-checkpoint version.
+            ordinaryLock = fs.openSync(ordinaryLockPath, "wx");
+            ownsOrdinaryLock = true;
+            const alignedIndexPath = path.join(temporaryIndex.directory, "aligned-index");
+            if (fs.existsSync(ordinaryIndexPath)) fs.copyFileSync(ordinaryIndexPath, alignedIndexPath);
+            else await runGit(cwd, ["read-tree", "--empty"], { indexPath: alignedIndexPath });
+            const alignedOptions = { indexPath: alignedIndexPath };
+            const currentIndex = indexEntries(await runGit(cwd, ["ls-files", "--stage", "-z", "--", ...indexPaths], alignedOptions));
+            const advancePaths = stagedPaths.filter((file) => originalIndex.get(file) === baseIndex.get(file)
+              && currentIndex.get(file) === originalIndex.get(file));
+            if (advancePaths.length) {
+              await runGit(cwd, ["reset", "--quiet", commitHash, "--", ...advancePaths.map((file) => `:(literal)${file}`)], alignedOptions);
+            }
+            fs.writeFileSync(ordinaryLock, fs.readFileSync(alignedIndexPath));
+            fs.fchmodSync(ordinaryLock, fs.existsSync(ordinaryIndexPath) ? fs.statSync(ordinaryIndexPath).mode & 0o777 : 0o644);
+            fs.fsyncSync(ordinaryLock);
+            fs.closeSync(ordinaryLock);
+            ordinaryLock = undefined;
+            await runGit(cwd, ["update-ref", `refs/heads/${branch}`, commitHash, head || "0".repeat(commitHash.length)]);
+            try {
+              fs.renameSync(ordinaryLockPath, ordinaryIndexPath);
+              ownsOrdinaryLock = false;
+            } catch (error) {
+              await runGit(cwd, head ? ["update-ref", `refs/heads/${branch}`, head, commitHash] : ["update-ref", "-d", `refs/heads/${branch}`, commitHash]);
+              throw error;
+            }
+          } finally {
+            if (ordinaryLock !== undefined) fs.closeSync(ordinaryLock);
+            if (ownsOrdinaryLock) fs.rmSync(ordinaryLockPath, { force: true });
+          }
           const paths = await fileReceipts(cwd, commitHash, stagedPaths, before);
           return { ok: true, status: "committed", message: `Created local commit ${commitHash}.`, commitHash, branch, paths };
         } catch (error) {
@@ -747,19 +675,19 @@ export type OverleafPullReview = {
   localCommit: string;
   remoteCommit: string;
   files: string[];
-  conflicts: { path: string; local: string | null; remote: string | null; base: string | null; editable: boolean }[];
+  conflicts: { path: string; local: string | null; remote: string | null; base: string | null; merged: string | null; editable: boolean }[];
 };
 type PullSession = { worktree: string; localCommit: string; remoteCommit: string; branch: string; conflicts: string[] };
 
-function pullSessionPath(cwd: string, token: string) {
+async function pullSessionPath(cwd: string, token: string) {
   if (!/^[a-f0-9-]{36}$/.test(token)) throw new Error("Invalid pull review.");
-  return path.join(cwd, ".git", "openbar-pull-reviews", `${token}.json`);
+  return resolveGitAdministrativePath(cwd, `openbar-pull-reviews/${token}.json`);
 }
 
 async function removePullSession(cwd: string, token: string, session: PullSession) {
   await runGit(cwd, ["worktree", "remove", "--force", session.worktree]);
   fs.rmSync(path.dirname(session.worktree), { recursive: true, force: true });
-  fs.rmSync(pullSessionPath(cwd, token), { force: true });
+  fs.rmSync(await pullSessionPath(cwd, token), { force: true });
 }
 
 /** Prepare Git's three-way merge in a disposable worktree for human review. */
@@ -770,10 +698,10 @@ export async function prepareOverleafPull(projectDir: string): Promise<{ ok: tru
   // Preserve accepted local manuscript changes in history before merging.
   const checkpoint = await commitOverleafGit(projectDir, "OpenBar: checkpoint before Git pull");
   if (!checkpoint.ok) return { ok: false, message: checkpoint.message };
-  return withWriteLockAsync(path.join(cwd, ".git", "openbar-sync"), async () => {
+  return withGitSyncLock(cwd, async () => {
     let worktree: string | undefined;
     try {
-      if ((await runGit(cwd, ["status", "--porcelain=v1", "--untracked-files=no"])).trim()) {
+      if ((await projectGit(cwd).status(["--untracked-files=no"])).files.length) {
         throw new Error("Additional repository changes need a local commit before review. Your project checkpoint is preserved.");
       }
       const branch = (await runGit(cwd, ["symbolic-ref", "--short", "HEAD"])).trim();
@@ -809,11 +737,17 @@ export async function prepareOverleafPull(projectDir: string): Promise<{ ok: tru
           const content = await runGit(worktree, ["cat-file", "blob", blob.oid]);
           if (content.includes("\0") || Buffer.byteLength(content) !== size) { editable = false; contents.push(null); } else contents.push(content);
         }
-        conflicts.push({ path: file, base: contents[0], local: contents[1], remote: contents[2], editable });
+        let merged: string | null = null;
+        const mergedPath = path.resolve(worktree, file);
+        if (editable && fs.existsSync(mergedPath)) {
+          const stat = fs.lstatSync(mergedPath);
+          if (stat.isFile() && stat.size <= 1_000_000) merged = fs.readFileSync(mergedPath, "utf8");
+        }
+        conflicts.push({ path: file, base: contents[0], local: contents[1], remote: contents[2], merged, editable });
       }
       const files = [...new Set((await runGit(worktree, ["diff", "--name-only", "-z", localCommit])).split("\0").filter(Boolean))];
       const session: PullSession = { worktree, localCommit, remoteCommit, branch, conflicts: [...entries.keys()] };
-      const sessionFile = pullSessionPath(cwd, token);
+      const sessionFile = await pullSessionPath(cwd, token);
       fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
       fs.writeFileSync(sessionFile, JSON.stringify(session), { mode: 0o600 });
       return { ok: true as const, review: { token, localCommit, remoteCommit, files, conflicts } };
@@ -829,16 +763,16 @@ export async function prepareOverleafPull(projectDir: string): Promise<{ ok: tru
 
 export async function finishOverleafPull(projectDir: string, token: string, choices: OverleafConflictChoice[], cancel = false): Promise<{ ok: boolean; message: string }> {
   const cwd = resolveGitDir(projectDir);
-  return withWriteLockAsync(path.join(cwd, ".git", "openbar-sync"), async () => {
+  return withGitSyncLock(cwd, async () => {
     try {
-      const session = JSON.parse(fs.readFileSync(pullSessionPath(cwd, token), "utf8")) as PullSession;
+      const session = JSON.parse(fs.readFileSync(await pullSessionPath(cwd, token), "utf8")) as PullSession;
       if (cancel) {
         await removePullSession(cwd, token, session);
         return { ok: true, message: "Review closed. Your local checkpoint is preserved." };
       }
       const currentHead = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
       const currentBranch = (await runGit(cwd, ["symbolic-ref", "--short", "HEAD"])).trim();
-      if (currentHead !== session.localCommit || currentBranch !== session.branch || (await runGit(cwd, ["status", "--porcelain=v1", "--untracked-files=no"])).trim()) {
+      if (currentHead !== session.localCommit || currentBranch !== session.branch || (await projectGit(cwd).status(["--untracked-files=no"])).files.length) {
         return { ok: false, message: "The local project changed during review. Close this review and pull again to include those edits." };
       }
       const selected = new Map(choices.map((choice) => [choice.path, choice]));
@@ -895,9 +829,9 @@ export async function finishOverleafPull(projectDir: string, token: string, choi
 export type ForceSyncDirection = "pull" | "push";
 export type ForceSyncReview = { token: string; direction: ForceSyncDirection; branch: string; localCommit: string; remoteCommit: string; files: string[]; ahead: number; behind: number };
 type ForceSyncSession = ForceSyncReview & { confirmation?: string };
-function forceSyncPath(cwd: string, token: string) {
+async function forceSyncPath(cwd: string, token: string) {
   if (!/^[a-f0-9-]{36}$/.test(token)) throw new Error("Invalid force synchronization review.");
-  return path.join(cwd, ".git", "openbar-force-reviews", `${token}.json`);
+  return resolveGitAdministrativePath(cwd, `openbar-force-reviews/${token}.json`);
 }
 export async function prepareForceSync(projectDir: string, direction: ForceSyncDirection): Promise<{ ok: true; review: ForceSyncReview } | { ok: false; message: string }> {
   if (direction !== "pull" && direction !== "push") return { ok: false, message: "Choose force pull or force push." };
@@ -906,9 +840,9 @@ export async function prepareForceSync(projectDir: string, direction: ForceSyncD
   const checkpoint = await commitOverleafGit(projectDir, `OpenBar: checkpoint before force ${direction}`);
   if (!checkpoint.ok) return { ok: false, message: checkpoint.message };
   const cwd = resolveGitDir(projectDir);
-  return withWriteLockAsync(path.join(cwd, ".git", "openbar-sync"), async () => {
+  return withGitSyncLock(cwd, async () => {
     try {
-      if ((await runGit(cwd, ["status", "--porcelain=v1", "--untracked-files=no"])).trim()) throw new Error("Commit the remaining tracked changes before forcing synchronization.");
+      if ((await projectGit(cwd).status(["--untracked-files=no"])).files.length) throw new Error("Commit the remaining tracked changes before forcing synchronization.");
       const branch = (await runGit(cwd, ["symbolic-ref", "--short", "HEAD"])).trim();
       await runGit(cwd, ["fetch", "origin", branch]);
       const localCommit = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
@@ -917,7 +851,7 @@ export async function prepareForceSync(projectDir: string, direction: ForceSyncD
       const files = (await runGit(cwd, ["diff", "--name-only", "-z", localCommit, remoteCommit])).split("\0").filter(Boolean);
       const { randomUUID } = await import("node:crypto");
       const review: ForceSyncReview = { token: randomUUID(), direction, branch, localCommit, remoteCommit, files, ahead, behind };
-      const file = forceSyncPath(cwd, review.token);
+      const file = await forceSyncPath(cwd, review.token);
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, JSON.stringify(review), { mode: 0o600 });
       return { ok: true as const, review };
@@ -928,7 +862,7 @@ export async function prepareForceSync(projectDir: string, direction: ForceSyncD
 /** First explicit confirmation creates a separate receipt required by the final confirmation. */
 export async function confirmForceSync(projectDir: string, token: string): Promise<{ ok: true; confirmation: string } | { ok: false; message: string }> {
   try {
-    const file = forceSyncPath(resolveGitDir(projectDir), token);
+    const file = await forceSyncPath(resolveGitDir(projectDir), token);
     const session = JSON.parse(fs.readFileSync(file, "utf8")) as ForceSyncSession;
     const { randomUUID } = await import("node:crypto");
     session.confirmation = randomUUID();
@@ -939,14 +873,14 @@ export async function confirmForceSync(projectDir: string, token: string): Promi
 
 export async function finishForceSync(projectDir: string, token: string, confirmation: string, phrase: string, cancel = false): Promise<{ ok: boolean; message: string; recoveryRefs?: string[] }> {
   const cwd = resolveGitDir(projectDir);
-  return withWriteLockAsync(path.join(cwd, ".git", "openbar-sync"), async () => {
+  return withGitSyncLock(cwd, async () => {
     try {
-      const file = forceSyncPath(cwd, token);
+      const file = await forceSyncPath(cwd, token);
       const session = JSON.parse(fs.readFileSync(file, "utf8")) as ForceSyncSession;
       if (cancel) { fs.rmSync(file); return { ok: true, message: "Force synchronization cancelled." }; }
       if (!session.confirmation || confirmation !== session.confirmation || phrase !== `FORCE ${session.direction.toUpperCase()}`) throw new Error("Both confirmations are required before forcing synchronization.");
       const status = await getOverleafGitStatus(projectDir);
-      if (!status.isOverleafRemote || status.branch !== session.branch || status.lastCommit?.hash !== session.localCommit || (await runGit(cwd, ["status", "--porcelain=v1", "--untracked-files=no"])).trim()) throw new Error("The local project changed. Start a fresh force synchronization review.");
+      if (!status.isOverleafRemote || status.branch !== session.branch || status.lastCommit?.hash !== session.localCommit || (await projectGit(cwd).status(["--untracked-files=no"])).files.length) throw new Error("The local project changed. Start a fresh force synchronization review.");
       const remoteHead = (await runGit(cwd, ["ls-remote", "--heads", "origin", `refs/heads/${session.branch}`])).trim().split(/\s+/)[0];
       if (remoteHead !== session.remoteCommit) throw new Error("Git changed after your review. Start again to review its newest version.");
       const refs = [`refs/openbar/recovery/${token}/local`, `refs/openbar/recovery/${token}/overleaf`];
@@ -972,11 +906,11 @@ export async function getOverleafSyncDetails(projectDir: string, refresh = false
   const cwd = resolveGitDir(projectDir);
   const remoteCommit = (await runGit(cwd, ["rev-parse", `refs/remotes/origin/${status.branch}`]).catch(() => "")).trim();
   const baseCommit = remoteCommit ? (await runGit(cwd, ["merge-base", "HEAD", remoteCommit]).catch(() => "")).trim() : "";
-  const incomingFiles = baseCommit && remoteCommit ? parseNameStatusZ(await runGit(cwd, ["diff", "--name-status", "-z", baseCommit, remoteCommit])) : [];
-  const outgoingFiles = baseCommit ? parseNameStatusZ(await runGit(cwd, ["diff", "--name-status", "-z", baseCommit, "HEAD"])) : [];
+  const incomingFiles = baseCommit && remoteCommit ? await changedGitPaths(cwd, [baseCommit, remoteCommit]) : [];
+  const outgoingFiles = baseCommit ? await changedGitPaths(cwd, [baseCommit, "HEAD"]) : [];
   const localFiles = new Set([...outgoingFiles, ...(status.changedFiles || [])]);
   const overlappingFiles = incomingFiles.filter(file => localFiles.has(file));
-  const conflictedFiles = parseNulTerminatedPaths(await runGit(cwd, ["diff", "--name-only", "--diff-filter=U", "-z"]).catch(() => ""));
+  const conflictedFiles = splitNulRecords(await runGit(cwd, ["diff", "--name-only", "--diff-filter=U", "-z"]).catch(() => ""));
   const recovery = (await runGit(cwd, ["for-each-ref", "--count=40", "--sort=-creatordate", "--format=%(refname) %(objectname)", "refs/openbar/recovery/"]).catch(() => "")).trim().split("\n").filter(Boolean);
   return { status, localCommit: status.lastCommit?.hash, remoteCommit: remoteCommit || null, baseCommit: baseCommit || null, incomingFiles, outgoingFiles, overlappingFiles, conflictedFiles, recovery, nextStep: (status.behind || 0) > 0 ? "Call sync_project with action=review_pull to obtain base/local/remote text for each conflict. Resolve every file and apply_pull with the returned token. Each choice selects an entire file. A changed local HEAD or tracked working tree requires a fresh review." : "Local and remote commit counts are in status. Use the existing project save operation to publish local commits." };
 }

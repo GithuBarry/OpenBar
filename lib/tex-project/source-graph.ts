@@ -3,8 +3,10 @@
  */
 
 import fs from "node:fs";
+import { SKIP, visit } from "@unified-latex/unified-latex-util-visit";
 import path from "node:path";
 
+import { maskTexLiterals, TEX_LITERAL_ENVIRONMENTS } from "./tex-literals";
 import { discoverTexHeadings } from "./tex-structure";
 import { getDataBlock, sha256 } from "./codec";
 import { isEnvironment, isMacro, mandatoryArgs, nodesToPlainText, parseTex } from "./tex-ast";
@@ -32,7 +34,6 @@ export type GraphNode = {
   kind: "root" | "section" | "style" | "bibliography" | "include" | "unmanaged";
 };
 
-const VERBATIM_ENVS = new Set(["verbatim", "Verbatim", "lstlisting", "minted", "alltt"]);
 
 function posixRel(from: string, to: string): string {
   return path.relative(from, to).split(path.sep).join("/");
@@ -139,47 +140,24 @@ function includeInvocationEnd(source: string, from: number, command: "input" | "
 function walkIncludes(source: string): IncludeReference[] {
   const ast = parseTex(source);
   const found: IncludeReference[] = [];
-  const visit = (nodes: unknown[], inVerbatim: boolean, state: { appendix: boolean }) => {
-    for (const node of nodes) {
-      if (isEnvironment(node) && VERBATIM_ENVS.has(node.env || "")) {
-        continue;
-      }
-      if (inVerbatim) continue;
-      if (isMacro(node)) {
-        const name = (node.content || "").replace(/\*$/, "");
-        if (name === "appendix") {
-          state.appendix = true;
-          continue;
-        }
-        if (name === "input" || name === "include") {
-          const arg = nodesToPlainText(mandatoryArgs(node)[0] ?? []).trim();
-          const dynamic = !arg || /\\/.test(arg);
-          const command = name as "input" | "include";
-          const from = nodeStartOffset(node) ?? source.length;
-          found.push({
-            command,
-            raw: arg,
-            dynamic,
-            from,
-            to: includeInvocationEnd(source, from, command),
-            appendix: state.appendix,
-          });
-        }
-        continue;
-      }
-      if (node && typeof node === "object" && Array.isArray((node as { content?: unknown }).content)) {
-        const content = (node as { content: unknown[] }).content;
-        visit(content, false, state);
-      }
-    }
-  };
-  visit(ast.content, false, { appendix: false });
-  const astFound = found;
-  if (astFound.length) return astFound;
-  const fallback: IncludeReference[] = [];
-  const codeSource = stripTexComments(source);
-  let lineFrom = 0;
   let appendix = false;
+  visit(ast, (node, info) => {
+    if (info.key === "args" || (isEnvironment(node) && TEX_LITERAL_ENVIRONMENTS.has(node.env))) return SKIP;
+    if (!isMacro(node)) return;
+    const name = node.content.replace(/\*$/, "");
+    if (name === "appendix") appendix = true;
+    if (name === "input" || name === "include") {
+      const raw = nodesToPlainText(mandatoryArgs(node)[0] ?? []).trim();
+      const from = nodeStartOffset(node) ?? source.length;
+      found.push({ command: name, raw, dynamic: !raw || /\\/.test(raw), from, to: includeInvocationEnd(source, from, name), appendix });
+    }
+    return SKIP;
+  });
+  if (found.length) return found;
+  const fallback: IncludeReference[] = [];
+  const codeSource = maskTexLiterals(source);
+  let lineFrom = 0;
+  appendix = false;
   for (const line of source.split(/\n/)) {
     const code = codeSource.slice(lineFrom, lineFrom + line.length);
     const appendixAt = code.search(/\\appendix\b/);
@@ -206,81 +184,6 @@ function walkIncludes(source: string): IncludeReference[] {
 
 function hasTexSections(source: string): boolean {
   return discoverTexHeadings(source).length > 0;
-}
-
-function isEscaped(source: string, index: number): boolean {
-  let backslashes = 0;
-  for (let cursor = index - 1; cursor >= 0 && source[cursor] === "\\"; cursor -= 1) backslashes += 1;
-  return backslashes % 2 === 1;
-}
-
-function maskLiteralRange(output: string[], source: string, from: number, to: number): void {
-  for (let index = from; index < to; index += 1) {
-    if (source[index] !== "\r" && source[index] !== "\n") output[index] = " ";
-  }
-}
-
-function environmentCommandAt(source: string, index: number, command: "begin" | "end"): { name: string; to: number } | undefined {
-  if (source[index] !== "\\" || isEscaped(source, index)) return undefined;
-  const match = new RegExp(`^\\\\${command}\\s*\\{([^}\\r\\n]+)\\}`).exec(source.slice(index));
-  const name = match?.[1]?.trim();
-  return name && match ? { name, to: index + match[0].length } : undefined;
-}
-
-function verbCommandEnd(source: string, index: number): number | undefined {
-  if (source[index] !== "\\" || isEscaped(source, index)) return undefined;
-  const prefix = /^\\verb\*?/.exec(source.slice(index));
-  if (!prefix) return undefined;
-  const delimiter = source[index + prefix[0].length];
-  if (!delimiter || delimiter === "\r" || delimiter === "\n") return undefined;
-  for (let cursor = index + prefix[0].length + 1; cursor < source.length; cursor += 1) {
-    if (source[cursor] === delimiter) return cursor + 1;
-    if (source[cursor] === "\r" || source[cursor] === "\n") return cursor;
-  }
-  return source.length;
-}
-
-function stripTexComments(source: string): string {
-  const output = source.split("");
-  let inComment = false;
-  let verbatimEnvironment: string | undefined;
-  for (let index = 0; index < source.length; index += 1) {
-    const char = source[index]!;
-    if (inComment) {
-      if (char === "\r" || char === "\n") inComment = false;
-      else output[index] = " ";
-      continue;
-    }
-    if (verbatimEnvironment) {
-      const end = environmentCommandAt(source, index, "end");
-      if (end?.name === verbatimEnvironment) {
-        maskLiteralRange(output, source, index, end.to);
-        index = end.to - 1;
-        verbatimEnvironment = undefined;
-      } else if (char !== "\r" && char !== "\n") {
-        output[index] = " ";
-      }
-      continue;
-    }
-    const begin = environmentCommandAt(source, index, "begin");
-    if (begin && VERBATIM_ENVS.has(begin.name)) {
-      maskLiteralRange(output, source, index, begin.to);
-      index = begin.to - 1;
-      verbatimEnvironment = begin.name;
-      continue;
-    }
-    const verbEnd = verbCommandEnd(source, index);
-    if (verbEnd !== undefined) {
-      maskLiteralRange(output, source, index, verbEnd);
-      index = verbEnd - 1;
-      continue;
-    }
-    if (char === "%" && !isEscaped(source, index)) {
-      output[index] = " ";
-      inComment = true;
-    }
-  }
-  return output.join("");
 }
 
 function configuredMainFile(manuscriptDir: string): string | undefined {
@@ -325,7 +228,7 @@ export function locateTexRoot(manuscriptDir: string, preferred?: string): string
     for (const file of rootFiles) {
       const candidate = existingFile(safeRootCandidate(root, file));
       if (!candidate) continue;
-      const source = stripTexComments(fs.readFileSync(/*turbopackIgnore: true*/ candidate, "utf8"));
+      const source = maskTexLiterals(fs.readFileSync(/*turbopackIgnore: true*/ candidate, "utf8"));
       if (/\\documentclass\b/.test(source) || /\\begin\s*\{document\}/.test(source)) return candidate;
     }
   } catch {

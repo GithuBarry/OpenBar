@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import * as Popover from "@radix-ui/react-popover";
+import { PopoverSurface } from "@/components/pop";
+import { Bot } from "lucide-react";
 
 import {
   getWebMcpCatalog,
@@ -11,7 +13,7 @@ import {
   type WebMcpDiagnostic,
   type WebMcpSurface,
 } from "@/lib/research/webmcp-register";
-import { AGENT_GUIDANCE } from "@/lib/research/agent-guidance";
+import { FastTooltip } from "@/components/fast-tooltip";
 import { cn } from "@/lib/utils";
 
 const SURFACE_LABEL: Partial<Record<WebMcpSurface, string>> = {
@@ -90,30 +92,26 @@ export function AgentReadyIndicator() {
   const ready = catalog.length > 0;
   const issueCount = diagnostics.length;
   const statusText = ready
-    ? `Agent ready · ${catalog.length} tools${issueCount ? ` · ${issueCount} issues` : ""}`
+    ? `Agent ready: ${catalog.length} tools${issueCount ? `, ${issueCount} issues` : ""}`
     : issueCount
-      ? `Agent issue · ${issueCount}`
+      ? `Agent issues: ${issueCount}`
       : "Agent waiting";
 
   return (
     <>
-    <aside className="sr-only" aria-label="Agent tool usage instructions" data-agent-tool-instructions>{AGENT_GUIDANCE}</aside>
     <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>
-      <button
-        type="button"
-        className={cn("ob-agent-ready", ready && "ob-agent-ready-on")}
-        aria-label="MCP and WebMCP agent tools"
-        aria-expanded={open}
-        title={issueCount ? "WebMCP registration issues" : ready ? "WebMCP tools on this page" : "Waiting for WebMCP"}
-      >
-        <span className="ob-agent-ready-dot" aria-hidden="true" />
-        MCP / WebMCP
-      </button>
-      </Popover.Trigger>
+      <FastTooltip label={`${statusText}. Connection details`}>
+        <Popover.Trigger
+          type="button"
+          className={cn("ob-agent-ready", ready && "ob-agent-ready-on", issueCount > 0 && "ob-agent-ready-issue")}
+          aria-label={`${statusText}. Agent connection details`}
+        >
+          <span className="ob-agent-ready-dot" aria-hidden="true" />
+          <Bot size={16} aria-hidden="true" />
+        </Popover.Trigger>
+      </FastTooltip>
       {open && (
-        <Popover.Portal>
-        <Popover.Content className="ob-agent-ready-panel" align="end" sideOffset={8} collisionPadding={12} aria-label="MCP and WebMCP agent tools">
+        <PopoverSurface className="ob-agent-ready-panel" align="end" sideOffset={8} collisionPadding={12} aria-label="MCP and WebMCP agent tools">
           <p className="ob-agent-ready-heading">Tools and agent access</p>
           <Link href="/agents" className="text-xs text-accent underline">How to connect a browser or headless agent</Link>
           <p className="ob-agent-ready-heading mt-3">{statusText}</p>
@@ -123,7 +121,7 @@ export function AgentReadyIndicator() {
                 <p>{SURFACE_LABEL[surface] || surface}</p>
                 <ul>
                   {tools.map((tool) => (
-                    <li key={tool.name} title={tool.description}><code>{tool.name}</code> · {tool.title}</li>
+                    <li key={tool.name} title={tool.description}><code>{tool.name}</code> — {tool.title}</li>
                   ))}
                 </ul>
               </div>
@@ -147,8 +145,7 @@ export function AgentReadyIndicator() {
             </div>
           )}
           <p className="ob-agent-ready-empty">Headless clients connect to <code>/api/mcp</code> with the configured authentication, then call <code>tools/list</code>. Start with <code>get_project_state</code>.</p>
-        </Popover.Content>
-        </Popover.Portal>
+        </PopoverSurface>
       )}
     </Popover.Root>
     </>

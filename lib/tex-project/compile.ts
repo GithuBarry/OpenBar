@@ -1,8 +1,10 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import { redactSensitiveText } from "@/lib/server/git-url";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 import { writeTextAtomic } from "./codec";
 import { inspectPaperPageBudget, type PaperPageBudget } from "./page-budget";
@@ -175,12 +177,20 @@ function normalizeBuildPath(value: string): string {
  * unusual text or binary content.
  */
 export function hashBuildInputs(input: BuildInputHashInput): string {
-  const files = [...input.files]
-    .map((file) => ({ path: normalizeBuildPath(file.path), bytes: file.bytes }))
+  return hashBuildInputRecords({ ...input, files: input.files.map(file => {
+    const bytes = typeof file.bytes === "string" ? Buffer.from(file.bytes) : file.bytes;
+    return { path: file.path, size: bytes.byteLength, hash: createHash("sha256").update(bytes).digest("hex") };
+  }) });
+}
+
+type BuildFileDigest = { path: string; size: number; hash: string };
+
+function hashBuildInputRecords(input: Omit<BuildInputHashInput, "files"> & { files: BuildFileDigest[] }): string {
+  const files = input.files.map(file => ({ ...file, path: normalizeBuildPath(file.path) }))
     .sort((left, right) => left.path.localeCompare(right.path));
   const hash = createHash("sha256");
   hash.update(JSON.stringify({
-    version: 1,
+    version: 3,
     sourceHash: input.sourceHash,
     rootFile: normalizeBuildPath(input.rootFile),
     compiler: input.config.compiler,
@@ -192,13 +202,9 @@ export function hashBuildInputs(input: BuildInputHashInput): string {
   }));
   for (const file of files) {
     const relativePath = Buffer.from(file.path);
-    const bytes = typeof file.bytes === "string" ? Buffer.from(file.bytes) : file.bytes;
-    hash.update(String(relativePath.byteLength));
-    hash.update(":");
+    hash.update(`${relativePath.byteLength}:`);
     hash.update(relativePath);
-    hash.update(String(bytes.byteLength));
-    hash.update(":");
-    hash.update(bytes);
+    hash.update(`${file.size}:${file.hash}`);
   }
   return hash.digest("hex");
 }
@@ -416,22 +422,30 @@ export function compilerEnv(options: CompilerEnvironmentOptions = {}): NodeJS.Pr
   return environment;
 }
 
+let availabilityCache: { key: string; available: boolean; expires: number } | undefined;
+
 function latexmkAvailable(): boolean {
+  const key = `${process.env.PATH || ""}:${process.env.OPENBARRY_TEX_BIN || ""}`;
+  if (availabilityCache?.key === key && availabilityCache.expires > Date.now()) return availabilityCache.available;
+  let available = false;
   try {
     execFileSync("latexmk", ["-v"], { stdio: "ignore", timeout: 4_000, env: compilerEnv() });
-    return true;
-  } catch {
-    return false;
-  }
+    available = true;
+  } catch { /* A later request retries installation discovery. */ }
+  availabilityCache = { key, available, expires: Date.now() + (available ? 60_000 : 5_000) };
+  return available;
 }
 
 function copyManuscriptSnapshot(sourceRoot: string, snapshotRoot: string): void {
   fs.cpSync(sourceRoot, snapshotRoot, {
     recursive: true,
     force: true,
+    dereference: true,
     filter: (entry) => {
       const relative = path.relative(sourceRoot, entry);
-      return shouldIncludeSnapshotPath(relative);
+      if (!shouldIncludeSnapshotPath(relative)) return false;
+      snapshotEntry(sourceRoot, entry);
+      return true;
     },
   });
 }
@@ -440,13 +454,20 @@ function shouldIncludeSnapshotPath(relative: string): boolean {
   if (!relative) return true;
   const parts = relative.split(path.sep);
   if (parts[0] === ".git" || parts[0] === "node_modules") return false;
-  if (parts[0] === ".OpenBar" || parts[0] === ".openbarry") {
-    return !["build", "activity.jsonl", "request-replay.json", "request-replay-journal.json", "recovery"].includes(parts[1] || "");
+  if (parts[0] === "wiki") return false;
+  if (parts[0] === ".OpenBar" || parts[0] === ".openbarry" || parts[0] === "openbarry") {
+    // OpenBar records describe the workspace and maps. Compiler options have
+    // their own hash fields, and bibliography sources such as references.bib
+    // remain part of the snapshot in both supported project layouts.
+    return ![
+      "build", "activity.jsonl", "request-replay.json", "request-replay-journal.json", "recovery",
+      "mindmap.tex", "mindmaps", "project.tex", "project.json", "wiki", "skills",
+    ].includes(parts[1] || "");
   }
   return true;
 }
 
-function copyCompilerOutputs(snapshotBuildDir: string, canonicalBuildDir: string, artifactId: string): void {
+function copyCompilerOutputs(snapshotBuildDir: string, canonicalBuildDir: string, artifactId: string, snapshotRoot: string, sourceRoot: string): void {
   const pdf = path.join(snapshotBuildDir, "paper.pdf");
   if (!fs.existsSync(pdf)) throw new Error("latexmk completed without producing paper.pdf.");
   const segment = artifactSegment(artifactId);
@@ -457,6 +478,15 @@ function copyCompilerOutputs(snapshotBuildDir: string, canonicalBuildDir: string
   for (const name of ["paper.pdf", "paper.synctex.gz", "paper.log", "paper.aux", "paper.fls", "paper.fdb_latexmk"]) {
     const source = path.join(snapshotBuildDir, name);
     if (fs.existsSync(source)) fs.copyFileSync(source, path.join(stagingDir, name));
+  }
+  const synctex = path.join(stagingDir, "paper.synctex.gz");
+  if (fs.existsSync(synctex)) {
+    const text = gunzipSync(fs.readFileSync(synctex)).toString("utf8").replace(/^Input:(\d+):(.+)$/gm, (line, id: string, file: string) => {
+      const relative = path.relative(snapshotRoot, path.resolve(snapshotRoot, file.trim()));
+      return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
+        ? line : `Input:${id}:${path.join(sourceRoot, relative)}`;
+    });
+    fs.writeFileSync(synctex, gzipSync(text));
   }
   const publishedDir = path.join(artifactsDir, segment);
   fs.rmSync(publishedDir, { recursive: true, force: true });
@@ -487,27 +517,62 @@ function cleanupOldArtifacts(projectDir: string, displayedId = displayedArtifact
   }
 }
 
+let toolchainCache: { key: string; value: string; expires: number } | undefined;
+
 function compilerToolchainIdentity(): string {
+  const key = `${process.env.PATH || ""}:${process.env.OPENBARRY_TEX_BIN || ""}`;
+  if (toolchainCache?.key === key && toolchainCache.expires > Date.now()) return toolchainCache.value;
+  let value: string;
   try {
-    return execFileSync("latexmk", ["-v"], { encoding: "utf8", timeout: 4_000, env: compilerEnv() }).toString().slice(0, 4_000);
+    value = execFileSync("latexmk", ["-v"], { encoding: "utf8", timeout: 4_000, env: compilerEnv() }).toString().slice(0, 4_000);
   } catch {
-    return "unavailable";
+    value = "unavailable";
   }
+  toolchainCache = { key, value, expires: Date.now() + (value === "unavailable" ? 5_000 : 60_000) };
+  return value;
 }
 
-function snapshotFiles(snapshotRoot: string): BuildInputFile[] {
-  const files: BuildInputFile[] = [];
+const fileHashCache = new Map<string, { version: string; hash: string }>();
+
+function snapshotFiles(snapshotRoot: string): BuildFileDigest[] {
+  const files: BuildFileDigest[] = [];
+  if (fileHashCache.size > 10_000) fileHashCache.clear();
+  const active = new Set<string>();
   const visit = (directory: string) => {
+    const real = fs.realpathSync(directory);
+    if (active.has(real)) throw new Error("A symbolic link creates a cycle in the manuscript.");
+    active.add(real);
     for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const absolute = path.join(directory, entry.name);
       const relative = path.relative(snapshotRoot, absolute);
       if (!shouldIncludeSnapshotPath(relative)) continue;
-      if (entry.isDirectory()) visit(absolute);
-      else if (entry.isFile()) files.push({ path: normalizeBuildPath(relative), bytes: fs.readFileSync(absolute) });
+      const stat = snapshotEntry(snapshotRoot, absolute);
+      if (stat.isDirectory()) visit(absolute);
+      else {
+        const version = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+        let cached = fileHashCache.get(absolute);
+        if (cached?.version !== version) {
+          cached = { version, hash: createHash("sha256").update(fs.readFileSync(absolute)).digest("hex") };
+          fileHashCache.set(absolute, cached);
+        }
+        files.push({ path: normalizeBuildPath(relative), size: Number(stat.size), hash: cached.hash });
+      }
     }
+    active.delete(real);
   };
   visit(snapshotRoot);
   return files;
+}
+
+/** Validate the real file that TeX will read, including symbolic link targets. */
+function snapshotEntry(root: string, file: string): fs.BigIntStats {
+  const relative = path.relative(fs.realpathSync(root), fs.realpathSync(file));
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Compiler input resolves outside the manuscript: ${path.relative(root, file)}`);
+  }
+  const stat = fs.statSync(file, { bigint: true });
+  if (!stat.isFile() && !stat.isDirectory()) throw new Error(`Unsupported compiler input: ${path.relative(root, file)}`);
+  return stat;
 }
 
 function snapshotDigest(
@@ -516,7 +581,7 @@ function snapshotDigest(
   config: CompilerConfig,
   rootFile = "paper.tex",
 ): string {
-  return hashBuildInputs({
+  return hashBuildInputRecords({
     sourceHash,
     rootFile,
     config,
@@ -525,7 +590,7 @@ function snapshotDigest(
   });
 }
 
-function killCompiler(child: ReturnType<typeof spawn>, signal: NodeJS.Signals): void {
+function killCompiler(child: { pid?: number; kill: (signal: NodeJS.Signals) => unknown }, signal: NodeJS.Signals): void {
   try {
     if (child.pid) process.kill(-child.pid, signal);
     else child.kill(signal);
@@ -538,17 +603,17 @@ async function runLatexmk(projectDir: string, target: BuildInputSnapshot, jobId:
   const paths = texPaths(projectDir);
   const startedAt = new Date().toISOString();
   const { sourceHash, buildInputHash, config } = target;
+  const context = {
+    jobId, sourceHash, buildInputHash, startedAt,
+    compiler: "latexmk" as const,
+    engine: config.engine,
+    ...(config.texliveVersion ? { texliveVersion: config.texliveVersion } : {}),
+  };
   if (!latexmkAvailable()) {
     return Promise.resolve({
       state: "unavailable",
-      jobId,
-      sourceHash,
-      buildInputHash,
-      startedAt,
+      ...context,
       completedAt: new Date().toISOString(),
-      compiler: "latexmk",
-      engine: config.engine,
-      ...(config.texliveVersion ? { texliveVersion: config.texliveVersion } : {}),
       message: "latexmk is not installed. Configure TeX Live and latexmk in the project record.",
       diagnostics: ["Install TeX Live with latexmk. This server does not auto-select another compiler."],
       parsedDiagnostics: [],
@@ -584,13 +649,8 @@ async function runLatexmk(projectDir: string, target: BuildInputSnapshot, jobId:
     try { fs.rmSync(temporaryRoot, { recursive: true, force: true }); } catch { /* best effort */ }
     return {
       state: "error",
-      jobId,
-      sourceHash,
-      buildInputHash,
-      startedAt,
+      ...context,
       completedAt: new Date().toISOString(),
-      compiler: "latexmk",
-      engine: config.engine,
       message: error instanceof Error ? error.message : String(error),
       diagnostics: [error instanceof Error ? error.message : String(error)],
       parsedDiagnostics: [],
@@ -603,188 +663,159 @@ async function runLatexmk(projectDir: string, target: BuildInputSnapshot, jobId:
       // Best-effort cleanup; the compiler result is already durable.
     }
   };
-  return new Promise((resolve) => {
-    fs.mkdirSync(buildDir, { recursive: true });
-    const compilerHome = path.join(temporaryRoot, "home");
-    const compilerTemp = path.join(temporaryRoot, "tmp");
-    fs.mkdirSync(compilerHome, { recursive: true, mode: 0o700 });
-    fs.mkdirSync(compilerTemp, { recursive: true, mode: 0o700 });
-    const child = spawn("latexmk", latexmkArgs(buildDir, rootFile, config.engine), {
-      cwd: snapshotRoot,
-      env: compilerEnv({
-        home: compilerHome,
-        tempDir: compilerTemp,
-        texInputs: `${snapshotRoot}${path.delimiter}`,
-      }),
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: true,
+  fs.mkdirSync(buildDir, { recursive: true });
+  const compilerHome = path.join(temporaryRoot, "home");
+  const compilerTemp = path.join(temporaryRoot, "tmp");
+  fs.mkdirSync(compilerHome, { recursive: true, mode: 0o700 });
+  fs.mkdirSync(compilerTemp, { recursive: true, mode: 0o700 });
+  const { execa } = await import("execa");
+  const child = execa("latexmk", latexmkArgs(buildDir, rootFile, config.engine), {
+    cwd: snapshotRoot,
+    env: compilerEnv({
+      home: compilerHome,
+      tempDir: compilerTemp,
+      texInputs: `${snapshotRoot}${path.delimiter}`,
+    }),
+    extendEnv: false,
+    stdin: "ignore",
+    all: true,
+    buffer: false,
+    reject: false,
+    detached: true,
+    forceKillAfterDelay: 5_000,
+  });
+  let output = "";
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  const onChunk = (chunk: Buffer) => {
+    output += chunk.toString();
+    output = boundedLog(output);
+    persistStatus(projectDir, {
+      state: "running",
+      ...context,
+      stale: artifactIsStale(projectDir, buildInputHash),
+      rawLog: output,
+      lastLines: tail(output, 5),
     });
-    let output = "";
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
-    let timedOut = false;
-    const onChunk = (chunk: Buffer) => {
-      output += chunk.toString();
-      output = boundedLog(output);
-      persistStatus(projectDir, {
-        state: "running",
-        jobId,
-        sourceHash,
-        buildInputHash,
-        startedAt,
-        stale: artifactIsStale(projectDir, buildInputHash),
-        compiler: "latexmk",
-        engine: config.engine,
-        rawLog: output,
-        lastLines: tail(output, 5),
-      });
-    };
-    child.stdout.on("data", onChunk);
-    child.stderr.on("data", onChunk);
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      persistStatus(projectDir, {
-        state: "running",
-        jobId,
-        sourceHash,
-        buildInputHash,
-        startedAt,
-        stale: artifactIsStale(projectDir, buildInputHash),
-        compiler: "latexmk",
-        engine: config.engine,
-        message: "Compilation exceeded the five-minute limit. Terminating the compiler process tree.",
-        rawLog: boundedLog(output),
-        lastLines: tail(output, 8),
-      });
-      killCompiler(child, "SIGTERM");
-      killTimer = setTimeout(() => killCompiler(child, "SIGKILL"), 5_000);
-    }, 300_000);
-    const finish = (status: PaperCompileStatus) => {
-      clearTimeout(timeout);
-      if (killTimer) clearTimeout(killTimer);
-      cleanup();
-      resolve(status);
-    };
-    child.on("error", (error) => {
-      const unavailable = (error as NodeJS.ErrnoException).code === "ENOENT";
-      finish({
-        state: unavailable ? "unavailable" : "error",
-        jobId,
-        sourceHash,
-        buildInputHash,
-        compiler: "latexmk",
-        engine: config.engine,
-        startedAt,
-        completedAt: new Date().toISOString(),
-        message: unavailable
-          ? "latexmk could not be started. Install TeX Live."
-          : error.message,
-        diagnostics: unavailable ? ["latexmk could not be started. Install TeX Live."] : [error.message],
-        parsedDiagnostics: [],
-        rawLog: boundedLog(output),
-      });
+  };
+  child.all!.on("data", onChunk);
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    persistStatus(projectDir, {
+      state: "running",
+      ...context,
+      stale: artifactIsStale(projectDir, buildInputHash),
+      message: "Compilation exceeded the five-minute limit. Terminating the compiler process tree.",
+      rawLog: boundedLog(output),
+      lastLines: tail(output, 8),
     });
-    child.on("close", (code, signal) => {
-      const diagnostics = parseDiagnostics(output).slice(-16);
-      const parsedDiagnostics = parseTexFileLines(diagnostics);
-      if (code === 0) {
-        const artifactId = `pdf-${buildInputHash.slice(0, 16)}-${jobId.slice(-12)}`;
-        try {
-          // Recheck the same complete compiler input identity used by cache
-          // hits and status freshness. Assets, bibliography files, and
-          // compiler metadata can change while TeX is running and otherwise
-          // produce a mixed PDF that looks current to the editor.
-          const finalInput = currentBuildInput(projectDir);
-          if (finalInput.sourceHash !== sourceHash || finalInput.buildInputHash !== buildInputHash) {
-            finish({
-              state: "error",
-              jobId,
-              sourceHash,
-              buildInputHash,
-              compiler: "latexmk",
-              engine: config.engine,
-              startedAt,
-              completedAt: new Date().toISOString(),
-              message: "The compiler inputs changed while TeX was compiling; the PDF was discarded.",
-              diagnostics: ["Source or an included compiler input changed during compile. The last successful artifact is unchanged."],
-              parsedDiagnostics: [],
-              stale: true,
-              rawLog: boundedLog(output),
-            });
-            return;
-          }
-          copyCompilerOutputs(buildDir, paths.buildDir, artifactId);
-          writeArtifactManifest(projectDir, {
-            artifactId,
-            sourceHash,
-            buildInputHash,
-            jobId,
-            compiler: "latexmk",
-            engine: config.engine,
-            createdAt: new Date().toISOString(),
-          });
-          cleanupOldArtifacts(projectDir);
-        } catch (error) {
-          finish({
+    killCompiler(child, "SIGTERM");
+    killTimer = setTimeout(() => killCompiler(child, "SIGKILL"), 5_000);
+  }, 300_000);
+  const result = await child;
+  clearTimeout(timeout);
+  if (killTimer) clearTimeout(killTimer);
+  if (timedOut) killCompiler(child, "SIGKILL");
+  const finish = (status: PaperCompileStatus) => {
+    cleanup();
+    return status;
+  };
+  const { exitCode: code, signal } = result;
+  if (result.code) {
+    const unavailable = result.code === "ENOENT";
+    const message = unavailable ? "latexmk could not be started. Install TeX Live." : redactSensitiveText(result.originalMessage || "latexmk could not be started.");
+    return finish({
+      state: unavailable ? "unavailable" : "error",
+      ...context,
+      completedAt: new Date().toISOString(),
+      message, diagnostics: [message], parsedDiagnostics: [], rawLog: boundedLog(output),
+    });
+  }
+  const succeeded = code === 0 && !timedOut && !result.failed;
+  let diagnosticLog = output;
+  try {
+    const finalPassLog = fs.readFileSync(path.join(buildDir, "paper.log"), "utf8");
+    // The final TeX pass reflects resolved citations and references. Failed
+    // builds also need latexmk and bibliography-tool errors from the process.
+    diagnosticLog = succeeded ? finalPassLog : `${finalPassLog}\n${output}`;
+  } catch {
+    // Process output remains available when TeX could not create its log.
+  }
+  const diagnostics = parseDiagnostics(diagnosticLog);
+  const parsedDiagnostics = parseTexFileLines(diagnostics);
+  if (succeeded) {
+    const artifactId = `pdf-${buildInputHash.slice(0, 16)}-${jobId.slice(-12)}`;
+    try {
+      // Recheck the same complete compiler input identity used by cache
+      // hits and status freshness. Assets, bibliography files, and
+      // compiler metadata can change while TeX is running and otherwise
+      // produce a mixed PDF that looks current to the editor.
+      const finalInput = currentBuildInput(projectDir);
+      if (finalInput.sourceHash !== sourceHash || finalInput.buildInputHash !== buildInputHash) {
+        return finish({
           state: "error",
-          jobId,
-          sourceHash,
-          buildInputHash,
-          compiler: "latexmk",
-            engine: config.engine,
-            startedAt,
-            completedAt: new Date().toISOString(),
-            message: error instanceof Error ? error.message : String(error),
-            diagnostics: [error instanceof Error ? error.message : String(error)],
-            parsedDiagnostics: [],
-            rawLog: boundedLog(output),
-            stale: false,
-          });
-          return;
-        }
-        finish({
-          state: "success",
-          jobId,
-          sourceHash,
-          buildInputHash,
-          startedAt,
+          ...context,
           completedAt: new Date().toISOString(),
-          diagnostics,
-          parsedDiagnostics,
+          message: "The compiler inputs changed while TeX was compiling; the PDF was discarded.",
+          diagnostics: ["Source or an included compiler input changed during compile. The last successful artifact is unchanged."],
+          parsedDiagnostics: [],
+          stale: true,
           rawLog: boundedLog(output),
-          stale: false,
-          compiler: "latexmk",
-          engine: config.engine,
-          artifactId,
-          artifactSourceHash: sourceHash,
-          ...(config.texliveVersion ? { texliveVersion: config.texliveVersion } : {}),
         });
-        return;
       }
-      finish({
+      copyCompilerOutputs(buildDir, paths.buildDir, artifactId, snapshotRoot, sourceRoot);
+      writeArtifactManifest(projectDir, {
+        ...context,
+        artifactId,
+        createdAt: new Date().toISOString(),
+      });
+      cleanupOldArtifacts(projectDir);
+    } catch (error) {
+      return finish({
         state: "error",
-        jobId,
-        sourceHash,
-        buildInputHash,
-        compiler: "latexmk",
-        engine: config.engine,
-        startedAt,
+        ...context,
         completedAt: new Date().toISOString(),
-        message: timedOut
-          ? "TeX compilation exceeded the five-minute limit. The compiler process tree was terminated and the last successful artifact remains available."
-          : signal ? `TeX compilation stopped (${signal}).` : `TeX compilation failed with latexmk (exit ${code ?? "unknown"}).`,
-        diagnostics: diagnostics.length ? diagnostics : tail(output, 12),
-        parsedDiagnostics,
+        message: error instanceof Error ? error.message : String(error),
+        diagnostics: [error instanceof Error ? error.message : String(error)],
+        parsedDiagnostics: [],
         rawLog: boundedLog(output),
         stale: false,
       });
+    }
+    return finish({
+      state: "success",
+      ...context,
+      completedAt: new Date().toISOString(),
+      diagnostics,
+      parsedDiagnostics,
+      rawLog: boundedLog(output),
+      stale: false,
+      artifactId,
+      artifactSourceHash: sourceHash,
     });
+  }
+  return finish({
+    state: "error",
+    ...context,
+    completedAt: new Date().toISOString(),
+    message: timedOut
+      ? "TeX compilation exceeded the five-minute limit. The compiler process tree was terminated and the last successful artifact remains available."
+      : signal ? `TeX compilation stopped (${signal}).` : `TeX compilation failed with latexmk (exit ${code ?? "unknown"}).`,
+    diagnostics: diagnostics.length ? diagnostics : tail(output, 12),
+    parsedDiagnostics,
+    rawLog: boundedLog(output),
+    stale: false,
   });
 }
 
 function parseDiagnostics(output: string): string[] {
   const lines = output.split(/\r?\n/);
-  const selected = lines.filter((line) => /(?:^! |(?:\.tex:|l\.\d+)|LaTeX (?:Error|Warning)|Package .* (?:Error|Warning))/i.test(line));
-  return Array.from(new Set(selected.map((line) => line.trim()).filter(Boolean))).slice(-16);
+  const selected = lines.filter((line) => /(?:^! |\.(?:tex|sty|cls):\d+:|^l\.\d+|(?:LaTeX|Package .*|Class .*) (?:Error|Warning)|^Latexmk:.*(?:error|fail|missing|not found)|^\s*(?:pdf|xe|lua)latex:|^\s*(?:bibtex|biber|makeindex):|^ERROR -|^I (?:couldn't|could not|found no|was expecting)|^Repeated entry---line)/i.test(line));
+  const unique = Array.from(new Set(selected.map((line) => line.trim()).filter(Boolean)));
+  const priority = (line: string) => /\bWarning\b/i.test(line) ? 2 : /^l\.\d+/.test(line) ? 1 : 0;
+  // TeX can continue producing warnings after the first fatal error. Keep
+  // actionable errors and their source context ahead of the warning limit.
+  return unique.sort((left, right) => priority(left) - priority(right)).slice(0, 16);
 }
 
 function tail(value: string, count: number): string[] {

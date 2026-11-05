@@ -15,6 +15,8 @@ import {
   getCapabilitiesAction,
   getProjectStateAction,
   listWorkspaceProjectsAction,
+  getWorkspaceLayoutAction,
+  moveWorkspaceProjectToolAction,
   openWorkspaceProjectAction,
   inspectRepositoryAction,
   patchDocumentAction,
@@ -50,6 +52,8 @@ export const sharedWebMcpActions = {
 
 export const workspaceWebMcpActions = {
   listProjects: listWorkspaceProjectsAction,
+  getWorkspaceLayout: getWorkspaceLayoutAction,
+  moveProject: moveWorkspaceProjectToolAction,
   searchProjects: searchWorkspaceProjectsAction,
   openProject: openWorkspaceProjectAction,
 };

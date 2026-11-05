@@ -3,7 +3,10 @@
  * Existing paper tools in webmcp-paper-contract remain the focused set of ten.
  */
 
+import { SOURCE_INPUTS } from "./command-inputs";
+import { commandJsonSchemas, parseCommandInput } from "./command-schema";
 import { applySourceOperation } from "./operation-service";
+import { sourceOperation } from "./operations";
 import { failResult, okResult, type OperationResult } from "./operation-result";
 import { bannerRanges, splitBundleSource } from "@/lib/tex-project/source-bundle-format";
 import { findMacroMatches, parseAnchorAttrs } from "@/lib/marker-codec";
@@ -11,10 +14,7 @@ import {
   assertLiveRevision,
   boundWebMcpText,
   MAX_WEBMCP_TEXT_CHARS,
-  parseWebMcpArgs,
   parseWebMcpMaxChars,
-  unknownWebMcpArgument,
-  type JsonSchemaObject,
   type PaperWebMcpHost,
   type PaperWebMcpTool,
 } from "./webmcp-paper-contract";
@@ -39,10 +39,6 @@ export type PaperSourceHost = PaperWebMcpHost & {
   navigate?: (href: string) => void;
   current?: () => CurrentLocation | undefined;
 };
-
-function objectSchema(properties: Record<string, unknown> = {}, required: string[] = []): JsonSchemaObject {
-  return { type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false };
-}
 
 function sourceRange(args: Record<string, unknown>, source: string): { from: number; to: number } | OperationResult<never> {
   const from = args.from;
@@ -79,81 +75,7 @@ function touchesBundleBanner(source: string, from: number, to: number): boolean 
   ));
 }
 
-const expectedRevisionSchema = {
-  type: "integer",
-  minimum: 0,
-  description: "Live editor revision from the last get_paper_state call.",
-};
-
-export const PAPER_SOURCE_WEBMCP_SCHEMAS: Record<PaperSourceWebMcpToolName, JsonSchemaObject> = {
-  get_source_bundle: objectSchema({ maxChars: {
-    type: "integer",
-    minimum: 1,
-    maximum: MAX_WEBMCP_TEXT_CHARS,
-  } }),
-  read_source_range: objectSchema(
-    {
-      from: { type: "integer", minimum: 0 },
-      to: { type: "integer", minimum: 0 },
-      maxChars: { type: "integer", minimum: 1, maximum: MAX_WEBMCP_TEXT_CHARS },
-    },
-    ["from", "to"],
-  ),
-  replace_source_range: objectSchema(
-    {
-      from: { type: "integer", minimum: 0 },
-      to: { type: "integer", minimum: 0 },
-      text: { type: "string" },
-      expectedRevision: expectedRevisionSchema,
-      dryRun: { type: "boolean", description: "Return patches without mutating the live buffer." },
-    },
-    ["from", "to", "text", "expectedRevision"],
-  ),
-  add_comment: objectSchema(
-    {
-      from: { type: "integer", minimum: 0 },
-      to: { type: "integer", minimum: 0 },
-      text: { type: "string" },
-      kind: { type: "string", description: "Optional free project vocabulary for the comment." },
-      id: { type: "string", description: "Optional stable comment id. OpenBar generates one when omitted." },
-      expectedRevision: expectedRevisionSchema,
-      dryRun: { type: "boolean", description: "Return patches without mutating the live buffer." },
-    },
-    ["from", "to", "text", "expectedRevision"],
-  ),
-  add_todo: objectSchema(
-    {
-      from: { type: "integer", minimum: 0 },
-      to: { type: "integer", minimum: 0 },
-      title: { type: "string", description: "Optional TeX-owned TODO title." },
-      text: { type: "string" },
-      textFormat: { type: "string", enum: ["plain", "tex"], description: "Use tex for an authored TeX body. Plain text is escaped for TeX and is the default." },
-      expectedRevision: expectedRevisionSchema,
-      dryRun: { type: "boolean", description: "Return patches without mutating the live buffer." },
-    },
-    ["from", "to", "text", "expectedRevision"],
-  ),
-  update_todo: objectSchema(
-    {
-      id: { type: "string" },
-      title: { type: "string", description: "Optional TeX-owned TODO title. Use an empty string to clear it." },
-      text: { type: "string" },
-      textFormat: { type: "string", enum: ["plain", "tex"], description: "Use tex when editing the existing TeX body or supplying formatting commands. Plain text is escaped for TeX and is the default." },
-      completed: { type: "boolean" },
-      expectedRevision: expectedRevisionSchema,
-      dryRun: { type: "boolean", description: "Return patches without mutating the live buffer." },
-    },
-    ["id", "expectedRevision"],
-  ),
-  complete_todo: objectSchema(
-    { id: { type: "string" }, expectedRevision: expectedRevisionSchema, dryRun: { type: "boolean" } },
-    ["id", "expectedRevision"],
-  ),
-  reopen_todo: objectSchema(
-    { id: { type: "string" }, expectedRevision: expectedRevisionSchema, dryRun: { type: "boolean" } },
-    ["id", "expectedRevision"],
-  ),
-};
+export const PAPER_SOURCE_WEBMCP_SCHEMAS = commandJsonSchemas(SOURCE_INPUTS);
 
 export async function executePaperSourceTool(
   host: PaperSourceHost,
@@ -161,11 +83,9 @@ export async function executePaperSourceTool(
   rawArgs: unknown,
   options?: { signal?: AbortSignal },
 ): Promise<OperationResult<unknown>> {
-  const parsedArgs = parseWebMcpArgs(rawArgs);
+  const parsedArgs = parseCommandInput(SOURCE_INPUTS[name], rawArgs, true);
   if (!parsedArgs.ok) return failResult("invalid_arguments", parsedArgs.message, { retryable: false });
   const args = parsedArgs.value;
-  const unknown = unknownWebMcpArgument(args, PAPER_SOURCE_WEBMCP_SCHEMAS[name]);
-  if (unknown) return failResult("invalid_arguments", `Unknown argument "${unknown}".`, { retryable: false });
   const snapshot = host.getSnapshot();
   const source = snapshot.source;
 
@@ -228,46 +148,27 @@ export async function executePaperSourceTool(
     case "replace_source_range": {
       const rev = requireRev();
       if (!rev.ok) return rev;
-      if (typeof args.text !== "string") return failResult("invalid_arguments", "text must be a string.", false);
-      if (args.kind !== undefined && (typeof args.kind !== "string" || args.kind.trim().length > 80)) {
-        return failResult("invalid_arguments", "kind must be a string of 80 characters or fewer.", false);
-      }
-      if (args.dryRun !== undefined && typeof args.dryRun !== "boolean") return failResult("invalid_arguments", "dryRun must be a boolean.", false);
       const range = sourceRange(args, source);
       if ("ok" in range) return range;
       if (touchesBundleBanner(source, range.from, range.to)) {
         return failResult("invalid_path", "File banners identify source files and cannot be edited as body text.", false);
       }
-      const result = applySourceOperation(source, {
-        type: "replace_range",
-        from: range.from,
-        to: range.to,
-        text: args.text,
-      });
+      const result = applySourceOperation(source, sourceOperation(name, args));
       if (!result.ok) return result;
       if (dryRun) return okResult({ dryRun: true, patches: result.value.patches }, { revision: snapshot.revision });
-      const mutationError = await runRangeMutation(host, range.from, range.to, args.text, options?.signal);
+      const mutationError = await runRangeMutation(host, range.from, range.to, result.value.patches[0]!.next, options?.signal);
       if (mutationError) return mutationError;
       return okResult({ changed: true }, { revision: host.getSnapshot().revision });
     }
     case "add_comment": {
       const rev = requireRev();
       if (!rev.ok) return rev;
-      if (typeof args.text !== "string") return failResult("invalid_arguments", "text must be a string.", false);
-      if (args.dryRun !== undefined && typeof args.dryRun !== "boolean") return failResult("invalid_arguments", "dryRun must be a boolean.", false);
       const range = sourceRange(args, source);
       if ("ok" in range) return range;
       if (touchesBundleBanner(source, range.from, range.to)) {
         return failResult("invalid_path", "File banners identify source files and cannot be edited as body text.", false);
       }
-      const result = applySourceOperation(source, {
-        type: "add_comment",
-        from: range.from,
-        to: range.to,
-        text: args.text,
-        kind: typeof args.kind === "string" ? args.kind.trim() || undefined : undefined,
-        id: typeof args.id === "string" ? args.id : undefined,
-      });
+      const result = applySourceOperation(source, sourceOperation(name, args));
       if (!result.ok) return result;
       if (dryRun) return okResult({ dryRun: true, patches: result.value.patches }, { revision: snapshot.revision });
       const mutationError = await runRangeMutation(host, range.from, range.to, result.value.patches[0]!.next, options?.signal);
@@ -277,23 +178,12 @@ export async function executePaperSourceTool(
     case "add_todo": {
       const rev = requireRev();
       if (!rev.ok) return rev;
-      if (args.title !== undefined && typeof args.title !== "string") return failResult("invalid_arguments", "title must be a string.", false);
-      if (typeof args.text !== "string") return failResult("invalid_arguments", "text must be a string.", false);
-      if (args.textFormat !== undefined && args.textFormat !== "plain" && args.textFormat !== "tex") return failResult("invalid_arguments", "textFormat must be plain or tex.", false);
-      if (args.dryRun !== undefined && typeof args.dryRun !== "boolean") return failResult("invalid_arguments", "dryRun must be a boolean.", false);
       const range = sourceRange(args, source);
       if ("ok" in range) return range;
       if (touchesBundleBanner(source, range.from, range.to)) {
         return failResult("invalid_path", "File banners identify source files and cannot be edited as body text.", false);
       }
-      const result = applySourceOperation(source, {
-        type: "add_todo",
-        from: range.from,
-        to: range.to,
-        title: typeof args.title === "string" ? args.title : undefined,
-        text: args.text,
-        textFormat: args.textFormat as "plain" | "tex" | undefined,
-      });
+      const result = applySourceOperation(source, sourceOperation(name, args));
       if (!result.ok) return result;
       const insert = result.value.patches[0]!.next;
       if (dryRun) return okResult({ dryRun: true, patches: result.value.patches, inserted: insert }, { revision: snapshot.revision });
@@ -307,20 +197,7 @@ export async function executePaperSourceTool(
     case "update_todo": {
       const rev = requireRev();
       if (!rev.ok) return rev;
-      if (typeof args.id !== "string") return failResult("invalid_arguments", "id must be a string.", false);
-      if (args.title !== undefined && typeof args.title !== "string") return failResult("invalid_arguments", "title must be a string.", false);
-      if (args.text !== undefined && typeof args.text !== "string") return failResult("invalid_arguments", "text must be a string.", false);
-      if (args.textFormat !== undefined && args.textFormat !== "plain" && args.textFormat !== "tex") return failResult("invalid_arguments", "textFormat must be plain or tex.", false);
-      if (args.completed !== undefined && typeof args.completed !== "boolean") return failResult("invalid_arguments", "completed must be a boolean.", false);
-      if (args.dryRun !== undefined && typeof args.dryRun !== "boolean") return failResult("invalid_arguments", "dryRun must be a boolean.", false);
-      const result = applySourceOperation(source, {
-        type: "update_todo",
-        id: args.id,
-        title: typeof args.title === "string" ? args.title : undefined,
-        text: typeof args.text === "string" ? args.text : undefined,
-        textFormat: args.textFormat as "plain" | "tex" | undefined,
-        completed: typeof args.completed === "boolean" ? args.completed : undefined,
-      });
+      const result = applySourceOperation(source, sourceOperation(name, args));
       if (!result.ok) return result;
       const patch = result.value.patches[0]!;
       if (dryRun) return okResult({ dryRun: true, patches: result.value.patches, id: args.id }, { revision: snapshot.revision });
@@ -331,9 +208,7 @@ export async function executePaperSourceTool(
     case "complete_todo": {
       const rev = requireRev();
       if (!rev.ok) return rev;
-      if (typeof args.id !== "string") return failResult("invalid_arguments", "id must be a string.", false);
-      if (args.dryRun !== undefined && typeof args.dryRun !== "boolean") return failResult("invalid_arguments", "dryRun must be a boolean.", false);
-      const result = applySourceOperation(source, { type: "complete_todo", id: args.id });
+      const result = applySourceOperation(source, sourceOperation(name, args));
       if (!result.ok) return result;
       const patch = result.value.patches[0]!;
       if (dryRun) return okResult({ dryRun: true, patches: result.value.patches, id: args.id, completed: true }, { revision: snapshot.revision });
@@ -344,9 +219,7 @@ export async function executePaperSourceTool(
     case "reopen_todo": {
       const rev = requireRev();
       if (!rev.ok) return rev;
-      if (typeof args.id !== "string") return failResult("invalid_arguments", "id must be a string.", false);
-      if (args.dryRun !== undefined && typeof args.dryRun !== "boolean") return failResult("invalid_arguments", "dryRun must be a boolean.", false);
-      const result = applySourceOperation(source, { type: "reopen_todo", id: args.id });
+      const result = applySourceOperation(source, sourceOperation(name, args));
       if (!result.ok) return result;
       const patch = result.value.patches[0]!;
       if (dryRun) return okResult({ dryRun: true, patches: result.value.patches, id: args.id, completed: false }, { revision: snapshot.revision });

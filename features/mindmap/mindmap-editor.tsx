@@ -1,6 +1,8 @@
 "use client";
 
 import "katex/dist/katex.min.css";
+import { Select } from "@/components/select";
+import { FastTooltip } from "@/components/fast-tooltip";
 import styles from "./mindmap-editor.module.css";
 import { RichText as NodeRichText } from "@/components/rich-text";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useTransition, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
@@ -11,11 +13,12 @@ import * as Popover from "@radix-ui/react-popover";
 import { NodeToolbar, Position } from "@xyflow/react";
 import {
   AlertCircle,
-  CalendarDays,
   Check,
   Circle,
-  CircleCheck,
+  CheckSquare,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   FilePlus2,
   FileText,
   Bold,
@@ -39,10 +42,13 @@ import {
 import { markdownTableColumns, startsWithMarkdownTable } from "@/lib/mindmap/markdown-table";
 import { ChoiceButtons } from "@/components/choice-buttons";
 import { countMindmapDescendants } from "@/lib/mindmap-index";
+import { MINDMAP_PROGRESS_STATES, progressLabel } from "@/lib/mindmap/progress";
 import { useGitAutoSync } from "@/components/use-git-auto-sync";
 import { OverleafSyncNotice } from "@/components/overleaf-sync-notice";
 import { EditorNotice } from "@/components/editor-notice";
-import { commitAndPushProjectAction, convertMindmapCardToTodoAction, getMindmapAction, getProjectGitStatusAction, persistPaperTodoAction, removePaperTodoAction, saveMindmapAction, uploadMindmapImageAction } from "@/app/actions";
+import { SaveSyncStatus } from "@/components/save-sync-status";
+import { convertMindmapCardToTodoAction, persistPaperTodoAction, removePaperTodoAction, uploadMindmapImageAction } from "@/app/actions";
+import { getBrowserGitStatus, pushBrowserProject } from "@/lib/research/browser-git-sync";
 import { sharedWebMcpActions } from "@/features/webmcp-actions";
 import {
   cloneMindmap,
@@ -66,13 +72,15 @@ import {
 } from "@/lib/mindmap/layout";
 import { indentMindmapNode, mindmapMoveTargets, outdentMindmapNode, type MindmapDrop } from "@/lib/mindmap/drop-targets";
 import { mindmapDiskHash } from "@/lib/mindmap/mindmap";
+import { createMindmapSaveQueue } from "@/lib/mindmap/save-queue";
+import { isOutdatedMindmapPage, loadBrowserMindmap, saveBrowserMindmap } from "@/lib/mindmap/browser-save";
+import { mindmapRecoveryKey, readMindmapRecovery, writeMindmapRecovery, type MindmapRecoveryDraft } from "@/lib/mindmap/browser-recovery";
 import {
   mindmapCollapseStorageKey,
   parseMindmapCollapsePreference,
   serializeMindmapCollapsePreference,
 } from "@/lib/mindmap/collapse-preferences";
 import { cn } from "@/lib/utils";
-import { MAX_MINDMAP_CAPTION_WORDS, captionWordCount } from "@/lib/mindmap/card-content";
 import { artifactHref } from "@/lib/research/artifact-link";
 import { captionMindmapImage, detachMindmapImage } from "@/lib/mindmap/image-refs";
 import { availableTodoCandidates } from "@/lib/research/map-todo-candidates";
@@ -98,15 +106,18 @@ import {
   ordinaryMindmapCardContent,
   paperSectionRefs,
   reconcileTodos,
-  todoCounts,
+  todoCountsByParent,
   todosFromPaperState,
 } from "@/lib/research/todo-map";
 import { CardImages, hasImageTransfer, imageFilesFromTransfer } from "./card-images";
 import { CardCaution } from "./card-caution";
+import { CardScratchpad } from "./card-scratchpad";
 import { CautionEditor } from "./caution-editor";
 import { MindmapCanvas } from "./mindmap-canvas";
 import { MindmapChangesView } from "./mindmap-changes";
+import { CardLinks, CardProperties } from "./card-details";
 import { TexCodeMirror, type TexCodeMirrorHandle } from "@/features/paper/tex-codemirror";
+import { MindmapFontSize, MindmapFontSizeSlider } from "./mindmap-font-size";
 
 const AUTOSAVE_DELAY = 700;
 const LAST_WEEK_DAYS = 7;
@@ -119,8 +130,8 @@ const CARD_PALETTE = [
 ] as const;
 
 type LocalSaveState = "dirty" | "saving" | "saved" | "conflict";
-type RemoteSaveState = "checking" | "pending" | "syncing" | "synced" | "changed" | "unavailable" | "failed";
-type MindmapRemotePushResult = Awaited<ReturnType<typeof commitAndPushProjectAction>>;
+type RemoteSaveState = "checking" | "pending" | "syncing" | "synced" | "changed" | "blocked" | "unconfigured" | "unavailable" | "failed";
+type MindmapRemotePushResult = Awaited<ReturnType<typeof pushBrowserProject>>;
 
 type Point = { x: number; y: number };
 type Dimensions = { width: number; height: number };
@@ -293,7 +304,13 @@ export function MindmapEditor({
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const { mindmap, selectedId, selectedIds, past: history, future, revision } = session;
-  const persistedDiskHashRef = useRef(mindmapDiskHash(initialMindmap));
+  const persistedDiskHashRef = useRef(initialMindmap.diskHash || mindmapDiskHash(initialMindmap));
+  const [recoveryDraft, setRecoveryDraft] = useState<MindmapRecoveryDraft | null>(null);
+  const recoveryDraftRef = useRef<MindmapRecoveryDraft | null>(null);
+  recoveryDraftRef.current = recoveryDraft;
+  const recoveryLoadedRef = useRef(false);
+  const [recoveryStored, setRecoveryStored] = useState<boolean | null>(null);
+  const refreshingWithRecoveryRef = useRef(false);
   const paperSourceHashRef = useRef<string | undefined>(paperState?.paper?.sourceHash);
   const convertingCardIdRef = useRef<string | null>(null);
   const conversionStartingCardIdRef = useRef<string | null>(null);
@@ -301,7 +318,9 @@ export function MindmapEditor({
   useEffect(() => {
     paperSourceHashRef.current = paperState?.paper?.sourceHash;
   }, [paperState?.paper?.sourceHash]);
+  const [activityMode, setActivityMode] = useState<"off" | "week" | "custom">("off");
   const [activitySince, setActivitySince] = useState<string | null>(null);
+  const [customActivityDate, setCustomActivityDate] = useState(() => daysAgoDate(LAST_WEEK_DAYS));
   const collapseMapId = mindmap.id || initialMindmap.id || "draft";
   const collapseStorageKey = mindmapCollapseStorageKey(project, collapseMapId);
   const collapseNodeSignature = useMemo(
@@ -312,10 +331,7 @@ export function MindmapEditor({
   const collapsedIdsRef = useRef<Set<string>>(new Set());
   collapsedIdsRef.current = collapsedIds;
 
-  const setLocalCollapsed = useCallback((id: string, collapsed: boolean) => {
-    const next = new Set(collapsedIdsRef.current);
-    if (collapsed) next.add(id);
-    else next.delete(id);
+  const setLocalCollapsedIds = useCallback((next: Set<string>) => {
     collapsedIdsRef.current = next;
     setCollapsedIds(next);
     try {
@@ -327,6 +343,13 @@ export function MindmapEditor({
       // Browser storage can be unavailable in private or restricted sessions.
     }
   }, [collapseStorageKey]);
+
+  const setLocalCollapsed = useCallback((id: string, collapsed: boolean) => {
+    const next = new Set(collapsedIdsRef.current);
+    if (collapsed) next.add(id);
+    else next.delete(id);
+    setLocalCollapsedIds(next);
+  }, [setLocalCollapsedIds]);
 
   useEffect(() => {
     let next = new Set<string>();
@@ -352,7 +375,7 @@ export function MindmapEditor({
 
   const [remoteSaveState, setRemoteSaveState] = useState<RemoteSaveState>(() => {
     const snapshot = remoteQueue.getSnapshot();
-    return snapshot.sequence > 0 ? snapshot.phase : "checking";
+    return snapshot.phase === "pending" || snapshot.phase === "syncing" ? snapshot.phase : "checking";
   });
   const [checkingRemote, setCheckingRemote] = useState(false);
   const [remoteSaveError, setRemoteSaveError] = useState<string | null>(null);
@@ -364,8 +387,11 @@ export function MindmapEditor({
   const remoteSyncRef = useRef<RemoteSyncOutcome | undefined>(undefined);
 
   useEffect(() => {
+    let initial = true;
     const applyQueueEvent = (event: MindmapRemoteQueueEvent<MindmapRemotePushResult>) => {
-      if (event.sequence === 0) return;
+      const initialSettled = initial && (event.phase === "synced" || event.phase === "failed");
+      initial = false;
+      if (event.sequence === 0 || initialSettled) return;
       setCheckingRemote(false);
       if (event.phase === "pending") {
         setRemoteSaveState("pending");
@@ -414,8 +440,8 @@ export function MindmapEditor({
       if (result && !result.ok && (result.code === "remote_ahead" || result.code === "remote_conflict")) {
         setRemoteOutOfSync(true);
       }
-      setRemoteSaveState("failed");
-      setRemoteSaveError(message);
+      setRemoteSaveState(remoteSyncRef.current.status === "unconfigured" ? "unconfigured" : result && !result.ok && result.code === "pre_staged_work" ? "blocked" : "failed");
+      setRemoteSaveError(remoteSyncRef.current.status === "unconfigured" ? null : message);
     };
     return remoteQueue.subscribe(applyQueueEvent);
   }, [remoteQueue]);
@@ -427,7 +453,7 @@ export function MindmapEditor({
     ++remoteStatusRequestRef.current;
     return remoteQueue.enqueue(checkpoint, async () => {
       try {
-        return await commitAndPushProjectAction(project, message);
+        return await pushBrowserProject(project, message);
       } catch (error) {
         return {
           ok: false as const,
@@ -445,25 +471,25 @@ export function MindmapEditor({
     const queueSequence = remoteQueue.getSnapshot().sequence;
     const queueWasBusy = remoteQueue.isBusy;
     setCheckingRemote(true);
-    if (announce) setRemoteSaveState(current => current === "changed" || current === "failed" || current === "unavailable" ? current : "checking");
+    if (announce && !queueWasBusy) setRemoteSaveState(current => current === "changed" || current === "blocked" || current === "failed" || current === "unavailable" ? current : "checking");
     let timeoutId: number | undefined;
     try {
       const timeout = announce ? new Promise<never>((_, reject) => {
         timeoutId = window.setTimeout(() => reject(new Error("Remote status check timed out. Retry to refresh synchronization status.")), 5_000);
       }) : null;
-      const request = getProjectGitStatusAction(project, refreshRemote);
+      const request = getBrowserGitStatus(project, refreshRemote);
       const status = timeout ? await Promise.race([request, timeout]) : await request;
       if (requestId !== remoteStatusRequestRef.current) return;
       const queueSnapshot = remoteQueue.getSnapshot();
       if (queueWasBusy || remoteQueue.isBusy || queueSnapshot.sequence !== queueSequence) return status;
       if (!status.isGitRepo) {
-        setRemoteSaveState("unavailable");
-        setRemoteSaveError("Git status unavailable: this project has no Git repository.");
+        setRemoteSaveState("unconfigured");
+        setRemoteSaveError(null);
         return status;
       }
       if (!status.isOverleafRemote) {
-        setRemoteSaveState("unavailable");
-        setRemoteSaveError("Git remote unavailable: origin is not git.overleaf.com.");
+        setRemoteSaveState("unconfigured");
+        setRemoteSaveError(null);
         return status;
       }
       if (status.error) {
@@ -481,7 +507,13 @@ export function MindmapEditor({
       remoteOutOfSyncRef.current = applyingRemoteRef.current;
       setRemoteOutOfSync(false);
       setRemoteSaveError(null);
-      setRemoteSaveState((status.ahead || 0) > 0 || !status.isClean ? "pending" : "synced");
+      if (!Number.isSafeInteger(status.ahead) || !Number.isSafeInteger(status.behind)
+        || status.ahead! < 0 || status.behind! < 0 || typeof status.isClean !== "boolean") {
+        setRemoteSaveState("unavailable");
+        setRemoteSaveError("Git synchronization status could not be verified. Check the remote connection and try again.");
+        return status;
+      }
+      setRemoteSaveState((status.ahead || 0) > 0 || !status.isClean ? "pending" : refreshRemote ? "synced" : "checking");
       return status;
     } catch (error) {
       if (requestId !== remoteStatusRequestRef.current) return;
@@ -495,80 +527,101 @@ export function MindmapEditor({
   }, [project, remoteQueue]);
 
   useEffect(() => {
-    // Start with cached Git state. Background checks fetch after first paint.
-    void refreshRemoteStatus(false, false);
+    void refreshRemoteStatus(true, false);
   }, [refreshRemoteStatus]);
 
-  const webMcpSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const localSaveQueue = useMemo(() => createMindmapSaveQueue(), []);
   const webMcpSaveCountRef = useRef(0);
-  const persistWebMcpMutation = useCallback(async (
-    action: MindmapTreeAction | ((current: MindmapSession) => MindmapTreeAction | null),
-    expectedRevision?: number,
-  ): Promise<Mindmap> => {
-    webMcpSaveCountRef.current += 1;
-    const job = webMcpSaveQueueRef.current.then(async () => {
-      if (remoteOutOfSyncRef.current) throw Object.assign(new Error("Editing is paused. Review and synchronize Git updates to resume."), { code: "remote_conflict" });
-      const current = sessionRef.current;
-      if (expectedRevision !== undefined && current.revision !== expectedRevision) {
-        throw Object.assign(
-          new Error(`Live mindmap revision is ${current.revision}, not ${String(expectedRevision)}.`),
-          { code: "stale_live_state" },
-        );
-      }
-      const nextAction = typeof action === "function" ? action(current) : action;
-      if (!nextAction) return current.mindmap;
-      const nextSession = mindmapReducer(current, nextAction);
-      if (nextSession.mindmap === current.mindmap) return current.mindmap;
-
-      const snapshot = cloneMindmap(nextSession.mindmap);
-      sessionRef.current = nextSession;
-      dispatch(nextAction);
-      setLocalSaveState("saving");
-      const saved = await saveMindmapAction(project, snapshot, persistedDiskHashRef.current);
+  const captureRecoveryDraft = useCallback((): MindmapRecoveryDraft => ({
+    version: 1,
+    project,
+    mapId: sessionRef.current.mindmap.id || "draft",
+    baseHash: persistedDiskHashRef.current,
+    savedAt: new Date().toISOString(),
+    mindmap: cloneMindmap(sessionRef.current.mindmap),
+  }), [project]);
+  const preserveBrowserDraft = useCallback(() => {
+    const draft = recoveryDraftRef.current || captureRecoveryDraft();
+    let stored = false;
+    try { stored = writeMindmapRecovery(window.sessionStorage, draft); }
+    catch { /* Browser storage can be disabled. Keep the live editor open. */ }
+    setRecoveryStored(stored);
+    return stored;
+  }, [captureRecoveryDraft]);
+  const clearBrowserDraft = useCallback(() => {
+    try { window.sessionStorage.removeItem(mindmapRecoveryKey(project, sessionRef.current.mindmap.id || "draft")); }
+    catch { /* A saved map remains durable when browser storage is unavailable. */ }
+    setRecoveryStored(null);
+  }, [project]);
+  const persistCurrentSnapshot = useCallback(async (actor: "human" | "webmcp" = "human"): Promise<Mindmap> => {
+    if (recoveryDraftRef.current) throw new Error("Review the recovered draft before saving this map.");
+    const snapshot = cloneMindmap(sessionRef.current.mindmap);
+    const signature = mapSignature(snapshot);
+    if (signature === savedSignatureRef.current) return snapshot;
+    saveErrorRef.current = null;
+    setSaveError(null);
+    setLocalSaveState("saving");
+    preserveBrowserDraft();
+    try {
+      const saved = await saveBrowserMindmap(project, snapshot, persistedDiskHashRef.current, actor);
       persistedDiskHashRef.current = saved.diskHash ?? mindmapDiskHash(saved);
       const savedMapSignature = mapSignature(saved);
       savedSignatureRef.current = savedMapSignature;
       setSavedSignature(savedMapSignature);
-
       const latest = sessionRef.current;
-      if (mapSignature(latest.mindmap) === mapSignature(snapshot)) {
-        const acknowledged = mindmapReducer(latest, {
-          type: "ack-save",
-          diskHash: saved.diskHash,
-          persistedRevision: saved.revision,
-          updatedAt: saved.updatedAt,
-        });
-        sessionRef.current = acknowledged;
-        dispatch({
-          type: "ack-save",
-          diskHash: saved.diskHash,
-          persistedRevision: saved.revision,
-          updatedAt: saved.updatedAt,
-        });
-        setLocalSaveState("saved");
-      } else {
-        const rebased = mindmapReducer(latest, { type: "rebase-disk-hash", diskHash: persistedDiskHashRef.current });
-        sessionRef.current = rebased;
-        dispatch({ type: "rebase-disk-hash", diskHash: persistedDiskHashRef.current });
-        setLocalSaveState("dirty");
-      }
+      const unchanged = mapSignature(latest.mindmap) === signature;
+      const acknowledgement = unchanged
+        ? { type: "ack-save" as const, diskHash: saved.diskHash, persistedRevision: saved.revision, updatedAt: saved.updatedAt }
+        : { type: "rebase-disk-hash" as const, diskHash: persistedDiskHashRef.current };
+      sessionRef.current = mindmapReducer(latest, acknowledgement);
+      dispatch(acknowledgement);
+      setLocalSaveState(unchanged ? "saved" : "dirty");
+      if (unchanged) clearBrowserDraft();
+      else preserveBrowserDraft();
       nextRemoteCheckpointRef.current = mindmapRemoteCheckpoint(saved);
       void enqueueRemote("OpenBar: save mindmap", nextRemoteCheckpointRef.current);
       return saved;
-    });
-    webMcpSaveQueueRef.current = job.then(() => undefined, () => undefined).finally(() => {
-      webMcpSaveCountRef.current = Math.max(0, webMcpSaveCountRef.current - 1);
-    });
-    try {
-      return await job;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not save the mindmap.";
       saveErrorRef.current = message;
       setSaveError(message);
+      preserveBrowserDraft();
       setLocalSaveState(/conflict|changed.*reload|stale/i.test(message) ? "conflict" : "dirty");
       throw error;
     }
-  }, [enqueueRemote, project]);
+  }, [clearBrowserDraft, enqueueRemote, preserveBrowserDraft, project]);
+
+  const persistWebMcpMutation = useCallback(async (
+    action: MindmapTreeAction | ((current: MindmapSession) => MindmapTreeAction | null),
+    expectedRevision?: number,
+    actor: "human" | "webmcp" = "webmcp",
+  ): Promise<Mindmap> => {
+    webMcpSaveCountRef.current += 1;
+    try {
+      return await localSaveQueue.enqueue(async () => {
+        if (recoveryDraftRef.current) throw new Error("Review the recovered draft before editing this map.");
+        if (remoteOutOfSyncRef.current) throw Object.assign(new Error("Editing is paused. Review and synchronize Git updates to resume."), { code: "remote_conflict" });
+        // Flush pending human edits before attributing an agent operation.
+        await persistCurrentSnapshot("human");
+        const current = sessionRef.current;
+        if (expectedRevision !== undefined && current.revision !== expectedRevision) {
+          throw Object.assign(
+            new Error(`Live mindmap revision is ${current.revision}, not ${String(expectedRevision)}.`),
+            { code: "stale_live_state" },
+          );
+        }
+        const nextAction = typeof action === "function" ? action(current) : action;
+        if (!nextAction) return current.mindmap;
+        const nextSession = mindmapReducer(current, nextAction);
+        if (nextSession.mindmap === current.mindmap) return current.mindmap;
+        sessionRef.current = nextSession;
+        dispatch(nextAction);
+        return persistCurrentSnapshot(actor);
+      });
+    } finally {
+      webMcpSaveCountRef.current -= 1;
+    }
+  }, [localSaveQueue, persistCurrentSnapshot]);
 
   useMindmapWebMcp({
     sharedActions: sharedWebMcpActions,
@@ -584,7 +637,7 @@ export function MindmapEditor({
         revision: sessionRef.current.revision,
         diskHash: persistedDiskHashRef.current,
         remoteSync: remoteSyncRef.current,
-        editingBlocked: remoteOutOfSyncRef.current,
+        editingBlocked: remoteOutOfSyncRef.current || Boolean(recoveryDraftRef.current),
         rootId: current.rootId,
         nodes: current.nodes.map((node) => {
           const content = cardContentForNodeWithPaperState(node, paperState);
@@ -621,9 +674,9 @@ export function MindmapEditor({
     },
     focusNode: (id) => dispatch({ type: "select", id }),
     hasTodo: (todoId) => Boolean(paperState?.paper?.todos.some((todo) => todo.id === todoId)),
-    addNode: async (parentId, text, expectedRevision, title, caution) => {
+    addNode: async (parentId, text, expectedRevision, title, caution, caption) => {
       const id = newNodeId();
-      await persistWebMcpMutation({ type: "add-node", parentId, id, text, title, caution, agentDraft: true }, expectedRevision);
+      await persistWebMcpMutation({ type: "add-node", parentId, id, text, title, caution, caption, agentDraft: true }, expectedRevision);
       return id;
     },
     moveNode: async (id, parentId, beforeId, afterId, expectedRevision) => {
@@ -690,7 +743,11 @@ export function MindmapEditor({
         return node ? { type: "patch-node", id, patch: nodePatch } : null;
       }, expectedRevision);
     },
-    setActivityHighlight: (since) => setActivitySince(since || null),
+    setActivityHighlight: (since) => {
+      setActivityMode(since ? "custom" : "off");
+      if (since) setCustomActivityDate(since);
+      setActivitySince(since || null);
+    },
     placeTodoCard: async (todoId, parentId, expectedRevision) => {
       const existing = sessionRef.current.mindmap.nodes.find((node) => node.todoId === todoId);
       if (existing) {
@@ -785,19 +842,26 @@ export function MindmapEditor({
   const [editingId, setEditingId] = useState<string | null>(null);
   const inlineEditorSessionRef = useRef<InlineCardSession | null>(null);
   const [cardMenuOpen, setCardMenuOpen] = useState(true);
+  const [unplacedOpen, setUnplacedOpen] = useState(true);
+  const [selectMultiple, setSelectMultiple] = useState(false);
   const [inspectorPresent, setInspectorPresent] = useState(true);
   useEffect(() => {
     if (cardMenuOpen) { setInspectorPresent(true); return; }
     const timeout = window.setTimeout(() => setInspectorPresent(false), 180);
     return () => window.clearTimeout(timeout);
   }, [cardMenuOpen]);
-  useEffect(() => { if (window.matchMedia("(max-width: 899px)").matches) setCardMenuOpen(false); }, []);
-  const [inspectorSections, setInspectorSections] = useState<Partial<Record<InspectorSectionId, boolean>>>({ organization: true });
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 899px)").matches) {
+      setCardMenuOpen(false);
+      setUnplacedOpen(false);
+    }
+  }, []);
+  const [inspectorSections, setInspectorSections] = useState<Partial<Record<InspectorSectionId, boolean>>>({});
   useEffect(() => {
     try {
       const saved: unknown = JSON.parse(window.localStorage.getItem("openbar:inspector-sections:v1") || "null");
       if (saved && typeof saved === "object" && !Array.isArray(saved)) {
-        const sections: Partial<Record<InspectorSectionId, boolean>> = { organization: true };
+        const sections: Partial<Record<InspectorSectionId, boolean>> = {};
         for (const id of Object.keys(INSPECTOR_SECTION_LABELS) as InspectorSectionId[]) {
           const value = (saved as Record<string, unknown>)[id];
           if (typeof value === "boolean") sections[id] = value;
@@ -855,7 +919,8 @@ export function MindmapEditor({
   const readOnlyStorageKey = `openbar:mindmap-read-only:v1:${encodeURIComponent(project)}:${encodeURIComponent(collapseMapId)}`;
   const [manualReadOnly, setReadOnly] = useState(false);
   const saveConflict = Boolean(saveError && /conflict|changed.*reload|stale/i.test(saveError));
-  const readOnly = manualReadOnly || remoteOutOfSync || applyingRemote || saveConflict;
+  const outdatedSave = Boolean(saveError && isOutdatedMindmapPage(saveError));
+  const readOnly = manualReadOnly || remoteOutOfSync || applyingRemote || saveConflict || Boolean(recoveryDraft);
   useEffect(() => {
     try { setReadOnly(window.localStorage.getItem(readOnlyStorageKey) === "true"); }
     catch { setReadOnly(false); }
@@ -868,12 +933,10 @@ export function MindmapEditor({
       return next;
     });
   };
-  const [unplacedOpen, setUnplacedOpen] = useState(true);
   const unplacedCount = availableTodoCandidates(paperState?.paper?.todos || [], mindmap.nodes).length;
   const [labelDraft, setLabelDraft] = useState("");
   const [mapTitleDraft, setMapTitleDraft] = useState(initialMindmap.title || "");
   const mapTitleDirtyRef = useRef(false);
-  const saveInFlightRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     if (!mapTitleDirtyRef.current) setMapTitleDraft(mindmap.title || "");
@@ -902,12 +965,13 @@ export function MindmapEditor({
   const coverageById = useMemo(() => {
     const map = new Map<string, { complete: number; total: number }>();
     const { childrenByParent } = indexMindmap(mindmap);
+    const counts = todoCountsByParent(reconciliation, mindmap);
     for (const node of mindmap.nodes) {
       if (node.todoId) continue;
       const linked = paperSectionRefs(node).length > 0;
       const directTodo = (childrenByParent.get(node.id) || []).some((child) => Boolean(child.todoId));
       if (!linked && !directTodo) continue;
-      map.set(node.id, todoCounts(reconciliation, node.id, mindmap));
+      map.set(node.id, counts.get(node.id)!);
     }
     return map;
   }, [mindmap, reconciliation]);
@@ -961,36 +1025,38 @@ export function MindmapEditor({
   const currentSignature = useMemo(() => mapSignature(mindmap), [mindmap]);
   const dirty = currentSignature !== savedSignature;
   useEffect(() => {
+    if (recoveryLoadedRef.current) return;
+    recoveryLoadedRef.current = true;
+    try {
+      const draft = readMindmapRecovery(window.sessionStorage, project, collapseMapId);
+      if (draft && mapSignature(draft.mindmap) !== savedSignatureRef.current) {
+        recoveryDraftRef.current = draft;
+        setRecoveryDraft(draft);
+        setRecoveryStored(true);
+      } else if (draft) clearBrowserDraft();
+    } catch { /* Keep malformed or unavailable recovery data untouched. */ }
+  }, [clearBrowserDraft, collapseMapId, project]);
+  useEffect(() => {
+    if (recoveryLoadedRef.current && !recoveryDraftRef.current && dirty) preserveBrowserDraft();
+  }, [dirty, mindmap, preserveBrowserDraft]);
+  useEffect(() => {
     if (saveConflict) {
       if (localSaveState !== "conflict") setLocalSaveState("conflict");
     } else if (dirty) {
-      if (!saveInFlightRef.current && localSaveState === "saved") setLocalSaveState("dirty");
-    } else if (!saveInFlightRef.current && localSaveState !== "saved") {
+      if (!localSaveQueue.pending && localSaveState === "saved") setLocalSaveState("dirty");
+    } else if (!localSaveQueue.pending && localSaveState !== "saved") {
       setLocalSaveState("saved");
     }
     if (dirty && remoteSaveState === "synced") setRemoteSaveState("pending");
   }, [dirty, localSaveState, remoteSaveState, saveConflict]);
-  const localSaveLabel = localSaveState === "saving"
-    ? "Saving locally…"
-    : localSaveState === "conflict"
-      ? "Local conflict"
-      : localSaveState === "dirty"
-        ? "Local changes"
-        : "Local saved";
-  const remoteSaveLabel = remoteSaveState === "checking"
-    ? "Checking Git…"
-    : remoteSaveState === "pending"
-      ? "Remote pending"
-      : remoteSaveState === "syncing"
-        ? "Syncing to Git…"
-        : remoteSaveState === "synced"
-          ? "Remote synced"
-          : remoteSaveState === "changed"
-            ? "Remote changed"
-            : remoteSaveState === "unavailable"
-              ? "Remote unavailable"
-              : "Remote failed";
   const descendantCounts = useMemo(() => countMindmapDescendants(mindmap), [mindmap]);
+  const firstLevelBranchIds = useMemo(() => mindmap.nodes
+    .filter(node => node.parentId === mindmap.rootId && (descendantCounts.get(node.id) || 0) > 0)
+    .map(node => node.id), [mindmap.nodes, mindmap.rootId, descendantCounts]);
+  const depthCollapsed = firstLevelBranchIds.length > 0
+    && !collapsedIds.has(mindmap.rootId)
+    && firstLevelBranchIds.every(id => collapsedIds.has(id));
+  const expandAllFromToolbar = depthCollapsed || (firstLevelBranchIds.length === 0 && collapsedIds.size > 0);
   const activityNodeIds = useMemo(() => {
     if (!activitySince) return new Set<string>();
     const sinceMs = Date.parse(`${activitySince}T00:00:00`);
@@ -1029,86 +1095,88 @@ export function MindmapEditor({
     expectedRevision?: number,
     requestId?: string,
   ): Promise<MindmapTodoConversionResult> {
-    const current = sessionRef.current;
-    const node = indexMindmap(current.mindmap).nodeById.get(id);
-    const requestMindmap = cloneMindmap(current.mindmap);
-    const expectedMapDiskHash = persistedDiskHashRef.current;
-    const expectedPaperSourceHash = paperSourceHashRef.current ?? paperState?.paper?.sourceHash;
-    const remoteNotAttempted = {
-      status: "failed" as const,
-      code: "not_attempted",
-      message: "Remote sync was not attempted because the local conversion did not complete.",
-      retryable: false,
-    };
-    const localNotAttempted = {
-      paper: "failed" as const,
-      map: "not_attempted" as const,
-      message: "The card could not be converted locally.",
-    };
-    if (!node) {
-      return {
-        ok: false,
-        code: "unknown_card",
-        message: `Unknown mindmap card "${id}".`,
+    return localSaveQueue.enqueue(async () => {
+      const current = sessionRef.current;
+      const node = indexMindmap(current.mindmap).nodeById.get(id);
+      const requestMindmap = cloneMindmap(current.mindmap);
+      const expectedMapDiskHash = persistedDiskHashRef.current;
+      const expectedPaperSourceHash = paperSourceHashRef.current ?? paperState?.paper?.sourceHash;
+      const remoteNotAttempted = {
+        status: "failed" as const,
+        code: "not_attempted",
+        message: "Remote sync was not attempted because the local conversion did not complete.",
         retryable: false,
-        local: localNotAttempted,
-        remote: remoteNotAttempted,
       };
-    }
-    if (expectedRevision !== undefined && current.revision !== expectedRevision) {
-      return {
-        ok: false,
-        code: "stale_live_state",
-        message: `Live mindmap revision is ${current.revision}, not ${String(expectedRevision)}.`,
-        retryable: true,
-        local: localNotAttempted,
-        remote: remoteNotAttempted,
+      const localNotAttempted = {
+        paper: "failed" as const,
+        map: "not_attempted" as const,
+        message: "The card could not be converted locally.",
       };
-    }
-    const result = await convertMindmapCardToTodoAction(
-      project,
-      requestMindmap,
-      id,
-      sectionId,
-      expectedMapDiskHash,
-      expectedPaperSourceHash,
-      requestId || (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `convert-${Date.now()}`),
-    );
-    if (!result.ok) {
-      setSaveError(result.message);
+      if (!node) {
+        return {
+          ok: false,
+          code: "unknown_card",
+          message: `Unknown mindmap card "${id}".`,
+          retryable: false,
+          local: localNotAttempted,
+          remote: remoteNotAttempted,
+        };
+      }
+      if (expectedRevision !== undefined && current.revision !== expectedRevision) {
+        return {
+          ok: false,
+          code: "stale_live_state",
+          message: `Live mindmap revision is ${current.revision}, not ${String(expectedRevision)}.`,
+          retryable: true,
+          local: localNotAttempted,
+          remote: remoteNotAttempted,
+        };
+      }
+      const result = await convertMindmapCardToTodoAction(
+        project,
+        requestMindmap,
+        id,
+        sectionId,
+        expectedMapDiskHash,
+        expectedPaperSourceHash,
+        requestId || (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `convert-${Date.now()}`),
+      );
+      if (!result.ok) {
+        setSaveError(result.message);
+        return result;
+      }
+      const saved = result.value.mindmap;
+      persistedDiskHashRef.current = saved.diskHash ?? mindmapDiskHash(saved);
+      if (result.value.sourceHash) paperSourceHashRef.current = result.value.sourceHash;
+      pendingConversionRefreshRef.current = { cardId: id, todoId: result.value.todoId };
+      const latest = sessionRef.current;
+      if (mapSignature(latest.mindmap) === mapSignature(requestMindmap)) {
+        const hydrated = mindmapReducer(latest, { type: "hydrate", mindmap: saved });
+        sessionRef.current = hydrated;
+        dispatch({ type: "hydrate", mindmap: saved });
+      } else {
+        const merged = mergeMindmapAfterConversion(requestMindmap, saved, latest.mindmap);
+        const rebased = mindmapReducer(latest, { type: "revert", mindmap: merged });
+        sessionRef.current = rebased;
+        dispatch({ type: "revert", mindmap: merged });
+      }
+      const savedMapSignature = mapSignature(saved);
+      savedSignatureRef.current = savedMapSignature;
+      setSavedSignature(savedMapSignature);
+      nextRemoteCheckpointRef.current = mindmapRemoteCheckpoint(saved);
+      saveErrorRef.current = null;
+      setSaveError(null);
+      setLocalSaveState(mapSignature(sessionRef.current.mindmap) === savedMapSignature ? "saved" : "dirty");
+      if (result.value.remote.status === "pushed") {
+        setRemoteSaveState("synced");
+        setRemoteSaveError(null);
+      } else {
+        setRemoteSaveState(result.value.remote.status === "unconfigured" ? "unconfigured" : result.value.remote.status === "pending" ? "pending" : "failed");
+        setRemoteSaveError(result.value.remote.status === "unconfigured" ? null : result.value.remote.message);
+      }
+      router.refresh();
       return result;
-    }
-    const saved = result.value.mindmap;
-    persistedDiskHashRef.current = saved.diskHash ?? mindmapDiskHash(saved);
-    if (result.value.sourceHash) paperSourceHashRef.current = result.value.sourceHash;
-    pendingConversionRefreshRef.current = { cardId: id, todoId: result.value.todoId };
-    const latest = sessionRef.current;
-    if (mapSignature(latest.mindmap) === mapSignature(requestMindmap)) {
-      const hydrated = mindmapReducer(latest, { type: "hydrate", mindmap: saved });
-      sessionRef.current = hydrated;
-      dispatch({ type: "hydrate", mindmap: saved });
-    } else {
-      const merged = mergeMindmapAfterConversion(requestMindmap, saved, latest.mindmap);
-      const rebased = mindmapReducer(latest, { type: "revert", mindmap: merged });
-      sessionRef.current = rebased;
-      dispatch({ type: "revert", mindmap: merged });
-    }
-    const savedMapSignature = mapSignature(saved);
-    savedSignatureRef.current = savedMapSignature;
-    setSavedSignature(savedMapSignature);
-    nextRemoteCheckpointRef.current = mindmapRemoteCheckpoint(saved);
-    saveErrorRef.current = null;
-    setSaveError(null);
-    setLocalSaveState(mapSignature(sessionRef.current.mindmap) === savedMapSignature ? "saved" : "dirty");
-    if (result.value.remote.status === "pushed") {
-      setRemoteSaveState("synced");
-      setRemoteSaveError(null);
-    } else {
-      setRemoteSaveState(result.value.remote.status === "pending" ? "pending" : "failed");
-      setRemoteSaveError(result.value.remote.message);
-    }
-    router.refresh();
-    return result;
+    });
   }
 
   async function makeSelectedCardTodo() {
@@ -1143,15 +1211,8 @@ export function MindmapEditor({
     }
   }
 
-  async function setSelectedTodoCompleted(
-    completed: boolean,
-    preservedProgress?: NonNullable<MindmapNode["progress"]> | null,
-    expectedMapProgress = selected?.progress,
-  ): Promise<boolean> {
-    const selectedNode = selected;
-    const todoId = selectedNode?.todoId;
-    if (!selectedNode || !todoId || !selectedTodo || selectedMissing || todoProgressBusy) return false;
-    const nodeId = selectedNode.id;
+  const setTodoCompleted = useCallback(async (todoId: string, completed: boolean): Promise<boolean> => {
+    if (readOnly || todoProgressBusy || !paperState?.paper?.todos.some(todo => todo.id === todoId)) return false;
     const expectedPaperSourceHash = paperSourceHashRef.current ?? paperState?.paper?.sourceHash;
     setTodoProgressBusy(true);
     setSaveError(null);
@@ -1166,15 +1227,6 @@ export function MindmapEditor({
         return false;
       }
       if (result.diskHash) paperSourceHashRef.current = result.diskHash;
-      const currentNode = indexMindmap(sessionRef.current.mindmap).nodeById.get(nodeId);
-      if (
-        preservedProgress !== undefined
-        && currentNode
-        && currentNode.progress === expectedMapProgress
-        && currentNode.progress !== (preservedProgress ?? undefined)
-      ) {
-        dispatch({ type: "patch-node", id: nodeId, patch: { progress: preservedProgress ?? undefined } });
-      }
       // The local TeX mutation is durable even when Git sync fails. The
       // refresh projects local paper state into the card and paper views.
       router.refresh();
@@ -1186,7 +1238,7 @@ export function MindmapEditor({
     } finally {
       setTodoProgressBusy(false);
     }
-  }
+  }, [paperState, project, pushRemote, readOnly, router, todoProgressBusy]);
 
   const [progressNotice, setProgressNotice] = useState<{ id: string; text: string } | null>(null);
   useEffect(() => {
@@ -1198,17 +1250,9 @@ export function MindmapEditor({
   async function updateSelectedProgress(progress: MindmapNode["progress"]) {
     if (!selected) return;
     setProgressNotice(null);
-    if (selected.todoId && !selectedMissing && progress === 6) {
-      if (await setSelectedTodoCompleted(true, selected.progress, selected.progress)) setProgressNotice({ id: selected.id, text: "Completed in paper" });
-      return;
-    }
-    if (selected.todoId && !selectedMissing && selectedTodo?.completed) {
-      if (await setSelectedTodoCompleted(false, progress ?? null, selected.progress) && progress === undefined) setProgressNotice({ id: selected.id, text: "Reopened in paper" });
-      return;
-    }
     setSaveError(null);
     dispatch({ type: "patch-node", id: selected.id, patch: { progress } });
-    if (progress === undefined || progress === 6) setProgressNotice({ id: selected.id, text: progress === undefined ? "Progress cleared" : "Progress complete" });
+    if (progress === undefined || progress === 6 || progress === "ditched") setProgressNotice({ id: selected.id, text: progress === undefined ? "Progress cleared" : progress === "ditched" ? "Marked ditched" : "Progress complete" });
   }
 
   function beginTextTransaction(nodeId = sessionRef.current.selectedId) {
@@ -1251,8 +1295,8 @@ export function MindmapEditor({
 
   function selectCard(id: string, additive = false) {
     setMapSettingsOpen(false);
-    if (additive) setCardMenuOpen(true);
-    dispatch({ type: "select", id, additive });
+    if (additive && !selectMultiple) setCardMenuOpen(true);
+    dispatch({ type: "select", id, additive: additive || selectMultiple });
   }
 
   function indentSelected() {
@@ -1297,7 +1341,7 @@ export function MindmapEditor({
     if (readOnly) return;
     if (inlineEditorSessionRef.current?.nodeId === id && !await inlineEditorSessionRef.current.commit()) return;
     try {
-      await persistWebMcpMutation({ type: "patch-node", id, patch: { agentDraft: undefined } });
+      await persistWebMcpMutation({ type: "patch-node", id, patch: { agentDraft: undefined } }, undefined, "human");
     } catch (error) {
       const restore: MindmapTreeAction = { type: "patch-node", id, patch: { agentDraft: true } };
       sessionRef.current = mindmapReducer(sessionRef.current, restore);
@@ -1373,6 +1417,15 @@ export function MindmapEditor({
     setLocalCollapsed(id, !collapsedIdsRef.current.has(id));
   }, [descendantCounts, selected?.id, setLocalCollapsed]);
 
+  async function toggleDepthCollapse() {
+    if (inlineEditorSessionRef.current && !await inlineEditorSessionRef.current.commit()) return;
+    setLocalCollapsedIds(new Set(expandAllFromToolbar ? [] : firstLevelBranchIds));
+    setViewMode("map");
+    if (!expandAllFromToolbar) {
+      setFocusRequest(current => ({ id: mindmap.rootId, sequence: (current?.sequence || 0) + 1 }));
+    }
+  }
+
   function moveSibling(direction: -1 | 1) {
     if (!selected || selected.parentId === null) return;
     setSaveError(null);
@@ -1399,78 +1452,25 @@ export function MindmapEditor({
   const undo = useCallback(() => dispatch({ type: "undo" }), []);
   const redo = useCallback(() => dispatch({ type: "redo" }), []);
 
-  const save = useCallback((): Promise<void> | undefined => {
-    if (webMcpSaveCountRef.current > 0) return webMcpSaveQueueRef.current;
-    if (saveInFlightRef.current) return saveInFlightRef.current;
-    if (isPending) return saveInFlightRef.current || Promise.resolve();
-    const snapshot = cloneMindmap(sessionRef.current.mindmap);
-    const signature = mapSignature(snapshot);
-    saveErrorRef.current = null;
-    setSaveError(null);
-    setLocalSaveState("saving");
-    const job = (async () => {
-      try {
-        const saved = await saveMindmapAction(project, snapshot, persistedDiskHashRef.current);
-        persistedDiskHashRef.current = saved.diskHash ?? mindmapDiskHash(saved);
-        const savedMapSignature = mapSignature(saved);
-        savedSignatureRef.current = savedMapSignature;
-        setSavedSignature(savedMapSignature);
-        const current = sessionRef.current;
-        if (mapSignature(current.mindmap) === signature) {
-          const acknowledged = mindmapReducer(current, {
-            type: "ack-save",
-            diskHash: saved.diskHash,
-            persistedRevision: saved.revision,
-            updatedAt: saved.updatedAt,
-          });
-          sessionRef.current = acknowledged;
-          dispatch({
-            type: "ack-save",
-            diskHash: saved.diskHash,
-            persistedRevision: saved.revision,
-            updatedAt: saved.updatedAt,
-          });
-          setLocalSaveState("saved");
-        } else {
-          // Keep edits made while the request was in flight and carry forward
-          // the server's fresh CAS hash for the next save.
-          const rebased = mindmapReducer(current, { type: "rebase-disk-hash", diskHash: persistedDiskHashRef.current });
-          sessionRef.current = rebased;
-          dispatch({ type: "rebase-disk-hash", diskHash: persistedDiskHashRef.current });
-          setLocalSaveState("dirty");
-        }
-        nextRemoteCheckpointRef.current = mindmapRemoteCheckpoint(saved);
-        void enqueueRemote("OpenBar: save mindmap", nextRemoteCheckpointRef.current);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Could not save the mindmap.";
-        saveErrorRef.current = message;
-        setSaveError(message);
-        setLocalSaveState(/conflict|changed.*reload|stale/i.test(message) ? "conflict" : "dirty");
-      }
-    })();
-    saveInFlightRef.current = job;
-    void job.finally(() => {
-      if (saveInFlightRef.current === job) saveInFlightRef.current = null;
-    });
-    startTransition(async () => {
-      await job;
-    });
+  const save = useCallback((): Promise<void> => {
+    const job = localSaveQueue.enqueue(persistCurrentSnapshot).then(() => undefined, () => undefined);
+    startTransition(async () => { await job; });
     return job;
-  }, [enqueueRemote, isPending, project]);
+  }, [localSaveQueue, persistCurrentSnapshot]);
 
   const flushPendingSaves = useCallback(async () => {
     if (inlineEditorSessionRef.current && !await inlineEditorSessionRef.current.commit()) {
       throw new Error("Finish saving the open card before leaving this map.");
     }
     await imageUploadQueue.current;
-    if (webMcpSaveCountRef.current > 0) await webMcpSaveQueueRef.current;
-    if (saveInFlightRef.current) await saveInFlightRef.current;
-    const latestDirty = mapSignature(sessionRef.current.mindmap) !== savedSignatureRef.current;
-    if (latestDirty && !saveErrorRef.current && webMcpSaveCountRef.current === 0) {
-      await save();
-    }
+    await localSaveQueue.idle();
     if (saveErrorRef.current) throw new Error(saveErrorRef.current);
-  }, [dirty, save, saveError]);
+    while (mapSignature(sessionRef.current.mindmap) !== savedSignatureRef.current) {
+      await save();
+      await localSaveQueue.idle();
+      if (saveErrorRef.current) throw new Error(saveErrorRef.current);
+    }
+  }, [localSaveQueue, save]);
 
   useEffect(() => {
     const browserWindow = window as Window & { __openbarFlushMindmap?: () => Promise<void> };
@@ -1482,10 +1482,37 @@ export function MindmapEditor({
 
   // Persist edits shortly after the user pauses.
   useEffect(() => {
-    if (!dirty || isPending || saveError) return;
+    if (!dirty || isPending || saveError || recoveryDraft) return;
     const timer = window.setTimeout(() => save(), AUTOSAVE_DELAY);
     return () => window.clearTimeout(timer);
-  }, [dirty, isPending, mindmap, save, saveError]);
+  }, [dirty, isPending, mindmap, recoveryDraft, save, saveError]);
+
+  useEffect(() => {
+    const hasPendingChanges = () => pendingImageUploads.current || inlineEditorSessionRef.current || localSaveQueue.pending
+      || mapSignature(sessionRef.current.mindmap) !== savedSignatureRef.current;
+    const flush = () => {
+      if (!hasPendingChanges() || recoveryDraftRef.current) return;
+      void flushPendingSaves().catch(() => undefined);
+      // Ordinary inline card commits update sessionRef synchronously.
+      preserveBrowserDraft();
+    };
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (refreshingWithRecoveryRef.current) return;
+      if (!hasPendingChanges()) return;
+      flush();
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const onVisibilityChange = () => { if (document.visibilityState === "hidden") flush(); };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [flushPendingSaves, localSaveQueue, preserveBrowserDraft]);
 
   const navigationPendingRef = useRef(false);
   useEffect(() => {
@@ -1495,7 +1522,7 @@ export function MindmapEditor({
       if (!link || link.target === "_blank" || link.hasAttribute("download")) return;
       const url = new URL(link.href, window.location.href);
       if (url.origin !== window.location.origin || url.href === window.location.href || navigationPendingRef.current) return;
-      if (!pendingImageUploads.current && !inlineEditorSessionRef.current && !saveInFlightRef.current && mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current) return;
+      if (!pendingImageUploads.current && !inlineEditorSessionRef.current && !localSaveQueue.pending && mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current) return;
       event.preventDefault();
       navigationPendingRef.current = true;
       void flushPendingSaves().then(() => router.push(`${url.pathname}${url.search}${url.hash}`))
@@ -1517,15 +1544,22 @@ export function MindmapEditor({
     setSaveError(null);
   }, []);
 
-  const canAutoPull = () => !isPending && !saveInFlightRef.current && !saveErrorRef.current
+  const canAutoPull = () => !isPending && !localSaveQueue.pending && !saveErrorRef.current && !recoveryDraftRef.current
     && !inlineEditorSessionRef.current && !editingId && !pendingImageUploads.current
     && webMcpSaveCountRef.current === 0 && !convertingCardIdRef.current && !remoteQueue.isBusy
     && mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current
     && !document.activeElement?.closest("input, textarea, [contenteditable=true]");
+  const canAutoPush = () => !isPending && !localSaveQueue.pending && !saveErrorRef.current && !recoveryDraftRef.current
+    && !saveConflict && !applyingRemoteRef.current && !remoteOutOfSyncRef.current
+    && !inlineEditorSessionRef.current && !editingId && !pendingImageUploads.current
+    && webMcpSaveCountRef.current === 0 && !convertingCardIdRef.current && !remoteQueue.isBusy
+    && mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current;
   useGitAutoSync({
     project,
     isBusy: () => checkingRemote || remoteQueue.isBusy || isPending,
     canPull: canAutoPull,
+    canPush: canAutoPush,
+    push: () => pushRemote("OpenBar: resume saved project sync"),
     check: () => refreshRemoteStatus(true, false),
     onApplying: (applying) => {
       applyingRemoteRef.current = applying;
@@ -1533,7 +1567,7 @@ export function MindmapEditor({
       setApplyingRemote(applying);
     },
     onApplied: async () => {
-      const saved = await getMindmapAction(project, sessionRef.current.mindmap.id || "draft");
+      const saved = await loadBrowserMindmap(project, sessionRef.current.mindmap.id || "draft");
       if (!canAutoPull()) throw new Error("Git updates arrived while this editor changed. Save your draft and reload the latest map.");
       if (saved) hydrateSavedMap(saved);
       else router.push(`/p/${project}/mindmap`);
@@ -1545,18 +1579,61 @@ export function MindmapEditor({
 
   const reloadSavedMap = useCallback(() => {
     if (isPending) return;
-    if (!window.confirm("Load the newer saved map? Local unsaved edits will be replaced.")) return;
+    if (!preserveBrowserDraft()) return;
+    const draft = captureRecoveryDraft();
     startTransition(async () => {
       try {
         const mapId = sessionRef.current.mindmap.id || initialMindmap.id || "draft";
-        const saved = await getMindmapAction(project, mapId);
+        const saved = await loadBrowserMindmap(project, mapId);
         if (!saved) throw new Error("The saved mindmap is unavailable.");
+        recoveryDraftRef.current = draft;
+        setRecoveryDraft(draft);
         hydrateSavedMap(saved);
       } catch (error) {
         setSaveError(error instanceof Error ? error.message : "Could not reload the saved mindmap.");
       }
     });
-  }, [initialMindmap.id, isPending, project, hydrateSavedMap]);
+  }, [captureRecoveryDraft, initialMindmap.id, isPending, project, hydrateSavedMap, preserveBrowserDraft]);
+
+  const restoreBrowserDraft = useCallback(() => {
+    const draft = recoveryDraftRef.current;
+    if (!draft) return;
+    const sameBase = draft.baseHash === persistedDiskHashRef.current;
+    persistedDiskHashRef.current = draft.baseHash;
+    const action = { type: "replace" as const, mindmap: draft.mindmap };
+    sessionRef.current = mindmapReducer(sessionRef.current, action);
+    dispatch(action);
+    recoveryDraftRef.current = null;
+    setRecoveryDraft(null);
+    const message = sameBase ? null : "conflict: The saved map changed while this draft was open. Your recovered edits are preserved. Download the draft or load the saved map to review both versions.";
+    saveErrorRef.current = message;
+    setSaveError(message);
+    setLocalSaveState(sameBase ? "dirty" : "conflict");
+  }, [dispatch]);
+
+  const keepSavedMap = useCallback(() => {
+    recoveryDraftRef.current = null;
+    setRecoveryDraft(null);
+    clearBrowserDraft();
+  }, [clearBrowserDraft]);
+
+  const downloadBrowserDraft = useCallback(() => {
+    const draft = recoveryDraftRef.current || captureRecoveryDraft();
+    const url = URL.createObjectURL(new Blob([JSON.stringify(draft, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `openbar-${project}-${draft.mapId}-draft.json`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, [captureRecoveryDraft, project]);
+
+  const refreshWithDraft = useCallback(async () => {
+    if (inlineEditorSessionRef.current && !await inlineEditorSessionRef.current.commit()) return;
+    await localSaveQueue.idle();
+    if (!preserveBrowserDraft()) return;
+    refreshingWithRecoveryRef.current = true;
+    window.location.reload();
+  }, [localSaveQueue, preserveBrowserDraft]);
 
   // Global key navigation and canvas shortcuts
   useEffect(() => {
@@ -1753,6 +1830,7 @@ export function MindmapEditor({
     const node = layout.nodeById.get(id);
     const dimensions = layout.dimensions.get(id);
     if (!node || !dimensions) return null;
+    const activityAt = nodeActivityAt(node, reconciliation);
     return (
       <CanvasNode
         project={project}
@@ -1764,16 +1842,17 @@ export function MindmapEditor({
         node={node}
         cardContent={cardContentForNodeWithPaperState(node, paperState)}
         completed={Boolean(paperTodoFor(node, paperState)?.completed)}
+        todoBusy={todoProgressBusy}
+        onToggleTodo={node.todoId ? completed => setTodoCompleted(node.todoId!, completed) : undefined}
         missing={Boolean(node.todoId && !paperTodoFor(node, paperState))}
         collapsed={collapsedIds.has(node.id)}
         collapsedDescendantCount={descendantCounts.get(node.id) || 0}
         coverage={coverageById.get(node.id)}
-        activityLabel={activityNodeIds.has(node.id) ? relativeActivityLabel(nodeActivityAt(node, reconciliation)) : null}
+        activityLabel={activityNodeIds.has(node.id) ? Date.parse(activityAt) >= Date.parse(activitySince || "") ? relativeActivityLabel(activityAt) : "recent activity in this branch" : null}
         dimensions={dimensions}
         onMeasure={measureCard}
         orphan={!layout.reachable.has(node.id)}
         selected={selectedIdSet.has(node.id)}
-        active={activityNodeIds.has(node.id)}
         editing={node.id === editingId}
         editSessionRef={inlineEditorSessionRef}
         dropPreviewKind={dropPreview?.targetId === node.id ? dropPreview.kind : null}
@@ -1823,6 +1902,7 @@ export function MindmapEditor({
   }, [
     mindmap.fontSize,
     activityNodeIds,
+    activitySince,
     imageUploads,
     collapsedIds,
     coverageById,
@@ -1838,6 +1918,8 @@ export function MindmapEditor({
     selected?.id,
     selectedIdSet,
     readOnly,
+    todoProgressBusy,
+    setTodoCompleted,
     toggleCollapse,
     measureCard,
   ]);
@@ -1891,10 +1973,22 @@ export function MindmapEditor({
     >
       <header className={styles.toolbar} aria-label="Mindmap controls">
         <div className={styles.canvasTools}>
-          {viewMode === "changes" && <button type="button" onClick={() => setViewMode("map")}>Back to map</button>}
-          <button type="button" aria-expanded={unplacedOpen} onClick={() => { setUnplacedOpen((open) => !open); setViewMode("map"); }}>Unplaced TODOs <span>{unplacedCount}</span></button>
+          {viewMode === "changes" && <button type="button" className="p-button p-button-default" onClick={() => setViewMode("map")}>Back to map</button>}
+          <button type="button" className="p-button p-button-default" aria-label="Unplaced paper TODOs" aria-expanded={unplacedOpen} onClick={() => { setUnplacedOpen((open) => !open); setViewMode("map"); }}>Unplaced <span>{unplacedCount}</span></button>
+          <FastTooltip label={expandAllFromToolbar ? "Expand all cards" : "Collapse depth 2+ (keep the root and its first-level branches visible)"}>
+            <button type="button" className={cn("p-button p-button-default", styles.depthCollapse)} aria-label={expandAllFromToolbar ? "Expand all cards" : "Collapse all cards at depth 2 and deeper"}
+              data-collapsed={depthCollapsed} disabled={firstLevelBranchIds.length === 0 && collapsedIds.size === 0}
+              onClick={() => void toggleDepthCollapse()}>
+              {expandAllFromToolbar ? <ChevronsUpDown size={15} aria-hidden="true" /> : <ChevronsDownUp size={15} aria-hidden="true" />}
+              <span className={styles.depthCollapseLabel}>{expandAllFromToolbar ? "Expand all" : "Collapse 2+"}</span>
+              <span className={styles.depthCollapseCompact} aria-hidden="true">{expandAllFromToolbar ? "All" : "2+"}</span>
+            </button>
+          </FastTooltip>
+          <div className="hidden sm:block"><MindmapFontSize value={mindmap.fontSize || 12} disabled={readOnly}
+            onChange={fontSize => dispatch({ type: "set-font-size", fontSize })} /></div>
         </div>
         <div className={styles.toolbarActions}>
+          {selectMultiple && <button type="button" className={styles.iconButton} aria-label="Finish selecting cards" aria-pressed="true" onClick={() => { setSelectMultiple(false); setCardMenuOpen(true); }}><CheckSquare size={18} /></button>}
           <Popover.Root open={searchOpen || moveOpen} onOpenChange={(open) => { setSearchOpen(open); if (!open) setMoveOpen(false); }}>
             <Popover.Trigger asChild>
               <button type="button" className={styles.searchTrigger} aria-label="Find a card" onClick={() => { setMoveQuery(""); setSearchIndex(0); }}>
@@ -1919,14 +2013,14 @@ export function MindmapEditor({
                   {visibleSearchResults.map((result, index) => <button key={result.id} id={`mindmap-search-result-${index}`} type="button" role="option" aria-selected={index === searchIndex} onMouseEnter={() => setSearchIndex(index)} onClick={() => chooseSearchResult(result.id)}><span>{result.label}</span><span>↵</span></button>)}
                   {visibleSearchResults.length === 0 && <p>No matching cards.</p>}
                 </div>
-                <div className={styles.searchFooter}>{searchResults.length} cards · ↑ ↓ to choose · Enter to {moveOpen ? "move" : "jump"}</div>
+                <div className={styles.searchFooter}>{searchResults.length} cards. Use ↑ ↓ to choose and Enter to {moveOpen ? "move" : "jump"}</div>
               </Popover.Content>
             </Popover.Portal>
           </Popover.Root>
-          <button type="button" className={styles.primaryButton} disabled={readOnly} onClick={() => addChild()} title="Add a child to the selected card (Tab)"><Plus size={16} /><span>Add card</span></button>
-          <button type="button" className={styles.iconButton} disabled={selectedCards.length === 0} aria-label="Open selected card actions" aria-expanded={cardMenuOpen && selectedCards.length > 0} aria-controls="mindmap-card-menu" onClick={() => setCardMenuOpen((open) => !open)} title="Card inspector"><PanelRight size={17} /></button>
+          <FastTooltip label="Add a child to the selected card (Tab)"><button type="button" aria-label="Add card" className={cn("p-button p-button-primary", styles.primaryButton)} disabled={readOnly} onClick={() => addChild()}><Plus size={16} /><span>Add card</span></button></FastTooltip>
+          <FastTooltip label="Card inspector"><button type="button" className={styles.iconButton} disabled={selectedCards.length === 0} aria-label="Open selected card actions" aria-expanded={cardMenuOpen && selectedCards.length > 0} aria-controls="mindmap-card-menu" onClick={() => setCardMenuOpen((open) => !open)}><PanelRight size={17} /></button></FastTooltip>
           <Popover.Root open={mapSettingsOpen} onOpenChange={setMapSettingsOpen}>
-            <Popover.Trigger asChild><button type="button" className={styles.iconButton} aria-label="Open map settings" title="Map options"><MoreHorizontal size={18} /></button></Popover.Trigger>
+            <FastTooltip label="Map options"><Popover.Trigger asChild><button type="button" className={styles.iconButton} aria-label="Open map settings"><MoreHorizontal size={18} /></button></Popover.Trigger></FastTooltip>
             <Popover.Portal><Popover.Content id="mindmap-map-settings" className={styles.optionsPanel} sideOffset={10} align="end" collisionPadding={12} aria-label="Map options">
                   <label className="mindmap-field">
                     <span>Map title</span>
@@ -1955,13 +2049,28 @@ export function MindmapEditor({
                       aria-label="Mindmap title"
                     />
                   </label>
-              <label className={`mindmap-field ${styles.fontSizeField}`}>
-                <span>Font size <output>{mindmap.fontSize || 12} px</output></span>
-                <input type="range" min={10} max={20} step={1} value={mindmap.fontSize || 12} disabled={readOnly} aria-label="Card font size" onChange={event => dispatch({ type: "set-font-size", fontSize: Number(event.target.value) })} />
-              </label>
+              <MindmapFontSizeSlider value={mindmap.fontSize || 12} disabled={readOnly}
+                onChange={fontSize => dispatch({ type: "set-font-size", fontSize })} />
+              <button type="button" className={styles.optionRow} aria-pressed={selectMultiple} onClick={() => { setSelectMultiple((value) => !value); setMapSettingsOpen(false); setCardMenuOpen(false); }}><CheckSquare size={15} />Select multiple{selectMultiple && <Check size={14} />}</button>
               <button type="button" className={styles.optionRow} onClick={() => { setViewMode("changes"); setMapSettingsOpen(false); }}><GitBranch size={15} />Change history</button>
               <button type="button" className={styles.optionRow} aria-pressed={readOnly} disabled={remoteOutOfSync} onClick={toggleReadOnly}><LockKeyhole size={15} />Read-only mode{readOnly && <Check size={14} />}</button>
-              <button type="button" className={styles.optionRow} aria-pressed={Boolean(activitySince)} onClick={() => setActivitySince((current) => current ? null : daysAgoDate(LAST_WEEK_DAYS))}><CalendarDays size={15} />Highlight recent activity{activitySince && <Check size={14} />}</button>
+              <div className={styles.activityFilter}>
+                <label className="mindmap-field">
+                  <span>Highlight changes</span>
+                  <Select label="Highlight changes" value={activityMode} onValueChange={(value) => {
+                    const mode = value as "off" | "week" | "custom";
+                    setActivityMode(mode);
+                    setActivitySince(mode === "week" ? daysAgoDate(LAST_WEEK_DAYS) : mode === "custom" ? customActivityDate || null : null);
+                  }} options={[{ value: "off", label: "Off" }, { value: "week", label: "Last 7 days" }, { value: "custom", label: "From a date" }]} />
+                </label>
+                {activityMode === "custom" && <label className="mindmap-field">
+                  <span>From date</span>
+                  <input type="date" aria-label="Highlight changes from date" value={customActivityDate} max={calendarDate(new Date())} onChange={(event) => {
+                    setCustomActivityDate(event.target.value);
+                    setActivitySince(event.target.value || null);
+                  }} />
+                </label>}
+              </div>
               <button type="button" className={styles.optionRow} aria-expanded={showShortcuts} onClick={() => setShowShortcuts((open) => !open)}><Keyboard size={15} />Keyboard shortcuts</button>
               {showShortcuts && <dl className={styles.shortcutList}>
                 <div><dt>Pan canvas</dt><dd>Drag background</dd></div><div><dt>Nest card</dt><dd>Drop on card</dd></div><div><dt>Reorder card</dt><dd>Drop on edge</dd></div><div><dt>Add child</dt><dd>Tab</dd></div><div><dt>Add sibling</dt><dd>Enter</dd></div><div><dt>Edit card</dt><dd>E / double-click</dd></div><div><dt>Reorder</dt><dd>Alt + ↑ / ↓</dd></div><div><dt>Indent / outdent</dt><dd>Alt + → / ←</dd></div><div><dt>Find card</dt><dd>/</dd></div><div><dt>Undo</dt><dd>⌘ / Ctrl + Z</dd></div>
@@ -1984,6 +2093,7 @@ export function MindmapEditor({
           <MindmapCanvas
             virtualize={mindmap.nodes.length > 80 && !editingId && flowNodes.every(node => measuredCards.has(node.id))}
             mindmap={mindmap}
+            selectMultiple={selectMultiple}
             nodes={flowNodes}
             renderCard={renderCard}
             readOnly={readOnly}
@@ -2027,9 +2137,9 @@ export function MindmapEditor({
             data-local-save-state={localSaveState}
             data-remote-save-state={remoteSaveState}
           >
-            <span>{localSaveLabel}</span>
-            <span aria-hidden="true">·</span>
-            <span>{remoteSaveLabel}</span>
+            <SaveSyncStatus saved={!dirty && localSaveState === "saved"} saving={localSaveState === "saving"}
+              conflict={saveConflict || localSaveState === "conflict"} remote={remoteSaveState}
+              error={saveError || remoteSaveError} onRetry={() => { void pushRemote("OpenBar: retry saved project sync"); }} />
           </div>
 
         </footer>
@@ -2037,15 +2147,30 @@ export function MindmapEditor({
 
       </div>
 
-      {saveError && <EditorNotice project={project} title={saveConflict ? "Saved file conflict" : "Saving needs attention"} label={saveConflict ? "Editing paused · saved file changed" : "Saving needs attention"} message={saveError} paused={saveConflict}>
-        <button type="button" className="btn-outline" onClick={saveConflict ? reloadSavedMap : save}>{saveConflict ? "Reload saved map" : "Retry save"}</button>
+      {recoveryDraft && <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-xs" role="status">
+        <p>A browser draft from {new Date(recoveryDraft.savedAt).toLocaleString()} is preserved.
+          {recoveryDraft.baseHash !== persistedDiskHashRef.current && " The saved map has a newer revision."}</p>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="p-button p-button-primary btn-primary" onClick={restoreBrowserDraft}>Restore draft</button>
+          <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download draft</button>
+          <button type="button" className="p-button p-button-borderless btn-ghost" onClick={keepSavedMap}>Keep saved map</button>
+        </div>
+      </div>}
+      {saveError && <EditorNotice project={project} title={outdatedSave ? "Refresh OpenBar to continue" : saveConflict ? "Saved file conflict" : "Saving needs attention"} label={outdatedSave ? "OpenBar updated, draft preserved" : saveConflict ? "Editing paused, saved file changed" : "Saving needs attention"}
+        message={outdatedSave
+          ? recoveryStored ? "OpenBar was updated while this page was open. Your draft is preserved in this tab. Refresh, then restore the draft to finish saving."
+            : "OpenBar was updated while this page was open. Keep this tab open or download your draft. Browser recovery storage is currently unavailable."
+          : recoveryStored === false ? `${saveError} Keep this tab open or download the draft before refreshing.` : saveError}
+        report={outdatedSave ? saveError : undefined} paused={saveConflict}>
+        <button type="button" className="p-button p-button-default btn-outline" onClick={outdatedSave ? () => void refreshWithDraft() : saveConflict ? reloadSavedMap : save}>{outdatedSave ? "Refresh and retry" : saveConflict ? "Load saved map" : "Retry save"}</button>
+        <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download draft</button>
       </EditorNotice>}
       {!saveError && remoteSaveError && <OverleafSyncNotice
         project={project} message={remoteSaveError} editingPaused={remoteOutOfSync}
         disabled={isPending || applyingRemote} checking={checkingRemote || remoteSaveState === "syncing"}
         beforeReview={async () => { await flushPendingSaves(); return true; }}
         onApplied={async () => {
-          const saved = await getMindmapAction(project, sessionRef.current.mindmap.id || "draft");
+          const saved = await loadBrowserMindmap(project, sessionRef.current.mindmap.id || "draft");
           if (saved) hydrateSavedMap(saved);
           else router.push(`/p/${project}/mindmap`);
           router.refresh();
@@ -2057,16 +2182,15 @@ export function MindmapEditor({
       />}
 
       {!cardMenuOpen && viewMode === "map" && selectedCards.length > 0 && (
-        <button
+        <FastTooltip label="Open card inspector"><button
           type="button"
           className={styles.inspectorHandle}
           aria-label={`Open card inspector for ${selectedCards.length === 1 ? "selected card" : `${selectedCards.length} selected cards`}`}
-          title="Open card inspector"
           onClick={() => setCardMenuOpen(true)}
         >
           <PanelRight size={18} />
           {selectedCards.length > 1 && <span>{selectedCards.length}</span>}
-        </button>
+        </button></FastTooltip>
       )}
 
       {(cardMenuOpen || inspectorPresent) && selectedCards.length > 1 && (
@@ -2111,15 +2235,14 @@ export function MindmapEditor({
                 </h2>
               </div>
             </div>
-            <button
+            <FastTooltip label="Close card actions"><button
               type="button"
               className="mindmap-icon-button"
               aria-label="Close card actions"
-              title="Close card actions"
               onClick={() => setCardMenuOpen(false)}
             >
               <X size={16} />
-            </button>
+            </button></FastTooltip>
           </div>
           <p id="mindmap-card-menu-description" className="sr-only">
             Selected card controls.
@@ -2151,15 +2274,17 @@ export function MindmapEditor({
               )}
               {selected.todoId && selectedTodo && !selectedMissing && (
                 <>
-                  <button
-                    type="button"
-                    className="mindmap-card-menu-row"
+                  <label className="mindmap-card-menu-row">
+                    <input
+                    type="checkbox"
+                    checked={Boolean(selectedTodo.completed)}
+                    aria-label="TODO completed"
+                    className="h-4 w-4 accent-accent"
                     disabled={readOnly || todoProgressBusy}
-                    onClick={() => void setSelectedTodoCompleted(!selectedTodo.completed)}
-                  >
-                    <CircleCheck size={14} aria-hidden="true" />
-                    <span>{selectedTodo.completed ? "Reopen TODO" : "Complete TODO"}</span>
-                  </button>
+                    onChange={event => void setTodoCompleted(selected.todoId!, event.target.checked)}
+                    />
+                    <span>Complete TODO</span>
+                  </label>
                   <a className="mindmap-card-menu-row" href={"/p/" + project + "/paper#" + encodeURIComponent(selected.todoId)}>
                     <Link2 size={14} aria-hidden="true" />
                     <span>Jump to paper</span>
@@ -2167,6 +2292,25 @@ export function MindmapEditor({
                 </>
               )}
             </div>
+
+          {selected.id === mindmap.rootId && !selected.todoId && (
+            <div className="px-4 pb-4">
+              <label className="mindmap-field">
+                <span>Root card content</span>
+                <textarea
+                  aria-label="Root card content"
+                  placeholder="Add context below the title…"
+                  rows={4}
+                  value={selectedCardContent?.body || ""}
+                  disabled={readOnly}
+                  onChange={event => {
+                    setSaveError(null);
+                    dispatch({ type: "edit-card", id: selected.id, title: selectedCardContent?.title || "", text: event.target.value });
+                  }}
+                />
+              </label>
+            </div>
+          )}
 
           {selectedMissing && (
             <div className="mindmap-card-menu-warning" role="status">
@@ -2177,7 +2321,7 @@ export function MindmapEditor({
               <div className="mindmap-card-menu-actions">
                 <button
                   type="button"
-                  className="btn-outline"
+                  className="p-button p-button-default btn-outline"
                   onClick={() => {
                     const content = selectedCardContent || { title: "Recovered paper TODO", body: "" };
                     dispatch({ type: "unbind-todo", id: selected.id, title: content.title, text: content.body });
@@ -2187,10 +2331,10 @@ export function MindmapEditor({
                 </button>
                 <button
                   type="button"
-                  className="btn-outline text-danger"
+                  className="p-button p-button-default btn-outline text-danger"
                   onClick={() => {
                     setCardMenuOpen(false);
-                    dispatch({ type: "delete-subtree", id: selected.id });
+                    dispatch({ type: "delete-node-keep-children", id: selected.id });
                   }}
                 >
                   Delete card
@@ -2199,19 +2343,10 @@ export function MindmapEditor({
               {availableTodoCandidates(paperState?.paper?.todos || [], mindmap.nodes, selected.id).length > 0 && (
                 <label className="mindmap-field">
                   <span>Relink to paper TODO</span>
-                  <select
-                    defaultValue=""
-                    onChange={(event) => {
-                      const todoId = event.target.value;
-                      if (!todoId) return;
-                      dispatch({ type: "bind-todo", id: selected.id, todoId });
-                    }}
-                  >
-                    <option value="">Choose an available TODO…</option>
-                    {availableTodoCandidates(paperState?.paper?.todos || [], mindmap.nodes, selected.id).map((todo) => (
-                      <option key={todo.id} value={todo.id}>{todo.text}</option>
-                    ))}
-                  </select>
+                  <Select label="Relink to paper TODO" placeholder="Choose an available TODO…"
+                    options={availableTodoCandidates(paperState?.paper?.todos || [], mindmap.nodes, selected.id).map(todo => ({ value: todo.id, label: todo.text }))}
+                    onValueChange={todoId => dispatch({ type: "bind-todo", id: selected.id, todoId })}
+                  />
                 </label>
               )}
             </div>
@@ -2226,11 +2361,9 @@ export function MindmapEditor({
                 {(selected.tags || []).length > 0 && (
                   <div className="mindmap-chip-list">
                     {(selected.tags || []).map((tag) => (
-                      <button
-                        key={tag}
+                      <FastTooltip key={tag} label={"Remove " + tag}><button
                         type="button"
                         className="mindmap-chip"
-                        title={"Remove " + tag}
                         onClick={() => dispatch({
                           type: "patch-node",
                           id: selected.id,
@@ -2239,7 +2372,7 @@ export function MindmapEditor({
                       >
                         {tag}
                         <X size={11} aria-hidden="true" />
-                      </button>
+                      </button></FastTooltip>
                     ))}
                   </div>
                 )}
@@ -2269,21 +2402,6 @@ export function MindmapEditor({
                 <span>Priority</span>
                 <ChoiceButtons label="Card priority" value={selected.priority || ""} options={[{value:"",label:"Clear"}, ...["P0", "P1", "P2", "P3"].map(value => ({value,label:value}))]} onChange={(value) => dispatch({ type: "patch-node", id: selected.id, patch: { priority: value ? value as MindmapNode["priority"] : undefined } })} />
               </div>
-              <div className="mindmap-field">
-                <span>Extended note</span>
-                <textarea
-                  value={selected.caption || ""}
-                  maxLength={20_000}
-                  placeholder="Hidden context for model readers"
-                  aria-label="Extended note"
-                  onChange={(event) => {
-                    if (captionWordCount(event.target.value) <= MAX_MINDMAP_CAPTION_WORDS) {
-                      dispatch({ type: "patch-node", id: selected.id, patch: { caption: event.target.value } });
-                    }
-                  }}
-                />
-                <small>{captionWordCount(selected.caption)} / {MAX_MINDMAP_CAPTION_WORDS} words · model context</small>
-              </div>
             </div>
           </div>
           </fieldset>
@@ -2296,8 +2414,8 @@ export function MindmapEditor({
               <div className="mindmap-field">
                 <span>Progress</span>
                 <ProgressCircles
-                  value={selectedTodo?.completed && selected.todoId ? 6 : selected.progress}
-                  label={selected.todoId ? "TODO progress" : "Topic progress"}
+                  value={selected.progress}
+                  label="Card progress"
                   disabled={todoProgressBusy}
                   onChange={updateSelectedProgress}
                 />
@@ -2305,7 +2423,7 @@ export function MindmapEditor({
               </div>
               <div className="mindmap-field">
                 <span>Content format</span>
-                {selected.todoId ? <span className="mindmap-paper-format-note">TeX · shared with the paper</span> : (
+                {selected.todoId ? <span className="mindmap-paper-format-note">TeX shared with the paper</span> : (
                 <ChoiceButtons label="Card content format" value={selected.contentFormat || "plain"} options={[{value:"plain",label:"Plain"},{value:"markdown",label:"Markdown"},{value:"tex",label:"TeX"}]} onChange={(value) => dispatch({ type: "patch-node", id: selected.id, patch: { contentFormat: value as MindmapNode["contentFormat"] } })} />
                 )}
               </div>
@@ -2330,27 +2448,24 @@ export function MindmapEditor({
                 <span>Accent</span>
                 <div className="mindmap-color-palette" role="group" aria-label="Card accent palette">
                   {CARD_PALETTE.map((color) => (
-                    <button
-                      key={color.value}
+                    <FastTooltip key={color.value} label={color.label}><button
                       type="button"
                       className={cn("mindmap-color-swatch", selected.color === color.value && "mindmap-color-swatch-selected")}
                       style={{ backgroundColor: color.value }}
                       aria-label={color.label + " accent"}
                       aria-pressed={selected.color === color.value}
-                      title={color.label}
                       onClick={() => dispatch({ type: "patch-node", id: selected.id, patch: { color: color.value } })}
-                    />
+                    /></FastTooltip>
                   ))}
-                  <button
+                  <FastTooltip label="Use default accent"><button
                     type="button"
                     className={cn("mindmap-color-swatch mindmap-color-swatch-auto", !selected.color && "mindmap-color-swatch-selected")}
                     aria-label="Use default accent"
                     aria-pressed={!selected.color}
-                    title="Use default accent"
                     onClick={() => dispatch({ type: "patch-node", id: selected.id, patch: { color: undefined } })}
                   >
                     <span aria-hidden="true">Auto</span>
-                  </button>
+                  </button></FastTooltip>
                 </div>
                 <input
                   value={selected.color || ""}
@@ -2386,15 +2501,18 @@ export function MindmapEditor({
                   addImagesToCard(files, selected.id);
                 }}
               >
-                <span className="mindmap-field-label">Images</span>
+                <label className="flex min-h-9 cursor-pointer items-center justify-between gap-2 text-xs text-muted">
+                  <span className="mindmap-field-label">Images</span><span className="text-accent">Add image…</span>
+                  <input type="file" accept="image/*,application/pdf" multiple className="sr-only" aria-label="Add card images" onChange={(event) => { addImagesToCard(Array.from(event.target.files || []), selected.id); event.target.value = ""; }} />
+                </label>
                 <div className="mindmap-card-asset-grid">
                   {selectedRefs.filter((ref) => ref.kind === "figure").map((ref) => {
                     const href = artifactHref(project, ref);
                     return (
                       <div key={ref.kind + ":" + ref.id} className="mindmap-card-asset-item">
-                        <a href={href} target="_blank" rel="noreferrer" className="mindmap-card-asset" title={ref.label || ref.id}>
-                          {/\.pdf$/i.test(ref.id) ? <span>PDF · Open</span> : <img src={href} alt={ref.label || "Card image"} loading="lazy" />}
-                        </a>
+                        <FastTooltip label={ref.label || ref.id}><a href={href} target="_blank" rel="noreferrer" className="mindmap-card-asset">
+                          {/\.pdf$/i.test(ref.id) ? <span>Open PDF</span> : <img src={href} alt={ref.label || "Card image"} loading="lazy" />}
+                        </a></FastTooltip>
                         <input
                           value={ref.label || ""}
                           placeholder="Caption / alt text"
@@ -2424,7 +2542,11 @@ export function MindmapEditor({
 
           <InspectorSection id="more" open={Boolean(inspectorSections.more)} onToggle={() => toggleInspectorSection("more")}>
           <fieldset disabled={readOnly || convertingCardId === selected.id} className="mindmap-card-menu-fields">
-          <CautionEditor key={selected.id} value={selected.caution} onChange={(caution) => dispatch({ type: "patch-node", id: selected.id, patch: { caution } })} />
+          <CautionEditor key={selected.id} value={selected.caution} caption={selected.caption}
+            onCaptionChange={caption => dispatch({ type: "patch-node", id: selected.id, patch: { caption } })}
+            onChange={caution => dispatch({ type: "patch-node", id: selected.id, patch: { caution } })} />
+          <CardLinks key={`links:${selected.id}`} project={project} refs={selectedRefs} onChange={refs => dispatch({ type: "patch-node", id: selected.id, patch: { refs } })} />
+          <CardProperties key={`properties:${selected.id}`} value={selected.metadata} onChange={metadata => dispatch({ type: "patch-node", id: selected.id, patch: { metadata } })} />
           <div className="mindmap-card-menu-danger">
             {selected.id !== mindmap.rootId && <button type="button" className="mindmap-text-button" onClick={() => { setMoveQuery(""); setSearchIndex(0); setMoveOpen(true); }}>Move card…</button>}
             <button type="button" className="mindmap-text-button" onClick={() => addChild(selected.id)}>Add child card</button>
@@ -2514,7 +2636,7 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, sections, read
   const allTables = allOrdinary && cards.every((card) => (card.contentFormat || "plain") === "markdown" && markdownTableColumns(card.text) > 0);
   const allMovable = cards.every((card) => card.id !== rootId);
   const commonTags = (cards[0]?.tags || []).filter((tag) => cards.every((card) => (card.tags || []).some((item) => item.toLocaleLowerCase() === tag.toLocaleLowerCase())));
-  const mixed = <small className="mindmap-mixed-value">Mixed values · choose one to apply it to {cards.length} cards</small>;
+  const mixed = <small className="mindmap-mixed-value">Mixed values. Choose one to apply it to {cards.length} cards</small>;
 
   return (
     <aside id="mindmap-card-menu" data-state={open ? "open" : "closed"} aria-hidden={!open} inert={!open} className={styles.inspector} aria-label="Card inspector" aria-describedby="mindmap-card-menu-description">
@@ -2525,7 +2647,7 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, sections, read
             <h2 id="mindmap-card-menu-title" className="mindmap-card-menu-title">{cards.length} cards selected</h2>
           </div>
         </div>
-        <button type="button" className="mindmap-icon-button" aria-label="Close card actions" title="Close card actions" onClick={onClose}><X size={16} /></button>
+        <FastTooltip label="Close card actions"><button type="button" className="mindmap-icon-button" aria-label="Close card actions" onClick={onClose}><X size={16} /></button></FastTooltip>
       </div>
       <p id="mindmap-card-menu-description" className="sr-only">Shared controls for {cards.length} selected cards.</p>
       <p className={styles.multiSelectionHint}>Shift-click cards to add or remove them from this selection.</p>
@@ -2535,7 +2657,7 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, sections, read
           <div className="mindmap-card-menu-section"><div className="mindmap-card-menu-section-body">
             <div className="mindmap-field">
               <span>Common labels</span>
-              {commonTags.length > 0 && <div className="mindmap-chip-list">{commonTags.map((tag) => <button key={tag} type="button" className="mindmap-chip" title={`Remove ${tag} from selected cards`} onClick={() => onUpdateTag(tag, "remove")}>{tag}<X size={11} aria-hidden="true" /></button>)}</div>}
+              {commonTags.length > 0 && <div className="mindmap-chip-list">{commonTags.map((tag) => <FastTooltip key={tag} label={`Remove ${tag} from selected cards`}><button type="button" className="mindmap-chip" onClick={() => onUpdateTag(tag, "remove")}>{tag}<X size={11} aria-hidden="true" /></button></FastTooltip>)}</div>}
               <input
                 value={labelDraft}
                 list="mindmap-label-suggestions"
@@ -2619,9 +2741,9 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, sections, read
               {color === null && mixed}
               <div className="mindmap-color-palette" role="group" aria-label="Selected cards accent palette">
                 {CARD_PALETTE.map((option) => (
-                  <button key={option.value} type="button" className={cn("mindmap-color-swatch", color === option.value && "mindmap-color-swatch-selected")} style={{ backgroundColor: option.value }} aria-label={option.label + " accent"} aria-pressed={color === option.value} title={option.label} onClick={() => onPatch({ color: option.value })} />
+                  <FastTooltip key={option.value} label={option.label}><button type="button" className={cn("mindmap-color-swatch", color === option.value && "mindmap-color-swatch-selected")} style={{ backgroundColor: option.value }} aria-label={option.label + " accent"} aria-pressed={color === option.value} onClick={() => onPatch({ color: option.value })} /></FastTooltip>
                 ))}
-                <button type="button" className={cn("mindmap-color-swatch mindmap-color-swatch-auto", color === "" && "mindmap-color-swatch-selected")} aria-label="Use default accent" aria-pressed={color === ""} title="Use default accent" onClick={() => onPatch({ color: undefined })}><span aria-hidden="true">Auto</span></button>
+                <FastTooltip label="Use default accent"><button type="button" className={cn("mindmap-color-swatch mindmap-color-swatch-auto", color === "" && "mindmap-color-swatch-selected")} aria-label="Use default accent" aria-pressed={color === ""} onClick={() => onPatch({ color: undefined })}><span aria-hidden="true">Auto</span></button></FastTooltip>
               </div>
               <input value={color ?? ""} onChange={(event) => onPatch({ color: event.target.value.trim() || undefined })} placeholder={color === null ? "Mixed accents" : "#785ef0 or CSS color"} aria-label="Custom selected cards accent" />
             </div>
@@ -2694,9 +2816,9 @@ function MindmapUnplacedTray({ paperState, nodes, selectedParentId, onPlaceTodo 
         if (target && current) onPlaceTodo(current.todoId, target);
       }}
       onPointerCancel={() => { clearTarget(); setGhost(null); drag.current = null; }}>
-      <div className={styles.unplacedTitle}><button type="button" data-todo-drag-handle aria-label={`Drag ${todo.title || "paper TODO"}`} title="Drag onto a card">⠿</button><strong><NodeRichText text={todo.title || "Paper TODO"} format="tex" /></strong></div>
+      <div className={styles.unplacedTitle}><FastTooltip label="Drag onto a card"><button type="button" data-todo-drag-handle aria-label={`Drag ${todo.title || "paper TODO"}`}>⠿</button></FastTooltip><strong><NodeRichText text={todo.title || "Paper TODO"} format="tex" /></strong></div>
       <div className={styles.unplacedCopy}><NodeRichText text={todo.text} format="tex" /></div>
-      <button type="button" data-place-todo title={`Place under ${destinationLabel}`} onClick={() => onPlaceTodo(todo.id, selectedParentId)}>Place under selected card</button>
+      <FastTooltip label={`Place under ${destinationLabel}`}><button type="button" data-place-todo onClick={() => onPlaceTodo(todo.id, selectedParentId)}>Place under selected card</button></FastTooltip>
     </li>)}</ul>
     {visible.length === 0 && <p>{candidates.length ? "No matching TODOs" : "All paper TODOs are represented on this map."}</p>}
     {ghost && createPortal(<div className={styles.todoDragGhost} style={{ left: ghost.x + 12, top: ghost.y + 12 }}>{ghost.title}</div>, document.body)}
@@ -2715,6 +2837,8 @@ function CanvasNode({
   node,
   cardContent,
   completed,
+  todoBusy,
+  onToggleTodo,
   missing,
   collapsed,
   collapsedDescendantCount,
@@ -2724,7 +2848,6 @@ function CanvasNode({
   onMeasure,
   orphan,
   selected,
-  active,
   editing,
   editSessionRef,
   dropPreviewKind,
@@ -2747,6 +2870,8 @@ function CanvasNode({
   node: MindmapNode;
   cardContent: { title: string; body: string };
   completed: boolean;
+  todoBusy: boolean;
+  onToggleTodo?: (completed: boolean) => Promise<boolean>;
   missing: boolean;
   collapsed: boolean;
   collapsedDescendantCount: number;
@@ -2757,7 +2882,6 @@ function CanvasNode({
   onMeasure: (id: string, size: Dimensions) => void;
   orphan: boolean;
   selected: boolean;
-  active: boolean;
   editing: boolean;
   editSessionRef: RefObject<InlineCardSession | null>;
   dropPreviewKind: MindmapDrop["kind"] | null;
@@ -2773,6 +2897,9 @@ function CanvasNode({
   onTodoCommit?: (title: string, text: string) => Promise<boolean>;
 }) {
   const cardRef = useRef<HTMLElement | null>(null);
+  const activityDescription = activityLabel
+    ? activityLabel === "recent activity in this branch" ? "Recent activity in this branch" : `Recent activity: ${activityLabel}`
+    : undefined;
   const [imageDropActive, setImageDropActive] = useState(false);
   const tableFitKey = node.contentFormat === "markdown" && node.tableLayout !== "scroll" && markdownTableColumns(node.text) > 0
     ? JSON.stringify([project, node, cardContent, coverage, activityLabel, fontSize]) : null;
@@ -2914,13 +3041,13 @@ function CanvasNode({
       onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
       onClick={(event) => event.stopPropagation()}
     >
-      <button type="button" className={styles.editToolbarButton} aria-label="Bold selection" title="Bold (⌘B / Ctrl+B)" onPointerDown={(event) => event.preventDefault()} onClick={() => formatSelection("bold")}><Bold size={15} /></button>
-      <button type="button" className={styles.editToolbarButton} aria-label="Italic selection" title="Italic (⌘I / Ctrl+I)" onPointerDown={(event) => event.preventDefault()} onClick={() => formatSelection("italic")}><Italic size={15} /></button>
+      <FastTooltip label="Bold (⌘B / Ctrl+B)"><button type="button" className={styles.editToolbarButton} aria-label="Bold selection" onPointerDown={(event) => event.preventDefault()} onClick={() => formatSelection("bold")}><Bold size={15} /></button></FastTooltip>
+      <FastTooltip label="Italic (⌘I / Ctrl+I)"><button type="button" className={styles.editToolbarButton} aria-label="Italic selection" onPointerDown={(event) => event.preventDefault()} onClick={() => formatSelection("italic")}><Italic size={15} /></button></FastTooltip>
       {node.todoId ? <span className="mindmap-inline-editor-hint" title="Paper TODO formatting is saved in TeX">TeX</span> : (
         <ChoiceButtons label="Editing card content format" value={draftFormat || "plain"} options={[{value:"plain",label:"Plain"},{value:"markdown",label:"Markdown"},{value:"tex",label:"TeX"}]} onChange={(value) => setDraftFormat(value as MindmapNode["contentFormat"])} />
       )}
       <span className="mindmap-inline-editor-divider" />
-      <button type="button" className={styles.editToolbarButton} aria-label="Finish editing card" title="Done (⌘Enter / Ctrl+Enter)" onClick={() => void commit()}><Check size={15} /><span>{node.agentDraft ? "Keep draft" : "Done"}</span></button>
+      <FastTooltip label="Done (⌘Enter / Ctrl+Enter)"><button type="button" className={styles.editToolbarButton} aria-label="Finish editing card" onClick={() => void commit()}><Check size={15} /><span>{node.agentDraft ? "Keep draft" : "Done"}</span></button></FastTooltip>
       {formatHint && <span className="mindmap-format-hint" role="status">{formatHint}</span>}
     </NodeToolbar>
     <article
@@ -2931,7 +3058,7 @@ function CanvasNode({
       role="treeitem"
       aria-selected={selected}
       aria-label={title || mindmapNodeLabel(node)}
-      title={title || mindmapNodeLabel(node)}
+      aria-description={activityDescription}
       className={cn(
         "mindmap-node-card",
         node.todoId && "mindmap-node-todo",
@@ -2941,7 +3068,6 @@ function CanvasNode({
         orphan && "mindmap-node-orphan",
         selected && "mindmap-node-selected",
         imageDropActive && "mindmap-image-drop-active",
-        active && "mindmap-node-active",
         styles.card,
         editing && "mindmap-node-editing nodrag",
         dropPreviewKind && "mindmap-node-drop-target",
@@ -2985,13 +3111,18 @@ function CanvasNode({
       }}
     >
       {node.agentDraft && <div className={styles.draftHeading}>Agent draft</div>}
-      <CardCaution caution={node.caution} />
+      {activityDescription && <FastTooltip label={activityDescription}><span className={styles.activityBadge} role="img" tabIndex={0} aria-label={activityDescription} /></FastTooltip>}
       {node.todoId && (
         <div className={styles.todoHeading}>
-          <span className={styles.todoKind}><FileText size={12} aria-hidden="true" />Paper TODO</span>
+          <label className={cn(styles.todoKind, styles.todoTick, "nodrag nopan")} onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
+            <input type="checkbox" checked={completed} disabled={readOnly || missing || todoBusy || editing}
+              aria-label={`TODO completed: ${title || body}`}
+              onChange={event => void onToggleTodo?.(event.target.checked)} />
+            Paper TODO
+          </label>
           <span className={cn(styles.todoStatus, completed && styles.todoComplete, missing && styles.todoMissing)}>
-            {missing ? <AlertCircle size={12} aria-hidden="true" /> : <span className={styles.progressCompact}><ProgressGlyph value={completed ? 6 : node.progress ?? 0} size={18} /></span>}
-            {missing ? "Missing in paper" : completed ? "Complete" : node.progress ? `${Math.round(node.progress / 6 * 100)}%` : "Open"}
+            {missing ? <AlertCircle size={12} aria-hidden="true" /> : <span className={styles.progressCompact}><ProgressGlyph value={node.progress === "ditched" ? "ditched" : completed ? 6 : node.progress ?? 0} size={18} /></span>}
+            {missing ? "Missing in paper" : node.progress === "ditched" ? "Ditched" : completed ? "Complete" : node.progress ? `${Math.round(node.progress / 6 * 100)}%` : "Open"}
           </span>
         </div>
       )}
@@ -3044,20 +3175,15 @@ function CanvasNode({
           )}
         </>
       )}
+          <CardCaution caution={node.caution} />
           {(uploading > 0 || node.refs?.some(ref => ref.kind === "figure")) && (
             <CardImages project={project} refs={node.refs || []} readOnly={readOnly} uploading={uploading}
               onChange={onImageChange} />
           )}
-          {node.caption?.trim() && <Popover.Root>
-            <Popover.Trigger asChild><button type="button" className={cn(styles.noteTrigger, "nodrag nopan")} onClick={event => event.stopPropagation()}><FileText size={13} />Extended note</button></Popover.Trigger>
-            <Popover.Portal><Popover.Content className={cn(styles.noteWindow, "nodrag nopan")} side="right" align="start" sideOffset={14} collisionPadding={16} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()} onWheel={event => event.stopPropagation()} aria-label="Extended note">
-              <header><span><FileText size={15} />Extended note</span><Popover.Close aria-label="Close extended note"><X size={16} /></Popover.Close></header>
-              <div className={styles.noteBody}>{node.caption}</div>
-            </Popover.Content></Popover.Portal>
-          </Popover.Root>}
+          <CardScratchpad text={node.caption} />
           {node.agentDraft && !readOnly && <div className={cn(styles.draftActions, "nodrag nopan")} data-mind-editor={node.id} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
-            <button type="button" aria-label="Save card" title="Save card" onClick={() => void onSaveDraft()}><Check size={13} /></button>
-            <button type="button" aria-label="Delete draft" title="Delete draft" onClick={onDeleteDraft}><X size={13} /></button>
+            <FastTooltip label="Save card"><button type="button" aria-label="Save card" onClick={() => void onSaveDraft()}><Check size={13} /></button></FastTooltip>
+            <FastTooltip label="Delete draft"><button type="button" aria-label="Delete draft" onClick={onDeleteDraft}><X size={13} /></button></FastTooltip>
           </div>}
           {coverage && coverage.total > 0 && (
             <div className="mindmap-coverage">
@@ -3069,17 +3195,16 @@ function CanvasNode({
           )}
           <div className="mindmap-node-meta">
             {node.priority && <span className="mindmap-node-priority" data-priority={node.priority} aria-label={`Priority ${node.priority}`}>{node.priority}</span>}
-            {activityLabel && <span>{activityLabel}</span>}
             {tags.slice(0, 2).map((tag) => <span className="mindmap-node-tag" key={tag}>{tag}</span>)}
             {tags.length > 2 && <span className="mindmap-node-tag">+{tags.length - 2}</span>}
           </div>
+          <CardScratchpad text={node.caution?.background} label="Background notes" atCardEdge />
       {collapsedDescendantCount > 0 && (
-        <button
+        <FastTooltip label={collapsed ? "Expand child cards" : "Collapse all child cards"}><button
           type="button"
           className={cn("mindmap-collapse-toggle", collapsed && "mindmap-collapse-toggle-visible")}
           aria-label={collapsed ? `Expand ${collapsedDescendantCount} child cards` : `Collapse ${collapsedDescendantCount} child cards`}
           aria-expanded={!collapsed}
-          title={collapsed ? "Expand child cards" : "Collapse all child cards"}
           onPointerDown={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -3099,7 +3224,7 @@ function CanvasNode({
           ) : (
             <Minus size={12} strokeWidth={2.75} aria-hidden="true" />
           )}
-        </button>
+        </button></FastTooltip>
       )}
       {dropPreviewKind && (
         <span className={cn("mindmap-drop-preview", styles.dropPreview)} data-drop-kind={dropPreviewKind} role="status">
@@ -3123,7 +3248,7 @@ function calendarDate(date: Date): string {
 }
 
 function formatProgress(progress: MindmapNode["progress"]): string {
-  return `${progress ?? 0} of 6`;
+  return progressLabel(progress);
 }
 
 function formatMindmapDate(value: string): string {
@@ -3168,10 +3293,9 @@ function ToolbarButton({
   children: React.ReactNode;
 }) {
   return (
-    <button
+    <FastTooltip label={title}><button
       type="button"
       ref={buttonRef}
-      title={title}
       aria-label={ariaLabel || title}
       aria-haspopup={ariaHaspopup}
       aria-expanded={ariaExpanded}
@@ -3181,7 +3305,7 @@ function ToolbarButton({
       className={cn("mindmap-toolbar-button", danger && "mindmap-toolbar-button-danger")}
     >
       {children}
-    </button>
+    </button></FastTooltip>
   );
 }
 
@@ -3261,7 +3385,11 @@ function dropPreviewLabel(drop: MindmapDrop, nodeById: Map<string, MindmapNode>)
   return drop.kind === "child" ? `Drop to nest under “${label}”` : `Drop to place ${drop.kind === "before" ? "before" : "after"} “${label}”`;
 }
 
-function ProgressGlyph({ value, size = 24 }: { value: number; size?: number }) {
+function ProgressGlyph({ value, size = 24 }: { value: NonNullable<MindmapNode["progress"]>; size?: number }) {
+  if (value === "ditched") return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+    <circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" strokeWidth="2.4" />
+    <path d="m5.3 5.3 13.4 13.4" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+  </svg>;
   const angle = value / 6 * Math.PI * 2;
   const x = (12 + 10 * Math.sin(angle)).toFixed(3);
   const y = (12 - 10 * Math.cos(angle)).toFixed(3);
@@ -3278,10 +3406,10 @@ function ProgressCircles({ value, onChange, disabled = false, compact = false, l
   compact?: boolean;
   label?: string;
 }) {
-  if (compact) return <span className={styles.progressCompact} aria-label={`${label}: ${value ?? 0} of 6`} title={`${label}: ${value ?? 0} of 6`}><ProgressGlyph value={value ?? 0} size={16} /></span>;
+  if (compact) return <span className={styles.progressCompact} aria-label={`${label}: ${progressLabel(value)}`} title={`${label}: ${progressLabel(value)}`}><ProgressGlyph value={value ?? 0} size={16} /></span>;
   return <div className={styles.progressChoices} role="group" aria-label={label}>
     <button type="button" className={styles.progressClear} aria-label={`Clear ${label.toLowerCase()}`} aria-pressed={value === undefined} disabled={disabled} onClick={() => onChange?.(undefined)}>Clear</button>
-    {([0, 1, 2, 3, 4, 5, 6] as const).map((state) => <button key={state} type="button" aria-label={state === 6 ? `Finish ${label.toLowerCase()}` : `${label}: ${state} of 6`} aria-pressed={state === value} title={state === 6 ? "Finished" : state === 0 ? "Ready to start" : `${Math.round(state / 6 * 100)}%`} disabled={disabled} onClick={() => onChange?.(state)}><ProgressGlyph value={state} /></button>)}
+    {MINDMAP_PROGRESS_STATES.map((state) => <FastTooltip key={state} label={state === "ditched" ? "Ditched" : state === 6 ? "Finished" : state === 0 ? "Ready to start" : `${Math.round(state / 6 * 100)}%`}><button type="button" aria-label={state === "ditched" ? `Mark ${label.toLowerCase()} ditched` : state === 6 ? `Finish ${label.toLowerCase()}` : `${label}: ${state} of 6`} aria-pressed={state === value} disabled={disabled} onClick={() => onChange?.(state)}><ProgressGlyph value={state} /></button></FastTooltip>)}
   </div>;
 }
 

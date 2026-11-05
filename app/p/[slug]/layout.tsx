@@ -6,6 +6,7 @@ import { requireProjectPage } from "@/lib/server/project-access";
 import { Sidebar } from "@/components/shell/sidebar";
 import { ProjectAgentShell } from "@/components/shell/project-agent-shell";
 import { getWorkspaceSettings } from "@/lib/workspace";
+import { getProjectAgentMentions } from "@/lib/research/project-state";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,7 @@ export default async function ProjectLayout({
 
   return (
     <ProjectAgentShell project={slug} publicDemo={publicDemo}>
+      <meta name="openbar-agent-requests" content={JSON.stringify(getProjectAgentMentions(slug))} />
       <div className="flex h-screen overflow-hidden">
         <Sidebar
           projects={projects}
@@ -34,7 +36,7 @@ export default async function ProjectLayout({
           workspaceTagline={workspace.tagline}
           publicDemo={publicDemo}
         />
-        <main className="min-w-0 flex-1 overflow-y-auto bg-canvas">
+        <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 overflow-y-auto bg-canvas">
           {children}
         </main>
       </div>

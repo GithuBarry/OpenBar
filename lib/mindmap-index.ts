@@ -30,9 +30,9 @@ export function persistableMindmapNode(node: MindmapNode): MindmapNode {
     text: node.todoId?.trim() ? "" : node.text,
     parentId: node.parentId,
   };
-  // Extended notes are map-owned context for ordinary and TODO-backed cards.
-  if (node.caption?.trim()) next.caption = node.caption.trim();
-  const caution = normalizeMindmapCaution(node.caution);
+  // Collapsed notes belong to the map, including on TODO-backed cards.
+  if (node.caption?.trim()) next.caption = node.caption;
+  const caution = normalizeMindmapCaution(node.caution, { trim: false });
   if (caution) next.caution = caution;
   if (!node.todoId?.trim() && node.title !== undefined) next.title = node.title;
   if (node.todoId?.trim()) next.todoId = node.todoId.trim();

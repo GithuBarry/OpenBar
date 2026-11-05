@@ -1,44 +1,56 @@
 #!/usr/bin/env node
-/** Newline JSON-RPC bridge. Credentials stay in the environment, diagnostics in stderr. */
-import readline from 'node:readline'
+/** SDK transport relay. Credentials stay in the environment, diagnostics in stderr. */
+import { StreamableHTTPClientTransport, isInitializeRequest, isJSONRPCRequest } from '@modelcontextprotocol/client'
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
+
 const base = process.env.OPENBARRY_URL || 'http://127.0.0.1:3000'
 const endpoint = new URL('/api/mcp', base)
 if (endpoint.protocol !== 'https:' && !(endpoint.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname))) throw new Error('Use HTTPS or loopback HTTP for OPENBARRY_URL.')
 const token = process.env.OPENBARRY_ACCESS_TOKEN
 if (!token) throw new Error('Set OPENBARRY_ACCESS_TOKEN before starting the bridge.')
-let session, protocol
-async function send(message) {
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }
-  if (session) headers['Mcp-Session-Id'] = session
-  if (protocol) headers['MCP-Protocol-Version'] = protocol
-  const response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(message), signal: AbortSignal.timeout(360_000), redirect: 'error' })
-  const body = await response.text()
-  if (!response.ok) throw new Error(`OpenBar HTTP ${response.status}: ${body.slice(0, 500)}`)
-  if (response.headers.get('mcp-session-id')) session = response.headers.get('mcp-session-id')
-  if (!body) return
-  const result = JSON.parse(body)
-  if (message.method === 'initialize') protocol = result.result?.protocolVersion
-  process.stdout.write(JSON.stringify(result) + '\n')
+
+const stdio = new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 4_000_000 })
+const http = new StreamableHTTPClientTransport(endpoint, {
+  requestInit: { headers: { Authorization: `Bearer ${token}` }, redirect: 'error' },
+  fetch: async (url, init) => {
+    const response = await fetch(url, {
+      ...init,
+      redirect: 'error',
+      signal: AbortSignal.any([...(init?.signal ? [init.signal] : []), AbortSignal.timeout(init?.method === 'DELETE' ? 5000 : 360_000)]),
+    })
+    // The server exposes the SDK-negotiated version on HTTP responses. This
+    // keeps relay framing and initialization payload parsing inside the SDK.
+    const protocol = response.headers.get('mcp-protocol-version')
+    if (protocol) http.setProtocolVersion(protocol)
+    return response
+  },
+})
+
+let closed = false
+let initialized = Promise.resolve()
+function report(error) { process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`) }
+async function close() {
+  if (closed) return
+  closed = true
+  await http.terminateSession().catch(report)
+  await Promise.allSettled([http.close(), stdio.close()])
 }
-const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })
-const pending = new Set()
-function reportError(message, error) {
-  if (message?.id !== undefined) process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: error.message } }) + '\n')
-  else process.stderr.write(error.message + '\n')
+
+stdio.onmessage = (message) => {
+  const operation = initialized.then(() => http.send(message))
+  if (isInitializeRequest(message)) initialized = operation.catch(() => {})
+  void operation.catch(async (error) => {
+    if (isJSONRPCRequest(message) && !closed) {
+      await stdio.send({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: error instanceof Error ? error.message : String(error) } }).catch(report)
+    } else report(error)
+  })
 }
-for await (const line of input) {
-  let message
-  try {
-    if (line.length > 4_000_000) throw new Error('Message exceeds 4 MB.')
-    message = JSON.parse(line)
-    const operation = send(message).catch(error => reportError(message, error))
-    pending.add(operation)
-    void operation.finally(() => pending.delete(operation))
-    // Finish negotiation before sending messages that use its session headers.
-    if (message.method === 'initialize') await operation
-  } catch (error) {
-    reportError(message, error)
-  }
-}
-await Promise.all(pending)
-if (session) await fetch(endpoint, { method: 'DELETE', headers: { Authorization: `Bearer ${token}`, 'Mcp-Session-Id': session }, signal: AbortSignal.timeout(5000) }).catch(() => {})
+http.onmessage = (message) => { void stdio.send(message).catch(report) }
+stdio.onerror = report
+http.onerror = report
+stdio.onclose = () => { void close() }
+http.onclose = () => { void close() }
+process.once('SIGINT', () => { void close() })
+process.once('SIGTERM', () => { void close() })
+await http.start()
+await stdio.start()

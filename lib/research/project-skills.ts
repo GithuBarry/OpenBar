@@ -339,7 +339,10 @@ export function readSkillFile(root: string, id: string, source: ProjectSkill["so
   }
 }
 
-export function readAnySkill(projectRoot: string, id: string): { skill: ProjectSkill; body: string } | null {
+export function readAnySkill(projectRoot: string, id: string, source?: ProjectSkill["source"]): { skill: ProjectSkill; body: string } | null {
+  if (source === "project") return readSkillFile(projectRoot, id, "project");
+  if (source === "workspace") return readSkillFile(workspaceRoot(), id, "workspace");
+  if (source === "openbar") return readBundledSkill(id);
   return readSkillFile(projectRoot, id, "project")
     || readSkillFile(workspaceRoot(), id, "workspace")
     || readBundledSkill(id);

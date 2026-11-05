@@ -32,7 +32,7 @@ const nextConfig: NextConfig = {
   // traces so `next build` does not warn about walking manuscript files.
   // Pandoc Lua filters must ship with the server trace.
   outputFileTracingExcludes: {
-    "/*": ["./content/projects/**", "./scratch/**", "./.scratch/**"],
+    "/*": ["./content/projects/**", "./scratch/**", "./.scratch/**", "./.next*/standalone/**"],
   },
   outputFileTracingIncludes: {
     "/*": ["./lib/tex-project/pandoc-openbarry.lua"],
@@ -58,6 +58,7 @@ const nextConfig: NextConfig = {
   ],
   experimental: {
     authInterrupts: true,
+    useTypeScriptCli: false,
     serverActions: {
       bodySizeLimit: "10mb",
     },

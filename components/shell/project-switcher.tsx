@@ -1,10 +1,10 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import Link from "next/link";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronsUpDown } from "lucide-react";
 
-import { Pop } from "@/components/pop";
+import { MenuSurface } from "@/components/pop";
 import { CreateProjectButton } from "@/components/project/create-project";
 import { Project } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -18,15 +18,14 @@ export function ProjectSwitcher({
   activeSlug?: string;
   allowCreate?: boolean;
 }) {
-  const router = useRouter();
-  const [open, setOpen] = useState(false);
   const active = projects.find((p) => p.slug === activeSlug);
 
   return (
-    <div className="relative">
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        aria-label="Choose project"
         className="ob-press flex w-full items-center gap-2 rounded-lg border border-line bg-surface-2 px-2.5 py-2 text-left text-sm transition-colors hover:bg-surface-3"
       >
         <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-surface text-base">
@@ -37,19 +36,16 @@ export function ProjectSwitcher({
         </span>
         <ChevronsUpDown size={14} className="shrink-0 text-faint" />
       </button>
+      </DropdownMenu.Trigger>
 
-      {open && <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />}
-      <Pop open={open} origin="tl" className="absolute left-0 right-0 top-full z-50 mt-1.5 p-1.5">
+      <MenuSurface align="start" className="w-64 p-1.5">
         {projects.map((p) => (
-          <button
-            key={p.slug}
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              router.push(`/p/${p.slug}`);
-            }}
+          <DropdownMenu.Item asChild key={p.slug}>
+          <Link
+            href={`/p/${p.slug}`}
+            aria-current={p.slug === activeSlug ? "page" : undefined}
             className={cn(
-              "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors hover:bg-surface-2",
+              "ob-menu-item flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors",
               p.slug === activeSlug ? "bg-accent/10 text-accent font-semibold" : "text-ink",
             )}
           >
@@ -58,14 +54,15 @@ export function ProjectSwitcher({
             </span>
             <span className="flex-1 truncate">{p.title}</span>
             {p.slug === activeSlug && <Check size={14} className="text-accent" />}
-          </button>
+          </Link>
+          </DropdownMenu.Item>
         ))}
         {allowCreate && (
           <div className="mt-1 border-t border-line pt-1">
-            <CreateProjectButton compact className="w-full [&>button]:w-full [&>button]:justify-center" />
+            <CreateProjectButton compact trigger={<DropdownMenu.Item className="ob-menu-item text-sm" onSelect={event => event.preventDefault()}>New project</DropdownMenu.Item>} />
           </div>
         )}
-      </Pop>
-    </div>
+      </MenuSurface>
+    </DropdownMenu.Root>
   );
 }

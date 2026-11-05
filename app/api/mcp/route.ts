@@ -1,216 +1,165 @@
-import { agentOriginAllowed, agentCors } from "@/lib/server/agent-http";
-import { readAgentRequestBody } from "@/lib/server/agent-request-body";
-import { pruneMcpSessions, touchMcpSession, type McpSession } from "@/lib/server/mcp-sessions";
-import { AGENT_GUIDANCE } from "@/lib/research/agent-guidance";
-import { randomUUID } from "node:crypto";
-import { discoveryRpc } from "@/lib/research/mcp-discovery";
+import { randomUUID } from "node:crypto"
+import {
+  createMcpHandler,
+  isLegacyRequest,
+  isJSONRPCRequest,
+  parseJSONRPCMessage,
+  readRequestBody,
+  SUPPORTED_PROTOCOL_VERSIONS,
+  WebStandardStreamableHTTPServerTransport,
+  type Server,
+} from "@modelcontextprotocol/server"
 
-import { authorizeMcpRequest } from "@/lib/server/mcp-access";
-import { executeMcpTool, listMcpTools } from "@/lib/research/mcp-command-registry";
+import { agentOriginAllowed, agentCors } from "@/lib/server/agent-http"
+import { authorizeMcpRequest } from "@/lib/server/mcp-access"
+import { createOpenbarMcpServer } from "@/lib/server/mcp-server"
+import { pruneMcpSessions, touchMcpSession, type McpSession } from "@/lib/server/mcp-sessions"
 
-export const dynamic = "force-dynamic";
+export const dynamic = "force-dynamic"
 
-type JsonRpcRequest = {
-  jsonrpc?: unknown;
-  id?: string | number;
-  method?: unknown;
-  params?: unknown;
-};
+const MAX_REQUEST_BYTES = 4_000_000
 
+type Session = McpSession & {
+  server: Server
+  transport: WebStandardStreamableHTTPServerTransport
+  activeRequestIds: Set<string>
+}
+const sessions = new Map<string, Session>()
+const modern = createMcpHandler(({ authInfo }) => createOpenbarMcpServer(authInfo!.clientId), {
+  legacy: "reject",
+  maxRequestBodySize: MAX_REQUEST_BYTES,
+})
 
-const sessions = new Map<string, McpSession>();
-const SUPPORTED_PROTOCOLS = new Set(["2025-03-26", "2025-06-18", "2025-11-25"]);
+// Expiry also closes SDK protocol state, which aborts its in-flight handlers.
+const expiryTimer = setInterval(() => { void pruneMcpSessions(sessions) }, 60_000)
+expiryTimer.unref()
 
-function headers(sessionId?: string): Headers {
-  const result = new Headers({
-    "Cache-Control": "no-store",
-    "X-Content-Type-Options": "nosniff",
-    "Link": '</agents>; rel="help", </llms-deployment.txt>; rel="help"; type="text/plain", </llms.txt>; rel="alternate"; type="text/plain"',
-  });
-  if (sessionId) result.set("Mcp-Session-Id", sessionId);
-  return result;
+function errorResponse(message: string, code: string, status: number): Response {
+  return Response.json({ error: message, code }, { status })
 }
 
-function json(body: unknown, status = 200, sessionId?: string): Response {
-  const responseHeaders = headers(sessionId);
-  responseHeaders.set("Content-Type", "application/json");
-  return new Response(JSON.stringify(body), { status, headers: responseHeaders });
+function policyError(id: string | number | null, message: string, status: number): Response {
+  return Response.json({ jsonrpc: "2.0", id, error: { code: -32600, message } }, { status })
 }
 
-function rpcError(id: string | number | null | undefined, code: number, message: string, data?: unknown, sessionId?: string): Response {
-  return json({ jsonrpc: "2.0", id: id ?? null, error: { code, message, ...(data === undefined ? {} : { data }) } }, 200, sessionId);
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function requestKey(id: string | number): string {
-  return `${typeof id}:${String(id)}`;
-}
-
-function isValidRequest(value: unknown): value is JsonRpcRequest {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const item = value as JsonRpcRequest;
-  return item.jsonrpc === "2.0" && typeof item.method === "string" && (item.id === undefined || typeof item.id === "string" || (typeof item.id === "number" && Number.isFinite(item.id)));
-}
-
-function sessionFrom(request: Request): { id?: string; session?: McpSession } {
-  const id = request.headers.get("mcp-session-id")?.trim() || undefined;
-  return { id, session: id ? sessions.get(id) : undefined };
-}
-
-function pruneSessions(): void {
-  pruneMcpSessions(sessions);
-}
-
-function toolList() {
-  return listMcpTools().map((tool) => ({
-    name: tool.name,
-    title: tool.title,
-    description: tool.description,
-    inputSchema: tool.inputSchema,
-    annotations: tool.annotations,
-  }));
-}
-
-function mcpToolResult(result: { ok: boolean; value?: unknown; [key: string]: unknown }, id: string | number | null | undefined, sessionId?: string): Response {
-  const text = JSON.stringify(result);
-  return json({
-    jsonrpc: "2.0",
-    id: id ?? null,
-    result: {
-      content: [{ type: "text", text }],
-      structuredContent: result,
-      ...(result.ok ? {} : { isError: true }),
-    },
-  }, 200, sessionId);
-}
-
-async function handleRpc(value: unknown, actor: string, sessionId?: string): Promise<Response> {
-  if (!isValidRequest(value)) return rpcError(null, -32600, "Invalid JSON-RPC request.", undefined, sessionId);
-  const id = value.id;
-  const method = value.method as string;
-  if (value.params !== undefined && !isObject(value.params)) return rpcError(id, -32602, "params must be an object.", undefined, sessionId);
-  const params = isObject(value.params) ? value.params : {};
-  const session = sessionId ? sessions.get(sessionId) : undefined;
-  if (id === undefined) {
-    if (method === "notifications/cancelled" && session) {
-      const cancelledId = params.requestId;
-      if (typeof cancelledId === "string" || typeof cancelledId === "number") session.requests?.get(requestKey(cancelledId))?.abort();
-    }
-    return new Response(null, { status: 202, headers: headers(sessionId) });
-  }
-  if (method === "ping") return json({ jsonrpc: "2.0", id: id ?? null, result: {} }, 200, sessionId);
-  if (method === "initialize") {
-    if (session) return rpcError(id, -32600, "This session is already initialized.", undefined, sessionId);
-    if (typeof params.protocolVersion !== "string" || !isObject(params.capabilities) || !isObject(params.clientInfo) || typeof params.clientInfo.name !== "string" || typeof params.clientInfo.version !== "string") {
-      return rpcError(id, -32602, "initialize requires protocolVersion, capabilities, and clientInfo with name and version.");
-    }
-    const requested = params.protocolVersion;
-    const protocolVersion = SUPPORTED_PROTOCOLS.has(requested) ? requested : "2025-11-25";
-    const nextSessionId = sessionId || randomUUID();
-    sessions.set(nextSessionId, { actor, lastSeen: Date.now(), protocolVersion, requests: new Map() });
-    return json({
-      jsonrpc: "2.0",
-      id: id ?? null,
-      result: {
-        protocolVersion,
-        capabilities: { tools: { listChanged: false }, resources: {}, prompts: {} },
-        serverInfo: { name: "OpenBar", version: "0.1.0" },
-        instructions: AGENT_GUIDANCE,
-      },
-    }, 200, nextSessionId);
-  }
-  if (method === "tools/list") {
-    return json({ jsonrpc: "2.0", id: id ?? null, result: { tools: toolList() } }, 200, sessionId);
-  }
-  if (method === "tools/call") {
-    const name = typeof params.name === "string" ? params.name : "";
-    if (!name || !listMcpTools().some((tool) => tool.name === name)) return rpcError(id, -32602, name ? `Unknown tool "${name}".` : "tools/call requires params.name.", { code: "invalid_arguments" }, sessionId);
-    const args = params.arguments === undefined ? {} : params.arguments;
-    if (!isObject(args)) return rpcError(id, -32602, "tools/call arguments must be an object.", { code: "invalid_arguments" }, sessionId);
-    const key = requestKey(id);
-    if (session?.requests?.has(key)) return rpcError(id, -32600, "This request ID is already executing.", undefined, sessionId);
-    const controller = new AbortController();
-    session?.requests?.set(key, controller);
-    try {
-      const result = await executeMcpTool(name, args, { actor, requestId: sessionId ? `${sessionId}:${key}` : undefined, signal: controller.signal });
-      return mcpToolResult(result, id, sessionId);
-    } finally {
-      session?.requests?.delete(key);
-    }
-  }
-  const discovery = await discoveryRpc(method, params, actor);
-  if (discovery) return json({ jsonrpc: "2.0", id: id ?? null, ...discovery }, 200, sessionId);
-  return rpcError(id, -32601, `Method "${method}" is not supported by OpenBar MCP.`, undefined, sessionId);
-}
-
-async function handlePost(request: Request): Promise<Response> {
-  pruneSessions();
-  const access = await authorizeMcpRequest(request);
-  if (!access.ok) return json({ error: access.message, code: "mcp_access_required" }, access.status);
-  const session = sessionFrom(request);
-  if (session.session && !touchMcpSession(session.session, access.actor)) return json({ error: "Session belongs to another identity.", code: "invalid_session" }, 403);
-  if (session.id && !session.session && request.headers.get("mcp-session-id")) return json({ error: "Unknown or expired MCP session.", code: "invalid_session" }, 404);
-  let body: unknown;
+async function sessionRequest(session: Session, request: Request, parsedBody: unknown): Promise<Response> {
+  let key: string | undefined
   try {
-    const raw = await readAgentRequestBody(request);
-    if (raw.length > 4_000_000) return json({ error: "MCP request is too large.", code: "request_too_large" }, 413, session.id);
-    body = JSON.parse(raw);
+    const message = parseJSONRPCMessage(parsedBody)
+    if (isJSONRPCRequest(message)) {
+      key = `${typeof message.id}:${String(message.id)}`
+      if (session.activeRequestIds.has(key)) return policyError(message.id, "This request ID is already executing.", 200)
+    }
+  } catch { /* The SDK transport produces the protocol validation response. */ }
+  if (key) session.activeRequestIds.add(key)
+  try {
+    const headers = new Headers(request.headers)
+    // This endpoint has always returned JSON to legacy callers. Adapt its
+    // permissive Accept policy to the SDK transport's two-format requirement.
+    headers.set("Accept", "application/json, text/event-stream")
+    return await session.transport.handleRequest(new Request(request.url, { method: request.method, headers, signal: request.signal }), { parsedBody })
+  } finally {
+    if (key) session.activeRequestIds.delete(key)
+  }
+}
+
+async function serveSession(request: Request, actor: string, parsedBody: unknown, existing?: Session): Promise<Response> {
+  const protocolHeader = request.headers.get("mcp-protocol-version")
+  if (protocolHeader && !SUPPORTED_PROTOCOL_VERSIONS.includes(protocolHeader)) {
+    return errorResponse("Unsupported MCP-Protocol-Version.", "invalid_protocol", 400)
+  }
+  if (existing) {
+    const negotiated = existing.server.getNegotiatedProtocolVersion()
+    // OpenBar provides request/response tools and deliberately exposes this
+    // surface through POST. The SDK owns per-request streaming and DELETE.
+    if (request.method === "GET") return new Response(null, { status: 405, headers: { Allow: "POST, DELETE, OPTIONS" } })
+    const response = await sessionRequest(existing, request, parsedBody)
+    if (negotiated) response.headers.set("MCP-Protocol-Version", negotiated)
+    return request.method === "DELETE" && response.ok ? new Response(null, { status: 204 }) : response
+  }
+  if (request.method === "GET") return new Response(null, { status: 405, headers: { Allow: "POST, DELETE, OPTIONS" } })
+  if (request.method === "DELETE") return new Response(null, { status: 204 })
+
+  const server = createOpenbarMcpServer(actor)
+  const activeRequestIds = new Set<string>()
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: randomUUID,
+    enableJsonResponse: true,
+    maxRequestBodySize: MAX_REQUEST_BYTES,
+    onsessioninitialized: (id) => {
+      sessions.set(id, { actor, lastSeen: Date.now(), server, transport, activeRequestIds, close: () => server.close() })
+    },
+  })
+  server.onclose = () => {
+    if (transport.sessionId) sessions.delete(transport.sessionId)
+  }
+  await server.connect(transport)
+  try {
+    const response = await sessionRequest({ actor, lastSeen: Date.now(), server, transport, activeRequestIds, close: () => server.close() }, request, parsedBody)
+    const protocol = server.getNegotiatedProtocolVersion()
+    if (protocol) response.headers.set("MCP-Protocol-Version", protocol)
+    // The transport creates a session before the SDK validates initialize.
+    // Close failed handshakes and malformed opening messages immediately.
+    if (!protocol) await server.close()
+    return response
   } catch (error) {
-    if (error instanceof RangeError) return json({ error: error.message, code: "request_too_large" }, 413, session.id);
-    return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "MCP request must contain valid JSON." } }, 400, session.id);
+    await server.close()
+    throw error
   }
-  if (Array.isArray(body)) return json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Send one JSON-RPC message per HTTP request." } }, 400);
-  if (isObject(body) && typeof body.method === "string" && body.method !== "initialize" && !session.session) return json({ error: "Initialize a session before sending MCP messages.", code: "session_required" }, 400);
-  if (isObject(body) && body.jsonrpc === "2.0" && body.method === undefined && (typeof body.id === "string" || typeof body.id === "number") && (("result" in body) !== ("error" in body))) {
-    return new Response(null, { status: 202, headers: headers(session.id) });
+}
+
+async function serveAuthenticated(request: Request, actor: string, session?: Session): Promise<Response> {
+  let parsedBody: unknown
+  if (request.method === "POST") {
+    // The SDK bounds incoming bytes. OpenBar's single-message policy and
+    // duplicate-id guard run before the transport allocates response streams.
+    const body = await readRequestBody(request, MAX_REQUEST_BYTES)
+    if (body.tooLarge) return errorResponse("MCP request is too large.", "request_too_large", 413)
+    try { parsedBody = JSON.parse(body.text) }
+    catch { return Response.json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "MCP request must contain valid JSON." } }, { status: 400 }) }
+    if (Array.isArray(parsedBody)) return policyError(null, "Send one JSON-RPC message per HTTP request.", 400)
   }
-  const response = await handleRpc(body, session.session?.actor || access.actor, session.id);
-  return response;
-}
-
-async function handleGet(request: Request): Promise<Response> {
-  const access = await authorizeMcpRequest(request);
-  if (!access.ok) return json({ error: access.message, code: "mcp_access_required" }, access.status);
-  pruneSessions();
-  const { id, session } = sessionFrom(request);
-  if (id && !session) return json({ error: "Unknown or expired MCP session.", code: "invalid_session" }, 404);
-  if (session && !touchMcpSession(session, access.actor)) return json({ error: "Session belongs to another identity.", code: "invalid_session" }, 403);
-  return new Response(null, { status: 405, headers: { Allow: "POST, DELETE, OPTIONS" } });
-}
-
-async function handleDelete(request: Request): Promise<Response> {
-  const access = await authorizeMcpRequest(request);
-  if (!access.ok) return json({ error: access.message, code: "mcp_access_required" }, access.status);
-  pruneSessions();
-  const { id, session } = sessionFrom(request);
-  if (id && !session) return json({ error: "Unknown or expired MCP session.", code: "invalid_session" }, 404);
-  if (session && session.actor !== access.actor) return json({ error: "Session belongs to another identity.", code: "invalid_session" }, 403);
-  if (id) {
-    for (const controller of session?.requests?.values() || []) controller.abort();
-    sessions.delete(id);
+  if (await isLegacyRequest(request, parsedBody, { maxRequestBodySize: MAX_REQUEST_BYTES })) {
+    // SDK classification preserves stateful 2025 clients alongside its
+    // per-request modern handler. Both use the same domain server factory.
+    return serveSession(request, actor, parsedBody, session)
   }
-  return new Response(null, { status: 204, headers: headers(id || undefined) });
+  return modern.fetch(request, { parsedBody, authInfo: { token: "", clientId: actor, scopes: [] } })
 }
 
-async function dispatch(request: Request, handler: (request: Request) => Promise<Response>): Promise<Response> {
-  if (!agentOriginAllowed(request)) return json({ error: "Agent origin is outside OPENBARRY_AGENT_ORIGINS.", code: "origin_not_allowed" }, 403);
-  const protocol = request.headers.get("mcp-protocol-version");
-  if (protocol && !SUPPORTED_PROTOCOLS.has(protocol)) return agentCors(request, json({ error: "Unsupported MCP-Protocol-Version.", code: "invalid_protocol" }, 400));
-  const currentSession = sessionFrom(request).session;
-  if (protocol && currentSession && currentSession.protocolVersion !== protocol) return agentCors(request, json({ error: "Use the protocol negotiated for this session.", code: "invalid_protocol" }, 400));
-  const response = await handler(request);
-  const negotiated = sessions.get(response.headers.get("mcp-session-id") || "")?.protocolVersion;
-  if (negotiated) response.headers.set("MCP-Protocol-Version", negotiated);
-  if (response.status === 401) response.headers.set("WWW-Authenticate", 'Bearer realm="OpenBar"');
-  return agentCors(request, response);
+async function dispatch(request: Request): Promise<Response> {
+  if (!agentOriginAllowed(request)) return errorResponse("Agent origin is outside OPENBARRY_AGENT_ORIGINS.", "origin_not_allowed", 403)
+  let response: Response
+  if (request.method === "OPTIONS") {
+    response = new Response(null, { status: 204, headers: { Allow: "GET, POST, DELETE, OPTIONS" } })
+  } else {
+    const access = await authorizeMcpRequest(request)
+    if (!access.ok) {
+      response = errorResponse(access.message, "mcp_access_required", access.status)
+    } else {
+      await pruneMcpSessions(sessions)
+      const sessionId = request.headers.get("mcp-session-id")?.trim()
+      const session = sessionId ? sessions.get(sessionId) : undefined
+      const protocol = request.headers.get("mcp-protocol-version")
+      if (sessionId && !session) {
+        response = errorResponse("Unknown or expired MCP session.", "invalid_session", 404)
+      } else if (session && !touchMcpSession(session, access.actor)) {
+        response = errorResponse("Session belongs to another identity.", "invalid_session", 403)
+      } else if (session && protocol && session.server.getNegotiatedProtocolVersion() && protocol !== session.server.getNegotiatedProtocolVersion()) {
+        response = errorResponse("Use the protocol negotiated for this session.", "invalid_protocol", 400)
+      } else {
+        response = await serveAuthenticated(request, access.actor, session)
+      }
+    }
+  }
+  response.headers.set("Cache-Control", "no-store")
+  response.headers.set("X-Content-Type-Options", "nosniff")
+  response.headers.set("Link", '</agents>; rel="help", </llms-deployment.txt>; rel="help"; type="text/plain", </llms.txt>; rel="alternate"; type="text/plain"')
+  if (response.status === 401) response.headers.set("WWW-Authenticate", 'Bearer realm="OpenBar"')
+  return agentCors(request, response)
 }
 
-export async function OPTIONS(request: Request): Promise<Response> {
-  return dispatch(request, async () => new Response(null, { status: 204, headers: { Allow: "GET, POST, DELETE, OPTIONS", "Cache-Control": "no-store" } }));
-}
-export async function POST(request: Request) { return dispatch(request, handlePost); }
-export async function GET(request: Request) { return dispatch(request, handleGet); }
-export async function DELETE(request: Request) { return dispatch(request, handleDelete); }
+export const OPTIONS = dispatch
+export const POST = dispatch
+export const GET = dispatch
+export const DELETE = dispatch

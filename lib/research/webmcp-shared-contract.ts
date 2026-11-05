@@ -2,13 +2,15 @@
  * Shared page-scoped WebMCP tools available on every project page.
  */
 
+import { SHARED_INPUTS } from "./command-inputs";
+import { parseCommandInput } from "./command-schema";
 import {
   PROJECT_WEBMCP_TOOL_NAMES,
   SHARED_WEBMCP_SCHEMAS,
   SETUP_WEBMCP_TOOL_NAMES,
 } from "./mcp-tool-schemas";
 import { failResult, okResult, type OperationResult } from "./operation-result";
-import { parseWebMcpArgs, unknownWebMcpArgument, type PaperWebMcpTool } from "./webmcp-paper-contract";
+import { type PaperWebMcpTool } from "./webmcp-paper-contract";
 import { safeUrl } from "@/lib/safe-url";
 import type { ProjectLink } from "@/lib/types";
 
@@ -51,7 +53,7 @@ export type SharedWebMcpActions = {
   getProjectState: (project: string, current?: CurrentLocation, query?: ProjectStateQuery) => Promise<unknown>;
   searchProject: (project: string, query: string) => Promise<unknown>;
   resolveNavigation: (project: string, input: { id?: string; href?: string }) => Promise<{ href: string } | null>;
-  readProjectSkill: (project: string, id: string) => Promise<unknown>;
+  readProjectSkill: (project: string, id: string, source?: "project" | "workspace" | "openbar") => Promise<unknown>;
   getCapabilities: () => Promise<unknown>;
   inspectRepository: (project: string) => Promise<unknown>;
   previewConversion: (project: string, filePath: string, source: string, to: string, expandProject: boolean) => Promise<unknown>;
@@ -110,7 +112,7 @@ const TOOL_META: Record<SharedToolName, { title: string; description: string }> 
   get_project_state: {
     title: "Read project state",
     description:
-      "Read this first when entering a project or recovering context. Returns map/source identities, TODO coverage, Git sync state, current location, and instruction/skill metadata. detail=full loads project rules, AGENTS.md bodies, and the full TODO listing by default.",
+      "Start here on every project visit. Read saved project state, @agent requests, TODO coverage, Git sync, and instruction/skill metadata. detail=full includes AGENTS.md bodies and all TODOs. Use get_paper_state or get_source_bundle for the browser's live draft.",
   },
   search_project: {
     title: "Search the project",
@@ -185,11 +187,9 @@ async function executeSharedWebMcpTool(
   name: SharedToolName,
   rawArgs: unknown,
 ): Promise<OperationResult<unknown>> {
-  const parsedArgs = parseWebMcpArgs(rawArgs);
+  const parsedArgs = parseCommandInput(SHARED_INPUTS[name], rawArgs, true);
   if (!parsedArgs.ok) return failResult("invalid_arguments", parsedArgs.message, { retryable: false });
   const args = parsedArgs.value;
-  const unknown = unknownWebMcpArgument(args, SHARED_WEBMCP_SCHEMAS[name]!);
-  if (unknown) return failResult("invalid_arguments", `Unknown argument "${unknown}".`, { retryable: false });
   try {
     switch (name) {
       case "sync_project": return host.actions.syncProject ? host.actions.syncProject(host.project, args) : failResult("capability_unavailable", "Synchronization review is unavailable in this client.", false);
@@ -237,7 +237,7 @@ async function executeSharedWebMcpTool(
       case "read_project_skill": {
         const id = requiredString(args, "id");
         if (typeof id !== "string") return id;
-        return okResult(await host.actions.readProjectSkill(host.project, id));
+        return okResult(await host.actions.readProjectSkill(host.project, id, args.source as Parameters<SharedWebMcpActions["readProjectSkill"]>[2]));
       }
       case "get_capabilities":
         return okResult(await host.actions.getCapabilities());

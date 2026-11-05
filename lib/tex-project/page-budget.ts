@@ -5,9 +5,9 @@ import { texPaths } from "./project";
 
 export type PaperPageBudget = {
   totalPages: number;
-  firstNumberedPage: number;
-  mainMatterPages: number;
-  lastNumberedSection: {
+  firstNumberedPage?: number;
+  mainMatterPages?: number;
+  lastNumberedSection?: {
     number: number;
     title: string;
     startsOnPage: number;
@@ -59,7 +59,8 @@ export function inspectPaperPageBudget(projectDir: string, artifactId?: string):
     if (!Number.isInteger(number) || number < 1 || !Number.isInteger(page) || page < 1) continue;
     sections.push({ number, page, title: plainTitle(match[4] || "") || `Section ${number}` });
   }
-  if (!sections.length) return undefined;
+  const absolutePages = Number(/\\@abspage@last\{(\d+)\}/.exec(aux)?.[1]);
+  if (!sections.length) return Number.isInteger(absolutePages) && absolutePages > 0 ? { totalPages: absolutePages, measuredAt } : undefined;
 
   sections.sort((a, b) => a.number - b.number || a.page - b.page);
   const first = sections[0]!;

@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { BibEntry } from "@/lib/bibtex";
-import type { PreviewResult } from "@/lib/tex-project/preview-html";
-import type { PreviewBatch, PreviewChange, PreviewWorkerIn, PreviewWorkerOut } from "./preview.worker";
+import type { PaperPreviewResult, PreviewBatch, PreviewChange, PreviewWorkerIn, PreviewWorkerOut } from "./preview.worker";
 
 const PREVIEW_DEBOUNCE_MS = 150;
 const PREVIEW_MAX_WAIT_MS = 500;
@@ -16,7 +15,7 @@ export function usePreviewWorker(options: {
   assetBaseUrl?: string;
   getLiveSource?: () => string;
 }): {
-  result: PreviewResult | null;
+  result: PaperPreviewResult | null;
   revision: number;
   workerError: string | null;
   reset: (source: string) => void;
@@ -39,7 +38,7 @@ export function usePreviewWorker(options: {
   const bibliographyRef = useRef(options.bibliography);
   const assetBaseUrlRef = useRef(options.assetBaseUrl);
   const getLiveSourceRef = useRef(options.getLiveSource);
-  const [result, setResult] = useState<PreviewResult | null>(null);
+  const [result, setResult] = useState<PaperPreviewResult | null>(null);
   const [revision, setRevision] = useState(0);
   const [workerError, setWorkerError] = useState<string | null>(null);
   bibliographyRef.current = options.bibliography;

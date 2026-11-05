@@ -70,21 +70,34 @@
   background: rgb(var(--surface));
 }
 
-.editor :global(.ob-cm-metadata-marker) {
-  display: inline-flex;
+/* One compact, expandable boundary leads directly into each included file. */
+.includeBoundary {
+  margin: 2px 0 0;
+  border-top: 1px solid rgb(var(--line) / .65);
+  color: rgb(var(--muted));
+}
+.includeBoundary > summary {
+  display: flex;
   align-items: center;
-  padding: 0 3px;
-  border: 0;
-  border-radius: 0;
-  color: rgb(var(--faint));
-  background: transparent;
-  opacity: .6;
-  font: 9px/14px var(--font-sans);
-  vertical-align: middle;
+  gap: 8px;
+  min-height: 25px;
+  padding: 3px 12px;
   cursor: pointer;
+  list-style: none;
+  font: 10px/1.4 var(--font-sans);
 }
-.editor :global(.ob-cm-metadata-marker):hover,
-.editor :global(.ob-cm-metadata-marker):focus-visible {
-  color: rgb(var(--ink));
-  opacity: 1;
+.includeBoundary > summary::-webkit-details-marker { display: none; }
+.includeBoundary > summary::before {
+  content: "›";
+  font-size: 14px;
+  color: rgb(var(--faint));
+  transition: transform 120ms;
 }
+.includeBoundary[open] > summary::before { transform: rotate(90deg); }
+.includeBoundary > summary:hover { background: rgb(var(--accent) / .035); }
+.includeBoundary > summary:focus-visible { outline: 2px solid rgb(var(--accent) / .5); outline-offset: -2px; }
+.includeBoundary > summary code { min-width: 0; overflow-wrap: anywhere; font: 10px/1.4 var(--font-mono); }
+.includeOrigin { margin-left: auto; color: rgb(var(--faint)); font-size: 9px; white-space: nowrap; }
+.includeSource { padding: 2px 12px 5px 26px; background: rgb(var(--accent) / .025); }
+.includeSourceLabel { color: rgb(var(--faint)); font: 9px/1.4 var(--font-sans); }
+@media (prefers-reduced-motion: reduce) { .includeBoundary > summary::before { transition: none; } }

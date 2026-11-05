@@ -5,18 +5,16 @@
  * standards, labels, and vocabulary remain editable in AGENTS.md and skills.
  */
 
-export const OPENBAR_EXPECTATIONS_VERSION = "2026-09-04";
+export const OPENBAR_EXPECTATIONS_VERSION = "2026-11-04";
 
 export const OPENBAR_EXPECTATIONS = [
-  "Read the relevant paper context before proposing or applying an edit.",
-  "Preserve the scientific argument, useful unfinished tables and figures, and unresolved markers.",
-  "Make one useful local contribution and preserve unrelated cards, fields, and map placement.",
-  "Treat TeX as the source of truth for TODO identity, text, timestamps, and completion.",
-  "Keep Primary coverage complete; an unplaced TODO is still covered in Primary Unplaced.",
-  "Use seven independent progress states with user-defined meaning; never infer completion from progress or children.",
-  "Distinguish local persistence, remote synchronization, compile success, and research completion.",
-  "Use expected revisions and stable source locations; report conflicts and affected paths instead of overwriting them.",
-  "Prepare advisor summaries from substantive edits on demand, not from edit counts or automatic project-victory claims.",
+  "Read relevant context and tagged requests. Make the smallest requested edit, preserving unfinished structures and unrelated work.",
+  "Keep work-in-progress papers visibly unfinished throughout: place TODOs where their results most strengthen the argument, with local questions, notes, partial tables, and missing-result markers until each open point is resolved.",
+  "Start from the intended full paper skeleton. Fill its sections, argument steps, comparisons, tables, and figures as evidence arrives, and expose reopened gaps when changes reduce completion.",
+  "TeX owns TODO identity, text, timestamps, and completion. Primary covers each TODO through a card or Unplaced.",
+  "Each map owns presentation and user-defined progress. Scientific vocabulary belongs in project instructions and skills.",
+  "Use current revisions and source hashes. Report conflicts with affected paths.",
+  "Report saving, remote synchronization, compilation, and research outcomes separately. Ground requested summaries in substantive edits.",
 ] as const;
 
 export type OpenBarExpectations = {

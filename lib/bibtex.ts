@@ -2,9 +2,7 @@ import { safeUrl } from "@/lib/safe-url";
 
 /**
  * Minimal, dependency-free BibTeX support. A per-project `references.bib` file
- * is the separate bibliography source; the draft cites entries with
- * `\cite{key}` (also `\citep`/`\citet`/`[@key]`), and `compileBibliography`
- * resolves those into numbered links plus a rendered References list.
+ * supplies bibliography entries for TeX previews and citation disclosures.
  */
 
 export interface BibEntry {
@@ -13,12 +11,6 @@ export interface BibEntry {
   fields: Record<string, string>;
   /** Server-preformatted CSL HTML from Citation.js. Never imported from `lib/citation.ts` on the client. */
   html?: string;
-}
-
-export interface CompiledReference {
-  n: number;
-  key: string;
-  entry: BibEntry;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,63 +85,7 @@ export function formatReference(entry: BibEntry): string {
   return html;
 }
 
-// ---------------------------------------------------------------------------
-// Compiling citations
-// ---------------------------------------------------------------------------
-
+/** Stable DOM anchor shared by citation links and rendered references. */
 export function refId(key: string): string {
   return `ref-${key.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-}
-
-const CITE_RE = /\\(?:cite|citep|citet|citealp|citeauthor|autocite|parencite|textcite|obcite)(?:\[[^\]]*\])?\{([^}]*)\}|\[[@$]([^\]\s]+(?:\s*[;,]\s*[@$]?[^\]\s]+)*)\]/g;
-
-/**
- * Replace citation commands in `source` with numbered `[n]` links and return the
- * ordered list of cited references (by first appearance). Unknown keys render as
- * a muted `[?]`.
- */
-export function compileBibliography(
-  source: string,
-  entries: BibEntry[],
-): { source: string; references: CompiledReference[] } {
-  if (!entries.length) return { source, references: [] };
-  const byKey = new Map(entries.map((e) => [e.key, e]));
-  const numByKey = new Map<string, number>();
-  const order: string[] = [];
-
-  const newSource = source.replace(CITE_RE, (_m, latexKeys?: string, mdKeys?: string) => {
-    const raw = latexKeys ?? mdKeys ?? "";
-    const keys = raw
-      .split(/[;,]/)
-      .map((k) => k.replace(/^[@$]/, "").trim())
-      .filter(Boolean);
-    const inner = keys
-      .map((k) => {
-        if (!byKey.has(k)) return `<span class="ob-cite-missing" title="unknown key: ${escAttr(k)}">?</span>`;
-        if (!numByKey.has(k)) {
-          order.push(k);
-          numByKey.set(k, order.length);
-        }
-        const num = numByKey.get(k)!;
-        return `<a class="ob-cite" href="#${refId(k)}">${num}</a>`;
-      })
-      .join(", ");
-    return `[${inner}]`;
-  });
-
-  const references: CompiledReference[] = order.map((key, idx) => ({
-    n: idx + 1,
-    key,
-    entry: byKey.get(key)!,
-  }));
-  return { source: newSource, references };
-}
-
-/** Render the compiled References section as an HTML block for the paper. */
-export function renderReferencesHtml(references: CompiledReference[]): string {
-  if (!references.length) return "";
-  const items = references
-    .map((r) => `<li id="${refId(r.key)}">${formatReference(r.entry)}</li>`)
-    .join("\n");
-  return `\n\n<section class="ob-references">\n<h2 id="references">References</h2>\n<ol class="ob-refs">\n${items}\n</ol>\n</section>\n`;
 }

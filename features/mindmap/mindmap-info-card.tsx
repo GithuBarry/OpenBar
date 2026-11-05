@@ -106,10 +106,10 @@ export function MindmapInfoCard({
               <dd className="max-w-[65%] truncate text-right text-muted">{git.author || "Unknown author"}</dd>
             </div>
             <div className="text-muted">
-              <span className="text-faint">Message · </span>{git.message || "Untitled commit"}
+              <span className="text-faint">Message: </span>{git.message || "Untitled commit"}
             </div>
             <div className="text-muted">
-              <span className="text-faint">Hash · </span><code>{git.hash.slice(0, 12)}…</code>
+              <span className="text-faint">Hash: </span><code>{git.hash.slice(0, 12)}…</code>
             </div>
 
           </dl>

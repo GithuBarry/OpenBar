@@ -2,8 +2,10 @@
  * AGENTS.md and skill WebMCP tools for the instructions page.
  */
 
+import { INSTRUCTIONS_INPUTS } from "./command-inputs";
+import { commandJsonSchemas, parseCommandInput } from "./command-schema";
 import { failResult, okResult, type OperationResult } from "./operation-result";
-import { parseWebMcpArgs, unknownWebMcpArgument, type JsonSchemaObject, type PaperWebMcpTool } from "./webmcp-paper-contract";
+import { type PaperWebMcpTool } from "./webmcp-paper-contract";
 import type { CurrentLocation, SharedWebMcpActions } from "./webmcp-shared-contract";
 
 export type SkillWriteSpec = { id: string; name?: string; description?: string; body: string };
@@ -37,36 +39,7 @@ const NAMES = [
 
 type ToolName = (typeof NAMES)[number];
 
-function objectSchema(properties: Record<string, unknown> = {}, required: string[] = []): JsonSchemaObject {
-  return { type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false };
-}
-
-const SCHEMAS: Record<ToolName, JsonSchemaObject> = {
-  write_agents_md: objectSchema({ body: { type: "string" }, expectedHash: { type: "string" } }, ["body"]),
-  write_project_skill: objectSchema(
-    {
-      id: { type: "string" },
-      name: { type: "string" },
-      description: { type: "string" },
-      body: { type: "string" },
-      expectedHash: { type: "string" },
-    },
-    ["id", "body"],
-  ),
-  delete_project_skill: objectSchema({ id: { type: "string" }, expectedHash: { type: "string" } }, ["id", "expectedHash"]),
-  write_workspace_agents_md: objectSchema({ body: { type: "string" }, expectedHash: { type: "string" } }, ["body"]),
-  write_workspace_skill: objectSchema(
-    {
-      id: { type: "string" },
-      name: { type: "string" },
-      description: { type: "string" },
-      body: { type: "string" },
-      expectedHash: { type: "string" },
-    },
-    ["id", "body"],
-  ),
-  delete_workspace_skill: objectSchema({ id: { type: "string" }, expectedHash: { type: "string" } }, ["id", "expectedHash"]),
-};
+const SCHEMAS = commandJsonSchemas(INSTRUCTIONS_INPUTS);
 
 const META: Record<ToolName, { title: string; description: string }> = {
   write_agents_md: {
@@ -111,11 +84,9 @@ async function executeInstructionsTool(
   name: ToolName,
   rawArgs: unknown,
 ): Promise<OperationResult<unknown>> {
-  const parsedArgs = parseWebMcpArgs(rawArgs);
+  const parsedArgs = parseCommandInput(INSTRUCTIONS_INPUTS[name], rawArgs, true);
   if (!parsedArgs.ok) return failResult("invalid_arguments", parsedArgs.message, { retryable: false });
   const args = parsedArgs.value;
-  const unknown = unknownWebMcpArgument(args, SCHEMAS[name]);
-  if (unknown) return failResult("invalid_arguments", `Unknown argument "${unknown}".`, false);
   try {
     switch (name) {
       case "write_agents_md": {

@@ -23,7 +23,7 @@ export default async function WikiDetail({
     <>
       <PageHeader
         title={project.title}
-        subtitle={`Wiki · ${page.title}`}
+        subtitle={`Wiki: ${page.title}`}
         project={project}
         readOnlyProject={isPublicDemoMode()}
         icon={<FileText size={18} />}

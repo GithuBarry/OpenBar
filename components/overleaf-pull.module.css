@@ -2,8 +2,7 @@
 .trigger:disabled, .dialog button:disabled { opacity: .5; cursor: default; }
 .notice { font-size: 11px; color: rgb(var(--muted)); }
 .dialog { width: min(960px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid rgb(var(--line)); border-radius: 12px; background: rgb(var(--surface)); color: rgb(var(--ink)); box-shadow: 0 24px 80px rgb(0 0 0 / .3); }
-.dialog::backdrop { background: rgb(0 0 0 / .35); }
-.dialog[open] { display: flex; flex-direction: column; }
+.dialog { display: flex; flex-direction: column; }
 .header, .footer { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px; }
 .header { border-bottom: 1px solid rgb(var(--line)); }
 .header h2 { font-size: 17px; font-weight: 600; }

@@ -22,6 +22,8 @@ export interface Project {
   venue?: string;
   createdAt: string;
   updatedAt: string;
+  /** Latest saved authored project change. Computed on read and excluded from stored metadata. */
+  lastEditedAt?: string;
   color?: string;
   icon?: string;
   links: ProjectLink[];
@@ -56,9 +58,9 @@ export interface MindmapNode {
    * Empty on TODO cards — TeX owns the text.
    */
   text: string;
-  /** Map-owned model-facing context hidden from the rendered card, including on TODO cards. */
+  /** Map-owned text in the collapsed notes section, including on TODO cards. */
   caption?: string;
-  /** Map-owned qualifications by importance. Critical and important appear on hover. */
+  /** Map-owned notes. Critical and important are visible, background opens in a collapsed section. */
   caution?: MindmapCaution;
   /** When set, this card is a view of the TeX `\obtodo` with this id. */
   todoId?: string;
@@ -72,7 +74,7 @@ export interface MindmapNode {
   tableLayout?: "wide" | "scroll";
   color?: string;
   tags?: string[];
-  /** Optional seven-state planning indicator. Zero is empty; absent is hidden. */
+  /** Optional map-local 0–6 progress or ditched status. Absent is hidden. */
   progress?: MindmapProgress;
   /** Optional map-local priority. The value has no scientific meaning. */
   priority?: "P0" | "P1" | "P2" | "P3";

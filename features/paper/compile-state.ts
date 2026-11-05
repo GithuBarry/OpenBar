@@ -113,6 +113,7 @@ export function transitionCompileStatus(
   if (next.state && next.state !== "running") {
     delete merged.observationDelayed;
   }
+  if (next.state === "success" && next.message === undefined) delete merged.message;
 
   const targetMismatch = retainedArtifact && (next.buildInputHash || next.sourceHash)
     ? !artifactMatchesTarget(retainedArtifact, next)

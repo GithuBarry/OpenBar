@@ -81,6 +81,27 @@ export type SourceOperation =
   | AddCommentOperation
   | AssignTodoIdsOperation;
 
+/** Build the shared operation after the transport validates its command input. */
+export function sourceOperation(
+  name: "replace_source_range" | "add_todo" | "update_todo" | "add_comment" | "complete_todo" | "reopen_todo",
+  args: Record<string, unknown>,
+): SourceOperation {
+  const id = (args.id ?? args.todoId) as string;
+  switch (name) {
+    case "replace_source_range":
+      return { type: "replace_range", from: args.from as number, to: args.to as number, text: args.text as string };
+    case "add_comment":
+      return { type: name, from: args.from as number, to: args.to as number, text: args.text as string, kind: args.kind as string | undefined, id };
+    case "add_todo":
+      return { type: name, from: args.from as number, to: args.to as number, title: args.title as string | undefined, text: args.text as string, textFormat: args.textFormat as "plain" | "tex" | undefined, id };
+    case "update_todo":
+      return { type: name, id, title: args.title as string | undefined, text: args.text as string | undefined, textFormat: args.textFormat as "plain" | "tex" | undefined, completed: args.completed as boolean | undefined };
+    case "complete_todo":
+    case "reopen_todo":
+      return { type: name, id };
+  }
+}
+
 export type SourcePatch = {
   filePath: string;
   from: number;

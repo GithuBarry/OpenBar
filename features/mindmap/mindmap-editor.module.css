@@ -1,5 +1,5 @@
 .editor { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); --overleaf-notice-top: 70px; grid-template-rows: 60px minmax(0, 1fr); height: 100%; min-height: 0; overflow: hidden; background: rgb(var(--canvas)); }
-.inspector { position: absolute; grid-column: 1; grid-row: 2; inset: 16px 16px auto auto; z-index: 26; display: flex; min-height: 0; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; background: rgb(var(--surface)); color: rgb(var(--ink)); padding: 0; font-family: var(--font-sans); width: 304px; max-height: calc(100% - 32px); border: 1px solid rgb(var(--line)); border-radius: 12px; margin: 0; box-shadow: 0 10px 32px rgb(0 0 0 / .12); }
+.inspector { position: absolute; grid-column: 1; grid-row: 2; inset: 16px 16px auto auto; z-index: 26; display: flex; min-height: 0; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; background: rgb(var(--surface)); color: rgb(var(--ink)); padding: 0; font-family: var(--font-sans); width: 304px; max-height: calc(100% - 32px); border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); margin: 0; box-shadow: var(--shadow-pop); }
 .inspector > * { flex-shrink: 0; }
 @media (max-width: 600px) {
   .editor:has(:global([data-editor-notice])) .inspector { top: 52px; max-height: calc(100% - 64px); }
@@ -41,7 +41,7 @@
 
 /* The workspace owns its chrome and geometry as one component. */
 .editor > :global(.mindmap-workspace) { grid-column: 1; grid-row: 2; position: relative; }
-.toolbar { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; min-width: 0; gap: 16px; padding: 0 20px; background: rgb(var(--surface)); border-bottom: 1px solid rgb(var(--line)); z-index: 24; }
+.toolbar { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; min-width: 0; gap: 16px; padding: 0 20px; background: rgb(var(--toolbar)); border-bottom: 1px solid rgb(var(--line)); z-index: 24; }
 .viewTabs { display: flex; gap: 4px; align-items: center; min-width: 0; }
 .viewTabs > button { display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border-radius: 7px; color: rgb(var(--muted)); font-size: 12px; font-weight: 500; white-space: nowrap; cursor: pointer; }
 .viewTabs > button[aria-selected="true"] { color: rgb(var(--ink)); background: rgb(var(--surface-2)); box-shadow: inset 0 0 0 1px rgb(var(--line) / .7); }
@@ -50,11 +50,11 @@
 .toolbarActions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .iconButton { display: inline-flex; align-items: center; justify-content: center; height: 34px; width: 34px; border-radius: 7px; color: rgb(var(--muted)); cursor: pointer; flex-shrink: 0; }
 .iconButton:hover, .iconButton[aria-expanded="true"] { background: rgb(var(--surface-2)); color: rgb(var(--ink)); }
-.primaryButton { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 7px; background: rgb(var(--accent)); color: white; font-size: 12px; font-weight: 550; cursor: pointer; box-shadow: 0 1px 2px rgb(0 0 0 / .08); white-space: nowrap; }
+.primaryButton:global(.p-button) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 7px; background: rgb(var(--accent)); color: rgb(var(--accent-ink)); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
 .primaryButton:hover { filter: brightness(1.08); }
 .searchTrigger { display: flex; align-items: center; gap: 8px; width: 168px; height: 34px; border: 1px solid rgb(var(--line)); border-radius: 7px; padding: 0 9px; color: rgb(var(--faint)); font-size: 11px; cursor: pointer; }
 .searchTrigger > kbd { margin-left: auto; font-family: var(--font-sans); color: rgb(var(--faint)); }
-.searchPanel, .optionsPanel { z-index: 90; border: 1px solid rgb(var(--line)); border-radius: 12px; background: rgb(var(--surface)); color: rgb(var(--ink)); box-shadow: 0 12px 40px rgb(0 0 0 / .14); font-family: var(--font-sans); width: min(420px, calc(100vw - 24px)); overflow: hidden; }
+.searchPanel, .optionsPanel { z-index: 90; border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); background: rgb(var(--surface)); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); font-family: var(--font-sans); width: min(420px, calc(100vw - 24px)); overflow: hidden; }
 .searchField { display: flex; align-items: center; gap: 10px; padding: 14px; border-bottom: 1px solid rgb(var(--line)); color: rgb(var(--muted)); }
 .searchField > input { flex: 1; min-width: 0; background: transparent; outline: none; font-size: 13px; color: rgb(var(--ink)); }
 .searchResults { max-height: min(380px, 55vh); overflow-y: auto; padding: 6px; }
@@ -64,8 +64,9 @@
 .searchResults > button[aria-selected="true"] { background: rgb(var(--accent) / .08); color: rgb(var(--accent)); }
 .searchResults > p { padding: 20px 12px; font-size: 12px; color: rgb(var(--muted)); }
 .searchFooter { border-top: 1px solid rgb(var(--line)); padding: 9px 14px; font-size: 10px; color: rgb(var(--faint)); }
-.optionsPanel { width: min(288px, calc(100vw - 24px)); padding: 16px; }
+.optionsPanel { width: min(288px, calc(100vw - 24px)); max-height: min(700px, calc(100dvh - 24px)); overflow-y: auto; padding: 16px; }
 .optionsPanel > :global(.mindmap-field) { margin-bottom: 12px; }
+.activityFilter { display: grid; gap: 10px; padding: 10px 0; }
 .optionRow { display: flex; align-items: center; gap: 9px; padding: 10px 0; width: 100%; text-align: left; font-size: 12px; color: rgb(var(--muted)); cursor: pointer; }
 .optionRow:hover { color: rgb(var(--ink)); }
 .shortcutList { padding: 10px; border-radius: 6px; background: rgb(var(--surface-2)); font-size: 10px; color: rgb(var(--muted)); }
@@ -86,9 +87,9 @@
 .moveNotice > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .moveNotice > button { color: rgb(var(--accent)); font-weight: 600; cursor: pointer; }
 .editor :global(.mindmap-viewport) { background: rgb(var(--canvas)); }
-.card { border-radius: 10px; box-shadow: 0 1px 3px rgb(0 0 0 / .035); }
+.card { border-radius: 12px; box-shadow: 0 1px 3px rgb(0 0 0 / .035); }
 .card:global(.mindmap-node-selected) { border-color: var(--mind-node-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--mind-node-accent) 62%, transparent), 0 5px 16px rgb(0 0 0 / .08); }
-.card:global(.mindmap-node-root) { background: color-mix(in srgb, rgb(var(--accent)) 3%, rgb(var(--surface))); }
+.card:global(.mindmap-node-root) { --mind-card-surface: color-mix(in srgb, rgb(var(--accent)) 3%, rgb(var(--surface))); background: var(--mind-card-surface); }
 .editor :global(.react-flow__controls) { overflow: hidden; border-radius: 9px; border: 1px solid rgb(var(--line)); box-shadow: 0 2px 8px rgb(0 0 0 / .04); bottom: 8px; left: 16px; }
 .editor :global(.react-flow__controls-button) { width: 30px; height: 30px; border-bottom-color: rgb(var(--line)); }
 .editor :global(.mindmap-save-error) { font-size: 11px; line-height: 1.5; padding: 8px 16px; }
@@ -137,25 +138,34 @@
 .todoHeading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 16px; margin-bottom: 8px; font-size: 10px; line-height: 16px; }
 .todoKind, .todoStatus { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .todoKind { color: rgb(var(--muted)); font-weight: 500; }
+.todoTick { min-height: 28px; margin-block: -6px; cursor: pointer; }
+.todoTick input { width: 16px; height: 16px; accent-color: rgb(var(--accent)); }
+@media (pointer: coarse) { .todoTick { min-height: 36px; margin-block: -10px; } }
 .todoKind svg { color: var(--mind-node-accent); }
 .todoStatus { color: rgb(var(--muted)); }
 .todoComplete { color: rgb(var(--ok)); }
 .todoMissing { color: rgb(var(--warn)); }
 @media (max-width: 700px) { .workspaceFooter { flex-wrap: wrap; padding: 0 12px 0 60px; } }
 .progressChoices { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
-.progressChoices > button { display: grid; place-items: center; width: 28px; height: 32px; border: 1px solid transparent; border-radius: 6px; color: rgb(var(--ok)); }
+.progressChoices > button { display: grid; place-items: center; width: 25px; height: 32px; border: 1px solid transparent; border-radius: 6px; color: rgb(var(--ok)); }
 .progressChoices > button[aria-pressed="true"] { background: rgb(var(--ok) / .12); border-color: rgb(var(--ok) / .4); }
 .progressChoices > button:focus-visible { outline: 2px solid rgb(var(--ok)); outline-offset: 1px; }
 .progressChoices > .progressClear { width: auto; padding: 0 5px; font-size: 10px; color: rgb(var(--muted)); }
 .progressChoices > button:disabled { opacity: .5; }
 .progressCompact { display: inline-flex; align-items: center; color: rgb(var(--ok)); }
-.cardProgress { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+.cardProgress { position: absolute; top: 13px; right: 14px; display: inline-flex; }
+.card:has(> .cardProgress) :global(.mindmap-node-title), .card:has(> .cardProgress) :global(.mindmap-inline-editor .cm-line:first-child) { padding-right: 24px; }
 .todoComplete { color: rgb(var(--muted)); }
 .progressChoices > .progressClear[aria-pressed="true"] { background: rgb(var(--accent) / .1); border-color: rgb(var(--accent) / .4); color: rgb(var(--accent)); }
 .canvasTools { display: flex; align-items: center; gap: 8px; }
-.canvasTools > button { display: flex; align-items: center; gap: 8px; white-space: nowrap; padding: 7px 10px; border: 1px solid rgb(var(--line)); border-radius: 7px; font-size: 12px; }
+.canvasTools > button { display: flex; align-items: center; gap: 8px; height: 32px; white-space: nowrap; padding: 0 10px; border: 1px solid transparent; border-radius: 7px; font-size: 12px; }
 .canvasTools > button[aria-expanded="true"] { background: rgb(var(--accent) / .1); color: rgb(var(--accent)); }
 .canvasTools span { padding: 1px 5px; border-radius: 4px; background: rgb(var(--surface-2)); font-size: 10px; }
+.canvasTools > .depthCollapse { gap: 5px; cursor: pointer; }
+.canvasTools > .depthCollapse[data-collapsed="true"] { background: rgb(var(--accent) / .1); color: rgb(var(--accent)); }
+.canvasTools > .depthCollapse:disabled { opacity: .45; cursor: default; }
+.canvasTools .depthCollapseLabel, .canvasTools .depthCollapseCompact { padding: 0; background: transparent; font-size: inherit; }
+.canvasTools .depthCollapseCompact { display: none; }
 .canvasLayout { position: absolute; inset: 0; display: flex; min-width: 0; min-height: 0; }
 .canvasSurface { position: relative; min-width: 0; flex: 1; }
 .unplacedTray { width: 244px; flex-shrink: 0; overflow-y: auto; padding: 12px; border-right: 1px solid rgb(var(--line)); background: rgb(var(--surface)); }
@@ -170,6 +180,19 @@
 .todoDragGhost { position: fixed; z-index: 1000; max-width: 220px; padding: 10px 14px; border: 1px solid rgb(var(--accent)); border-radius: 9px; box-shadow: 0 8px 24px rgb(0 0 0 / .15); background: rgb(var(--surface)); font-size: 12px; pointer-events: none; }
 .card[data-todo-drop-target="true"] { outline: 3px solid rgb(var(--accent)); outline-offset: 4px; }
 @media (max-width: 700px) { .unplacedTray { width: 156px; padding: 8px; } .toolbar { min-height: 96px; height: auto; } .canvasTools { order: 2; } }
+@media (max-width: 600px) {
+  .editor { --overleaf-notice-top: 62px; grid-template-rows: 52px minmax(0, 1fr); }
+  .toolbar { min-height: 52px; flex-wrap: nowrap; gap: 4px; padding: 4px 8px; }
+  .canvasTools { order: 0; gap: 4px; }
+  .canvasTools > .depthCollapse { padding-inline: 7px; }
+  .canvasTools .depthCollapseLabel { display: none; }
+  .canvasTools .depthCollapseCompact { display: inline; }
+  .toolbarActions { width: auto; min-width: 0; flex: 1; gap: 2px; }
+  .searchTrigger { width: 34px; margin-right: 0; justify-content: center; }
+  .searchTrigger > span, .primaryButton > span { display: none; }
+  .primaryButton:global(.p-button) { width: 34px; padding: 0; }
+}
+@media (pointer: coarse) { .inspector button, .inspector summary { min-height: 36px; } }
 .editToolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 7px; border: 1px solid rgb(var(--muted) / .4); border-radius: 10px; background: rgb(var(--surface)); color: rgb(var(--ink)); box-shadow: 0 8px 26px rgb(0 0 0 / .18), 0 0 0 3px rgb(var(--surface) / .8); max-width: calc(100vw - 60px); }
 .editToolbarButton { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 30px; min-height: 30px; padding: 4px 6px; border-radius: 6px; color: rgb(var(--ink)); font-size: 12px; }
 .editToolbarButton:hover { background: rgb(var(--surface-2)); }
@@ -177,19 +200,15 @@
 .canvasSurface { overflow: hidden; }
 
 .cardPlaceholder { color: rgb(var(--faint)); font-size: 14px; line-height: 20px; }
-.card.agentDraft { border-style: dashed; background: rgb(var(--surface-2)); }
-.draftHeading { position: absolute; top: -7px; left: 12px; padding: 0 4px; background: rgb(var(--surface-2)); color: rgb(var(--accent)); font-size: 9px; line-height: 14px; }
-.draftActions { position: absolute; top: -11px; right: 8px; display: flex; gap: 2px; padding: 0 2px; border-radius: 6px; background: rgb(var(--surface-2)); }
+.card.agentDraft { --mind-card-surface: rgb(var(--surface)); border: 1.5px dashed rgb(var(--accent) / .72); border-left-width: 2px; background: var(--mind-card-surface); box-shadow: 0 2px 7px rgb(0 0 0 / .10); }
+.draftHeading { position: absolute; top: -7px; left: 12px; padding: 0 4px; background: rgb(var(--surface)); color: rgb(var(--accent)); font-size: 9px; line-height: 14px; }
+.activityBadge { position: absolute; top: -3px; right: 12px; width: 7px; height: 7px; border-radius: 50%; background: rgb(var(--accent)); cursor: help; }
+.activityBadge:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 3px; }
+.agentDraft .activityBadge { right: 64px; }
+.draftActions { position: absolute; top: -12px; right: 8px; display: flex; gap: 2px; padding: 1px 3px; border: 1px solid rgb(var(--line)); border-radius: 7px; background: rgb(var(--surface)); box-shadow: 0 1px 4px rgb(0 0 0 / .10); }
 .draftActions button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 5px; color: rgb(var(--muted)); cursor: pointer; }
 .draftActions button:hover { color: rgb(var(--ink)); background: rgb(var(--line) / .6); }
 .draftActions button:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; }
-.noteTrigger { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; margin-top: 10px; border: 1px solid rgb(var(--line)); border-radius: 7px; color: rgb(var(--muted)); background: rgb(var(--surface)); font-size: 11px; cursor: pointer; }
-.noteTrigger:hover, .noteTrigger[data-state="open"] { color: rgb(var(--accent)); border-color: rgb(var(--accent) / .35); }
-.noteWindow { z-index: 65; width: min(420px, calc(100vw - 32px)); max-height: min(520px, var(--radix-popover-content-available-height)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid rgb(var(--line)); border-radius: 14px; background: rgb(var(--surface)); color: rgb(var(--ink)); box-shadow: 0 16px 56px rgb(0 0 0 / .18); font-family: var(--font-sans); }
-.noteWindow header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid rgb(var(--line)); font-size: 12px; font-weight: 600; }
-.noteWindow header span { display: flex; gap: 8px; align-items: center; }
-.noteWindow header button { padding: 4px; border-radius: 5px; color: rgb(var(--muted)); cursor: pointer; }
-.noteBody { min-height: 0; padding: 16px 18px; overflow: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.75; }
 
 
 
@@ -200,6 +219,3 @@
 @keyframes inspectorExit { from { opacity: 1; transform: translateX(0) scale(1); } to { opacity: 0; transform: translateX(40px) scale(.95); } }
 @keyframes inspectorHandleEnter { from { opacity: 0; transform: translate(16px, -50%); } to { opacity: 1; transform: translate(0, -50%); } }
 @media (prefers-reduced-motion: reduce) { .inspector, .inspector[data-state="closed"], .inspectorHandle { animation: none; } .inspector[data-state="closed"] { visibility: hidden; } }
-
-.fontSizeField > span { display: flex; justify-content: space-between; }
-.fontSizeField input[type="range"] { width: 100%; padding: 0; accent-color: rgb(var(--accent)); cursor: pointer; }
