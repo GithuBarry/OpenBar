@@ -224,6 +224,7 @@
 }
 @container (max-width: 520px) {
   .fontTools, .canvasTools .unplacedLabel, .primaryButton > span, .canvasTools .depthCollapseLabel { display: none; }
+  .historyControls > span { display: none; }
   .canvasTools .depthCollapseCompact { display: inline; }
   .primaryButton:global(.p-button) { width: 34px; padding-inline: 0; }
 }
