@@ -182,37 +182,50 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
     // setup before it sends a lease request.
     const startTimer = window.setTimeout(() => void start(), 0);
     const timer = window.setInterval(async () => {
+      const current = credential.current;
       try {
-        const current = credential.current;
         if (current) {
           const result = await request("heartbeat", current);
-          if (stopped) return;
+          if (stopped || credential.current !== current) return;
           if (result.status) setStatus(result.status);
           if (!result.ok) { record(null); setWritable(false); setMessage(result.message || "Editing access changed. Your open draft stays in this tab."); }
           else { setWritable(true); setMessage(null); }
         } else {
           const next = await readStatus();
-          if (!stopped) setStatus(next);
+          if (!stopped && credential.current === current) setStatus(next);
         }
-      } catch { if (!stopped) { setWritable(false); setMessage("Could not check editing access. Your open draft stays in this tab."); } }
+      } catch { if (!stopped && credential.current === current) { setWritable(false); setMessage("Could not check editing access. Your open draft stays in this tab."); } }
     }, PROJECT_WRITE_SESSION_HEARTBEAT_MS);
     const pagehide = () => {
       const current = credential.current;
       if (!current) return;
       try { sessionStorage.setItem(storageKey, JSON.stringify({ credential: current, continuationReady: true })); } catch { /* The lease expires if this tab cannot resume. */ }
+      const body = JSON.stringify({ action: "release", credential: current });
+      try {
+        if (navigator.sendBeacon(endpoint, new Blob([body], { type: "application/json" }))) return;
+      } catch { /* Use a keepalive request when beacon delivery is unavailable. */ }
+      void fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
+    };
+    const pageshow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      setWritable(false);
+      if (credential.current) void claim(credential.current);
+      else void check();
     };
     window.addEventListener("pagehide", pagehide);
+    window.addEventListener("pageshow", pageshow);
     return () => {
       stopped = true;
       mounted.current = false;
       clearTimeout(startTimer);
       clearInterval(timer);
       window.removeEventListener("pagehide", pagehide);
+      window.removeEventListener("pageshow", pageshow);
       if (credential.current && pendingKeys.current.size === 0 && pendingRequests.current === 0) {
         navigationContinuations.set(storageKey, credential.current);
       }
     };
-  }, [claim, publicDemo, readStatus, record, request, storageKey]);
+  }, [check, claim, endpoint, publicDemo, readStatus, record, request, storageKey]);
 
   const release = useCallback(async () => {
     const current = credential.current;
