@@ -1,3 +1,4 @@
+import type {} from "webmcp-types";
 import { failResult } from "./operation-result";
 
 export type WebMcpRegistration = {
@@ -19,31 +20,14 @@ export type WebMcpCatalogEntry = {
   surface: WebMcpSurface;
 };
 
-export type WebMcpTool = {
-  name: string;
+export type WebMcpTool = Omit<WebMCP.ModelContextTool, "title" | "inputSchema" | "annotations" | "execute"> & {
   title: string;
-  description: string;
-  inputSchema: unknown;
+  inputSchema: object;
   annotations: { readOnlyHint: boolean; untrustedContentHint?: boolean };
   execute: (args?: unknown, options?: { signal?: AbortSignal }) => Promise<unknown> | unknown;
 };
 
-type NativeWebMcpTool = {
-  name: string;
-  title?: string;
-  description: string;
-};
-
-export type WebMcpModelContext = {
-  registerTool: (tool: WebMcpTool, options?: { signal?: AbortSignal; exposedTo?: string[] }) => Promise<void>;
-  getTools?: () => Promise<readonly NativeWebMcpTool[]>;
-};
-
-declare global {
-  interface Document {
-    readonly modelContext?: WebMcpModelContext;
-  }
-}
+export type WebMcpModelContext = Pick<WebMCP.ModelContext, "registerTool"> & Partial<Pick<WebMCP.ModelContext, "getTools">>;
 
 type BrowserAgentBridge = {
   listTools: () => Array<Omit<WebMcpTool, "execute">>;
@@ -75,30 +59,9 @@ function exposeBrowserBridge(): void {
   };
 }
 
-let navigatorHost: WebMcpModelContext | undefined;
-let navigatorAdapter: WebMcpModelContext | undefined;
-
-/** Normalize the native registration API exposed by the current browser. */
 export function getBrowserModelContext(): WebMcpModelContext | undefined {
   if (typeof document === "undefined") return undefined;
-  if (document.modelContext?.registerTool) return document.modelContext;
-  const native = (navigator as Navigator & { modelContext?: WebMcpModelContext }).modelContext;
-  if (!native?.registerTool) return undefined;
-  if (native === navigatorHost && navigatorAdapter) return navigatorAdapter;
-  navigatorHost = native;
-  navigatorAdapter = {
-    async registerTool(tool, options) {
-      await native.registerTool({
-        ...tool,
-        execute: async (args, executionOptions) => {
-          const result = await tool.execute(args, executionOptions);
-          return typeof result === "string" ? result : JSON.stringify(result);
-        },
-      }, options);
-    },
-    ...(native.getTools ? { getTools: () => native.getTools!() } : {}),
-  };
-  return navigatorAdapter;
+  return document.modelContext?.registerTool ? document.modelContext : undefined;
 }
 
 type RegistrationOwner = {
