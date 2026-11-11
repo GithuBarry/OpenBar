@@ -63,7 +63,9 @@
     ".next-ui-polish-final/types/**/*.ts",
     ".next-ui-polish-final/dev/types/**/*.ts",
     ".next-recovered-release/types/**/*.ts",
-    ".next-recovered-release/dev/types/**/*.ts"
+    ".next-recovered-release/dev/types/**/*.ts",
+    ".next-codex-production-20261110-inbox-session/types/**/*.ts",
+    ".next-codex-production-20261110-inbox-session/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
