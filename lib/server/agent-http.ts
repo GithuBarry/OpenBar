@@ -19,8 +19,8 @@ export function agentCors(request: Request, response: Response): Response {
     headers.set("Access-Control-Allow-Origin", origin)
     headers.set("Access-Control-Allow-Credentials", "true")
     headers.set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-    headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID")
-    headers.set("Access-Control-Expose-Headers", "Mcp-Session-Id, Mcp-Protocol-Version, WWW-Authenticate")
+    headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type, Mcp-Protocol-Version, Mcp-Method, Mcp-Name, Last-Event-ID")
+    headers.set("Access-Control-Expose-Headers", "Mcp-Protocol-Version, WWW-Authenticate")
   }
   return new Response(response.body, { status: response.status, headers })
 }

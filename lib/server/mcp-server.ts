@@ -21,10 +21,8 @@ export function createOpenbarMcpServer(actor: string): Server {
   server.setRequestHandler("tools/call", async (request, context) => {
     const { name, arguments: args = {} } = request.params
     if (!getMcpTool(name)) throw new ProtocolError(-32602, `Unknown tool "${name}".`, { code: "invalid_arguments" })
-    const id = context.mcpReq.id
     const result = await executeMcpTool(name, args, {
       actor,
-      requestId: context.sessionId ? `${context.sessionId}:${typeof id}:${String(id)}` : undefined,
       signal: context.mcpReq.signal,
     })
     return {

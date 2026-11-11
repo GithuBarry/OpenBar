@@ -84,13 +84,17 @@ their judgment to recognize similar content.
 The `/api/mcp` endpoint requires a bearer token from `OPENBARRY_ACCESS_TOKEN`
 or a verified Cloudflare Access identity allowed by the deployment. Public
 demo access and same-origin browser access do not grant MCP access. The
-endpoint supports `initialize`, `tools/list`, `tools/call`, bounded JSON
-requests, session ids, and JSON-RPC errors.
+endpoint supports SDK protocol discovery, `tools/list`, `tools/call`, bounded
+JSON requests, and JSON-RPC errors. The SDK also supports 2025 initialization.
 
 Use the authenticated endpoint for saved-state work such as bounded reads,
 paper and map edits, batch previews and applies, activity, compilation, and
 Git status or synchronization. Every write supplies project identity and a
-revision or disk hash where the resource supports compare-and-swap.
+revision or disk hash where the resource supports compare-and-swap. Supply a
+unique stable `requestId` to mutation tools that accept it and reuse that ID
+for a retry. HTTP requests have independent transport state, so JSON-RPC IDs
+identify calls within a transport exchange rather than serving as durable retry
+keys.
 
 ## Page-local tools
 
@@ -325,16 +329,13 @@ The bridge requires a running authenticated OpenBar server.
 
 The official MCP SDK handles HTTP framing, protocol negotiation, cancellation,
 discovery, and the stdio relay. The endpoint supports the current `2026-07-28`
-per-request protocol alongside session-based `2025-03-26`, `2025-06-18`, and
-`2025-11-25` clients. The existing tool schemas and result envelopes are shared
-by both transports.
+per-request protocol alongside `2025-03-26`, `2025-06-18`, and `2025-11-25`
+clients using the SDK's stateless HTTP handler. Tool schemas and result
+envelopes are shared across transports.
 
-Legacy sessions use JSON responses and return 405 for optional GET event streams.
-Clients poll `get_paper_compile` for jobs. Authenticated requests refresh session
-activity. Sessions expire after 30 idle minutes and release their SDK resources.
-A 404 for an expired session requires initialization again. Unsupported protocol
-versions receive 400. Untrusted origins receive 403. Bearer authentication returns
-a Bearer challenge on 401.
+Clients poll `get_paper_compile` for jobs. Unsupported protocol versions receive
+an SDK protocol error. Untrusted origins receive 403. Bearer authentication
+returns a Bearer challenge on 401.
 
 Stdio clients keep the bridge's standard input open while awaiting responses.
 Closing standard input shuts down the SDK transports and cancels pending work.

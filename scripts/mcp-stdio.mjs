@@ -28,11 +28,11 @@ const http = new StreamableHTTPClientTransport(endpoint, {
 
 let closed = false
 let initialized = Promise.resolve()
-function report(error) { process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`) }
+function report(error) { if (!closed) process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`) }
 async function close() {
   if (closed) return
   closed = true
-  await http.terminateSession().catch(report)
+  if (http.sessionId) await http.terminateSession().catch(report)
   await Promise.allSettled([http.close(), stdio.close()])
 }
 
