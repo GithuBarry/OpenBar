@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 type RemoteState = "checking" | "pending" | "syncing" | "synced" | "changed" | "blocked" | "unconfigured" | "unavailable" | "failed";
 
-export function SaveSyncStatus({ saved, saving, conflict = false, error, remote, onRetry, compact = false }: {
+export function SaveSyncStatus({ saved, saving, conflict = false, error, remote, onRetry, compact = false, iconOnly = false }: {
   saved: boolean;
   saving: boolean;
   conflict?: boolean;
@@ -14,9 +14,11 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
   remote: RemoteState;
   onRetry?: () => void;
   compact?: boolean;
+  iconOnly?: boolean;
 }) {
   const synced = saved && !saving && !conflict && remote === "synced";
-  const attention = conflict || remote === "changed" || remote === "blocked" || remote === "unavailable" || remote === "failed";
+  const review = remote === "changed" || remote === "blocked";
+  const remoteError = remote === "unavailable" || remote === "failed";
   const label = conflict ? "Save conflict"
     : saving ? "Saving…"
       : !saved ? "Unsaved changes"
@@ -41,16 +43,17 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
     <button type="button" onClick={canRetry ? onRetry : undefined}
       aria-label={label} aria-disabled={!canRetry} data-save-stage={synced ? "remote" : saved ? "local" : "unsaved"}
       className={cn("inline-flex min-w-0 items-center gap-1 rounded text-[11px] text-muted", canRetry ? "cursor-pointer hover:text-ink" : "cursor-default")}>
-      {conflict ? <CircleAlert size={12} className="shrink-0 text-danger" />
+      {conflict ? <CircleAlert size={12} className="shrink-0 text-[rgb(var(--danger))]" />
         : saving ? <LoaderCircle size={12} className="shrink-0 animate-spin text-accent" />
+          : !saved ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
           : synced ? <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-accent" aria-hidden="true">
             <path d="m1 12 5 5L17 6" />
             <path d="m7 12 5 5L23 6" />
           </svg>
-            : saved ? <Check size={13} className={cn("shrink-0", attention ? "text-warn" : "text-muted")} />
-              : <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />}
-      {saved && !saving && remote === "syncing" && <LoaderCircle size={11} className="shrink-0 animate-spin text-accent" />}
-      <span className={cn("min-w-0 truncate font-medium tabular-nums", compact && "hidden xl:inline")}>{label}</span>
+            : remote === "checking" || remote === "syncing" ? <LoaderCircle size={12} className="shrink-0 animate-spin text-accent" />
+              : review || remoteError ? <CircleAlert size={12} className={cn("shrink-0", remoteError ? "text-[rgb(var(--danger))]" : "text-[rgb(var(--warn))]")} />
+                : <Check size={13} className="shrink-0 text-muted" />}
+      <span className={cn("min-w-0 truncate font-medium tabular-nums", iconOnly ? "sr-only" : compact && "hidden xl:inline")}>{label}</span>
     </button>
   </FastTooltip>;
 }

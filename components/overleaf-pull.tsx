@@ -1,77 +1,123 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useProjectWriteSession } from "@/components/project-session/project-write-session";
 import { Modal } from "./modal";
 import { GitMergeEditor } from "./git-merge-editor";
 import { OverleafForce } from "./overleaf-force";
-import { Download, LoaderCircle, X } from "lucide-react";
-import { prepareProjectPullAction, finishProjectPullAction } from "@/app/actions";
+import { Check, Copy, Download, LoaderCircle, X } from "lucide-react";
+import { copyText } from "@/lib/copy-text";
+import { requestGitReview } from "@/lib/git-review-client";
 import type { OverleafConflictChoice, OverleafPullReview } from "@/lib/tex-project/overleaf-git";
+import type { ForcePullReconciliation, PendingForcePull } from "@/lib/research/force-sync-client";
 import styles from "./overleaf-pull.module.css";
 
-export function OverleafPull({ project, beforeReview, onApplied, onClosed, disabled = false }: {
+export function OverleafPull({ project, beforeReview, onApplied, onPullUncertain, onClosed, disabled = false }: {
   project: string;
   beforeReview?: () => Promise<boolean>;
-  onApplied: () => Promise<void>;
+  onApplied: (pending?: PendingForcePull) => Promise<void>;
+  onPullUncertain?: (reconcile: ForcePullReconciliation, pending: PendingForcePull) => void;
   onClosed?: () => void;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [review, setReview] = useState<OverleafPullReview | null>(null);
   const [choices, setChoices] = useState<Record<string, OverleafConflictChoice>>({});
-  const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "saving" | "preparing" | "applying" | "closing">("idle");
+  const busy = phase !== "idle";
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   const [notice, setNotice] = useState("");
+  const [logLines, setLogLines] = useState<{ id: number; text: string }[]>([]);
+  const nextLogId = useRef(0);
+  const { setPendingWork } = useProjectWriteSession();
+
+  useEffect(() => {
+    setPendingWork("git-review", open || busy);
+    return () => setPendingWork("git-review", false);
+  }, [open, busy, setPendingWork]);
 
   async function prepare() {
     if (busy) return;
-    setBusy(true); setError(""); setNotice(""); setChoices({}); setReview(null);
+    setPhase(beforeReview ? "saving" : "preparing"); setError(""); setCopied(false); setCopyError(false); setNotice(""); setChoices({}); setReview(null); setLogLines([]);
     setOpen(true);
+    let savingEditor = true;
     try {
       if (beforeReview && !await beforeReview()) throw new Error("Save the current editor changes before reviewing Git updates.");
-      const result = await prepareProjectPullAction(project);
+      savingEditor = false;
+      setPhase("preparing");
+      const result = await requestGitReview(project, { action: "prepare" }, text => {
+        const id = nextLogId.current++;
+        setLogLines(current => [...current, { id, text }].slice(-5));
+      });
       if (!result.ok) throw new Error(result.message);
       setReview(result.review);
-    } catch (err) { setError(err instanceof Error ? err.message : "Could not prepare Git updates."); }
-    finally { setBusy(false); }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not prepare Git updates.";
+      setError(savingEditor && message === "An unexpected response was received from the server."
+        ? "The current editor save received an unexpected server response. Keep this tab open to preserve your draft, then check your connection and sign-in before trying again."
+        : message);
+    }
+    finally { setPhase("idle"); }
   }
 
   async function close() {
     if (busy) return;
-    setBusy(true);
+    setPhase("closing");
     try {
       if (review) {
-        const result = await finishProjectPullAction(project, review.token, [], true);
+        const result = await requestGitReview(project, { action: "finish", token: review.token, choices: [], cancel: true });
         if (!result.ok) throw new Error(result.message);
+        if (result.applied) await onApplied();
       }
       setReview(null); setOpen(false); onClosed?.();
     } catch (err) { setError(err instanceof Error ? err.message : "Could not close review."); }
-    finally { setBusy(false); }
+    finally { setPhase("idle"); }
   }
 
   async function apply() {
     if (!review || busy) return;
-    setBusy(true); setError("");
+    setPhase("applying"); setError(""); setCopied(false); setCopyError(false);
     try {
-      const result = await finishProjectPullAction(project, review.token, Object.values(choices));
+      const result = await requestGitReview(project, { action: "finish", token: review.token, choices: Object.values(choices) });
       if (!result.ok) throw new Error(result.message);
-      setReview(null);
       await onApplied();
+      setReview(null);
       setNotice(result.message); setOpen(false); onClosed?.();
     } catch (err) { setError(err instanceof Error ? err.message : "Could not apply Git updates."); }
-    finally { setBusy(false); }
+    finally { setPhase("idle"); }
+  }
+
+  const diagnosticReport = [
+    "OpenBar Git review",
+    `Project: ${project}`,
+    `Error: ${error}`,
+    logLines.length ? `Recent Git output:\n${logLines.map(line => line.text).join("\n")}` : "",
+  ].filter(Boolean).join("\n\n");
+
+  async function copyDiagnostics() {
+    try { await copyText(diagnosticReport); setCopied(true); setCopyError(false); }
+    catch { setCopied(false); setCopyError(true); }
   }
 
   return <>
     <button type="button" className={styles.trigger} disabled={disabled || busy} onClick={() => void prepare()}><Download size={14} />Pull from Git</button>
-    <OverleafForce project={project} beforeReview={beforeReview} onApplied={onApplied} onClosed={onClosed} disabled={disabled || busy} />
+    <OverleafForce project={project} beforeReview={beforeReview} onApplied={onApplied} onPullUncertain={onPullUncertain} onClosed={onClosed} disabled={disabled || busy} />
     {notice && <span className={styles.notice} role="status">{notice}</span>}
     <Modal open={open} onClose={() => void close()} title="Review Git updates" busy={busy} className={styles.dialog}>
       <div className={styles.header}><h2 id="overleaf-pull-title">Review Git updates</h2><button type="button" aria-label="Close Git review" disabled={busy} onClick={() => void close()}><X size={18} /></button></div>
       <div className={styles.body}>
-        <p>Local changes are checkpointed in Git. Review the combined version, then apply it to this project.</p>
-        {busy && <p role="status"><LoaderCircle size={15} className={styles.spinner} /> Preparing or applying updates…</p>}
-        {error && <p className={styles.error} role="alert">{error}</p>}
+        <p>{review ? "Local changes are checkpointed in Git. Review the combined version, then apply it to this project." : "Prepare the incoming Git updates for review."}</p>
+        {busy && <p role="status"><LoaderCircle size={15} className={styles.spinner} /> {phase === "saving" ? "Saving current editor changes…" : phase === "preparing" ? "Preparing Git review, including fetching incoming updates…" : phase === "applying" ? "Applying reviewed updates and refreshing the editor…" : "Closing Git review…"}</p>}
+        {(busy || error) && logLines.length > 0 && <ol className={styles.progressLog} role="log" aria-label="Git review progress" aria-live="polite" aria-relevant="additions">{logLines.map(line => <li key={line.id}>{line.text}</li>)}</ol>}
+        {error && <>
+          <p className={`${styles.error} ${styles.errorDetails}`} role="alert">{error}</p>
+          <div className={styles.errorActions}>
+            <button type="button" onClick={() => void copyDiagnostics()}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? "Copied details" : "Copy error details"}</button>
+          </div>
+          {copyError && <label className={styles.diagnosticFallback}>Select and copy these details<textarea readOnly value={diagnosticReport} /></label>}
+        </>}
         {review && <>
           <p>{review.files.length} changed files, {review.conflicts.length} conflicts requiring your choice</p>
           <details><summary>Changed files</summary><ul>{review.files.map((file) => <li key={file}><code>{file}</code></li>)}</ul></details>
@@ -97,7 +143,11 @@ export function OverleafPull({ project, beforeReview, onApplied, onClosed, disab
           <p>Each choice applies to the entire file. Git combines changes in other files automatically. The combined result stays local until you save to Git.</p>
         </>}
       </div>
-      <div className={styles.footer}><button type="button" disabled={busy} onClick={() => void close()}>Cancel review</button><button type="button" disabled={busy || !review || review.conflicts.some((conflict) => !choices[conflict.path] || (choices[conflict.path].choice === "merged" && /^(<<<<<<< |=======\s*$|>>>>>>> )/m.test(choices[conflict.path].text || "")))} onClick={() => void apply()}>Apply updates</button></div>
+      <div className={styles.footer}>
+        <button type="button" disabled={busy} onClick={() => void close()}>{review ? "Cancel review" : "Close"}</button>
+        {review ? <button type="button" disabled={busy || review.conflicts.some((conflict) => !choices[conflict.path] || (choices[conflict.path].choice === "merged" && /^(<<<<<<< |=======\s*$|>>>>>>> )/m.test(choices[conflict.path].text || "")))} onClick={() => void apply()}>Apply updates</button>
+          : error && <button type="button" disabled={busy || disabled} onClick={() => void prepare()}>Retry review</button>}
+      </div>
     </Modal>
   </>;
 }

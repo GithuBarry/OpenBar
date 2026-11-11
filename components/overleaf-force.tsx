@@ -1,15 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useProjectWriteSession } from "@/components/project-session/project-write-session";
 import { Modal } from "./modal";
 import { prepareForceProjectSyncAction, confirmForceProjectSyncAction, finishForceProjectSyncAction } from "@/app/actions";
+import { finishForceRequest, persistPendingForcePull, readPendingForcePull, type ForcePullReconciliation, type PendingForcePull } from "@/lib/research/force-sync-client";
 import type { ForceSyncDirection, ForceSyncReview } from "@/lib/tex-project/overleaf-git";
 import styles from "./overleaf-pull.module.css";
 
-export function OverleafForce({ project, beforeReview, onApplied, onClosed, disabled }: {
+export function OverleafForce({ project, beforeReview, onApplied, onPullUncertain, onClosed, disabled }: {
   project: string;
   beforeReview?: () => Promise<boolean>;
-  onApplied: () => Promise<void>;
+  onApplied: (pending?: PendingForcePull) => Promise<void>;
+  onPullUncertain?: (reconcile: ForcePullReconciliation, pending: PendingForcePull) => void;
   onClosed?: () => void;
   disabled?: boolean;
 }) {
@@ -21,7 +24,19 @@ export function OverleafForce({ project, beforeReview, onApplied, onClosed, disa
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [direction, setDirection] = useState<ForceSyncDirection>("pull");
+  const finishAttempted = useRef(false);
+  const pendingPull = useRef<PendingForcePull | null>(null);
+  const { setPendingWork } = useProjectWriteSession();
+  useEffect(() => {
+    setPendingWork("git-force-review", open || busy);
+    return () => setPendingWork("git-force-review", false);
+  }, [open, busy, setPendingWork]);
+  const reportPullUncertain = (pending: PendingForcePull) => onPullUncertain?.(
+    () => finishForceRequest("pull", () => finishForceProjectSyncAction(project, pending.token, "", "", true)), pending,
+  );
   async function prepare(next: ForceSyncDirection) {
+    finishAttempted.current = false;
+    pendingPull.current = null;
     setDirection(next); setBusy(true); setError(""); setConfirmation(""); setPhrase(""); setNotice(""); setOpen(true);
     try {
       if (beforeReview && !await beforeReview()) throw new Error("Save the current editor changes before continuing.");
@@ -34,13 +49,19 @@ export function OverleafForce({ project, beforeReview, onApplied, onClosed, disa
   async function close() {
     if (busy) return;
     setBusy(true);
+    let uncertain = false;
     try {
       if (review) {
-        const result = await finishForceProjectSyncAction(project, review.token, "", "", true);
+        const result = await finishForceRequest(direction, () => finishForceProjectSyncAction(project, review.token, "", "", true), finishAttempted.current && pendingPull.current ? () => { uncertain = true; reportPullUncertain(pendingPull.current!); } : undefined);
+        if (uncertain) { setReview(null); setOpen(false); onClosed?.(); return; }
         if (!result.ok) throw new Error(result.message);
+        if (direction === "pull" && (result.applied || finishAttempted.current)) await onApplied(pendingPull.current || undefined);
       }
       setReview(null); setOpen(false); onClosed?.();
-    } catch (err) { setError(err instanceof Error ? err.message : "Could not cancel."); }
+    } catch (err) {
+      if (uncertain) { setReview(null); setOpen(false); onClosed?.(); }
+      else setError(err instanceof Error ? err.message : "Could not cancel.");
+    }
     finally { setBusy(false); }
   }
   async function confirm() {
@@ -56,12 +77,23 @@ export function OverleafForce({ project, beforeReview, onApplied, onClosed, disa
   async function finish() {
     if (!review || busy) return;
     setBusy(true); setError("");
+    let uncertain = false;
     try {
-      const result = await finishForceProjectSyncAction(project, review.token, confirmation, phrase);
+      if (direction === "pull") {
+        const existing = readPendingForcePull(project);
+        if (existing && existing !== review.token) {
+          reportPullUncertain({ token: existing, persisted: true });
+          throw new Error("Check the previous force pull before starting another.");
+        }
+        pendingPull.current = persistPendingForcePull(project, review.token);
+        if (!pendingPull.current.persisted) reportPullUncertain(pendingPull.current);
+      }
+      finishAttempted.current = true;
+      const result = await finishForceRequest(direction, () => finishForceProjectSyncAction(project, review.token, confirmation, phrase), () => { uncertain = true; if (pendingPull.current) reportPullUncertain(pendingPull.current); });
       if (!result.ok) throw new Error(result.message);
-      setReview(null); await onApplied();
+      await onApplied(pendingPull.current || undefined); setReview(null);
       setNotice(`${result.message} Both versions have Git recovery points.`); setOpen(false); onClosed?.();
-    } catch (err) { setError(err instanceof Error ? err.message : "Could not complete synchronization."); }
+    } catch (err) { const message = err instanceof Error ? err.message : "Could not complete synchronization."; setError(uncertain ? `Git may have updated the project. Reload the editor to check. ${message}` : message); }
     finally { setBusy(false); }
   }
   const expectedPhrase = `FORCE ${direction.toUpperCase()}`;

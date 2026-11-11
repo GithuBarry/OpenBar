@@ -14,13 +14,18 @@ type Props = {
   message: string
   report?: string
   paused?: boolean
+  inline?: boolean
+  floating?: boolean
+  attention?: boolean
   triggerLabel?: string
   onOpen?: () => void
+  openRequest?: number
+  primaryAction?: ReactNode
   children?: ReactNode
 }
 
 /** One floating, accessible design for editor errors and synchronization conflicts. */
-export function EditorNotice({ project, title, label, message, report, paused, triggerLabel = "Editor conflict details", onOpen, children }: Props) {
+export function EditorNotice({ project, title, label, message, report, paused, inline, floating, attention, triggerLabel = "Editor conflict details", onOpen, openRequest, primaryAction, children }: Props) {
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const [copyError, setCopyError] = useState("")
@@ -30,6 +35,7 @@ export function EditorNotice({ project, title, label, message, report, paused, t
   const panelRef = useRef<HTMLDivElement>(null)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const onOpenRef = useRef(onOpen)
+  const lastOpenRequest = useRef(openRequest)
   onOpenRef.current = onOpen
   const keepOpen = () => { clearTimeout(closeTimer.current); setOpen(true) }
   const closeSoon = () => {
@@ -40,6 +46,13 @@ export function EditorNotice({ project, title, label, message, report, paused, t
     }, 180)
   }
   useEffect(() => () => clearTimeout(closeTimer.current), [])
+  useEffect(() => {
+    if (openRequest !== lastOpenRequest.current) {
+      lastOpenRequest.current = openRequest
+      clearTimeout(closeTimer.current)
+      setOpen(true)
+    }
+  }, [openRequest])
   useEffect(() => { if (open) { setCopied(false); setCopyError(""); setCapturedAt(new Date().toISOString()); onOpenRef.current?.() } }, [open])
   useEffect(() => { setCopied(false) }, [message, report])
   const diagnosticReport = open && typeof window !== "undefined" ? [
@@ -76,14 +89,16 @@ export function EditorNotice({ project, title, label, message, report, paused, t
     link.click()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
-  return <div className={styles.anchor} data-editor-notice>
+  return <div className={floating ? styles.floatingAnchor : inline ? styles.inlineAnchor : styles.anchor} data-editor-notice>
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
-        <button type="button" className={styles.trigger} aria-label={triggerLabel} title={message} onMouseEnter={keepOpen} onMouseLeave={closeSoon} onClick={event => { event.preventDefault(); keepOpen() }}>
-          {paused ? <LockKeyhole size={13} /> : <AlertCircle size={13} />}<span>{label}</span><ChevronDown size={12} />
+        <button type="button" className={floating ? `${styles.inlineTrigger} ${styles.floatingTrigger}` : inline ? styles.inlineTrigger : styles.trigger} data-paused={paused || undefined} data-attention={attention || undefined} aria-label={triggerLabel} title={message} onMouseEnter={keepOpen} onMouseLeave={closeSoon} onClick={event => { event.preventDefault(); keepOpen() }}>
+          {paused && !inline && !floating ? <LockKeyhole size={13} /> : <AlertCircle size={13} />}<span>{label}</span><ChevronDown size={12} />
         </button>
       </Popover.Trigger>
-      <PopoverSurface ref={panelRef} onMouseEnter={keepOpen} onMouseLeave={closeSoon} onOpenAutoFocus={event => event.preventDefault()} className={styles.panel} side="bottom" align="center" sideOffset={8} collisionPadding={12} aria-label={title}>
+      <PopoverSurface ref={panelRef} onMouseEnter={keepOpen} onMouseLeave={closeSoon} onOpenAutoFocus={event => event.preventDefault()} onFocusOutside={event => {
+        if (event.target instanceof HTMLElement && event.target.getAttribute("aria-label") === "Diagnostic report clipboard transfer") event.preventDefault()
+      }} className={styles.panel} side="bottom" align="center" sideOffset={8} collisionPadding={12} aria-label={title}>
         <header><strong>{title}</strong><Popover.Close aria-label="Close error details"><X size={15} /></Popover.Close></header>
         <p className={styles.message} role="status">{message}</p>
         <div className={styles.footer}>
@@ -98,5 +113,6 @@ export function EditorNotice({ project, title, label, message, report, paused, t
         {copyError && <p className={styles.copyError} role="status">Download the report or copy the diagnostics above. Clipboard details are included in the report.</p>}
       </PopoverSurface>
     </Popover.Root>
+    {primaryAction}
   </div>
 }
