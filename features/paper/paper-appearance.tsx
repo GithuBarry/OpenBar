@@ -6,6 +6,7 @@ import { useRef, useState } from "react";
 import { ChoiceButtons } from "@/components/choice-buttons";
 import { FastTooltip } from "@/components/fast-tooltip";
 import { AnchoredPop } from "@/components/pop";
+import { useTheme } from "@/components/theme";
 
 export type PaperReaderFont = "serif" | "sans";
 export type PaperEditorWidth = "compact" | "wide" | "full";
@@ -66,6 +67,7 @@ export function PaperAppearance({
   onToolbarPositionChange: (value: PaperToolbarPosition) => void;
   onReset: () => void;
 }) {
+  const { theme, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
 
@@ -104,6 +106,10 @@ export function PaperAppearance({
           >
             <RotateCcw size={10} /> Reset
           </button>
+        </div>
+        <div className="ob-paper-appearance-row">
+          <span>Color theme</span>
+          <ChoiceButtons label="Color theme" value={theme} options={[{ value: "paper" as const, label: "Paper" }, { value: "light" as const, label: "Light" }, { value: "dark" as const, label: "Dark" }]} onChange={setTheme} />
         </div>
         <div className="ob-paper-appearance-columns">
         <section aria-label="Reader appearance">
