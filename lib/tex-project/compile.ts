@@ -84,6 +84,9 @@ export type BuildInputSnapshot = {
 
 const running = new Map<string, Promise<PaperCompileStatus>>();
 const queuedAfterCurrent = new Set<string>();
+// Compiler jobs have a five-minute execution limit and a five-second forced
+// termination window. Allow time for snapshot capture and result publishing.
+const COMPILE_RECOVERY_MS = 6 * 60_000;
 
 export function compileStatusFile(projectDir: string): string {
   return path.join(texPaths(projectDir).buildDir, "status.json");
@@ -236,7 +239,24 @@ function artifactIsStale(projectDir: string, buildInputHash: string): boolean {
 
 export function getPaperCompileStatus(projectDir: string): PaperCompileStatus {
   try {
-    const status = JSON.parse(fs.readFileSync(compileStatusFile(projectDir), "utf8")) as PaperCompileStatus;
+    const statusFile = compileStatusFile(projectDir);
+    const stored = JSON.parse(fs.readFileSync(statusFile, "utf8")) as PaperCompileStatus;
+    // A different server process may own a current build. Once its bounded
+    // execution window has passed, expose a retryable terminal state. Derive
+    // this without rewriting the file, since another process could publish a
+    // newer result while the status is being read.
+    let reference = 0;
+    if (stored.state === "running" && !running.has(projectDir)) {
+      const started = stored.startedAt ? Date.parse(stored.startedAt) : Number.NaN;
+      reference = Number.isFinite(started) && started <= Date.now() ? started : fs.statSync(statusFile).mtimeMs;
+    }
+    const interrupted = reference > 0 && Date.now() - reference > COMPILE_RECOVERY_MS;
+    const status: PaperCompileStatus = interrupted ? {
+      ...stored,
+      state: "error",
+      completedAt: new Date(reference + COMPILE_RECOVERY_MS).toISOString(),
+      message: "The compile did not finish within its recovery window. Retry compilation.",
+    } : stored;
     // A PDF is addressable only when its immutable artifact manifest is
     // present as well. Older projects can retain a bare `paper.pdf` from a
     // pre-manifest build; reporting it as available makes the client request
@@ -741,7 +761,7 @@ async function runLatexmk(projectDir: string, target: BuildInputSnapshot, jobId:
   } catch {
     // Process output remains available when TeX could not create its log.
   }
-  const diagnostics = parseDiagnostics(diagnosticLog);
+  const diagnostics = parseDiagnostics(diagnosticLog, snapshotRoot);
   const parsedDiagnostics = parseTexFileLines(diagnostics);
   if (succeeded) {
     const artifactId = `pdf-${buildInputHash.slice(0, 16)}-${jobId.slice(-12)}`;
@@ -808,10 +828,16 @@ async function runLatexmk(projectDir: string, target: BuildInputSnapshot, jobId:
   });
 }
 
-function parseDiagnostics(output: string): string[] {
+function parseDiagnostics(output: string, snapshotRoot: string): string[] {
   const lines = output.split(/\r?\n/);
   const selected = lines.filter((line) => /(?:^! |\.(?:tex|sty|cls):\d+:|^l\.\d+|(?:LaTeX|Package .*|Class .*) (?:Error|Warning)|^Latexmk:.*(?:error|fail|missing|not found)|^\s*(?:pdf|xe|lua)latex:|^\s*(?:bibtex|biber|makeindex):|^ERROR -|^I (?:couldn't|could not|found no|was expecting)|^Repeated entry---line)/i.test(line));
-  const unique = Array.from(new Set(selected.map((line) => line.trim()).filter(Boolean)));
+  const snapshotPrefix = `${snapshotRoot}${path.sep}`;
+  const unique = Array.from(new Set(selected.map((line) => {
+    const readable = line.trim().split(snapshotPrefix).join("");
+    // TeX wraps long diagnostic lines mid-word, so its explanation can be
+    // truncated here. Give the common paragraph error a complete next step.
+    return readable.replace(/Paragraph ended\b.*/i, "A paragraph break occurred while reading a command. Check for a blank line or a missing closing brace near this line.");
+  }).filter(Boolean)));
   const priority = (line: string) => /\bWarning\b/i.test(line) ? 2 : /^l\.\d+/.test(line) ? 1 : 0;
   // TeX can continue producing warnings after the first fatal error. Keep
   // actionable errors and their source context ahead of the warning limit.

@@ -1237,7 +1237,7 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
       if (!section) return failResult("unknown_section", "Unknown section.", false);
       assertPaperHash(section.hash, String(args.baseHash));
       const patch = patchSectionTableCell(section.tex, Number(args.tableIndex), Number(args.row), Number(args.column), String(args.tex));
-      if (!patch.ok) return failResult(patch.reason === "complex" ? "capability_unavailable" : "invalid_arguments", `Table cell patch: ${patch.reason}.`, false);
+      if (!patch.ok) return failResult(patch.reason === "complex" || patch.reason === "comment_in_cell" ? "capability_unavailable" : "invalid_arguments", patch.reason === "comment_in_cell" ? "The cell contains a TeX comment between its contents. Edit the source directly while preserving the comment." : `Table cell patch: ${patch.reason}.`, false);
       return okResult({ sectionId: args.sectionId, tex: patch.tex, baseHash: section.hash, dryRun: true });
     }
     return idempotentWrite(project, "patch_paper_table", args, context, async requestId => {
@@ -1245,7 +1245,7 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
       if (!section) return failResult("unknown_section", "Unknown section.", false);
       assertPaperHash(section.hash, String(args.baseHash));
       const patch = patchSectionTableCell(section.tex, Number(args.tableIndex), Number(args.row), Number(args.column), String(args.tex));
-      if (!patch.ok) return failResult(patch.reason === "complex" ? "capability_unavailable" : "invalid_arguments", `Table cell patch: ${patch.reason}.`, false);
+      if (!patch.ok) return failResult(patch.reason === "complex" || patch.reason === "comment_in_cell" ? "capability_unavailable" : "invalid_arguments", patch.reason === "comment_in_cell" ? "The cell contains a TeX comment between its contents. Edit the source directly while preserving the comment." : `Table cell patch: ${patch.reason}.`, false);
       return persistPaperSectionPatch(project, String(args.sectionId), String(args.baseHash), patch.tex, requestId, "patch_paper_table");
     });
   }),

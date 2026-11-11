@@ -21,7 +21,7 @@ export type TableFragment = {
   env: string;
 };
 
-export type TablePatchError = "complex" | "missing_table" | "missing_cell";
+export type TablePatchError = "complex" | "missing_table" | "missing_cell" | "comment_in_cell";
 
 /** FNV-1a, portable across Node and the browser. */
 export function tableFragmentKey(source: string): string {
@@ -101,7 +101,7 @@ export function patchSectionTableCell(
   if (!table) return { ok: false, reason: "missing_table" };
   if (isComplexTableSource(table.source, table.env)) return { ok: false, reason: "complex" };
   const patched = patchTabularCell(table.source, row, column, tex);
-  if (!patched.ok) return { ok: false, reason: "missing_cell" };
+  if (!patched.ok) return { ok: false, reason: patched.reason };
   return {
     ok: true,
     tex: `${sectionTex.slice(0, table.from)}${patched.source}${sectionTex.slice(table.to)}`,

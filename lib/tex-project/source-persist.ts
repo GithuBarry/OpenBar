@@ -11,7 +11,7 @@ import { sha256, writeTextAtomic } from "./codec";
 import { withProjectWriteLock, withProjectWriteLockAsync } from "@/lib/research/project-lock";
 import { expandProjectForConversion } from "./latexpand";
 import { conversionSourceHash, manuscriptFilePath } from "./pandoc";
-import { buildSourceBundle, mapVirtualRange } from "./source-bundle";
+import { buildSourceBundle, mapVirtualRange, type SourceBundle } from "./source-bundle";
 import { clearSourceTransactionJournal, recoverSourceTransaction, writeSourceTransactionJournal } from "./source-transaction";
 import { bannerRanges, fileBanner, fileBytesUnchanged, splitBundleSource } from "./source-bundle-format";
 
@@ -90,7 +90,8 @@ export function persistSourceBundle(input: {
   expectedBundleHash?: string;
   dryRun?: boolean;
   requestId?: string;
-}): OperationResult<{ bundleHash: string; written: string[]; dryRun?: boolean; patches?: SourcePatch[] }> {
+  includeBundle?: boolean;
+}): OperationResult<{ bundleHash: string; written: string[]; bundle?: SourceBundle; graphChanged?: boolean; dryRun?: boolean; patches?: SourcePatch[] }> {
   const parts = splitBundleSource(input.nextSource);
   return withProjectWriteLock(input.manuscriptDir, () => {
     const bundle = buildSourceBundle(input.manuscriptDir, undefined, 0, true);
@@ -103,6 +104,15 @@ export function persistSourceBundle(input: {
       });
     }
     if (input.expectedBundleHash && bundle.bundleHash !== input.expectedBundleHash) {
+      // A previous attempt can have committed even when its response was lost.
+      // Acknowledge that exact result while holding the write lock, so retries
+      // can safely advance to the current hash without replacing any disk data.
+      if (input.nextSource === bundle.source) {
+        return okResult(
+          { bundleHash: bundle.bundleHash, written: [], ...(input.includeBundle ? { bundle, graphChanged: true } : {}), ...(input.dryRun ? { dryRun: true as const, patches: [] } : {}) },
+          { diskHash: bundle.bundleHash, revision: bundle.revision },
+        );
+      }
       return failResult("stale_disk_state", "Source bundle hash does not match.", {
         retryable: true,
         currentHash: bundle.bundleHash,
@@ -159,7 +169,7 @@ export function persistSourceBundle(input: {
     }
     if (!writes.length) {
       return okResult(
-        { bundleHash: bundle.bundleHash, written: [], ...(input.dryRun ? { dryRun: true as const, patches: [] } : {}) },
+        { bundleHash: bundle.bundleHash, written: [], ...(input.includeBundle ? { bundle } : {}), ...(input.dryRun ? { dryRun: true as const, patches: [] } : {}) },
         { diskHash: bundle.bundleHash, revision: bundle.revision },
       );
     }
@@ -200,8 +210,10 @@ export function persistSourceBundle(input: {
     }
     clearSourceTransactionJournal(input.manuscriptDir, true);
     const after = buildSourceBundle(input.manuscriptDir, undefined, 0, true);
+    const graphChanged = bundle.segments.length !== after.segments.length
+      || bundle.segments.some((segment, index) => segment.filePath !== after.segments[index]?.filePath);
     return okResult(
-      { bundleHash: after.bundleHash, written: writes.map((item) => item.filePath) },
+      { bundleHash: after.bundleHash, written: writes.map((item) => item.filePath), ...(input.includeBundle ? { bundle: after, graphChanged } : {}) },
       { diskHash: after.bundleHash, revision: after.revision },
     );
   });

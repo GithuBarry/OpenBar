@@ -191,7 +191,7 @@ function attachCommentMatches(source: string, comments: PaperNote[]): void {
     const match = matches[index];
     if (!match) continue;
     index += 1;
-    const attrs = parseAnchorAttrs(match.attrs.replace(/,(?=[A-Za-z])/g, ", "));
+    const attrs = parseAnchorAttrs(match.attrs);
     comment.attrs = { ...comment.attrs, ...attrs };
     const id = attrs.id?.trim();
     if (id) comment.id = id;

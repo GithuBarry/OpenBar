@@ -14,9 +14,10 @@ function commandEnvironmentAt(source: string, index: number, command: "begin" | 
   return name && match ? { name, to: index + match[0].length } : undefined;
 }
 
-function verbCommandEnd(source: string, index: number): number | undefined {
+/** Return the end of an inline verbatim command using UTF-16 source offsets. */
+export function texVerbCommandEnd(source: string, index: number): number | undefined {
   if (source[index] !== "\\" || escapedAt(source, index)) return undefined;
-  const prefix = /^\\verb\*?(?![A-Za-z@])/.exec(source.slice(index));
+  const prefix = /^\\verb(?![A-Za-z@])\*?/.exec(source.slice(index));
   if (!prefix) return undefined;
   const delimiter = source[index + prefix[0].length];
   if (!delimiter || delimiter === "\r" || delimiter === "\n") return undefined;
@@ -27,11 +28,22 @@ function verbCommandEnd(source: string, index: number): number | undefined {
   return source.length;
 }
 
+/** Return the end of a literal environment, including an incomplete one. */
+export function texLiteralEnvironmentEnd(source: string, index: number): number | undefined {
+  const begin = commandEnvironmentAt(source, index, "begin");
+  if (!begin || !TEX_LITERAL_ENVIRONMENTS.has(begin.name)) return undefined;
+  for (let cursor = begin.to; cursor < source.length; cursor += 1) {
+    if (source[cursor] !== "\\") continue;
+    const end = commandEnvironmentAt(source, cursor, "end");
+    if (end?.name === begin.name) return end.to;
+  }
+  return source.length;
+}
+
 /** Mask TeX comments and literal environments while retaining source offsets. */
 export function maskTexLiterals(source: string): string {
   const output = source.split("");
   let inComment = false;
-  let verbatimEnvironment: string | undefined;
   for (let index = 0; index < source.length; index += 1) {
     const char = source[index]!;
     if (inComment) {
@@ -39,34 +51,12 @@ export function maskTexLiterals(source: string): string {
       else output[index] = " ";
       continue;
     }
-    if (verbatimEnvironment) {
-      const end = commandEnvironmentAt(source, index, "end");
-      if (end?.name === verbatimEnvironment) {
-        for (let cursor = index; cursor < end.to; cursor += 1) {
-          if (source[cursor] !== "\r" && source[cursor] !== "\n") output[cursor] = " ";
-        }
-        index = end.to - 1;
-        verbatimEnvironment = undefined;
-      } else if (char !== "\r" && char !== "\n") {
-        output[index] = " ";
-      }
-      continue;
-    }
-    const begin = commandEnvironmentAt(source, index, "begin");
-    if (begin && TEX_LITERAL_ENVIRONMENTS.has(begin.name)) {
-      for (let cursor = index; cursor < begin.to; cursor += 1) {
+    const literalEnd = texLiteralEnvironmentEnd(source, index) ?? texVerbCommandEnd(source, index);
+    if (literalEnd !== undefined) {
+      for (let cursor = index; cursor < literalEnd; cursor += 1) {
         if (source[cursor] !== "\r" && source[cursor] !== "\n") output[cursor] = " ";
       }
-      index = begin.to - 1;
-      verbatimEnvironment = begin.name;
-      continue;
-    }
-    const verbEnd = verbCommandEnd(source, index);
-    if (verbEnd !== undefined) {
-      for (let cursor = index; cursor < verbEnd; cursor += 1) {
-        if (source[cursor] !== "\r" && source[cursor] !== "\n") output[cursor] = " ";
-      }
-      index = verbEnd - 1;
+      index = literalEnd - 1;
       continue;
     }
     if (char === "%" && !escapedAt(source, index)) {

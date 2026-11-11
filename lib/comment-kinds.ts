@@ -7,6 +7,13 @@ export const DEFAULT_COMMENT_KINDS = [
   { value: "reviewer", label: "Reviewer", tone: "rose" },
 ] as const;
 
+/** These characters can change how TeX reads the optional macro argument. */
+export function commentKindValidationError(kind: string): string | null {
+  return /[\\%{}\[\]\r\n]/.test(kind)
+    ? "Use a type without %, \\, { }, [ ], or line breaks."
+    : null;
+}
+
 export function commentKindAppearance(kind = ""): { label: string; tone: string } {
   const value = kind.trim();
   const normalized = value.toLowerCase();

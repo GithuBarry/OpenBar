@@ -56,6 +56,7 @@ export type PreviewResult = {
 export type PreviewHtmlOptions = {
   bibliography?: BibEntry[];
   assetBaseUrl?: string;
+  onProgress?: (stage: "includes" | "parsing" | "formatting" | "math" | "assembling" | "recovering") => void;
 };
 
 type HastPreviewOptions = PreviewHtmlOptions;
@@ -411,7 +412,7 @@ function buildReplacements(
 
   const replacements: Record<string, (node: Macro) => Node> = {
     obclaim: (node: Macro) => htmlLike({ tag: "span", attributes: {
-      className: "ob-claim-inline", tabIndex: "0", role: "button", "aria-haspopup": "dialog",
+      className: "ob-claim-inline", tabIndex: "0", role: "button", title: "Go to source",
       "data-ob-annotation": "Claim", "data-annotation-source": printRaw(node),
     }, content: lastArg(node) }),
     obevidence: (node: Macro) => htmlLike({ tag: "span", attributes: { className: "ob-evidence-inline" }, content: lastArg(node) }),
@@ -420,7 +421,7 @@ function buildReplacements(
       const appearance = commentKindAppearance(kind);
       return htmlLike({ tag: "span", attributes: {
         className: `ob-comment-inline ob-comment-tone-${appearance.tone}`,
-        tabIndex: "0", role: "button", "aria-haspopup": "dialog",
+        tabIndex: "0", role: "button", title: "Go to source",
         "data-ob-annotation": appearance.label, "data-annotation-source": printRaw(node),
         "data-comment-kind": appearance.label,
       }, content: lastArg(node) });
@@ -871,9 +872,12 @@ export function renderPreviewDocument(source: string, options: PreviewHtmlOption
   try {
     const cites: CiteState = { order: [], num: new Map() };
     const headingCounts = new Map<string, number>();
+    options.onProgress?.("includes");
     const inlined = inlineBundleIncludesMapped(source);
     const previewSource = inlined.source;
+    options.onProgress?.("parsing");
     const tree = bodyTreeForPreview(previewSource);
+    options.onProgress?.("formatting");
     const processor = unified().use(unifiedLatexToHast, {
       macroReplacements: buildReplacements(options, cites, headingCounts, previewSource),
     });
@@ -882,7 +886,9 @@ export function renderPreviewDocument(source: string, options: PreviewHtmlOption
     hydrateTableSpans(hast);
     const headingKey = headingOccurrenceKey(2, "References", headingCounts);
     patchBibliographyPlaceholders(hast, cites.order, headingKey);
+    options.onProgress?.("math");
     hydrateMathAndBibliography(hast, options, headingKey);
+    options.onProgress?.("assembling");
     const rendered = blocksFromHast(hast);
     return {
       blocks: attachSourceRanges(previewSource, rendered.blocks, inlined.mapOffset, inlined.mapFilePath),
@@ -890,6 +896,7 @@ export function renderPreviewDocument(source: string, options: PreviewHtmlOption
       diagnostics: [],
     };
   } catch (error) {
+    options.onProgress?.("recovering");
     const message = error instanceof Error ? error.message : "TeX preview failed.";
     return recoverPreviewBySection(source, options, message);
   }

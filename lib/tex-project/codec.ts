@@ -57,7 +57,9 @@ export class TexEnvelopeError extends Error {
   }
 }
 
-const WRITE_LOCK_STALE_MS = 120_000;
+// Reclaiming an old directory can remove a newer owner's lock when contenders
+// race. Keep the lock until its owner releases it or an operator recovers it.
+const WRITE_LOCK_STALE_MS = Infinity;
 const WRITE_LOCK_UPDATE_MS = 60_000;
 const WRITE_LOCK_RETRIES = { retries: 40, minTimeout: 20, maxTimeout: 200 };
 
@@ -264,15 +266,27 @@ export function normalizeTexBody(value: string): string {
   return normalized ? `${normalized}\n` : "";
 }
 
+function lockAcquisitionError(file: string, error: unknown): unknown {
+  if (error instanceof Error && "code" in error && error.code === "ELOCKED") {
+    error.message = `This project is busy. Wait for the active operation to finish, then try again. If the lock remains after an interrupted process, stop all OpenBar writers sharing this storage and confirm that no writer is active before removing the empty lock directory: ${path.resolve(`${file}.ob-lock`)}`;
+  }
+  return error;
+}
+
 export function withWriteLock<T>(file: string, operation: () => T): T {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const release = lockfile.lockSync(file, {
-    lockfilePath: `${file}.ob-lock`,
-    realpath: false,
-    stale: WRITE_LOCK_STALE_MS,
-    update: WRITE_LOCK_UPDATE_MS,
-    retries: 0,
-  });
+  let release: () => void;
+  try {
+    release = lockfile.lockSync(file, {
+      lockfilePath: `${file}.ob-lock`,
+      realpath: false,
+      stale: WRITE_LOCK_STALE_MS,
+      update: WRITE_LOCK_UPDATE_MS,
+      retries: 0,
+    });
+  } catch (error) {
+    throw lockAcquisitionError(file, error);
+  }
   try {
     return operation();
   } finally {
@@ -283,13 +297,18 @@ export function withWriteLock<T>(file: string, operation: () => T): T {
 /** Async variant for conversions that must inspect the include graph while the lock is held. */
 export async function withWriteLockAsync<T>(file: string, operation: () => Promise<T> | T): Promise<T> {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const release = await lockfile.lock(file, {
-    lockfilePath: `${file}.ob-lock`,
-    realpath: false,
-    stale: WRITE_LOCK_STALE_MS,
-    update: WRITE_LOCK_UPDATE_MS,
-    retries: WRITE_LOCK_RETRIES,
-  });
+  let release: () => Promise<void>;
+  try {
+    release = await lockfile.lock(file, {
+      lockfilePath: `${file}.ob-lock`,
+      realpath: false,
+      stale: WRITE_LOCK_STALE_MS,
+      update: WRITE_LOCK_UPDATE_MS,
+      retries: WRITE_LOCK_RETRIES,
+    });
+  } catch (error) {
+    throw lockAcquisitionError(file, error);
+  }
   try {
     return await operation();
   } finally {

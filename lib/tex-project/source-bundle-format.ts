@@ -37,6 +37,49 @@ export function splitBundleSource(source: string): BundleSourcePart[] {
   });
 }
 
+/** Reapply edits made during a save to the server's rebuilt include graph. */
+export function rebaseBundleSource(saved: string, live: string, canonical: string):
+  | { ok: true; source: string }
+  | { ok: false; files: string[] } {
+  if (live === saved) return { ok: true, source: canonical };
+  const savedParts = splitBundleSource(saved);
+  const liveParts = splitBundleSource(live);
+  const canonicalParts = splitBundleSource(canonical);
+  if (!savedParts.length || savedParts[0]?.bannerFrom !== 0 || liveParts[0]?.bannerFrom !== 0
+    || !canonicalParts.length || canonicalParts[0]?.bannerFrom !== 0 || savedParts.length !== liveParts.length
+    || savedParts.some((part, index) => part.filePath !== liveParts[index]?.filePath)) {
+    return { ok: false, files: [] };
+  }
+  const changed = new Map<string, { before: string; after: string }>();
+  const conflicts = new Set<string>();
+  for (let index = 0; index < savedParts.length; index += 1) {
+    const before = savedParts[index]!;
+    const after = liveParts[index]!;
+    const existing = changed.get(before.filePath);
+    if (existing && (existing.before !== before.body || existing.after !== after.body)) conflicts.add(before.filePath);
+    else changed.set(before.filePath, { before: before.body, after: after.body });
+  }
+  const canonicalByFile = new Map<string, string>();
+  for (const part of canonicalParts) {
+    const existing = canonicalByFile.get(part.filePath);
+    if (existing !== undefined && existing !== part.body) conflicts.add(part.filePath);
+    canonicalByFile.set(part.filePath, part.body);
+  }
+  for (const [file, edit] of changed) {
+    if (edit.before === edit.after) continue;
+    const canonicalBody = canonicalByFile.get(file);
+    if (canonicalBody === undefined || !fileBytesUnchanged(edit.before, canonicalBody)) conflicts.add(file);
+  }
+  if (conflicts.size) return { ok: false, files: [...conflicts] };
+  return {
+    ok: true,
+    source: canonicalParts.map((part) => {
+      const edit = changed.get(part.filePath);
+      return `${fileBanner(part.filePath)}${edit && edit.before !== edit.after ? edit.after : part.body}`;
+    }).join(""),
+  };
+}
+
 export function bannerRanges(source: string): Array<{ from: number; to: number }> {
   return splitBundleSource(source).map((part) => ({ from: part.bannerFrom, to: part.bodyFrom }));
 }

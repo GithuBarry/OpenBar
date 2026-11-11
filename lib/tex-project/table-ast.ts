@@ -4,6 +4,7 @@
 
 import { isEnvironment, isMacro, parseTex, type TexNode } from "./tex-ast";
 import { isComplexTableSource } from "./table-complexity";
+import { texLiteralEnvironmentEnd, texVerbCommandEnd } from "./tex-literals";
 
 export type TableCellSpan = {
   row: number;
@@ -30,7 +31,7 @@ function isCellBreak(node: unknown): boolean {
   const record = node as { type?: string; content?: unknown };
   if (record.type === "string" && record.content === "&") return true;
   if (record.type === "alignmentTab" || record.type === "alignmenttab") return true;
-  return isMacro(node) && node.content === "&";
+  return false;
 }
 
 function isRule(node: unknown): boolean {
@@ -47,6 +48,10 @@ function isTrivia(node: unknown): boolean {
   if (!node || typeof node !== "object") return false;
   const type = (node as { type?: string }).type;
   return type === "whitespace" || type === "parbreak";
+}
+
+function isComment(node: unknown): boolean {
+  return Boolean(node && typeof node === "object" && (node as { type?: string }).type === "comment");
 }
 
 function nodeSpan(node: unknown): { from: number; to: number } | undefined {
@@ -138,6 +143,7 @@ function spansFromNodes(source: string, nodes: TexNode[]): TableCellSpan[] {
   let column = 0;
   let cellFrom: number | undefined;
   let cellTo: number | undefined;
+  let lastSeparatorEnd: number | undefined;
   const mark = (node: unknown) => {
     const span = nodeSpan(node);
     if (!span) return;
@@ -155,11 +161,9 @@ function spansFromNodes(source: string, nodes: TexNode[]): TableCellSpan[] {
   };
   const flushRow = (boundary: number) => {
     flushCell(boundary);
-    if (spans.some((item) => item.row === rowIndex && item.tex)) rowIndex += 1;
-    else {
-      while (spans.length && spans[spans.length - 1]!.row === rowIndex) spans.pop();
-    }
+    rowIndex += 1;
     column = 0;
+    lastSeparatorEnd = undefined;
   };
   for (const node of nodes) {
     if (isRowBreak(node)) {
@@ -168,12 +172,13 @@ function spansFromNodes(source: string, nodes: TexNode[]): TableCellSpan[] {
     }
     if (isCellBreak(node)) {
       flushCell(offsetOf(node, "start") ?? cellTo ?? cellFrom ?? 0);
+      lastSeparatorEnd = offsetOf(node, "end");
       continue;
     }
-    if (isRule(node) || (isTrivia(node) && cellFrom == null)) continue;
+    if (isRule(node) || isComment(node) || (isTrivia(node) && cellFrom == null)) continue;
     mark(node);
   }
-  if (cellFrom != null || column > 0) flushRow(source.length);
+  if (cellFrom != null || column > 0) flushRow(lastSeparatorEnd ?? source.length);
   return spans;
 }
 
@@ -199,14 +204,29 @@ export function tabularCellsFromTex(body: string): string[][] {
   return rows.filter((item) => item.length);
 }
 
+function containsTexComment(source: string): boolean {
+  for (let index = 0; index < source.length; index += 1) {
+    if (source[index] === "\\") {
+      const literalEnd = texVerbCommandEnd(source, index) ?? texLiteralEnvironmentEnd(source, index);
+      if (literalEnd !== undefined) { index = literalEnd - 1; continue; }
+    }
+    if (source[index] !== "%") continue;
+    let slashes = 0;
+    for (let cursor = index - 1; cursor >= 0 && source[cursor] === "\\"; cursor -= 1) slashes += 1;
+    if (slashes % 2 === 0) return true;
+  }
+  return false;
+}
+
 export function patchTabularCell(
   source: string,
   row: number,
   column: number,
   tex: string,
-): { ok: true; source: string; cell: TableCellSpan } | { ok: false; reason: "missing_cell" } {
+): { ok: true; source: string; cell: TableCellSpan } | { ok: false; reason: "missing_cell" | "comment_in_cell" } {
   const cell = tabularCellSpansFromTex(source).find((item) => item.row === row && item.column === column);
   if (!cell) return { ok: false, reason: "missing_cell" };
+  if (containsTexComment(cell.tex)) return { ok: false, reason: "comment_in_cell" };
   return { ok: true, source: `${source.slice(0, cell.from)}${tex}${source.slice(cell.to)}`, cell };
 }
 

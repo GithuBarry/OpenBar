@@ -6,7 +6,7 @@ export interface MacroMatch {
   length: number;
 }
 
-import { TEX_LITERAL_ENVIRONMENTS } from "@/lib/tex-project/tex-literals";
+import { texLiteralEnvironmentEnd, texVerbCommandEnd } from "@/lib/tex-project/tex-literals";
 
 function isEscaped(source: string, index: number): boolean {
   let backslashes = 0;
@@ -48,14 +48,6 @@ function skipBalanced(source: string, start: number, open: string, close: string
     }
   }
   return undefined;
-}
-
-function skipVerbatimEnvironment(source: string, index: number): number | undefined {
-  const begin = /^\\begin\{([^}]+)\}/.exec(source.slice(index));
-  if (!begin || !TEX_LITERAL_ENVIRONMENTS.has(begin[1]!)) return undefined;
-  const endToken = `\\end{${begin[1]}}`;
-  const end = source.indexOf(endToken, index + begin[0].length);
-  return end < 0 ? source.length : end + endToken.length;
 }
 
 function skipDefinition(source: string, index: number): number | undefined {
@@ -117,7 +109,9 @@ export function findMacroMatches(src: string, macroNames: string[]): MacroMatch[
       i += 1;
       continue;
     }
-    const verbatimEnd = src[i] === "\\" ? skipVerbatimEnvironment(src, i) : undefined;
+    const verbatimEnd = src[i] === "\\" && !isEscaped(src, i)
+      ? texVerbCommandEnd(src, i) ?? texLiteralEnvironmentEnd(src, i)
+      : undefined;
     if (verbatimEnd !== undefined) {
       i = verbatimEnd;
       continue;
@@ -206,8 +200,8 @@ export function parseAnchorAttrs(raw: string): Record<string, string> {
     }
 
     const valueStart = position;
-    while (position < raw.length && !/\s/.test(raw[position])) position++;
-    attrs[key] = raw.slice(valueStart, position).replace(/,+$/, "");
+    while (position < raw.length && !/[\s,]/.test(raw[position])) position++;
+    attrs[key] = raw.slice(valueStart, position);
   }
   return attrs;
 }
