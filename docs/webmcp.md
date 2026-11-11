@@ -42,7 +42,7 @@ A memoryless agent follows this path:
 
 ```text
 open /
-→ list_projects or search_projects
+→ list_projects
 → open_project
 → get_project_state
 → check_inbox
@@ -52,8 +52,7 @@ open /
 
 The steps have distinct roles:
 
-1. Start at `/` and use `list_projects` or
-   `search_projects` to find a project.
+1. Start at `/` and use `list_projects` to find a project.
 2. Call `open_project` with the returned slug. OpenBar navigates to that
    project's paper page.
 3. Call `get_project_state` for compact orientation, then `check_inbox` for pending
@@ -70,7 +69,8 @@ The steps have distinct roles:
 | Tool | Purpose |
 | --- | --- |
 | `list_projects` | List workspace projects with paper links and identity details. |
-| `search_projects` | Find projects by slug, title, tagline, or label. |
+| `get_workspace_layout` | Read the current workspace ordering and archive layout. |
+| `move_project` | Move a project in the workspace using its current layout hash. |
 | `open_project` | Open the paper page for a slug returned by the list or search tools. |
 
 The workspace tools are read-oriented and use the home page to perform
