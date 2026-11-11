@@ -113,6 +113,14 @@ for a retry. HTTP requests have independent transport state, so JSON-RPC IDs
 identify calls within a transport exchange rather than serving as durable retry
 keys.
 
+Native MCP changes TODO completion through `update_todo` with the TODO `id` and
+`completed: true` or `completed: false`. Card deletion uses
+`preview_mindmap_batch` followed by `apply_mindmap_batch` with the same
+`selectedIds` and `deleteMode`. The `cards` mode promotes surviving children,
+and `branches` removes selected cards and their descendants. Supply the current
+revision and preview token even for one card. Browser WebMCP retains the live
+completion and deletion actions supplied by its active page.
+
 ## Page-local tools
 
 ### Paper

@@ -857,12 +857,6 @@ async function executeApplyMindmapBatch(args: unknown, context: McpCommandContex
   } catch (error) { return caught(error); }
 }
 
-async function executeDeleteMindmap(args: unknown, context: McpCommandContext, mode: "cards" | "branches"): Promise<OperationResult<unknown>> {
-  const record = asObject(args);
-  if (!record) return failResult("invalid_arguments", "Arguments must be an object.", false);
-  return executeApplyMindmapBatch({ ...record, selectedIds: [record.id], deleteMode: mode }, context);
-}
-
 function persistPaperSectionPatch(
   project: string,
   sectionId: string,
@@ -984,27 +978,6 @@ async function executeConvertCardToTodo(args: unknown, context: McpCommandContex
           diskHash: result.value.mindmap.diskHash,
           remote: pendingRemote(),
         });
-      } catch (error) { return caught(error); }
-    });
-  } catch (error) { return caught(error); }
-}
-
-async function executeTodoState(args: unknown, context: McpCommandContext, completed: boolean): Promise<OperationResult<unknown>> {
-  const record = asObject(args);
-  if (!record) return failResult("invalid_arguments", "Arguments must be an object.", false);
-  try {
-    const project = projectArg(record);
-    const todoId = stringArg(record, "todoId");
-    const expectedBundleHash = stringArg(record, "expectedBundleHash");
-    return idempotentWrite(project, completed ? "complete_todo" : "reopen_todo", record, context, async (requestId) => {
-      try {
-        assertAdministrativeWriteAllowed("MCP TODO changes");
-        const operation = sourceOperation(completed ? "complete_todo" : "reopen_todo", { todoId });
-        const result = persistPaperTodoOperation({ manuscriptDir: texPaths(projectContentDir(project)).manuscriptDir, operation, expectedBundleHash });
-        if (!result.ok) return result;
-        const value = receipt({ requestId, operation: completed ? "complete_todo" : "reopen_todo", resources: [{ kind: "paper-todo", id: todoId! }], diskHash: result.diskHash, value: { todoId, completed } });
-        recordWebMcpActivity(project, { ...context, requestId }, { operation: completed ? "complete_todo" : "reopen_todo", resources: [{ kind: "paper-todo", id: todoId! }], title: todoId, href: `/p/${encodeURIComponent(project)}/paper#${encodeURIComponent(todoId!)}` });
-        return okResult(value, { revision: result.revision, diskHash: result.diskHash, remote: pendingRemote() });
       } catch (error) { return caught(error); }
     });
   } catch (error) { return caught(error); }
@@ -1321,7 +1294,9 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
     if (to < from || to > bundle.source.length || to - from > MAX_READ_CHARS) return failResult("invalid_arguments", "Use an ordered source range within the document and 200000 characters.", false);
     return okResult({ project, from, to, source: bundle.source.slice(from, to), bundleHash: bundle.bundleHash });
   }, { readOnlyHint: true }),
-  ...(["add_todo", "update_todo", "add_comment"] as const).map(name => tool(name, name.replaceAll("_", " "), "Apply a source annotation operation to saved TeX with a required bundle hash. dryRun previews the operation.", async (raw, context) => {
+  ...(["add_todo", "update_todo", "add_comment"] as const).map(name => tool(name, name.replaceAll("_", " "), name === "update_todo"
+    ? "Update a saved TeX TODO by id. Set completed=true to complete it or completed=false to reopen it. Title and text are optional. Pass expectedBundleHash from the current source read. dryRun previews the operation."
+    : "Apply a source annotation operation to saved TeX with a required bundle hash. dryRun previews the operation.", async (raw, context) => {
     const args = asObject(raw)!;
     const project = projectArg(args);
     assertAdministrativeWriteAllowed("MCP paper annotations");
@@ -1408,15 +1383,11 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
   tool("patch_mindmap_node", "Patch map card", mindmapToolDescription("patch_mindmap_node"), executePatchMindmapNode),
   tool("add_mindmap_node", "Add map card", mindmapToolDescription("add_mindmap_node"), executeAddMindmapNode),
   tool("move_mindmap_node", "Move map card", mindmapToolDescription("move_mindmap_node"), executeMoveMindmapNode),
-  tool("preview_mindmap_batch", "Preview map batch", "Preview exact affected cards, descendants, TODO-card count, branch roots, and a revision-bound token. This never writes.", executePreviewMindmapBatch, { readOnlyHint: true }),
-  tool("apply_mindmap_batch", "Apply map batch", "Apply one validated atomic batch for card fields, selected-branch movement, or deletion. Deletion requires a current preview token.", executeApplyMindmapBatch, { destructiveHint: true }),
-  tool("delete_mindmap_node", "Delete selected cards", "Delete selected cards and promote surviving children to the nearest surviving ancestor. Use a preview token.", (args, context) => executeDeleteMindmap(args, context, "cards"), { destructiveHint: true }),
-  tool("delete_mindmap_branch", "Delete selected branches", "Delete selected cards and all descendants, including collapsed descendants. Use a preview token.", (args, context) => executeDeleteMindmap(args, context, "branches"), { destructiveHint: true }),
+  tool("preview_mindmap_batch", "Preview map batch", "Preview affected cards and a revision-bound token. Pass selectedIds for one or more cards. deleteMode=cards removes selected cards and promotes surviving children. deleteMode=branches removes selected cards and all descendants. This preview is read-only.", executePreviewMindmapBatch, { readOnlyHint: true }),
+  tool("apply_mindmap_batch", "Apply map batch", "Apply an atomic card-field, movement, or deletion batch with the current preview token. Pass selectedIds for one or more cards. deleteMode=cards promotes surviving children. deleteMode=branches removes selected cards and all descendants, including collapsed cards.", executeApplyMindmapBatch, { destructiveHint: true }),
   tool("add_paper_todo_at_section", "Add paper TODO", "Insert a TeX-owned TODO at a current section using the current source-bundle hash. Reuse todoId and requestId for retries.", executeAddPaperTodoAtSection),
   tool("convert_card_to_todo", "Convert card to paper TODO", "Convert an ordinary map card into a TeX-owned TODO and bind the card atomically. Pass sectionId for an explicit current paper section, or omit it for a neutral insertion in the manuscript root. Use expectedRevision plus optional map and paper hashes for conflict checks, and requestId for retries.", executeConvertCardToTodo),
   tool("replace_paper_section", "Replace paper section", "Replace one section body using its exact section hash. Preserve other sections, TODOs, comments, markers, tables, and figures.", executeReplacePaperSection),
-  tool("complete_todo", "Complete paper TODO", "Set a TeX TODO completion timestamp while retaining its text and map cards.", (args, context) => executeTodoState(args, context, true)),
-  tool("reopen_todo", "Reopen paper TODO", "Clear a TeX TODO completion timestamp while retaining its text and map cards.", (args, context) => executeTodoState(args, context, false)),
   tool("get_activity", "Read activity", "Read durable authored operation history after applying the selected day filter and before pagination.", executeActivity, { readOnlyHint: true }),
   tool("set_activity_window", "Set activity window", "Persist the selected map's rolling activity window from 1 to 365 days.", executeSetActivityWindow),
   tool("compile_paper", "Compile paper", "Start a five-minute-bounded compiler job from an immutable source snapshot. The last successful artifact remains addressable if this job fails.", executeCompile),
