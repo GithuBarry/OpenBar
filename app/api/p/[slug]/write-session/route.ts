@@ -60,11 +60,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     if (input.label !== undefined && typeof input.label !== "string") {
       return json({ ok: false, code: "invalid_arguments", message: "The writing-session label must be text." }, 400);
     }
+    if (input.action === "takeover" && input.expectedOwnerGeneration !== null && typeof input.expectedOwnerGeneration !== "string") {
+      return json({ ok: false, code: "invalid_arguments", message: "Read the current editing session and supply its owner generation." }, 400);
+    }
     const projectPath = projectContentDir(slug);
     const label = input.label as string | undefined;
-    const result = input.action === "acquire"
+    const result = input.action === "acquire" || input.action === "takeover"
       ? typeof input.sessionId === "string"
-        ? await acquireProjectWriteSession(projectPath, { sessionId: input.sessionId, label })
+        ? await acquireProjectWriteSession(projectPath, { sessionId: input.sessionId, label, ...(input.action === "takeover" ? { expectedOwnerGeneration: input.expectedOwnerGeneration as string | null } : {}) })
         : null
       : input.action === "resume"
         ? await resumeProjectWriteSession(projectPath, parseProjectWriteSessionCredential(input.credential), label)

@@ -625,6 +625,12 @@ export function PaperEditor({
     recoveryDraftRef.current = null;
   }, [project]);
 
+  const previouslyWritable = useRef(sessionWritable);
+  useEffect(() => {
+    if (previouslyWritable.current && !sessionWritable) writeRecoveryDraft();
+    previouslyWritable.current = sessionWritable;
+  }, [sessionWritable, writeRecoveryDraft]);
+
   const reviewingRemoteRef = useRef(false);
   useEffect(() => () => { if (reviewingRemoteRef.current) remoteQueue.resume(); }, [remoteQueue]);
   useEffect(() => {
@@ -2877,13 +2883,14 @@ export function PaperEditor({
             {restoreEditingAttention && <span aria-hidden="true" className={paperStyles.editingGlassTint} onAnimationEnd={() => setRestoreEditingAttention(false)} />}
             <div role="toolbar" aria-label="Paper editing" className={cn("ob-format-bar", paperStyles.editingToolbar, !sessionWritable && paperStyles.editingToolbarCompact)}>
               {!sessionWritable && <div className={paperStyles.editingAccess}>
-                <button type="button" className={paperStyles.restoreEditing} disabled={!canRestore} onClick={restoreEditing} aria-label={canRestore ? "Refresh to edit" : accessMessage} title={canRestore ? "Refresh to edit" : accessMessage}>
+                <button type="button" className={paperStyles.restoreEditing} disabled={!canRestore} onClick={restoreEditing} aria-label="Resume edit" title="Resume edit from the latest saved project. This transfers editing here. The previous session keeps its draft and switches to viewing.">
                   <span className={paperStyles.restoreEditingLabel}>
                     {canRestore ? <LockKeyholeOpen size={14} aria-hidden="true" /> : <LockKeyhole size={14} aria-hidden="true" />}
-                    <span className={paperStyles.restoreEditingText}>{canRestore ? "Refresh to edit" : accessMessage}</span>
+                    <span className={paperStyles.restoreEditingText}>Resume edit</span>
                   </span>
                 </button>
-                {!canRestore && <button type="button" className={paperStyles.checkEditingAccess} disabled={checkingEditingAccess} aria-label="Check again" aria-busy={checkingEditingAccess} title="Check editing access again" onClick={() => { void checkEditingAccess(); }}><RefreshCw size={14} aria-hidden="true" /></button>}
+                <span role="status" className="max-w-40 truncate text-[11px] text-muted" title={accessMessage}>{accessMessage}</span>
+                <button type="button" className={paperStyles.checkEditingAccess} disabled={checkingEditingAccess} aria-label="Check again" aria-busy={checkingEditingAccess} title="Check editing access again" onClick={() => { void checkEditingAccess(); }}><RefreshCw size={14} aria-hidden="true" /></button>
               </div>}
               <fieldset key={sessionWritable ? "editing" : "viewing"} className={paperStyles.editingTools} disabled={!sessionWritable} inert={!sessionWritable} aria-label="Formatting tools">
               {layout === "pdf" && <Tool title="Show source position in PDF" onClick={() => { void jumpToPdf(); }}><FileText size={15} /></Tool>}

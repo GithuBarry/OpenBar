@@ -108,6 +108,7 @@ function statusFor(record: SessionRecord | null, credential?: ProjectWriteSessio
     state: occupied ? "occupied" : "available",
     writable: occupied && credential !== undefined && matches(record, credential),
     ownerLabel: occupied ? record.label : null,
+    ownerGeneration: occupied ? record.generation : null,
     expiresAt: occupied ? record.expiresAt : null,
     serverTime: now,
   };
@@ -155,13 +156,20 @@ function transition<T>(projectPath: string, operation: () => T): Promise<T> {
 
 export async function acquireProjectWriteSession(
   projectPath: string,
-  input: { sessionId: string; label?: string },
+  input: { sessionId: string; label?: string; expectedOwnerGeneration?: string | null },
 ): Promise<ProjectWriteSessionResult> {
   if (!UUID.test(input.sessionId)) throw new ProjectWriteSessionError("write_session_invalid", "A fresh browser session identity is required.", 400);
+  if (input.expectedOwnerGeneration !== undefined && input.expectedOwnerGeneration !== null && !UUID.test(input.expectedOwnerGeneration)) {
+    throw new ProjectWriteSessionError("write_session_invalid", "Read the current editing session before resuming editing.", 400);
+  }
   return transition(projectPath, () => {
     const current = readRecord(projectPath);
     const now = Date.now();
-    if (active(current, now)) return denied(current, "project_in_use", "Another session is writing this project. This tab can read the latest saved work.");
+    const ownerGeneration = active(current, now) ? current.generation : null;
+    if (input.expectedOwnerGeneration !== undefined && ownerGeneration !== input.expectedOwnerGeneration) {
+      return denied(current, "write_session_changed", "Editing access changed. Check the current session and try again.");
+    }
+    if (ownerGeneration !== null && input.expectedOwnerGeneration === undefined) return denied(current, "project_in_use", "Another session is writing this project. This tab can read the latest saved work.");
     const next = newRecord(input.sessionId, labelFor(input.label), now);
     writeRecord(projectPath, next.record);
     return { ok: true, credential: next.credential, status: statusFor(next.record, next.credential, now) };

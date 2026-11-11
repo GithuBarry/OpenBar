@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useSharedProjectWebMcp } from "@/features/use-shared-webmcp";
 import type { CurrentLocation } from "@/lib/research/webmcp-shared-contract";
 import { ProjectWriteSession } from "@/components/project-session/project-write-session";
+import { SessionWebMcp } from "@/features/use-session-webmcp";
 
 function locationFromPath(project: string, pathname: string): CurrentLocation {
   const href = pathname;
@@ -44,5 +45,5 @@ export function ProjectAgentShell({
       return { ...loc, href: `${pathname}${window.location.hash}` };
     },
   });
-  return <ProjectWriteSession key={project} project={project} publicDemo={publicDemo}>{children}</ProjectWriteSession>;
+  return <ProjectWriteSession key={project} project={project} publicDemo={publicDemo}><SessionWebMcp disabled={publicDemo} />{children}</ProjectWriteSession>;
 }
