@@ -59,6 +59,11 @@
 .toolbar > .projectBar, .toolbar > .canvasTools { position: absolute; width: max-content; height: var(--mindmap-dock-height); min-height: 0; max-width: calc(100% - 16px); flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; overflow-y: hidden; pointer-events: auto; }
 .projectBar { top: 8px; left: 8px; }
 .projectBar > :global(.ob-chrome-header) { flex: 0 1 auto; min-width: 0; }
+.toolbar:has(.projectBar :global(.ob-chrome-header input)) { z-index: 28; }
+.toolbar > .projectBar:has(:global(.ob-chrome-header input)) { height: auto; overflow: visible; align-items: flex-start; }
+.projectBar:has(:global(.ob-chrome-header input)) > :global(.ob-chrome-header) { flex: 1; width: 100%; }
+.projectBar:has(:global(.ob-chrome-header input)) > .fontTools,
+.projectBar:has(:global(.ob-chrome-header input)) > .toolbarActions { display: none; }
 .canvasTools { top: auto; bottom: var(--mindmap-dock-bottom); left: 50%; transform: translateX(-50%); }
 .resumeDock { position: absolute; z-index: 30; bottom: var(--mindmap-bottom-clearance); left: 50%; width: max-content; max-width: calc(100% - 24px); transform: translateX(-50%); }
 .resumeDock:empty { display: none; }
