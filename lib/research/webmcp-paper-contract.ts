@@ -852,6 +852,13 @@ async function executeNamed(
             { retryable: false, currentRevision: snapshot.revision },
           );
         }
+        if (patched.reason === "comment_in_cell") {
+          return failResult(
+            WEBMCP_ERROR_CODES.capability_unavailable,
+            "This cell contains a TeX comment between its contents. Edit the source directly while preserving the comment.",
+            { retryable: false, currentRevision: snapshot.revision },
+          );
+        }
         return failResult(
           WEBMCP_ERROR_CODES.invalid_arguments,
           patched.reason === "missing_table" ? `No table ${args.tableIndex} in this section.` : "Unknown table cell.",

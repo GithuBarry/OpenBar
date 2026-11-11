@@ -11,7 +11,11 @@
  */
 
 import { revalidatePath } from "next/cache";
-import { after } from "next/server";
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import { withBrowserProjectWriteSession } from "@/lib/server/project-write-session-request";
+import { withProjectWriteLock } from "@/lib/research/project-lock";
+import { acquireProjectWriteSession, releaseProjectWriteSession, withProjectWriteSessionContext, ProjectWriteSessionError, type ProjectWriteSessionCredential } from "@/lib/research/project-write-session";
 
 import {
   getEditableTexPaper,
@@ -21,7 +25,10 @@ import {
   saveProject,
   getProject,
   listVisibleProjects,
+  checkProjectName,
+  connectProjectToOverleaf,
   createProject,
+  type NewProjectInput,
   getMindmap,
   saveMindmap,
   createMindmap,
@@ -37,7 +44,7 @@ import { synctexEdit, synctexView } from "@/lib/tex-project/synctex";
 import { FIGURE_MAX_BYTES, uploadFigureAsset, texPaths, readDocument, DRAFT_MINDMAP_ID, resolveMindmapStorageIdentity } from "@/lib/tex-project/project";
 import { persistSourceBundle, applyConversionWrite } from "@/lib/tex-project/source-persist";
 import { syncProjectCommand } from "@/lib/research/sync-project-command";
-import { getOverleafSyncDetails, prepareForceSync, confirmForceSync, finishForceSync, type ForceSyncDirection, prepareOverleafPull, finishOverleafPull, type OverleafConflictChoice, commitOverleafGit, getProjectGitHistory, getOverleafGitStatus, pullOverleafGit, pushOverleafGit, refreshOverleafGitStatus, syncOverleafGit } from "@/lib/tex-project/overleaf-git";
+import { getOverleafSyncDetails, prepareForceSync, confirmForceSync, finishForceSync, type ForceSyncDirection, prepareOverleafPull, finishOverleafPull, type OverleafConflictChoice, commitOverleafGit, getProjectGitHistory, getOverleafGitStatus, pullOverleafGit, reconcileDirectPull, pushOverleafGit, refreshOverleafGitStatus, syncOverleafGit, OverleafSetupError } from "@/lib/tex-project/overleaf-git";
 import { inspectRepository } from "@/lib/tex-project/source-graph";
 import { getConversionPlan, previewManuscriptConversion } from "@/lib/tex-project/pandoc";
 import { getRuntimeCapabilities } from "@/lib/research/capabilities";
@@ -59,12 +66,11 @@ import {
 } from "@/lib/research/project-skills";
 import { persistPaperTodoOperation, insertTodoAtSection, persistPaperTodoPlacement, previewPaperTodoPlacement, relocatePaperTodo } from "@/lib/research/paper-todo-persist";
 import { convertMindmapCardToTodo } from "@/lib/research/mindmap-todo-conversion";
-import { scheduleRemoteSyncAfterResponse } from "@/lib/research/project-sync";
 import { applyMindmapAction, newNodeId } from "@/features/mindmap/mindmap-state";
 import { analyzePaper } from "@/lib/research/paper-analysis";
 import type { SourceOperation } from "@/lib/research/operations";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
-import { stableJson } from "@/lib/tex-project/codec";
+import { stableJson, TexEnvelopeError } from "@/lib/tex-project/codec";
 import { requireProjectAccess, requireWorkbenchAccess } from "@/lib/server/project-access";
 import { assertAdministrativeWriteAllowed, isPublicDemoMode } from "@/lib/server/demo-mode";
 import { normalizeMindmap, mindmapDiskHash } from "@/lib/mindmap/mindmap";
@@ -258,17 +264,54 @@ function mindmapActivityChanges(before: Mindmap | null, after: Mindmap): Activit
   return changes.slice(0, 50);
 }
 
+function saveProjectMetadata(project: Project, expectedHash?: string): void {
+    assertAdministrativeWriteAllowed("Project metadata changes");
+    saveProject(project, expectedHash);
+    recordActivity(project.slug, {
+      operation: "update_project",
+      resources: [{ kind: "project", id: project.slug }],
+      title: project.title,
+      href: `/p/${encodeURIComponent(project.slug)}/paper`,
+    });
+    bust(project.slug);
+}
+
 export async function saveProjectAction(project: Project, expectedHash = project.diskHash): Promise<void> {
   await requireProjectAccess(project.slug);
-  assertAdministrativeWriteAllowed("Project metadata changes");
-  saveProject(project, expectedHash);
-  recordActivity(project.slug, {
-    operation: "update_project",
-    resources: [{ kind: "project", id: project.slug }],
-    title: project.title,
-    href: `/p/${encodeURIComponent(project.slug)}/paper`,
+  return withBrowserProjectWriteSession(projectContentDir(project.slug), async () => {
+    saveProjectMetadata(project, expectedHash);
   });
-  bust(project.slug);
+}
+
+/** Home has no project provider, so reserve its short metadata edit explicitly. */
+export async function saveProjectFromHomeAction(project: Project, continuation?: ProjectWriteSessionCredential): Promise<OperationResult<{ saved: true }>> {
+  await requireProjectAccess(project.slug);
+  assertAdministrativeWriteAllowed("Project metadata changes");
+  const projectDir = projectContentDir(project.slug);
+  try {
+    let credential = continuation;
+    if (!credential) {
+      const claim = await acquireProjectWriteSession(projectDir, { sessionId: randomUUID() });
+      if (!claim.ok || !claim.credential) {
+        return failResult("project_in_use", "This project is open for editing. Release editing access in that tab before changing project details here.", { retryable: true });
+      }
+      credential = claim.credential;
+    }
+    try {
+      await withProjectWriteSessionContext(projectDir, credential, async () => saveProjectMetadata(project, project.diskHash));
+      return okResult({ saved: true });
+    } finally {
+      try { await releaseProjectWriteSession(projectDir, credential); }
+      catch (error) { console.warn("OpenBar could not release the temporary writing session", error instanceof Error ? error.message : String(error)); }
+    }
+  } catch (error) {
+    if (error instanceof ProjectWriteSessionError) return failResult(error.code, error.message, { retryable: true });
+    if (error instanceof TexEnvelopeError) return failResult("stale_disk_state", error.message, { retryable: true });
+    if (error && typeof error === "object" && "code" in error && error.code === "ELOCKED") {
+      return failResult("project_busy", "This project is finishing another save. Keep your edits here and try again.", { retryable: true });
+    }
+    throw error;
+  }
 }
 
 /** Save the visible product identity in the tracked content tree. */
@@ -282,16 +325,60 @@ export async function saveWorkspaceSettingsAction(
   return saved;
 }
 
-export async function createProjectAction(input: {
-  title: string;
-  slug?: string;
-  tagline?: string;
-}): Promise<{ slug: string }> {
+const projectNameInput = z.object({ title: z.string().trim().min(1).max(240), slug: z.string().max(120).optional() });
+const projectSetupInput = projectNameInput.extend({
+  tagline: z.string().max(240).optional(),
+  destination: z.enum(["local", "existing", "new"]).optional(),
+  overleafUrl: z.string().max(2048).optional(),
+  nameChecked: z.boolean().optional(),
+});
+
+export async function checkProjectNameAction(input: Pick<NewProjectInput, "title" | "slug">) {
+  await requireWorkbenchAccess();
+  assertAdministrativeWriteAllowed("Project setup");
+  const parsed = projectNameInput.safeParse(input);
+  if (!parsed.success) return { ok: false as const, message: "Enter a project title of up to 240 characters and a short project address." };
+  try {
+    return { ok: true as const, slug: checkProjectName(parsed.data) };
+  } catch (error) {
+    return { ok: false as const, message: error instanceof OverleafSetupError ? error.message : "OpenBar could not check the project name. Try again." };
+  }
+}
+
+async function synchronizeNewOverleafConnection(slug: string): Promise<string | undefined> {
+  const result = await pushOverleafGit(projectContentDir(slug), "OpenBar: set up project");
+  if (!result.ok) return `OpenBar saved the project and connected Overleaf. Initial sync needs attention. ${result.message}`;
+}
+
+export async function createProjectAction(input: NewProjectInput) {
   await requireWorkbenchAccess();
   assertAdministrativeWriteAllowed("Project creation");
-  const project = createProject(input);
-  bust(project.slug);
-  return { slug: project.slug };
+  const parsed = projectSetupInput.safeParse(input);
+  if (!parsed.success) return { ok: false as const, message: "Check the project title, address, and Overleaf link." };
+  try {
+    const project = await createProject(parsed.data);
+    const message = parsed.data.destination === "new" ? await synchronizeNewOverleafConnection(project.slug) : undefined;
+    bust(project.slug);
+    return { ok: true as const, slug: project.slug, message };
+  } catch (error) {
+    return { ok: false as const, message: error instanceof OverleafSetupError ? error.message : "OpenBar could not finish project setup. Check the workspace and try again." };
+  }
+}
+
+export async function connectProjectOverleafAction(slug: string, overleafUrl: string) {
+  await requireProjectAccess(slug);
+  assertAdministrativeWriteAllowed("Overleaf setup");
+  if (typeof overleafUrl !== "string" || overleafUrl.length > 2048) {
+    return { ok: false as const, message: "Paste an Overleaf project URL or Git URL." };
+  }
+  try {
+    await connectProjectToOverleaf(slug, overleafUrl);
+    const message = await synchronizeNewOverleafConnection(slug);
+    bust(slug);
+    return { ok: true as const, message };
+  } catch (error) {
+    return { ok: false as const, message: error instanceof OverleafSetupError ? error.message : "OpenBar could not connect this project. Check the workspace and try again." };
+  }
 }
 
 export async function saveMindmapAction(
@@ -301,72 +388,72 @@ export async function saveMindmapAction(
   actor: "human" | "webmcp" = "human",
 ): Promise<Mindmap> {
   await requireProjectAccess(slug);
-  const saved = normalizeMindmapForSave(slug, mindmap);
-  const current = getMindmap(slug, saved.id);
-  if (isPublicDemoMode() && !current) {
-    throw new Error("Mindmap creation is disabled in the public demo.");
-  }
-  if (expectedDiskHash && current) {
-    const currentHash = current.diskHash || mindmapDiskHash(current);
-    if (currentHash !== expectedDiskHash) {
-      throw new Error(`conflict: mindmap changed (hash ${currentHash}). Reload before saving.`);
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    const saved = normalizeMindmapForSave(slug, mindmap);
+    const current = getMindmap(slug, saved.id);
+    if (isPublicDemoMode() && !current) {
+      throw new Error("Mindmap creation is disabled in the public demo.");
     }
-  }
-  const normalized = normalizeMindmap({
-    ...saved,
-    revision: (current?.revision ?? 0) + 1,
+    if (expectedDiskHash && current) {
+      const currentHash = current.diskHash || mindmapDiskHash(current);
+      if (currentHash !== expectedDiskHash) {
+        throw new Error(`conflict: mindmap changed (hash ${currentHash}). Reload before saving.`);
+      }
+    }
+    const normalized = normalizeMindmap({
+      ...saved,
+      revision: (current?.revision ?? 0) + 1,
+    });
+    const next = saveMindmap(slug, normalized, expectedDiskHash);
+    const beforeNodes = new Map((current?.nodes || []).map((node) => [node.id, node]));
+    const afterNodes = new Map(next.nodes.map((node) => [node.id, node]));
+    const changedNodeIds = [...new Set([
+      ...beforeNodes.keys(),
+      ...afterNodes.keys(),
+    ])]
+      .filter((id) => {
+        const beforeNode = beforeNodes.get(id);
+        const afterNode = afterNodes.get(id);
+        if (!beforeNode || !afterNode) return true;
+        return MINDMAP_ACTIVITY_NODE_FIELDS.some((field) => !activityValuesEqual(beforeNode[field], afterNode[field]));
+      })
+      .sort()
+      .slice(0, 48);
+    const mapTitle = next.title || next.id || "Mindmap";
+    const activityTitle = changedNodeIds.length === 1
+      ? `${mapTitle} · ${afterNodes.get(changedNodeIds[0])?.title?.trim() || changedNodeIds[0]}`
+      : changedNodeIds.length > 1
+        ? `${mapTitle} · ${changedNodeIds.length} cards changed`
+        : mapTitle;
+    const mapId = next.id || DRAFT_MINDMAP_ID;
+    const mapHref = `/p/${encodeURIComponent(slug)}/mindmap${next.id && !isPrimaryMindmap(next) ? `/${encodeURIComponent(next.id)}` : ""}`;
+    recordActivity(slug, {
+      operation: "save_mindmap",
+      resources: [
+        { kind: "mindmap", id: next.id || DRAFT_MINDMAP_ID, mapId: next.id || DRAFT_MINDMAP_ID },
+        ...changedNodeIds.map((id) => ({ kind: "mindmap-node", id, mapId: next.id || DRAFT_MINDMAP_ID })),
+      ],
+      title: activityTitle,
+      href: mapHref,
+      changes: mindmapActivityChanges(current, next),
+    }, actor);
+    if (actor === "human") {
+      const removed = [...beforeNodes.values()].filter((node) => !afterNodes.has(node.id));
+      for (let offset = 0; offset < removed.length; offset += 48) {
+        const batch = removed.slice(offset, offset + 48);
+        recordActivity(slug, {
+          operation: "human_removed_mindmap_cards",
+          resources: batch.map((node) => ({ kind: "mindmap-node", id: node.id, mapId })),
+          title: batch.length === 1 ? (batch[0].title?.trim() || batch[0].text.trim() || "Removed card") : `${batch.length} removed cards`,
+          href: mapHref,
+          deleted: true,
+          changes: batch.map((node) => ({ field: `node:${node.id}`, before: mindmapNodeActivitySnapshot(node) })),
+        });
+      }
+    }
+    bust(slug);
+    return next;
   });
-  const diskHash = mindmapDiskHash(normalized);
-  const next = { ...normalized, diskHash };
-  saveMindmap(slug, next, expectedDiskHash);
-  const beforeNodes = new Map((current?.nodes || []).map((node) => [node.id, node]));
-  const afterNodes = new Map(next.nodes.map((node) => [node.id, node]));
-  const changedNodeIds = [...new Set([
-    ...beforeNodes.keys(),
-    ...afterNodes.keys(),
-  ])]
-    .filter((id) => {
-      const beforeNode = beforeNodes.get(id);
-      const afterNode = afterNodes.get(id);
-      if (!beforeNode || !afterNode) return true;
-      return MINDMAP_ACTIVITY_NODE_FIELDS.some((field) => !activityValuesEqual(beforeNode[field], afterNode[field]));
-    })
-    .sort()
-    .slice(0, 48);
-  const mapTitle = next.title || next.id || "Mindmap";
-  const activityTitle = changedNodeIds.length === 1
-    ? `${mapTitle} · ${afterNodes.get(changedNodeIds[0])?.title?.trim() || changedNodeIds[0]}`
-    : changedNodeIds.length > 1
-      ? `${mapTitle} · ${changedNodeIds.length} cards changed`
-      : mapTitle;
-  const mapId = next.id || DRAFT_MINDMAP_ID;
-  const mapHref = `/p/${encodeURIComponent(slug)}/mindmap${next.id && !isPrimaryMindmap(next) ? `/${encodeURIComponent(next.id)}` : ""}`;
-  recordActivity(slug, {
-    operation: "save_mindmap",
-    resources: [
-      { kind: "mindmap", id: next.id || DRAFT_MINDMAP_ID, mapId: next.id || DRAFT_MINDMAP_ID },
-      ...changedNodeIds.map((id) => ({ kind: "mindmap-node", id, mapId: next.id || DRAFT_MINDMAP_ID })),
-    ],
-    title: activityTitle,
-    href: mapHref,
-    changes: mindmapActivityChanges(current, next),
-  }, actor);
-  if (actor === "human") {
-    const removed = [...beforeNodes.values()].filter((node) => !afterNodes.has(node.id));
-    for (let offset = 0; offset < removed.length; offset += 48) {
-      const batch = removed.slice(offset, offset + 48);
-      recordActivity(slug, {
-        operation: "human_removed_mindmap_cards",
-        resources: batch.map((node) => ({ kind: "mindmap-node", id: node.id, mapId })),
-        title: batch.length === 1 ? (batch[0].title?.trim() || batch[0].text.trim() || "Removed card") : `${batch.length} removed cards`,
-        href: mapHref,
-        deleted: true,
-        changes: batch.map((node) => ({ field: `node:${node.id}`, before: mindmapNodeActivitySnapshot(node) })),
-      });
-    }
-  }
-  bust(slug);
-  return next;
 }
 
 /** Read the latest persisted map after a compare-and-swap conflict. */
@@ -388,12 +475,25 @@ export async function getProjectSyncDetailsAction(slug: string) {
 }
 
 /** Bring a clean checkout forward using Git's fast-forward rule. */
-export async function pullProjectUpdatesAction(slug: string) {
+export async function pullProjectUpdatesAction(slug: string, operationId: string) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Git pull");
-  const result = await pullOverleafGit(projectContentDir(slug));
-  if (result.ok) bust(slug);
-  return result;
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Git pull");
+    const result = await pullOverleafGit(projectContentDir(slug), operationId);
+    if (result.ok || result.uncertain) bust(slug);
+    return result;
+  });
+}
+
+/** Resolve or cancel the exact browser pull before permitting editor reload. */
+export async function reconcileProjectPullAction(slug: string, operationId: string) {
+  await requireProjectAccess(slug);
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Reconcile Git pull");
+    const result = await reconcileDirectPull(projectContentDir(slug), operationId);
+    if (result.state === "resolved" && result.result.ok) bust(slug);
+    return result;
+  });
 }
 
 export async function getProjectGitHistoryAction(slug: string, since?: string, limit = 40) {
@@ -403,62 +503,72 @@ export async function getProjectGitHistoryAction(slug: string, since?: string, l
 
 export async function commitAndPushProjectAction(slug: string, message?: string) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Git commit and push");
-  const result = await pushOverleafGit(
-    projectContentDir(slug),
-    message?.trim() || `OpenBar: save ${slug}`,
-  );
-  if (result.ok) bust(slug);
-  return result;
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Git commit and push");
+    const result = await pushOverleafGit(
+      projectContentDir(slug),
+      message?.trim() || `OpenBar: save ${slug}`,
+    );
+    if (result.ok) bust(slug);
+    return result;
+  });
 }
 
 /** Save the accepted manuscript/OpenBar paths into a local commit without network access. */
 export async function commitProjectAction(slug: string, message?: string) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Git local commit");
-  const result = await commitOverleafGit(projectContentDir(slug), message?.trim() || `OpenBar: save ${slug}`);
-  if (result.ok) bust(slug);
-  return result;
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Git local commit");
+    const result = await commitOverleafGit(projectContentDir(slug), message?.trim() || `OpenBar: save ${slug}`);
+    if (result.ok) bust(slug);
+    return result;
+  });
 }
 
 /** Push an existing local commit to the explicit validated Git branch. */
 export async function syncProjectAction(slug: string, commitHash?: string) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Git remote synchronization");
-  const result = await syncOverleafGit(projectContentDir(slug), commitHash);
-  if (result.ok) bust(slug);
-  return result;
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Git remote synchronization");
+    const result = await syncOverleafGit(projectContentDir(slug), commitHash);
+    if (result.ok) bust(slug);
+    return result;
+  });
 }
 
 export async function createMindmapAction(slug: string, title: string): Promise<{ id: string; title: string }> {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Mindmap creation");
-  const map = createMindmap(slug, title);
-  recordActivity(slug, {
-    operation: "create_mindmap",
-    resources: [{ kind: "mindmap", id: map.id || title, mapId: map.id || title }],
-    title: map.title || title,
-    href: `/p/${encodeURIComponent(slug)}/mindmap/${encodeURIComponent(map.id || title)}`,
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Mindmap creation");
+    const map = withProjectWriteLock(projectContentDir(slug), () => createMindmap(slug, title));
+    recordActivity(slug, {
+      operation: "create_mindmap",
+      resources: [{ kind: "mindmap", id: map.id || title, mapId: map.id || title }],
+      title: map.title || title,
+      href: `/p/${encodeURIComponent(slug)}/mindmap/${encodeURIComponent(map.id || title)}`,
+    });
+    bust(slug);
+    return { id: map.id || title, title: map.title || title };
   });
-  bust(slug);
-  return { id: map.id || title, title: map.title || title };
 }
 
 export async function deleteMindmapAction(slug: string, id: string): Promise<void> {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Mindmap deletion");
-  if (isPrimaryMindmap(id)) throw new Error("The primary mindmap cannot be deleted.");
-  const existing = getMindmap(slug, id);
-  if (isPrimaryMindmap(existing)) throw new Error("The primary mindmap cannot be deleted.");
-  deleteMindmap(slug, id);
-  recordActivity(slug, {
-    operation: "delete_mindmap",
-    resources: [{ kind: "mindmap", id, mapId: id }],
-    title: id,
-    href: `/p/${encodeURIComponent(slug)}/mindmap/${encodeURIComponent(id)}`,
-    deleted: true,
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Mindmap deletion");
+    if (isPrimaryMindmap(id)) throw new Error("The primary mindmap cannot be deleted.");
+    const existing = getMindmap(slug, id);
+    if (isPrimaryMindmap(existing)) throw new Error("The primary mindmap cannot be deleted.");
+    withProjectWriteLock(projectContentDir(slug), () => deleteMindmap(slug, id));
+    recordActivity(slug, {
+      operation: "delete_mindmap",
+      resources: [{ kind: "mindmap", id, mapId: id }],
+      title: id,
+      href: `/p/${encodeURIComponent(slug)}/mindmap/${encodeURIComponent(id)}`,
+      deleted: true,
+    });
+    bust(slug);
   });
-  bust(slug);
 }
 
 export async function getEditablePaperAction(slug: string) {
@@ -473,22 +583,33 @@ export async function persistSourceBundleAction(
   dryRun = false,
 ) {
   await requireProjectAccess(slug);
-  const result = persistSourceBundle({
-    manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
-    nextSource,
-    expectedBundleHash,
-    dryRun,
-  });
-  if (result.ok && !dryRun) {
-    recordActivity(slug, {
-      operation: "save_paper_source",
-      resources: [{ kind: "paper", id: "source" }],
-      title: "Paper source",
-      href: `/p/${encodeURIComponent(slug)}/paper`,
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    const result = persistSourceBundle({
+      manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
+      nextSource,
+      expectedBundleHash,
+      dryRun,
+      includeBundle: true,
     });
-    bust(slug);
-  }
-  return result;
+    if (result.ok && !dryRun) {
+      recordActivity(slug, {
+        operation: "save_paper_source",
+        resources: [{ kind: "paper", id: "source" }],
+        title: "Paper source",
+        href: `/p/${encodeURIComponent(slug)}/paper`,
+      });
+      bust(slug);
+      if (result.value.graphChanged) {
+        try {
+          const paper = getPaperEditorState(slug);
+          if (paper?.bundle.bundleHash === result.value.bundleHash) {
+            return { ...result, value: { ...result.value, paper } };
+          }
+        } catch { /* The saved bundle remains authoritative if metadata refresh fails. */ }
+      }
+    }
+    return result;
+  });
 }
 
 export async function requestPaperCompileAction(slug: string) {
@@ -519,18 +640,21 @@ export async function uploadPaperFigureAction(slug: string, formData: FormData):
   path: string;
 }> {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Figure uploads");
-  if (!getEditableTexPaper(slug)) throw new Error("This project has not been migrated to a complete TeX manuscript.");
-  const candidate = formData.get("file");
-  if (!candidate || typeof candidate === "string" || typeof candidate.arrayBuffer !== "function") {
-    throw new Error("Choose a figure file to upload.");
-  }
-  const file = candidate as File;
-  if (typeof file.size === "number" && file.size > FIGURE_MAX_BYTES) {
-    throw new Error("Figures are limited to 8 MB.");
-  }
-  const upload = uploadFigureAsset(projectContentDir(slug), file.name, Buffer.from(await file.arrayBuffer()));
-  return { id: upload.id, markdown: upload.markdown, tex: upload.tex, path: upload.path };
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Figure uploads");
+    if (!getEditableTexPaper(slug)) throw new Error("This project has not been migrated to a complete TeX manuscript.");
+    const candidate = formData.get("file");
+    if (!candidate || typeof candidate === "string" || typeof candidate.arrayBuffer !== "function") {
+      throw new Error("Choose a figure file to upload.");
+    }
+    const file = candidate as File;
+    if (typeof file.size === "number" && file.size > FIGURE_MAX_BYTES) {
+      throw new Error("Figures are limited to 8 MB.");
+    }
+    const bytes = Buffer.from(await file.arrayBuffer());
+    const upload = withProjectWriteLock(projectContentDir(slug), () => uploadFigureAsset(projectContentDir(slug), file.name, bytes));
+    return { id: upload.id, markdown: upload.markdown, tex: upload.tex, path: upload.path };
+  });
 }
 
 export async function uploadMindmapImageAction(slug: string, formData: FormData): Promise<{
@@ -539,22 +663,25 @@ export async function uploadMindmapImageAction(slug: string, formData: FormData)
   sha256: string;
 }> {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Mindmap image uploads");
-  if (!getEditableTexPaper(slug)) throw new Error("This project has not been migrated to a complete TeX manuscript.");
-  const candidate = formData.get("file");
-  if (!candidate || typeof candidate === "string" || typeof candidate.arrayBuffer !== "function") {
-    throw new Error("Choose an image file to upload.");
-  }
-  const file = candidate as File;
-  if (typeof file.size === "number" && file.size > FIGURE_MAX_BYTES) {
-    throw new Error("Images are limited to 8 MB.");
-  }
-  const upload = uploadFigureAsset(projectContentDir(slug), file.name, Buffer.from(await file.arrayBuffer()));
-  return {
-    ref: { kind: "figure", id: upload.path, label: file.name },
-    path: upload.path,
-    sha256: upload.sha256,
-  };
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Mindmap image uploads");
+    if (!getEditableTexPaper(slug)) throw new Error("This project has not been migrated to a complete TeX manuscript.");
+    const candidate = formData.get("file");
+    if (!candidate || typeof candidate === "string" || typeof candidate.arrayBuffer !== "function") {
+      throw new Error("Choose an image file to upload.");
+    }
+    const file = candidate as File;
+    if (typeof file.size === "number" && file.size > FIGURE_MAX_BYTES) {
+      throw new Error("Images are limited to 8 MB.");
+    }
+    const bytes = Buffer.from(await file.arrayBuffer());
+    const upload = withProjectWriteLock(projectContentDir(slug), () => uploadFigureAsset(projectContentDir(slug), file.name, bytes));
+    return {
+      ref: { kind: "figure", id: upload.path, label: file.name },
+      path: upload.path,
+      sha256: upload.sha256,
+    };
+  });
 }
 
 export async function getCapabilitiesAction() {
@@ -636,24 +763,26 @@ export async function searchProjectAction(slug: string, query: string) {
 /** Assign a stable id only when a researcher links an existing paper comment. */
 export async function ensurePaperCommentAction(slug: string, sourceStart: number, expectedBundleHash: string) {
   await requireProjectAccess(slug);
-  if (!Number.isInteger(sourceStart) || sourceStart < 0) throw new Error("Comment source position is invalid.");
-  if (!/^[a-f0-9]{64}$/i.test(expectedBundleHash)) throw new Error("Paper bundle hash is invalid.");
-  const manuscriptDir = texPaths(projectContentDir(slug)).manuscriptDir;
-  const bundle = buildSourceBundle(manuscriptDir);
-  if (bundle.bundleHash !== expectedBundleHash) {
-    throw new Error("Paper changed on disk. Reload before linking the comment.");
-  }
-  const ensured = ensureCommentId(bundle.source, sourceStart);
-  if (!ensured) throw new Error("Could not locate that paper comment in the current source.");
-  if (ensured.source === bundle.source) return { id: ensured.id, hash: bundle.bundleHash, changed: false };
-  const result = persistSourceBundle({
-    manuscriptDir,
-    nextSource: ensured.source,
-    expectedBundleHash,
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    if (!Number.isInteger(sourceStart) || sourceStart < 0) throw new Error("Comment source position is invalid.");
+    if (!/^[a-f0-9]{64}$/i.test(expectedBundleHash)) throw new Error("Paper bundle hash is invalid.");
+    const manuscriptDir = texPaths(projectContentDir(slug)).manuscriptDir;
+    const bundle = buildSourceBundle(manuscriptDir);
+    if (bundle.bundleHash !== expectedBundleHash) {
+      throw new Error("Paper changed on disk. Reload before linking the comment.");
+    }
+    const ensured = ensureCommentId(bundle.source, sourceStart);
+    if (!ensured) throw new Error("Could not locate that paper comment in the current source.");
+    if (ensured.source === bundle.source) return { id: ensured.id, hash: bundle.bundleHash, changed: false };
+    const result = persistSourceBundle({
+      manuscriptDir,
+      nextSource: ensured.source,
+      expectedBundleHash,
+    });
+    if (!result.ok) throw new Error(result.message);
+    bust(slug);
+    return { id: ensured.id, hash: result.diskHash || result.value.bundleHash, changed: true };
   });
-  if (!result.ok) throw new Error(result.message);
-  bust(slug);
-  return { id: ensured.id, hash: result.diskHash || result.value.bundleHash, changed: true };
 }
 
 export async function resolveProjectNavigationAction(slug: string, input: { id?: string; href?: string }) {
@@ -673,48 +802,52 @@ export async function updateProjectAction(
   patch: ProjectMetadataPatch,
 ) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Project metadata changes");
-  const current = getProject(slug);
-  if (!current) throw new Error(`Unknown project "${slug}".`);
-  if (!patch.expectedHash) throw new Error("Read project state and pass project.hash before saving.");
-  saveProject({
-    ...current,
-    ...(patch.title !== undefined ? { title: patch.title } : {}),
-    ...(patch.venue !== undefined ? { venue: patch.venue } : {}),
-    ...(patch.tagline !== undefined ? { tagline: patch.tagline } : {}),
-    ...(patch.overview !== undefined ? { overview: patch.overview } : {}),
-    ...(patch.researchKind !== undefined ? { researchKind: patch.researchKind } : {}),
-    ...(patch.color !== undefined ? { color: patch.color } : {}),
-    ...(patch.icon !== undefined ? { icon: patch.icon } : {}),
-    ...(patch.label !== undefined ? { label: patch.label } : {}),
-    ...(patch.engine !== undefined ? { engine: patch.engine } : {}),
-    ...(patch.mainFile !== undefined ? { mainFile: patch.mainFile } : {}),
-    ...(patch.texliveVersion !== undefined ? { texliveVersion: patch.texliveVersion } : {}),
-    ...(patch.links !== undefined ? { links: patch.links } : {}),
-    ...(patch.collaborators !== undefined ? { collaborators: patch.collaborators } : {}),
-    ...(patch.archivedAt !== undefined ? { archivedAt: patch.archivedAt || undefined } : {}),
-    updatedAt: new Date().toISOString(),
-  }, patch.expectedHash);
-  bust(slug);
-  return getProject(slug);
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Project metadata changes");
+    const current = getProject(slug);
+    if (!current) throw new Error(`Unknown project "${slug}".`);
+    if (!patch.expectedHash) throw new Error("Read project state and pass project.hash before saving.");
+    saveProject({
+      ...current,
+      ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(patch.venue !== undefined ? { venue: patch.venue } : {}),
+      ...(patch.tagline !== undefined ? { tagline: patch.tagline } : {}),
+      ...(patch.overview !== undefined ? { overview: patch.overview } : {}),
+      ...(patch.researchKind !== undefined ? { researchKind: patch.researchKind } : {}),
+      ...(patch.color !== undefined ? { color: patch.color } : {}),
+      ...(patch.icon !== undefined ? { icon: patch.icon } : {}),
+      ...(patch.label !== undefined ? { label: patch.label } : {}),
+      ...(patch.engine !== undefined ? { engine: patch.engine } : {}),
+      ...(patch.mainFile !== undefined ? { mainFile: patch.mainFile } : {}),
+      ...(patch.texliveVersion !== undefined ? { texliveVersion: patch.texliveVersion } : {}),
+      ...(patch.links !== undefined ? { links: patch.links } : {}),
+      ...(patch.collaborators !== undefined ? { collaborators: patch.collaborators } : {}),
+      ...(patch.archivedAt !== undefined ? { archivedAt: patch.archivedAt || undefined } : {}),
+      updatedAt: new Date().toISOString(),
+    }, patch.expectedHash);
+    bust(slug);
+    return getProject(slug);
+  });
 }
 
 export async function placeTodoOnMindmapAction(slug: string, todoId: string, parentId: string) {
   await requireProjectAccess(slug);
-  const map = getMindmap(slug, DRAFT_MINDMAP_ID);
-  if (!map || !isPrimaryMindmap(map)) throw new Error("Primary mindmap is missing.");
-  const existing = map.nodes.find((node) => node.todoId === todoId);
-  if (existing) {
-    if (existing.parentId === parentId) return { todoId, parentId, nodeId: existing.id };
-    const next = applyMindmapAction(map, { type: "reparent", id: existing.id, parentId });
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    const map = getMindmap(slug, DRAFT_MINDMAP_ID);
+    if (!map || !isPrimaryMindmap(map)) throw new Error("Primary mindmap is missing.");
+    const existing = map.nodes.find((node) => node.todoId === todoId);
+    if (existing) {
+      if (existing.parentId === parentId) return { todoId, parentId, nodeId: existing.id };
+      const next = applyMindmapAction(map, { type: "reparent", id: existing.id, parentId });
+      saveMindmap(slug, next.mindmap, map.diskHash);
+      bust(slug);
+      return { todoId, parentId, nodeId: existing.id };
+    }
+    const next = applyMindmapAction(map, { type: "add-node", parentId, id: newNodeId(), todoId });
     saveMindmap(slug, next.mindmap, map.diskHash);
     bust(slug);
-    return { todoId, parentId, nodeId: existing.id };
-  }
-  const next = applyMindmapAction(map, { type: "add-node", parentId, id: newNodeId(), todoId });
-  saveMindmap(slug, next.mindmap, map.diskHash);
-  bust(slug);
-  return { todoId, parentId, nodeId: next.selectedId };
+    return { todoId, parentId, nodeId: next.selectedId };
+  });
 }
 
 export async function previewConversionAction(
@@ -753,29 +886,31 @@ export async function previewConversionAction(
 
 export async function applyConversionAction(slug: string, planId: string, expectedHash: string, acknowledgeLoss: boolean, dryRun = false) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Conversion");
-  const manuscriptDir = texPaths(projectContentDir(slug)).manuscriptDir;
-  const plan = getConversionPlan(planId, manuscriptDir);
-  if (!plan || plan.projectId !== slug) {
-    return { ok: false as const, code: "invalid_arguments", message: "Unknown conversion plan.", retryable: false };
-  }
-  if (!expectedHash || plan.artifact.sourceHash !== expectedHash) {
-    return { ok: false as const, code: "stale_disk_state", message: "Conversion plan is stale.", retryable: true, currentHash: plan.artifact.sourceHash };
-  }
-  const result = await applyConversionWrite({
-    manuscriptDir,
-    filePath: plan.filePath,
-    output: plan.artifact.output,
-    loss: plan.artifact.loss,
-    acknowledgeLoss,
-    expectedSourceFileHash: plan.artifact.sourceFileHash,
-    expectedSourceBundleHash: plan.artifact.sourceBundleHash,
-    expectedExpandedSourceHash: plan.artifact.sourceHash,
-    expandProject: plan.artifact.expandMethod !== "none",
-    dryRun,
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Conversion");
+    const manuscriptDir = texPaths(projectContentDir(slug)).manuscriptDir;
+    const plan = getConversionPlan(planId, manuscriptDir);
+    if (!plan || plan.projectId !== slug) {
+      return { ok: false as const, code: "invalid_arguments", message: "Unknown conversion plan.", retryable: false };
+    }
+    if (!expectedHash || plan.artifact.sourceHash !== expectedHash) {
+      return { ok: false as const, code: "stale_disk_state", message: "Conversion plan is stale.", retryable: true, currentHash: plan.artifact.sourceHash };
+    }
+    const result = await applyConversionWrite({
+      manuscriptDir,
+      filePath: plan.filePath,
+      output: plan.artifact.output,
+      loss: plan.artifact.loss,
+      acknowledgeLoss,
+      expectedSourceFileHash: plan.artifact.sourceFileHash,
+      expectedSourceBundleHash: plan.artifact.sourceBundleHash,
+      expectedExpandedSourceHash: plan.artifact.sourceHash,
+      expandProject: plan.artifact.expandMethod !== "none",
+      dryRun,
+    });
+    if (result.ok && !dryRun) bust(slug);
+    return result;
   });
-  if (result.ok && !dryRun) bust(slug);
-  return result;
 }
 
 export async function readDocumentAction(slug: string, kind: "wiki", id: string) {
@@ -837,21 +972,23 @@ export async function persistPaperTodoAction(
   expectedBundleHash?: string,
 ) {
   await requireProjectAccess(slug);
-  const result = persistPaperTodoOperation({
-    manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
-    operation,
-    expectedBundleHash,
-  });
-  if (result.ok) {
-    const todoId = "id" in operation && typeof operation.id === "string" ? operation.id : undefined;
-    recordActivity(slug, {
-      operation: operation.type,
-      resources: [todoId ? { kind: "paper-todo", id: todoId } : { kind: "paper", id: "source" }],
-      ...(todoId ? { title: todoId, href: `/p/${encodeURIComponent(slug)}/paper#${encodeURIComponent(todoId)}` } : {}),
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    const result = persistPaperTodoOperation({
+      manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
+      operation,
+      expectedBundleHash,
     });
-    bust(slug);
-  }
-  return result;
+    if (result.ok) {
+      const todoId = "id" in operation && typeof operation.id === "string" ? operation.id : undefined;
+      recordActivity(slug, {
+        operation: operation.type,
+        resources: [todoId ? { kind: "paper-todo", id: todoId } : { kind: "paper", id: "source" }],
+        ...(todoId ? { title: todoId, href: `/p/${encodeURIComponent(slug)}/paper#${encodeURIComponent(todoId)}` } : {}),
+      });
+      bust(slug);
+    }
+    return result;
+  });
 }
 
 export async function insertPaperTodoAtSectionAction(
@@ -862,32 +999,34 @@ export async function insertPaperTodoAtSectionAction(
   title?: string,
 ) {
   await requireProjectAccess(slug);
-  const manuscriptDir = texPaths(projectContentDir(slug)).manuscriptDir;
-  const bundle = buildSourceBundle(manuscriptDir);
-  const inserted = insertTodoAtSection(bundle.source, sectionId, text, undefined, title);
-  if (!inserted.sectionFound || inserted.error) {
-    return {
-      ok: false as const,
-      code: inserted.sectionFound ? "invalid_tex" : "unknown_section",
-      message: inserted.error || `Unknown paper section id "${sectionId}".`,
-      retryable: false,
-    };
-  }
-  const result = persistSourceBundle({
-    manuscriptDir,
-    nextSource: inserted.source,
-    expectedBundleHash: expectedBundleHash ?? bundle.bundleHash,
-  });
-  if (result.ok) {
-    recordActivity(slug, {
-      operation: "insert_paper_todo",
-      resources: [{ kind: "paper-todo", id: inserted.id }, ...(inserted.sectionId ? [{ kind: "paper-section", id: inserted.sectionId }] : [])],
-      title: title || text.slice(0, 120),
-      href: `/p/${encodeURIComponent(slug)}/paper#${encodeURIComponent(inserted.id)}`,
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    const manuscriptDir = texPaths(projectContentDir(slug)).manuscriptDir;
+    const bundle = buildSourceBundle(manuscriptDir);
+    const inserted = insertTodoAtSection(bundle.source, sectionId, text, undefined, title);
+    if (!inserted.sectionFound || inserted.error) {
+      return {
+        ok: false as const,
+        code: inserted.sectionFound ? "invalid_tex" : "unknown_section",
+        message: inserted.error || `Unknown paper section id "${sectionId}".`,
+        retryable: false,
+      };
+    }
+    const result = persistSourceBundle({
+      manuscriptDir,
+      nextSource: inserted.source,
+      expectedBundleHash: expectedBundleHash ?? bundle.bundleHash,
     });
-    bust(slug);
-  }
-  return { ...result, id: inserted.id };
+    if (result.ok) {
+      recordActivity(slug, {
+        operation: "insert_paper_todo",
+        resources: [{ kind: "paper-todo", id: inserted.id }, ...(inserted.sectionId ? [{ kind: "paper-section", id: inserted.sectionId }] : [])],
+        title: title || text.slice(0, 120),
+        href: `/p/${encodeURIComponent(slug)}/paper#${encodeURIComponent(inserted.id)}`,
+      });
+      bust(slug);
+    }
+    return { ...result, id: inserted.id };
+  });
 }
 
 export async function previewPaperTodoPlacementAction(
@@ -916,24 +1055,26 @@ export async function persistPaperTodoPlacementAction(
   expectedBundleHash?: string,
 ) {
   await requireProjectAccess(slug);
-  const result = persistPaperTodoPlacement({
-    manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
-    sectionId,
-    text,
-    title,
-    id,
-    expectedBundleHash,
-  });
-  if (result.ok) {
-    recordActivity(slug, {
-      operation: "place_paper_todo",
-      resources: [{ kind: "paper-todo", id: result.value?.id || id || "todo" }, ...(result.value?.sectionId ? [{ kind: "paper-section", id: result.value.sectionId }] : [])],
-      title: title || text.slice(0, 120),
-      href: `/p/${encodeURIComponent(slug)}/paper#${encodeURIComponent(result.value?.id || id || "todo")}`,
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    const result = persistPaperTodoPlacement({
+      manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
+      sectionId,
+      text,
+      title,
+      id,
+      expectedBundleHash,
     });
-    bust(slug);
-  }
-  return result;
+    if (result.ok) {
+      recordActivity(slug, {
+        operation: "place_paper_todo",
+        resources: [{ kind: "paper-todo", id: result.value?.id || id || "todo" }, ...(result.value?.sectionId ? [{ kind: "paper-section", id: result.value.sectionId }] : [])],
+        title: title || text.slice(0, 120),
+        href: `/p/${encodeURIComponent(slug)}/paper#${encodeURIComponent(result.value?.id || id || "todo")}`,
+      });
+      bust(slug);
+    }
+    return result;
+  });
 }
 
 export async function relocatePaperTodoAction(
@@ -943,22 +1084,24 @@ export async function relocatePaperTodoAction(
   expectedBundleHash?: string,
 ) {
   await requireProjectAccess(slug);
-  const result = relocatePaperTodo({
-    manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
-    todoId,
-    sectionId,
-    expectedBundleHash,
-  });
-  if (result.ok) {
-    recordActivity(slug, {
-      operation: "relocate_paper_todo",
-      resources: [{ kind: "paper-todo", id: todoId }, { kind: "paper-section", id: sectionId }],
-      title: todoId,
-      href: `/p/${encodeURIComponent(slug)}/paper#${encodeURIComponent(todoId)}`,
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    const result = relocatePaperTodo({
+      manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
+      todoId,
+      sectionId,
+      expectedBundleHash,
     });
-    bust(slug);
-  }
-  return result;
+    if (result.ok) {
+      recordActivity(slug, {
+        operation: "relocate_paper_todo",
+        resources: [{ kind: "paper-todo", id: todoId }, { kind: "paper-section", id: sectionId }],
+        title: todoId,
+        href: `/p/${encodeURIComponent(slug)}/paper#${encodeURIComponent(todoId)}`,
+      });
+      bust(slug);
+    }
+    return result;
+  });
 }
 
 export async function convertMindmapCardToTodoAction(
@@ -971,85 +1114,93 @@ export async function convertMindmapCardToTodoAction(
   requestId?: string,
 ): Promise<MindmapTodoConversionResult> {
   await requireProjectAccess(slug);
-  const current = normalizeMindmapForSave(slug, mindmap);
-  const local = await convertMindmapCardToTodo({
-    projectDir: projectContentDir(slug),
-    slug,
-    mindmap: current,
-    cardId,
-    sectionId,
-    expectedMapDiskHash,
-    expectedBundleHash,
-    requestId,
-  });
-  if (!local.ok) {
-    const failure: MindmapTodoConversionFailure = {
-      ...local,
-      local: {
-        paper: "failed",
-        map: "not_attempted",
-        message: local.message,
-      },
-      remote: {
-        status: "failed",
-        code: "not_attempted",
-        message: "Remote sync was not attempted because the local conversion did not complete.",
-        retryable: false,
-      },
-    };
-    return failure;
-  }
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    const current = normalizeMindmapForSave(slug, mindmap);
+    const local = await convertMindmapCardToTodo({
+      projectDir: projectContentDir(slug),
+      slug,
+      mindmap: current,
+      cardId,
+      sectionId,
+      expectedMapDiskHash,
+      expectedBundleHash,
+      requestId,
+    });
+    if (!local.ok) {
+      const failure: MindmapTodoConversionFailure = {
+        ...local,
+        local: {
+          paper: "failed",
+          map: "not_attempted",
+          message: local.message,
+        },
+        remote: {
+          status: "failed",
+          code: "not_attempted",
+          message: "Remote sync was not attempted because the local conversion did not complete.",
+          retryable: false,
+        },
+      };
+      return failure;
+    }
 
-  // Local durability is the user-visible success boundary. A remote failure
-  // leaves this result intact and can be retried independently.
-  recordActivity(slug, {
-    operation: "convert_mindmap_card_to_todo",
-    requestId,
-    resources: [
-      { kind: "paper-todo", id: local.value.todoId },
-      { kind: "mindmap-node", id: cardId, mapId: current.id || DRAFT_MINDMAP_ID },
-    ],
-    title: local.value.todoId,
-    href: `/p/${encodeURIComponent(slug)}/mindmap${current.id && !isPrimaryMindmap(current) ? `/${encodeURIComponent(current.id)}` : ""}#${encodeURIComponent(cardId)}`,
+    // Local durability is the user-visible success boundary. A remote failure
+    // leaves this result intact and can be retried independently.
+    recordActivity(slug, {
+      operation: "convert_mindmap_card_to_todo",
+      requestId,
+      resources: [
+        { kind: "paper-todo", id: local.value.todoId },
+        { kind: "mindmap-node", id: cardId, mapId: current.id || DRAFT_MINDMAP_ID },
+      ],
+      title: local.value.todoId,
+      href: `/p/${encodeURIComponent(slug)}/mindmap${current.id && !isPrimaryMindmap(current) ? `/${encodeURIComponent(current.id)}` : ""}#${encodeURIComponent(cardId)}`,
+    });
+    bust(slug);
+    // The editor owns the project-scoped quiet window and queues Git after it
+    // receives this durable local result.
+    const remote = {
+      status: "pending" as const,
+      code: "remote_sync_queued",
+      message: "Local save complete. Git synchronization is pending.",
+      retryable: true,
+    };
+    return okResult({
+      todoId: local.value.todoId,
+      mindmap: local.value.mindmap,
+      local: local.value.local,
+      ...(local.value.sectionId ? { sectionId: local.value.sectionId } : {}),
+      ...(local.value.sourceHash ? { sourceHash: local.value.sourceHash } : {}),
+      remote,
+    }, { revision: local.value.mindmap.revision, diskHash: local.value.mindmap.diskHash });
   });
-  bust(slug);
-  const remote = scheduleRemoteSyncAfterResponse(
-    (task) => after(task),
-    () => commitAndPushProjectAction(slug, "OpenBar: convert mindmap card to paper TODO"),
-  );
-  return okResult({
-    todoId: local.value.todoId,
-    mindmap: local.value.mindmap,
-    local: local.value.local,
-    ...(local.value.sectionId ? { sectionId: local.value.sectionId } : {}),
-    ...(local.value.sourceHash ? { sourceHash: local.value.sourceHash } : {}),
-    remote,
-  }, { revision: local.value.mindmap.revision, diskHash: local.value.mindmap.diskHash });
 }
 
 export async function removePaperTodoAction(slug: string, todoId: string, expectedBundleHash?: string) {
   await requireProjectAccess(slug);
-  const manuscriptDir = texPaths(projectContentDir(slug)).manuscriptDir;
-  const bundle = buildSourceBundle(manuscriptDir);
-  const todo = analyzePaper(bundle.source).todos.find((item) => item.id === todoId);
-  if (!todo) throw new Error(`Unknown TODO "${todoId}".`);
-  // TeX owns the TODO lifecycle. Referencing cards remain in their maps so
-  // their hierarchy and descendants stay available for repair or conversion.
-  const result = persistPaperTodoOperation({
-    manuscriptDir,
-    operation: { type: "replace_range", from: todo.start, to: todo.end, text: "" },
-    expectedBundleHash: expectedBundleHash ?? bundle.bundleHash,
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    const manuscriptDir = texPaths(projectContentDir(slug)).manuscriptDir;
+    const bundle = buildSourceBundle(manuscriptDir);
+    const todo = analyzePaper(bundle.source).todos.find((item) => item.id === todoId);
+    if (!todo) throw new Error(`Unknown TODO "${todoId}".`);
+    // TeX owns the TODO lifecycle. Referencing cards remain in their maps so
+    // their hierarchy and descendants stay available for repair or conversion.
+    const result = persistPaperTodoOperation({
+      manuscriptDir,
+      operation: { type: "replace_range", from: todo.start, to: todo.end, text: "" },
+      expectedBundleHash: expectedBundleHash ?? bundle.bundleHash,
+    });
+    if (!result.ok) return result;
+    recordActivity(slug, {
+      operation: "delete_paper_todo",
+      resources: [{ kind: "paper-todo", id: todoId }],
+      title: todoId,
+      href: `/p/${encodeURIComponent(slug)}/paper#${encodeURIComponent(todoId)}`,
+      deleted: true,
+    });
+    bust(slug);
+    return result;
   });
-  if (!result.ok) return result;
-  recordActivity(slug, {
-    operation: "delete_paper_todo",
-    resources: [{ kind: "paper-todo", id: todoId }],
-    title: todoId,
-    href: `/p/${encodeURIComponent(slug)}/paper#${encodeURIComponent(todoId)}`,
-    deleted: true,
-  });
-  bust(slug);
-  return result;
 }
 
 export async function deleteWikiPageAction(slug: string, pageSlug: string, expectedHash: string) {
@@ -1069,10 +1220,12 @@ export async function renameWikiPageAction(slug: string, fromSlug: string, toSlu
 
 export async function writeAgentsMdAction(slug: string, body: string, expectedHash?: string) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Project instructions");
-  const result = writeAgentsMd(projectContentDir(slug), body, expectedHash);
-  bust(slug);
-  return result;
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Project instructions");
+    const result = withProjectWriteLock(projectContentDir(slug), () => writeAgentsMd(projectContentDir(slug), body, expectedHash));
+    bust(slug);
+    return result;
+  });
 }
 
 export async function writeProjectSkillAction(
@@ -1081,17 +1234,21 @@ export async function writeProjectSkillAction(
   expectedHash?: string,
 ) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Project skills");
-  const skill = writeProjectSkill(projectContentDir(slug), spec, expectedHash);
-  bust(slug);
-  return skill;
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Project skills");
+    const skill = withProjectWriteLock(projectContentDir(slug), () => writeProjectSkill(projectContentDir(slug), spec, expectedHash));
+    bust(slug);
+    return skill;
+  });
 }
 
 export async function deleteProjectSkillAction(slug: string, id: string, expectedHash: string) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Project skills");
-  deleteProjectSkill(projectContentDir(slug), id, "project", expectedHash);
-  bust(slug);
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Project skills");
+    withProjectWriteLock(projectContentDir(slug), () => deleteProjectSkill(projectContentDir(slug), id, "project", expectedHash));
+    bust(slug);
+  });
 }
 
 export async function writeWorkspaceAgentsMdAction(body: string, expectedHash?: string) {
@@ -1117,39 +1274,51 @@ export async function deleteWorkspaceSkillAction(id: string, expectedHash: strin
 
 export async function prepareProjectPullAction(slug: string) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Review Git pull");
-  return prepareOverleafPull(projectContentDir(slug));
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Review Git pull");
+    return prepareOverleafPull(projectContentDir(slug));
+  });
 }
 
 export async function finishProjectPullAction(slug: string, token: string, choices: OverleafConflictChoice[], cancel = false) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Apply Git pull");
-  const result = await finishOverleafPull(projectContentDir(slug), token, choices, cancel);
-  if (result.ok && !cancel) bust(slug);
-  return result;
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Apply Git pull");
+    const result = await finishOverleafPull(projectContentDir(slug), token, choices, cancel);
+    if (result.ok && !cancel) bust(slug);
+    return result;
+  });
 }
 
 export async function prepareForceProjectSyncAction(slug: string, direction: ForceSyncDirection) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Review forced synchronization");
-  return prepareForceSync(projectContentDir(slug), direction);
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Review forced synchronization");
+    return prepareForceSync(projectContentDir(slug), direction);
+  });
 }
 export async function confirmForceProjectSyncAction(slug: string, token: string) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Confirm forced synchronization");
-  return confirmForceSync(projectContentDir(slug), token);
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Confirm forced synchronization");
+    return confirmForceSync(projectContentDir(slug), token);
+  });
 }
 export async function finishForceProjectSyncAction(slug: string, token: string, confirmation: string, phrase: string, cancel = false) {
   await requireProjectAccess(slug);
-  assertAdministrativeWriteAllowed("Force synchronization");
-  const result = await finishForceSync(projectContentDir(slug), token, confirmation, phrase, cancel);
-  if (result.ok && !cancel) bust(slug);
-  return result;
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    assertAdministrativeWriteAllowed("Force synchronization");
+    const result = await finishForceSync(projectContentDir(slug), token, confirmation, phrase, cancel);
+    if ((result.ok && !cancel) || result.applied || result.uncertain) bust(slug);
+    return result;
+  });
 }
 
 export async function syncProjectReviewAction(slug: string, input: unknown) {
   await requireProjectAccess(slug);
-  const result = await syncProjectCommand(projectContentDir(slug), input);
-  if (result.ok && input && typeof input === "object" && "action" in input && input.action === "apply_pull") bust(slug);
-  return result;
+  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
+    const result = await syncProjectCommand(projectContentDir(slug), input);
+    if (result.ok && input && typeof input === "object" && "action" in input && input.action === "apply_pull") bust(slug);
+    return result;
+  });
 }

@@ -24,7 +24,7 @@ import {
 } from "./codec";
 import { deriveSections, stripSectionComments } from "./section-ranges";
 import { figureToTex } from "./obmd";
-import { composePaperTex, looksLikeMarkdownPaper, PAPER_REFERENCES_INPUT, readTexDocumentTitle, sectionCommandForLevel, splitPaperTex } from "./paper-compose";
+import { composePaperTex, PAPER_REFERENCES_INPUT, readTexDocumentTitle, sectionCommandForLevel } from "./paper-compose";
 import { prepareDocumentBody, inferDocumentFormat } from "./document-body";
 import { locateTexRoot, traverseInputGraph, orderedSourceRanges } from "./source-graph";
 import { normalizeTeXInputPath } from "./source-bundle-format";
@@ -384,8 +384,7 @@ export function patchPaperSection(
 }
 
 /**
- * One lock, verify every hash, then commit all. Browser autosave and MCP
- * full-paper updates use this so a mid-loop conflict cannot save a prefix.
+ * One lock verifies every hash before committing section patches.
  */
 export function patchPaperSections(projectDir: string, patches: PaperSectionPatch[]): PaperSection[] {
   if (!patches.length) return [];
@@ -409,47 +408,6 @@ export function patchPaperSections(projectDir: string, patches: PaperSectionPatc
     }
     return current.map(({ section }) => findPaperSection(projectDir, section.id)!);
   });
-}
-
-/**
- * Full-document save for MCP get_draft / update_draft. Bodies are TeX and are
- * written as-is. Heading identity changes still require an explicit structural
- * operation rather than rebuilding every section file.
- */
-export function replacePaperTex(projectDir: string, projectId: string, title: string, source: string): TexPaper {
-  if (looksLikeMarkdownPaper(source)) {
-    throw new TexEnvelopeError("Paper source must be TeX (\\title / \\section), not markdown headings.");
-  }
-  const current = readTexPaper(projectDir, projectId, title);
-  const incoming = splitPaperTex(source);
-  if (!incoming.length) return current || readTexPaper(projectDir, projectId, title)!;
-
-  const currentSections = current?.sections || [];
-  const sameTitles = incoming.length === currentSections.length
-    && incoming.every((inc, i) => normalizeTitle(inc.title) === normalizeTitle(currentSections[i]?.title || ""));
-
-  if (sameTitles && current) {
-    const patches: PaperSectionPatch[] = [];
-    for (let i = 0; i < currentSections.length; i++) {
-      const section = currentSections[i]!;
-      const next = incoming[i]!;
-      const texChanged = next.tex.trim() !== section.tex.trim();
-      const levelChanged = next.level !== section.level;
-      const appendixChanged = Boolean(next.appendix) !== Boolean(section.appendix);
-      if (!texChanged && !levelChanged && !appendixChanged) continue;
-      patches.push({
-        id: section.id,
-        baseHash: section.hash,
-        tex: next.tex,
-        level: next.level,
-        appendix: next.appendix,
-      });
-    }
-    if (patches.length) patchPaperSections(projectDir, patches);
-    return readTexPaper(projectDir, projectId, title)!;
-  }
-
-  throw new TexEnvelopeError("Paper structure changed. Use an explicit section operation to add, remove, rename, or reorder sections.");
 }
 
 export function findPaperSection(projectDir: string, id: string): PaperSection | null {
@@ -537,7 +495,7 @@ export function writePaperProject(
   return readTexPaper(projectDir, "", title)!;
 }
 
-export { composePaperTex, splitPaperTex };
+export { composePaperTex };
 
 export function readBibliographyRaw(projectDir: string): string {
   const paths = texPaths(projectDir);
@@ -597,7 +555,10 @@ export function writeBibliographyRaw(projectDir: string, raw: string): void {
 }
 
 export function readBibliography(projectDir: string): BibEntry[] {
-  const raw = readBibliographyRaw(projectDir);
+  return parseBibliography(readBibliographyRaw(projectDir));
+}
+
+export function parseBibliography(raw: string): BibEntry[] {
   const entries = parseBibtexCitationJs(raw) ?? [];
   return entries.map((entry) => {
     const html = formatBibliographyHtml(entry) || undefined;
@@ -1026,7 +987,7 @@ function openBarryStyle(): string {
     \providecommand{\obclaim}[2][]{#2}
     \providecommand{\obevidence}[2][]{#2}
     \providecommand{\obcomment}[2][]{\textit{[Comment: #2]}}
-    \providecommand{\obtodo}[2][]{\textit{[TODO: #2]}}
+    \providecommand{\obtodo}[2][]{{\itshape [TODO: #2]}}
     \providecommand{\obmarker}[2]{\textit{[#1: #2]}}
     \providecommand{\obcite}[2][]{\cite{#2}\if\relax\detokenize{#1}\relax\else, #1\fi}
   \else
@@ -1034,7 +995,7 @@ function openBarryStyle(): string {
     \providecommand{\obclaim}[2][]{\textcolor{magenta!75!black}{#2}}
     \providecommand{\obevidence}[2][]{#2}
     \providecommand{\obcomment}[2][]{\textcolor{gray!75!black}{\textit{[Comment: #2]}}}
-    \providecommand{\obtodo}[2][]{\textcolor{orange!85!black}{[TODO: #2]}}
+    \providecommand{\obtodo}[2][]{{\color{orange!85!black}[TODO: #2]}}
     \providecommand{\obmarker}[2]{\textcolor{orange!85!black}{[#1: #2]}}
     \providecommand{\obcite}[2][]{\cite{#2}\if\relax\detokenize{#1}\relax\else, #1\fi}
   \fi

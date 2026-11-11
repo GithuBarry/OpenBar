@@ -2,6 +2,7 @@ import { saveMindmapAction } from "@/app/actions"
 import { getMindmap } from "@/lib/store"
 import { ProjectAccessError, requireProjectAccess } from "@/lib/server/project-access"
 import { requestIsSameOrigin } from "@/lib/server/request-origin"
+import { ProjectWriteSessionError } from "@/lib/research/project-write-session"
 import type { Mindmap } from "@/lib/types"
 
 export const dynamic = "force-dynamic"
@@ -42,6 +43,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     return json({ mindmap })
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not save the map."
-    return json({ error: message }, error instanceof ProjectAccessError ? error.status : /conflict|changed on disk/i.test(message) ? 409 : 400)
+    return json({ error: message, ...(error instanceof ProjectWriteSessionError ? { code: error.code } : {}) }, error instanceof ProjectAccessError || error instanceof ProjectWriteSessionError ? error.status : /conflict|changed on disk/i.test(message) ? 409 : 400)
   }
 }

@@ -151,6 +151,12 @@ function mutationFailure(host: MindmapWebMcpHost, error: unknown): OperationResu
       currentRevision: current.revision,
     });
   }
+  if (code === "remote_conflict") {
+    return failResult("remote_conflict", message, {
+      retryable: true,
+      currentRevision: current.revision,
+    });
+  }
   if (code === WEBMCP_ERROR_CODES.stale_live_state) {
     return failResult(WEBMCP_ERROR_CODES.stale_live_state, message, {
       retryable: true,
@@ -580,7 +586,11 @@ export async function executeMindmapWebMcpTool(
     case "complete_todo": {
       if (typeof args.todoId !== "string" || !args.todoId.trim()) return failResult("invalid_arguments", "todoId is required.", false);
       if (!host.completeTodo) return failResult("capability_unavailable", "This map cannot complete TODOs.", false);
-      await host.completeTodo(String(args.todoId));
+      try {
+        await host.completeTodo(String(args.todoId));
+      } catch (error) {
+        return mutationFailure(host, error);
+      }
       const completedSnapshot = host.getSnapshot();
       return okResult({ todoId: args.todoId, completed: true }, {
         revision: completedSnapshot.revision,
@@ -590,7 +600,11 @@ export async function executeMindmapWebMcpTool(
     case "reopen_todo": {
       if (typeof args.todoId !== "string" || !args.todoId.trim()) return failResult("invalid_arguments", "todoId is required.", false);
       if (!host.reopenTodo) return failResult("capability_unavailable", "This map cannot reopen TODOs.", false);
-      await host.reopenTodo(String(args.todoId));
+      try {
+        await host.reopenTodo(String(args.todoId));
+      } catch (error) {
+        return mutationFailure(host, error);
+      }
       const reopenedSnapshot = host.getSnapshot();
       return okResult({ todoId: args.todoId, completed: false }, {
         revision: reopenedSnapshot.revision,

@@ -13,7 +13,7 @@ import {
   type ProjectSkill,
 } from "@/lib/research/project-skills";
 import type { CurrentLocation, ProjectStateQuery } from "@/lib/research/webmcp-shared-contract";
-import { getEditableTexPaper, getMindmap, getPaperEditorState, getProject, getWikiPage, listWiki, listMindmaps, projectContentDir } from "@/lib/store";
+import { getEditableTexPaper, getMindmap, getPaperEditorState, getProjectMetadata, getWikiPage, listWiki, listMindmaps, projectContentDir } from "@/lib/store";
 import { DRAFT_MINDMAP_ID, texPaths, type PaperSection, type TexPaper } from "@/lib/tex-project/project";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import type { Mindmap, Project, WikiPage } from "@/lib/types";
@@ -677,7 +677,7 @@ function hashAgents(body: string): string {
 }
 
 export function getProjectState(slug: string, current?: CurrentLocation): ProjectState | null {
-  const project = getProject(slug);
+  const project = getProjectMetadata(slug);
   if (!project) return null;
   const dir = projectContentDir(slug);
   const paths = texPaths(dir);
@@ -956,7 +956,7 @@ export function searchProjectContent(input: {
 }
 
 export function searchProject(slug: string, query: string): SearchHit[] {
-  const project = getProject(slug);
+  const project = getProjectMetadata(slug);
   if (!project) return [];
   const paper = getEditableTexPaper(slug);
   const analysis = paper ? analyzePaper(paper.source) : undefined;

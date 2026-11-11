@@ -55,6 +55,7 @@ export function scheduleRemoteSyncAfterResponse(
 
 const UNCONFIGURED_CODES = new Set(["not_git_repo", "remote_unconfigured", "remote_not_overleaf"]);
 const PENDING_CODES = new Set(["push_failed", "remote_ahead", "remote_conflict", "remote_check_failed"]);
+const CREDENTIAL_ERROR = /authentication failed|authentication required|could not read (?:username|password)|invalid (?:username|password|credentials|token)|permission denied \(publickey\)|http(?: error| code)?\s*[: ]\s*(?:401|403)\b|\b(?:401|403)\s+(?:unauthorized|forbidden)\b/i;
 
 export function remoteSyncResult(result: OverleafGitPushResult): RemoteSyncResult {
   if (result.ok) {
@@ -82,7 +83,7 @@ export function remoteSyncResult(result: OverleafGitPushResult): RemoteSyncResul
       code,
       retryable: true,
       ...(result.commitHash ? { commitHash: result.commitHash } : {}),
-      credentialNeeded: code === "push_failed",
+      credentialNeeded: code === "push_failed" && CREDENTIAL_ERROR.test(result.message),
     };
   }
   return {

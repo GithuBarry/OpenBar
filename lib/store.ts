@@ -18,6 +18,7 @@ import {
   listDocumentIds,
   readBibliography,
   readBibliographyRaw,
+  parseBibliography,
   readDocument,
   readDocumentTex,
   documentFile,
@@ -38,8 +39,10 @@ import {
   DRAFT_MINDMAP_ID,
   resolveMindmapStorageIdentity,
 } from "./tex-project/project";
-import { TexEnvelopeError, sha256, withWriteLock } from "./tex-project/codec";
-import { withProjectWriteLock } from "./research/project-lock";
+import { TexEnvelopeError, sha256, withWriteLock, withWriteLockAsync } from "./tex-project/codec";
+import { withProjectWriteLock, withProjectWriteLockAsync } from "./research/project-lock";
+import { attachOverleafCheckout, cloneOverleafProject, getProjectGitDestination, isBlankOverleafProject, OverleafSetupError } from "./tex-project/overleaf-git";
+import { overleafProjectId } from "./server/git-url";
 import { mindmapDiskHash } from "./mindmap/mindmap";
 import { readPaper } from "./research/paper-service";
 import { buildSourceBundle } from "./tex-project/source-bundle";
@@ -72,6 +75,7 @@ const CONTENT_ROOT =
 
 const projectsDir = () => path.join(CONTENT_ROOT, "projects");
 const projectDir = (slug: string) => path.join(projectsDir(), safeSegment(slug, "project slug"));
+const projectSetupLock = () => path.join(projectsDir(), ".project-setup");
 
 function parseTexRecord<T>(file: string, raw: unknown, schema: z.ZodType<T>): T | null {
   try {
@@ -83,10 +87,14 @@ function parseTexRecord<T>(file: string, raw: unknown, schema: z.ZodType<T>): T 
 }
 
 function safeSegment(value: string, label: string): string {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+  if (!validProjectSlug(value)) {
     throw new Error(`Unsafe ${label}: ${value}`);
   }
   return value;
+}
+
+function validProjectSlug(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
 }
 
 function recordContentDiagnostic(file: string, error: unknown) {
@@ -136,7 +144,7 @@ function withCreatedAt<T extends { createdAt?: string; updatedAt?: string }>(
 
 export function listProjects(): Project[] {
   const dir = projectsDir();
-  const slugs = listDir(dir).filter((slug) => hasTexProject(path.join(dir, slug)));
+  const slugs = listDir(dir).filter((slug) => validProjectSlug(slug) && hasTexProject(path.join(dir, slug)));
   const projects = slugs
     .map((slug) => getProject(slug))
     .filter((p): p is Project => p != null);
@@ -166,7 +174,6 @@ function listedProjectFallback(slug: string, dir: string, raw: unknown): Project
   if (text("venue")) project.venue = text("venue");
   if (text("label")) project.label = text("label");
   project.diskHash = projectFileHash(dir);
-  project.lastEditedAt = projectLastEditedAt(dir, texPaths(dir).paperFile, project.updatedAt);
   return project;
 }
 
@@ -193,7 +200,8 @@ function coerceProjectLinkKinds(raw: unknown): unknown {
   };
 }
 
-export function getProject(slug: string): Project | null {
+/** Read project identity without scanning the project for its last edit. */
+export function getProjectMetadata(slug: string): Project | null {
   if (typeof slug !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(slug)) return null;
   const dir = projectDir(slug);
   if (!hasTexProject(dir)) return null;
@@ -206,8 +214,15 @@ export function getProject(slug: string): Project | null {
     overview: parsed.overview || "",
     links: parsed.links || [],
     diskHash: projectFileHash(dir),
-    lastEditedAt: projectLastEditedAt(dir, texPaths(dir).paperFile, parsed.updatedAt),
   };
+}
+
+/** Return project identity and the latest saved project edit. */
+export function getProject(slug: string): Project | null {
+  const project = getProjectMetadata(slug);
+  if (!project) return null;
+  const dir = projectDir(slug);
+  return { ...project, lastEditedAt: projectLastEditedAt(dir, texPaths(dir).paperFile, project.updatedAt) };
 }
 
 /** Drop blank optional identity fields so they can be removed from the web UI. */
@@ -259,60 +274,134 @@ export function saveProject(project: Project, expectedHash?: string): void {
   });
 }
 
-function slugifyProjectId(title: string): string {
-  const slug = title.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  if (!slug || !/^[a-z0-9]/.test(slug)) throw new Error("Could not make a project slug from that title.");
+export type NewProjectInput = {
+  title: string;
+  slug?: string;
+  tagline?: string;
+  destination?: "local" | "existing" | "new";
+  overleafUrl?: string;
+  nameChecked?: boolean;
+};
+
+export function checkProjectName(input: Pick<NewProjectInput, "title" | "slug">): string {
+  const title = input.title.trim();
+  if (!title) throw new OverleafSetupError("Enter a project title.");
+  const slug = input.slug?.trim() || title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (slug.length > 120 || !validProjectSlug(slug)) throw new OverleafSetupError("Choose a short project address using letters, numbers, dots, underscores, or hyphens. Start with a letter or number.");
+  const nameKey = (name: string) => name.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+  const names = listDir(projectsDir());
+  if (names.some(name => name.toLowerCase() === slug.toLowerCase())) {
+    throw new OverleafSetupError(`The project address "${slug}" is already in use in OpenBar.`);
+  }
+  for (const name of names.filter(validProjectSlug)) {
+    const existing = getProjectMetadata(name);
+    if (existing && nameKey(existing.title) === nameKey(title)) {
+      throw new OverleafSetupError(`"${existing.title}" is already in OpenBar.`);
+    }
+  }
   return slug;
 }
 
-/** Create a new TeX project under content/projects. Web and MCP both use this. */
-export function createProject(input: { title: string; slug?: string; tagline?: string }): Project {
-  const title = input.title.trim();
-  if (!title) throw new Error("A project needs a title.");
-  const slug = safeSegment(input.slug?.trim() || slugifyProjectId(title), "project slug");
+async function ensureOverleafProjectUnused(id: string, currentSlug?: string): Promise<void> {
+  const slugs = listDir(projectsDir()).filter(slug => validProjectSlug(slug) && slug !== currentSlug);
+  const destinations = await Promise.all(slugs.map(slug => getProjectGitDestination(projectDir(slug))));
+  const used = destinations.findIndex(destination => destination.kind === "overleaf" && destination.id === id);
+  if (used >= 0) {
+    const slug = slugs[used]!;
+    throw new OverleafSetupError(`This Overleaf project is already connected to "${getProjectMetadata(slug)?.title || slug}" in OpenBar.`);
+  }
+}
+
+function selectedOverleafProject(value: string | undefined): string {
+  const id = overleafProjectId(value || "");
+  if (!id) throw new OverleafSetupError("Paste the Overleaf project URL or Git URL.");
+  return id;
+}
+
+function writeStarterPaper(directory: string, title: string): void {
+  writePaperProject(directory, title, [{
+    id: "introduction",
+    title: "Introduction",
+    level: 2,
+    order: 0,
+    label: "sec-introduction",
+    tex: composeObtodo({ text: "Write a good introduction: you're telling a story" }),
+  }]);
+}
+
+/** Stage the selected source and publish the complete checkout as one workspace entry. */
+export async function createProject(input: NewProjectInput): Promise<Project> {
+  return withWriteLockAsync(projectSetupLock(), async () => {
+    const title = input.title.trim();
+    const slug = checkProjectName(input);
+    const dir = projectDir(slug);
+    const destination = input.destination || "local";
+    const id = destination === "local" ? undefined : selectedOverleafProject(input.overleafUrl);
+    if (destination === "new" && !input.nameChecked) throw new OverleafSetupError("Check the project name in your Overleaf dashboard before creating it there.");
+    if (id) await ensureOverleafProjectUnused(id);
+    const now = nowISO();
+    const project: Project = {
+      id: slug,
+      slug,
+      title,
+      tagline: (input.tagline || "").trim(),
+      overview: "",
+      createdAt: now,
+      updatedAt: now,
+      links: [],
+    };
+    const staging = fs.mkdtempSync(path.join(projectsDir(), `.${slug}.tmp-`));
+    try {
+      const files = id ? await cloneOverleafProject(staging, id) : [];
+      if (destination === "existing") {
+        if (!hasTexProject(staging)) throw new OverleafSetupError("Choose an Overleaf project with a LaTeX main document.");
+        const stored = readProjectRecord<unknown>(staging);
+        const imported = projectSchema.safeParse(coerceProjectLinkKinds(stored));
+        if (fs.existsSync(texPaths(staging).projectFile) && !imported.success) {
+          throw new OverleafSetupError("This Overleaf project has an unreadable OpenBar project record.");
+        }
+        const identity = imported.success
+          ? { ...imported.data, slug, id: slug, title, tagline: input.tagline === undefined ? imported.data.tagline : project.tagline, updatedAt: now }
+          : project;
+        writeProjectRecord(staging, persistableProject(identity));
+      } else {
+        if (id && !isBlankOverleafProject(staging, files)) {
+          throw new OverleafSetupError("This Overleaf project already contains a draft. Choose Use an existing Overleaf project to import its files. If you just created it, clear the starter main.tex and try again.");
+        }
+        writeProjectRecord(staging, persistableProject(id ? { ...project, mainFile: "main.tex" } : project));
+        writeStarterPaper(staging, title);
+      }
+      if (!fs.existsSync(texPaths(staging).mindmapFile)) {
+        writeMindmapRecord(staging, emptyMindmap(slug, { id: DRAFT_MINDMAP_ID, title, role: "draft", rootText: title }));
+      }
+      checkProjectName(input);
+      if (!hasTexProject(staging)) throw new OverleafSetupError("The new project needs a readable LaTeX main document.");
+      fs.renameSync(staging, dir);
+    } finally {
+      fs.rmSync(staging, { recursive: true, force: true });
+    }
+    const created = getProject(slug);
+    if (!created) throw new Error("Created project could not be read back.");
+    return created;
+  });
+}
+
+export async function connectProjectToOverleaf(slug: string, overleafUrl: string): Promise<void> {
+  const id = selectedOverleafProject(overleafUrl);
   const dir = projectDir(slug);
-  if (getProject(slug) || (fs.existsSync(dir) && fs.readdirSync(dir).length > 0)) {
-    throw new Error(`Project "${slug}" already exists.`);
-  }
-  const now = nowISO();
-  const project: Project = {
-    id: slug,
-    slug,
-    title,
-    tagline: (input.tagline || "").trim(),
-    overview: "",
-    createdAt: now,
-    updatedAt: now,
-    links: [],
-  };
-  fs.mkdirSync(projectsDir(), { recursive: true });
-  const staging = fs.mkdtempSync(path.join(projectsDir(), `.${slug}.tmp-`));
-  try {
-    writeProjectRecord(staging, persistableProject(project));
-    writePaperProject(staging, title, [{
-      id: "introduction",
-      title: "Introduction",
-      level: 2,
-      order: 0,
-      label: "sec-introduction",
-      tex: composeObtodo({ text: "Write the opening motivation." }),
-    }]);
-    writeMindmapRecord(staging, emptyMindmap(slug, {
-      id: DRAFT_MINDMAP_ID,
-      title: title,
-      role: "draft",
-      rootText: title,
-    }));
-    if (fs.existsSync(dir)) throw new Error(`Project "${slug}" appeared while it was being created.`);
-    if (!hasTexProject(staging)) throw new Error(`Project "${slug}" is incomplete after creation.`);
-    fs.renameSync(staging, dir);
-  } catch (error) {
-    if (fs.existsSync(staging)) fs.rmSync(staging, { recursive: true, force: true });
-    throw error;
-  }
-  const created = getProject(slug);
-  if (!created) throw new Error("Created project could not be read back.");
-  return created;
+  await withWriteLockAsync(projectSetupLock(), async () => {
+    const destination = await getProjectGitDestination(dir);
+    if (destination.kind === "overleaf" && destination.id === id) return;
+    if (destination.kind !== "local") throw new OverleafSetupError("This project already has a Git checkout.");
+    await ensureOverleafProjectUnused(id, slug);
+    const staging = fs.mkdtempSync(path.join(projectsDir(), `.${slug}.git-`));
+    try {
+      const files = await cloneOverleafProject(staging, id);
+      await withProjectWriteLockAsync(dir, () => attachOverleafCheckout(dir, staging, files));
+    } finally {
+      fs.rmSync(staging, { recursive: true, force: true });
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -361,24 +450,30 @@ export function getMindmap(slug: string, id = DRAFT_MINDMAP_ID): Mindmap | null 
   const diskHash = mindmapDiskHash(normalized);
   // Reads expose the current canonical view while preserving the hash of the
   // bytes that were read. A later save can persist the migration atomically.
-  return { ...migrateMindmapArtifactRefs(normalized, paperSectionRefTargets(slug)), diskHash };
+  const sections = hasPaperSectionRefs(normalized) ? paperSectionRefTargets(slug) : [];
+  return { ...migrateMindmapArtifactRefs(normalized, sections), diskHash };
+}
+
+function hasPaperSectionRefs(map: Mindmap): boolean {
+  return map.nodes.some(node => node.refs?.some(ref => ref.kind === "paper-section"));
 }
 
 export function listMindmaps(slug: string): Mindmap[] {
   const dir = projectDir(slug);
   if (!hasTexProject(dir)) return [];
-  const sections = paperSectionRefTargets(slug);
-  return listMindmapRecords(dir, recordContentDiagnostic).map(map => migrateMindmapArtifactRefs(normalizeMindmap(map), sections));
+  const maps = listMindmapRecords(dir, recordContentDiagnostic).map(normalizeMindmap);
+  const sections = maps.some(hasPaperSectionRefs) ? paperSectionRefTargets(slug) : [];
+  return maps.map(map => migrateMindmapArtifactRefs(map, sections));
 }
 
-export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: string): void {
+export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: string): Mindmap {
   const dir = projectDir(slug);
   const requestedId = mindmap.id || DRAFT_MINDMAP_ID;
   const requested = resolveMindmapStorageIdentity(dir, requestedId);
   if (mindmap.role && mindmap.role !== requested.role) {
     throw new TexEnvelopeError(`Mindmap "${requested.id}" has role "${mindmap.role}" but its storage role is "${requested.role}".`);
   }
-  withProjectWriteLock(dir, () => {
+  return withProjectWriteLock(dir, () => {
     const identity = resolveMindmapStorageIdentity(dir, requestedId);
     if (expectedDiskHash) {
       const current = readMindmapRecord(dir, identity.id);
@@ -402,6 +497,13 @@ export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: s
     };
     assertUniqueMindmapTodoIds(canonicalized);
     writeMindmapRecord(dir, persistableMindmap(canonicalized));
+    const persisted = readMindmapRecord(dir, identity.id);
+    if (!persisted) throw new Error(`Mindmap "${identity.id}" could not be read after saving.`);
+    const normalizedPersisted = normalizeMindmap(persisted);
+    return {
+      ...migrateMindmapArtifactRefs(normalizedPersisted, sections),
+      diskHash: mindmapDiskHash(normalizedPersisted),
+    };
   });
 }
 
@@ -433,7 +535,7 @@ export { DRAFT_MINDMAP_ID };
 export function getEditableTexPaper(slug: string): TexPaper | null {
   const dir = projectDir(slug);
   if (!hasTexProject(dir)) return null;
-  const project = getProject(slug);
+  const project = getProjectMetadata(slug);
   const result = readPaper(dir, slug, project?.title || slug);
   return result.ok ? result.value : null;
 }
@@ -534,6 +636,11 @@ export function getBibliography(slug: string): BibEntry[] {
 export function getBibliographyRaw(slug: string): string {
   const dir = projectDir(slug);
   return hasTexProject(dir) ? readBibliographyRaw(dir) : "";
+}
+
+export function getBibliographyData(slug: string): { raw: string; entries: BibEntry[] } {
+  const raw = getBibliographyRaw(slug);
+  return { raw, entries: parseBibliography(raw) };
 }
 
 // ---------------------------------------------------------------------------

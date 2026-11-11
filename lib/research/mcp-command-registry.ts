@@ -419,9 +419,7 @@ async function writeMap(
   const expected = map.diskHash || mindmapDiskHash(map);
   try {
     assertAdministrativeWriteAllowed("MCP mindmap changes");
-    saveMindmap(project, normalized, expected);
-    const saved = getMindmap(project, map.id || DRAFT_MINDMAP_ID);
-    if (!saved) return failResult("operation_failed", "Mindmap could not be read after saving.", { retryable: true });
+    const saved = saveMindmap(project, normalized, expected);
     recordWebMcpActivity(project, { actor: "webmcp", requestId }, {
       operation,
       resources,

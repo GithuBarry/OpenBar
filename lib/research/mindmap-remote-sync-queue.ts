@@ -8,6 +8,8 @@
  * not discard a pending push.
  */
 
+export const GIT_EDIT_QUIET_MS = 5_000;
+
 export type MindmapRemoteQueuePhase = "pending" | "syncing" | "synced" | "failed";
 
 export type MindmapRemoteQueueEvent<T> = {
@@ -22,6 +24,9 @@ type QueueEntry<T> = {
   sequence: number;
   checkpoint: string;
   run: () => Promise<T>;
+  deferred: boolean;
+  ready?: () => boolean;
+  startedAtGeneration: number;
   waiters: Array<{
     resolve: (value: T) => void;
     reject: (reason: unknown) => void;
@@ -40,6 +45,10 @@ export class CoalescedRemoteSyncQueue<T> {
   private active: QueueEntry<T> | null = null;
   private pending: QueueEntry<T> | null = null;
   private listeners = new Set<QueueListener<T>>();
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private lastEdit = 0;
+  private editGeneration = 0;
+  private paused = false;
   private snapshot: MindmapRemoteQueueEvent<T> = {
     phase: "synced",
     sequence: 0,
@@ -56,17 +65,43 @@ export class CoalescedRemoteSyncQueue<T> {
     return this.active !== null || this.pending !== null;
   }
 
+  get isRunning(): boolean { return this.active !== null; }
+
+  get activityGeneration(): number { return this.editGeneration; }
+
+  get editingRecently(): boolean { return Date.now() - this.lastEdit < GIT_EDIT_QUIET_MS; }
+
+  noteEdit(): void {
+    this.lastEdit = Date.now();
+    this.editGeneration += 1;
+    if (this.pending?.deferred) this.startNext();
+  }
+
+  pause(): void {
+    this.paused = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  resume(): void {
+    this.paused = false;
+    this.startNext();
+  }
+
   subscribe(listener: QueueListener<T>): () => void {
     this.listeners.add(listener);
     listener(this.snapshot);
     return () => this.listeners.delete(listener);
   }
 
-  enqueue(checkpoint: string, run: () => Promise<T>): Promise<T> {
+  enqueue(checkpoint: string, run: () => Promise<T>, deferred = false, ready?: () => boolean): Promise<T> {
     const entry: QueueEntry<T> = {
       sequence: ++this.sequence,
       checkpoint,
       run,
+      deferred,
+      ready,
+      startedAtGeneration: this.editGeneration,
       waiters: [],
     };
     const promise = new Promise<T>((resolve, reject) => {
@@ -99,10 +134,24 @@ export class CoalescedRemoteSyncQueue<T> {
   }
 
   private startNext(): void {
-    if (this.active || !this.pending) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    if (this.paused || this.active || !this.pending) return;
+    if (this.pending.deferred) {
+      const remaining = Math.max(0, this.lastEdit + GIT_EDIT_QUIET_MS - Date.now());
+      if (remaining > 0) {
+        this.timer = setTimeout(() => this.startNext(), remaining);
+        return;
+      }
+      if (this.pending.ready && !this.pending.ready()) {
+        this.timer = setTimeout(() => this.startNext(), 500);
+        return;
+      }
+    }
     const entry = this.pending;
     this.pending = null;
     this.active = entry;
+    entry.startedAtGeneration = this.editGeneration;
     this.emit({
       phase: "syncing",
       sequence: entry.sequence,
@@ -115,8 +164,14 @@ export class CoalescedRemoteSyncQueue<T> {
   }
 
   private finish(entry: QueueEntry<T>, result: T): void {
-    for (const waiter of entry.waiters) waiter.resolve(result);
     if (this.active !== entry) return;
+    // A running automatic push may finish while a newer edit is still being
+    // saved. Give that checkpoint the same quiet window to enter the queue.
+    if (!this.pending && entry.deferred && entry.startedAtGeneration !== this.editGeneration && this.editingRecently) {
+      setTimeout(() => this.finish(entry, result), Math.max(1, this.lastEdit + GIT_EDIT_QUIET_MS - Date.now()));
+      return;
+    }
+    for (const waiter of entry.waiters) waiter.resolve(result);
     this.active = null;
 
     // The result belongs to an older checkpoint when a newer tail exists. Its
@@ -139,8 +194,12 @@ export class CoalescedRemoteSyncQueue<T> {
   }
 
   private fail(entry: QueueEntry<T>, error: unknown): void {
-    for (const waiter of entry.waiters) waiter.reject(error);
     if (this.active !== entry) return;
+    if (!this.pending && entry.deferred && entry.startedAtGeneration !== this.editGeneration && this.editingRecently) {
+      setTimeout(() => this.fail(entry, error), Math.max(1, this.lastEdit + GIT_EDIT_QUIET_MS - Date.now()));
+      return;
+    }
+    for (const waiter of entry.waiters) waiter.reject(error);
     this.active = null;
 
     // Keep the latest checkpoint authoritative when an older operation fails

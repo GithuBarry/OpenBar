@@ -11,7 +11,7 @@ import {
   identityAllowed,
   verifyCloudflareAccessJwt,
 } from "@/lib/server/cloudflare-access";
-import { getProject } from "@/lib/store";
+import { getProjectMetadata } from "@/lib/store";
 
 export class ProjectAccessError extends Error {
   status: number;
@@ -70,7 +70,7 @@ export async function requireProjectAccess(slug: string): Promise<void> {
   } catch {
     throw new ProjectAccessError(`Unknown project: ${slug}`, 404);
   }
-  if (!getProject(slug)) {
+  if (!getProjectMetadata(slug)) {
     throw new ProjectAccessError(`Unknown project: ${slug}`, 404);
   }
   await requireWorkbenchAccess();
