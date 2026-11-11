@@ -1,8 +1,8 @@
-.editor { --mindmap-dock-height: 46px; --mindmap-dock-bottom: 10px; --mindmap-controls-bottom: calc(var(--mindmap-dock-height) + 16px); --mindmap-bottom-clearance: calc(var(--mindmap-dock-bottom) + var(--mindmap-dock-height) + 8px); --overleaf-notice-top: var(--mindmap-controls-bottom); position: relative; height: 100%; min-height: 0; overflow: hidden; background: rgb(var(--canvas)); container-type: size; }
-.inspector { position: absolute; top: var(--mindmap-controls-bottom); right: 8px; z-index: 26; display: flex; min-height: 0; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; background: var(--surface-overlay); color: rgb(var(--ink)); padding: 0; font-family: var(--font-sans); width: 304px; max-height: calc(100% - var(--mindmap-controls-bottom) - var(--mindmap-bottom-clearance)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); margin: 0; box-shadow: var(--shadow-pop); }
+.editor { --mindmap-dock-height: 46px; --mindmap-resume-height: var(--mindmap-dock-height); --mindmap-dock-bottom: 10px; --mindmap-controls-bottom: calc(var(--mindmap-dock-height) + 16px); --mindmap-bottom-clearance: calc(var(--mindmap-dock-bottom) + var(--mindmap-dock-height) + 8px); --overleaf-notice-top: var(--mindmap-controls-bottom); position: relative; height: 100%; min-height: 0; overflow: hidden; background: rgb(var(--canvas)); container-type: size; }
+.inspector { position: absolute; top: var(--mindmap-controls-bottom); right: 8px; z-index: 26; display: flex; min-height: 0; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; background: var(--surface-overlay); color: rgb(var(--ink)); padding: 0; font-family: var(--font-sans); width: 304px; max-height: calc(100% - var(--mindmap-controls-bottom) - var(--mindmap-panel-bottom-clearance, var(--mindmap-bottom-clearance))); border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); margin: 0; box-shadow: var(--shadow-pop); }
 .inspector > * { flex-shrink: 0; }
 @media (max-width: 600px) {
-  .editor:has(:global([data-editor-notice])) .inspector { top: calc(var(--mindmap-controls-bottom) + 52px); max-height: calc(100% - var(--mindmap-controls-bottom) - var(--mindmap-bottom-clearance) - 52px); }
+  .editor:has(:global([data-editor-notice])) .inspector { top: calc(var(--mindmap-controls-bottom) + 52px); max-height: calc(100% - var(--mindmap-controls-bottom) - var(--mindmap-panel-bottom-clearance, var(--mindmap-bottom-clearance)) - 52px); }
 }
 .inspector:focus { outline: none; }
 .inspectorHandle { position: fixed; right: 0; top: 50%; z-index: 26; display: inline-flex; align-items: center; gap: 5px; min-width: 38px; height: 48px; padding: 0 9px; transform: translateY(-50%); border: 1px solid rgb(var(--line)); border-right: 0; border-radius: 10px 0 0 10px; background: var(--surface-floating); color: rgb(var(--accent-text)); box-shadow: var(--shadow-float); cursor: pointer; }
@@ -120,6 +120,7 @@
 @media (max-width: 899px) { .inspector { width: min(304px, calc(100% - 16px)); } }
 @media (max-width: 600px) { .workspaceFooter { padding-inline: 12px; } }
 @media (min-width: 1024px) { .editor { --mindmap-dock-bottom: 10cqh; } }
+@media (max-width: 1023px) { .editor { --mindmap-resume-height: 56px; } }
 
 .card:global(.mindmap-node-card) { --card-title-size: calc(14px * var(--map-font-scale, 1)); --card-title-line: calc(19px * var(--map-font-scale, 1)); --card-title-weight: 600; --card-body-size: calc(12px * var(--map-font-scale, 1)); --card-body-line: calc(17px * var(--map-font-scale, 1)); padding: 12px 14px; min-height: 45px; }
 .card:global(.mindmap-node-root) { --card-title-size: calc(17px * var(--map-font-scale, 1)); --card-title-line: calc(21px * var(--map-font-scale, 1)); --card-title-weight: 650; }
@@ -197,7 +198,7 @@
 .canvasTools .depthCollapseCompact { display: none; }
 .canvasLayout { position: absolute; inset: 0; display: flex; min-width: 0; min-height: 0; }
 .canvasSurface { position: relative; min-width: 0; flex: 1; }
-.unplacedTray { width: 244px; flex-shrink: 0; overflow-y: auto; margin: var(--mindmap-controls-bottom) 0 var(--mindmap-bottom-clearance) 8px; padding: 12px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); background: var(--surface-overlay); box-shadow: var(--shadow-float); }
+.unplacedTray { width: 244px; flex-shrink: 0; overflow-y: auto; margin: var(--mindmap-controls-bottom) 0 var(--mindmap-panel-bottom-clearance, var(--mindmap-bottom-clearance)) 8px; padding: 12px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); background: var(--surface-overlay); box-shadow: var(--shadow-float); }
 .unplacedTray header { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
 .unplacedTray p { margin: 8px 0; font-size: 12px; color: rgb(var(--muted)); }
 .unplacedTray input { width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid rgb(var(--line)); border-radius: 6px; background: rgb(var(--surface)); font-size: 12px; }
@@ -213,6 +214,8 @@
 .todoDragGhost { position: fixed; z-index: 1000; max-width: 220px; padding: 10px 14px; border: 1px solid rgb(var(--accent)); border-radius: 9px; box-shadow: 0 8px 24px rgb(0 0 0 / .15); background: rgb(var(--surface)); font-size: 12px; pointer-events: none; }
 .card[data-todo-drop-target="true"] { outline: 3px solid rgb(var(--accent)); outline-offset: 4px; }
 @container (max-width: 1100px) {
+  .editor:has(:global([data-resume-edit])) .inspector,
+  .editor:has(:global([data-resume-edit])) .unplacedTray { --mindmap-panel-bottom-clearance: calc(var(--mindmap-bottom-clearance) + var(--mindmap-resume-height) + 8px); }
   .editor { --mindmap-controls-bottom: calc(2 * var(--mindmap-dock-height) + 24px); --mindmap-bottom-clearance: calc(var(--mindmap-dock-bottom) + 2 * var(--mindmap-dock-height) + 16px); }
   .toolbarActions { top: calc(var(--mindmap-dock-height) + 16px); }
   .workspaceFooter { bottom: calc(var(--mindmap-dock-bottom) + var(--mindmap-dock-height) + 8px); }
@@ -221,7 +224,7 @@
 }
 @container (max-width: 700px) {
   .fontTools { display: none; }
-  .unplacedTray { position: absolute; top: var(--mindmap-controls-bottom); right: auto; bottom: var(--mindmap-bottom-clearance); left: 8px; z-index: 20; width: min(300px, calc(100% - 16px)); margin: 0; }
+  .unplacedTray { position: absolute; top: var(--mindmap-controls-bottom); right: auto; bottom: var(--mindmap-panel-bottom-clearance, var(--mindmap-bottom-clearance)); left: 8px; z-index: 20; width: min(300px, calc(100% - 16px)); margin: 0; }
 }
 @container (max-width: 520px) {
   .fontTools, .canvasTools .unplacedLabel, .primaryButton > span, .canvasTools .depthCollapseLabel { display: none; }

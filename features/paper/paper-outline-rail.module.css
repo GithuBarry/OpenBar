@@ -107,7 +107,7 @@
   22% { opacity: .12; }
 }
 .editingToolbar button { height: 34px; min-width: 34px; border-radius: 12px; }
-.editingToolbar button:hover:enabled { background: rgb(var(--surface-2)); color: rgb(var(--ink)); }
+.editingToolbar button:not(:global(.p-button)):hover:enabled { background: rgb(var(--surface-2)); color: rgb(var(--ink)); }
 .editingToolbar button[aria-expanded="true"], .editingToolbar button[data-state="open"] { background: var(--surface-selected); box-shadow: inset 0 0 0 1px var(--border-selected); color: rgb(var(--ink)); }
 .editingToolbar button:focus-visible, .editingToolbar :global(.ob-comment-kind-picker) :global(.ob-select):focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: -2px; }
 .editingToolbar :global(.ob-comment-add-group > .ob-comment-add-action), .editingToolbar :global(.ob-comment-kind-picker .ob-select) { border-radius: 12px; }
