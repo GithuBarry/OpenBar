@@ -9,6 +9,7 @@ import "@codedgar/puppertino/modals";
 import "@codedgar/puppertino/popovers";
 import "@codedgar/puppertino/segmented-controls";
 import "@codedgar/puppertino/sidebars";
+import "@codedgar/puppertino/toolbars";
 import "./globals.css";
 import { agentOrigins } from "@/lib/server/agent-origins";
 import { AGENT_GUIDANCE } from "@/lib/research/agent-guidance";

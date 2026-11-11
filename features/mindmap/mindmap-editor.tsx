@@ -10,6 +10,7 @@ import { getBrowserEditablePaper } from "@/features/paper/browser-source";
 import { FastTooltip } from "@/components/fast-tooltip";
 import styles from "./mindmap-editor.module.css";
 import { RichText as NodeRichText } from "@/components/rich-text";
+import { ChildNavigation, type ChildNavigationItem } from "./child-navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useTransition, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
@@ -1279,11 +1280,24 @@ export function MindmapEditor({
     setEditingId(id);
   }
 
-  function selectCard(id: string, additive = false) {
+  const selectCard = useCallback((id: string, additive = false) => {
     setMapSettingsOpen(false);
     if (additive && !selectMultiple) setCardMenuOpen(true);
     dispatch({ type: "select", id, additive: additive || selectMultiple });
-  }
+  }, [selectMultiple]);
+
+  const focusCard = useCallback((id: string) => {
+    let parent = layout.nodeById.get(id)?.parentId;
+    const visited = new Set<string>();
+    while (parent && !visited.has(parent)) {
+      visited.add(parent);
+      setLocalCollapsed(parent, false);
+      parent = layout.nodeById.get(parent)?.parentId;
+    }
+    selectCard(id);
+    setViewMode("map");
+    setFocusRequest(current => ({ id, sequence: (current?.sequence || 0) + 1 }));
+  }, [layout.nodeById, selectCard, setLocalCollapsed]);
 
   function indentSelected() {
     const id = sessionRef.current.selectedId;
@@ -1929,6 +1943,12 @@ export function MindmapEditor({
         onImageFiles={files => addImagesToCard(files, node.id)}
         node={node}
         cardContent={cardContentForNodeWithPaperState(node, paperState)}
+        childNavigation={(layout.children.get(node.id) || []).map(child => ({
+          id: child.id,
+          ...cardContentForNodeWithPaperState(child, paperState),
+          format: child.todoId ? "tex" : child.contentFormat,
+        }))}
+        onJumpToChild={focusCard}
         completed={Boolean(paperTodoFor(node, paperState)?.completed)}
         todoBusy={todoProgressBusy}
         onToggleTodo={node.todoId ? completed => setTodoCompleted(node.todoId!, completed) : undefined}
@@ -1994,6 +2014,7 @@ export function MindmapEditor({
     );
   }, [
     mindmap.fontSize,
+    focusCard,
     activityNodeIds,
     activitySince,
     imageUploads,
@@ -2036,18 +2057,7 @@ export function MindmapEditor({
   const visibleSearchResults = searchResults.slice(0, 60);
   const chooseSearchResult = (id: string) => {
     if (moveOpen) moveSelectedTo(id);
-    else {
-      let parent = layout.nodeById.get(id)?.parentId;
-      const visited = new Set<string>();
-      while (parent && !visited.has(parent)) {
-        visited.add(parent);
-        setLocalCollapsed(parent, false);
-        parent = layout.nodeById.get(parent)?.parentId;
-      }
-      selectCard(id);
-      setViewMode("map");
-      setFocusRequest((current) => ({ id, sequence: (current?.sequence || 0) + 1 }));
-    }
+    else focusCard(id);
     setSearchOpen(false);
     setMoveOpen(false);
     setMoveQuery("");
@@ -2068,11 +2078,11 @@ export function MindmapEditor({
       onKeyDown={onKeyDown}
     >
       <header className={styles.toolbar} aria-label="Mindmap controls">
-        <div className={cn("p-glass-sm", styles.canvasTools)} role="group" aria-label="Map view controls">
-          {viewMode === "changes" && <button type="button" className="p-button p-button-default" onClick={() => setViewMode("map")}>Back to map</button>}
-          <button type="button" className="p-button p-button-default" aria-label="Unplaced paper TODOs" aria-expanded={unplacedOpen} onClick={() => { setUnplacedOpen((open) => !open); setViewMode("map"); }}><ListTodo size={15} aria-hidden="true" /><span className={styles.unplacedLabel}>Unplaced</span><span>{unplacedCount}</span></button>
+        <div className={cn("p-toolbar-group", styles.canvasTools)} role="group" aria-label="Map view controls">
+          {viewMode === "changes" && <button type="button" className="p-toolbar-btn" onClick={() => setViewMode("map")}>Back to map</button>}
+          <button type="button" className="p-toolbar-btn" aria-label="Unplaced paper TODOs" aria-expanded={unplacedOpen} onClick={() => { setUnplacedOpen((open) => !open); setViewMode("map"); }}><ListTodo size={15} aria-hidden="true" /><span className={styles.unplacedLabel}>Unplaced</span><span>{unplacedCount}</span></button>
           <FastTooltip label={expandAllFromToolbar ? "Expand all cards" : "Collapse depth 2+ (keep the root and its first-level branches visible)"}>
-            <button type="button" className={cn("p-button p-button-default", styles.depthCollapse)} aria-label={expandAllFromToolbar ? "Expand all cards" : "Collapse all cards at depth 2 and deeper"}
+            <button type="button" className={cn("p-toolbar-btn", styles.depthCollapse)} aria-label={expandAllFromToolbar ? "Expand all cards" : "Collapse all cards at depth 2 and deeper"}
               data-collapsed={depthCollapsed} disabled={firstLevelBranchIds.length === 0 && collapsedIds.size === 0}
               onClick={() => void toggleDepthCollapse()}>
               {expandAllFromToolbar ? <ChevronsUpDown size={15} aria-hidden="true" /> : <ChevronsDownUp size={15} aria-hidden="true" />}
@@ -2083,11 +2093,11 @@ export function MindmapEditor({
           <div className={styles.fontTools}><MindmapFontSize value={mindmap.fontSize || 12} disabled={readOnly}
             onChange={fontSize => dispatch({ type: "set-font-size", fontSize })} /></div>
         </div>
-        <div className={cn("p-glass-sm", styles.toolbarActions)} role="group" aria-label="Map card controls">
-          {selectMultiple && <button type="button" className={styles.iconButton} aria-label="Finish selecting cards" aria-pressed="true" onClick={() => { setSelectMultiple(false); setCardMenuOpen(true); }}><CheckSquare size={18} /></button>}
+        <div className={cn("p-toolbar-group", styles.toolbarActions)} role="group" aria-label="Map card controls">
+          {selectMultiple && <button type="button" className={cn("p-toolbar-btn", styles.iconButton)} aria-label="Finish selecting cards" aria-pressed="true" onClick={() => { setSelectMultiple(false); setCardMenuOpen(true); }}><CheckSquare size={18} /></button>}
           <Popover.Root open={searchOpen || moveOpen} onOpenChange={(open) => { setSearchOpen(open); if (!open) setMoveOpen(false); }}>
             <Popover.Trigger asChild>
-              <button type="button" className={styles.searchTrigger} aria-label="Find a card" onClick={() => { setMoveQuery(""); setSearchIndex(0); }}>
+              <button type="button" className={cn("p-toolbar-btn", styles.searchTrigger)} aria-label="Find a card" onClick={() => { setMoveQuery(""); setSearchIndex(0); }}>
                 <Search size={15} /><span>Find a card</span><kbd>/</kbd>
               </button>
             </Popover.Trigger>
@@ -2113,10 +2123,10 @@ export function MindmapEditor({
               </Popover.Content>
             </Popover.Portal>
           </Popover.Root>
-          <FastTooltip label="Add a child to the selected card (Tab)"><button type="button" aria-label="Add card" className={cn("p-button p-button-primary", styles.primaryButton)} disabled={readOnly} onClick={() => addChild()}><Plus size={16} /><span>Add card</span></button></FastTooltip>
-          <FastTooltip label="Card inspector"><button type="button" className={styles.iconButton} disabled={selectedCards.length === 0} aria-label="Open selected card actions" aria-expanded={cardMenuOpen && selectedCards.length > 0} aria-controls="mindmap-card-menu" onClick={() => setCardMenuOpen((open) => !open)}><PanelRight size={17} /></button></FastTooltip>
+          <FastTooltip label="Add a child to the selected card (Tab)"><button type="button" aria-label="Add card" className={cn("p-button p-button-primary p-toolbar-btn", styles.primaryButton)} disabled={readOnly} onClick={() => addChild()}><Plus size={16} /><span>Add card</span></button></FastTooltip>
+          <FastTooltip label="Card inspector"><button type="button" className={cn("p-toolbar-btn", styles.iconButton)} disabled={selectedCards.length === 0} aria-label="Open selected card actions" aria-expanded={cardMenuOpen && selectedCards.length > 0} aria-controls="mindmap-card-menu" onClick={() => setCardMenuOpen((open) => !open)}><PanelRight size={17} /></button></FastTooltip>
           <Popover.Root open={mapSettingsOpen} onOpenChange={setMapSettingsOpen}>
-            <FastTooltip label="Map options"><Popover.Trigger asChild><button type="button" className={styles.iconButton} aria-label="Open map settings"><MoreHorizontal size={18} /></button></Popover.Trigger></FastTooltip>
+            <FastTooltip label="Map options"><Popover.Trigger asChild><button type="button" className={cn("p-toolbar-btn", styles.iconButton)} aria-label="Open map settings"><MoreHorizontal size={18} /></button></Popover.Trigger></FastTooltip>
             <Popover.Portal><Popover.Content id="mindmap-map-settings" className={styles.optionsPanel} sideOffset={10} align="end" collisionPadding={12} aria-label="Map options">
                   <label className="mindmap-field">
                     <span>Map title</span>
@@ -2742,7 +2752,7 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, readOnly, onCl
               <datalist id="mindmap-label-suggestions">{projectLabels.map((tag) => <option key={tag} value={tag} />)}</datalist>
             </div>
             <div className="mindmap-field">
-              <span>Priority {priority === null && <button type="button" className={styles.mixedReset} aria-label="Clear selected cards priority" onClick={() => onPatch({ priority: undefined })}><X size={12} aria-hidden="true" /></button>}</span>
+              <span>Priority</span>
               {priority === null && mixed}
               <ChoiceButtons<string>
                 label="Selected cards priority"
@@ -2761,7 +2771,7 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, readOnly, onCl
           <div className="mindmap-card-menu-section"><div className="mindmap-card-menu-section-body">
             {allOrdinary && (
               <div className={"mindmap-field " + styles.progressField}>
-                <span>Progress {progress === null && <button type="button" className={styles.mixedReset} aria-label="Clear selected cards progress" onClick={() => onPatch({ progress: undefined })}><X size={12} aria-hidden="true" /></button>}</span>
+                <span>Progress</span>
                 {progress === null && mixed}
                 <ProgressCircles value={progress ?? undefined} label="Selected cards progress" onChange={(value) => onPatch({ progress: value })} />
               </div>
@@ -2917,6 +2927,8 @@ function CanvasNode({
   onImageFiles,
   node,
   cardContent,
+  childNavigation,
+  onJumpToChild,
   completed,
   todoBusy,
   onToggleTodo,
@@ -2951,6 +2963,8 @@ function CanvasNode({
   onImageFiles: (files: File[]) => void;
   node: MindmapNode;
   cardContent: { title: string; body: string };
+  childNavigation: ChildNavigationItem[];
+  onJumpToChild: (id: string) => void;
   completed: boolean;
   todoBusy: boolean;
   onToggleTodo?: (completed: boolean) => Promise<boolean>;
@@ -3282,6 +3296,7 @@ function CanvasNode({
             {tags.length > 2 && <span className="mindmap-node-tag">+{tags.length - 2}</span>}
           </div>
           <CardScratchpad text={node.caution?.background} label="Background notes" atCardEdge />
+      {!editing && <ChildNavigation parentTitle={title || "Untitled card"} items={childNavigation} onJump={onJumpToChild} />}
       {collapsedDescendantCount > 0 && (
         <FastTooltip label={collapsed ? "Expand child cards" : "Collapse all child cards"}><button
           type="button"
@@ -3491,10 +3506,7 @@ function ProgressCircles({ value, onChange, disabled = false, compact = false, l
 }) {
   if (compact) return <span role="img" className={styles.progressCompact} aria-label={`${label}: ${progressLabel(value)}`} title={`${label}: ${progressLabel(value)}`}><ProgressGlyph value={value ?? 0} size={16} /></span>;
   return <div className={styles.progressChoices} role="group" aria-label={label}>
-    {MINDMAP_PROGRESS_STATES.map((state) => <span className={styles.progressChoice} key={state}>
-      <FastTooltip label={state === "ditched" ? "Ditched" : state === 6 ? "Finished" : state === 0 ? "Ready to start" : `${Math.round(state / 6 * 100)}%`}><button type="button" aria-label={state === "ditched" ? `Mark ${label.toLowerCase()} ditched` : state === 6 ? `Finish ${label.toLowerCase()}` : `${label}: ${state} of 6`} aria-pressed={state === value} disabled={disabled} onClick={() => onChange?.(state)}><ProgressGlyph value={state} /></button></FastTooltip>
-      {state === value && <FastTooltip label={`Clear ${label.toLowerCase()}`}><button type="button" className={styles.progressReset} aria-label={`Clear ${label.toLowerCase()}`} disabled={disabled} onClick={() => onChange?.(undefined)}><X size={10} aria-hidden="true" /></button></FastTooltip>}
-    </span>)}
+    {MINDMAP_PROGRESS_STATES.map((state) => <FastTooltip key={state} label={state === "ditched" ? "Ditched" : state === 6 ? "Finished" : state === 0 ? "Ready to start" : `${Math.round(state / 6 * 100)}%`}><button type="button" aria-label={state === "ditched" ? `Mark ${label.toLowerCase()} ditched` : state === 6 ? `Finish ${label.toLowerCase()}` : `${label}: ${state} of 6`} aria-pressed={state === value} disabled={disabled} onClick={() => onChange?.(state === value ? undefined : state)}><ProgressGlyph value={state} /></button></FastTooltip>)}
   </div>;
 }
 

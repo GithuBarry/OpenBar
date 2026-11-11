@@ -134,7 +134,7 @@ export function MindmapSwitcher({
   return (
     <Popover.Root open={open} onOpenChange={changeOpen}>
       <FastTooltip label={activeTitle}><Popover.Trigger asChild>
-        <button type="button" className={styles.trigger} aria-label="Choose mindmap"><Network size={16} className={styles.phoneMapIcon} /><span>{activeTitle}</span><ChevronDown size={12} /></button>
+        <button type="button" className={`p-toolbar-btn ${styles.trigger}`} aria-label="Choose mindmap"><Network size={16} className={styles.phoneMapIcon} /><span>{activeTitle}</span><ChevronDown size={12} /></button>
       </Popover.Trigger></FastTooltip>
       <PopoverSurface className={styles.menu} align="end" sideOffset={10} collisionPadding={12} aria-label="Mindmaps"
         onEscapeKeyDown={(event) => { if (renaming) { event.preventDefault(); if (!saving) cancelRename(); } }}>

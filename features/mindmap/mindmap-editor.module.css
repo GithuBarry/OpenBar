@@ -1,8 +1,8 @@
-.editor { --mindmap-dock-height: 46px; --mindmap-controls-bottom: calc(var(--mindmap-dock-height) + 16px); --overleaf-notice-top: var(--mindmap-controls-bottom); position: relative; height: 100%; min-height: 0; overflow: hidden; background: rgb(var(--canvas)); container-type: inline-size; }
-.inspector { position: absolute; top: var(--mindmap-controls-bottom); right: 8px; z-index: 26; display: flex; min-height: 0; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; background: var(--surface-overlay); color: rgb(var(--ink)); padding: 0; font-family: var(--font-sans); width: 304px; max-height: calc(100% - var(--mindmap-controls-bottom) - 56px); border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); margin: 0; box-shadow: var(--shadow-pop); }
+.editor { --mindmap-dock-height: 46px; --mindmap-controls-bottom: calc(var(--mindmap-dock-height) + 16px); --mindmap-bottom-clearance: calc(var(--mindmap-dock-height) + 16px); --overleaf-notice-top: var(--mindmap-controls-bottom); position: relative; height: 100%; min-height: 0; overflow: hidden; background: rgb(var(--canvas)); container-type: inline-size; }
+.inspector { position: absolute; top: var(--mindmap-controls-bottom); right: 8px; z-index: 26; display: flex; min-height: 0; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; background: var(--surface-overlay); color: rgb(var(--ink)); padding: 0; font-family: var(--font-sans); width: 304px; max-height: calc(100% - var(--mindmap-controls-bottom) - var(--mindmap-bottom-clearance)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); margin: 0; box-shadow: var(--shadow-pop); }
 .inspector > * { flex-shrink: 0; }
 @media (max-width: 600px) {
-  .editor:has(:global([data-editor-notice])) .inspector { top: calc(var(--mindmap-controls-bottom) + 52px); max-height: calc(100% - var(--mindmap-controls-bottom) - 108px); }
+  .editor:has(:global([data-editor-notice])) .inspector { top: calc(var(--mindmap-controls-bottom) + 52px); max-height: calc(100% - var(--mindmap-controls-bottom) - var(--mindmap-bottom-clearance) - 52px); }
 }
 .inspector:focus { outline: none; }
 .inspectorHandle { position: fixed; right: 0; top: 50%; z-index: 26; display: inline-flex; align-items: center; gap: 5px; min-width: 38px; height: 48px; padding: 0 9px; transform: translateY(-50%); border: 1px solid rgb(var(--line)); border-right: 0; border-radius: 10px 0 0 10px; background: var(--surface-floating); color: rgb(var(--accent-text)); box-shadow: var(--shadow-float); cursor: pointer; }
@@ -56,10 +56,10 @@
 /* The workspace owns its chrome and geometry as one component. */
 .editor > :global(.mindmap-workspace) { position: absolute; inset: 0; }
 .toolbar { position: absolute; inset: 0; z-index: 24; pointer-events: none; }
-.toolbarActions, .canvasTools { position: absolute; top: 8px; width: max-content; max-width: calc(100% - 16px); overflow-x: auto; overflow-y: hidden; padding: 5px 4px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-glass); background: var(--surface-floating); box-shadow: var(--shadow-float); scrollbar-width: none; pointer-events: auto; }
+.toolbarActions, .canvasTools { position: absolute; top: 8px; width: max-content; height: var(--mindmap-dock-height); max-width: calc(100% - 16px); overflow-x: auto; overflow-y: hidden; padding: 6px; border-radius: 999px; scrollbar-width: none; pointer-events: auto; }
 .toolbarActions { right: 8px; }
-.canvasTools { left: 50%; transform: translateX(-50%); }
-.resumeDock { position: absolute; z-index: 30; bottom: 62px; left: 50%; width: max-content; max-width: calc(100% - 24px); transform: translateX(-50%); }
+.canvasTools { top: auto; bottom: 8px; left: 50%; transform: translateX(-50%); }
+.resumeDock { position: absolute; z-index: 30; bottom: var(--mindmap-bottom-clearance); left: 50%; width: max-content; max-width: calc(100% - 24px); transform: translateX(-50%); }
 .resumeDock:empty { display: none; }
 .viewTabs { display: flex; gap: 4px; align-items: center; min-width: 0; }
 .viewTabs > button { display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border-radius: 7px; color: rgb(var(--muted)); font-size: 12px; font-weight: 500; white-space: nowrap; cursor: pointer; }
@@ -67,12 +67,12 @@
 .viewTabs > button:hover { color: rgb(var(--ink)); }
 .viewTabs > button > span { font-size: 12px; min-width: 18px; padding: 1px 4px; border-radius: 5px; background: rgb(var(--accent) / .09); color: rgb(var(--ink)); }
 .toolbarActions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-.iconButton { display: inline-flex; align-items: center; justify-content: center; height: 34px; width: 34px; border-radius: 7px; color: rgb(var(--muted)); cursor: pointer; flex-shrink: 0; }
-.iconButton:hover { background: rgb(var(--surface-2)); color: rgb(var(--ink)); }
-.iconButton[aria-expanded="true"], .iconButton[aria-pressed="true"] { background: var(--surface-selected); color: rgb(var(--ink)); box-shadow: inset 0 0 0 1px var(--border-selected); }
-.primaryButton:global(.p-button) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 7px; background: rgb(var(--accent)); color: rgb(var(--accent-ink)); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
-.primaryButton:hover { filter: brightness(1.08); }
-.searchTrigger { display: flex; align-items: center; gap: 8px; width: 138px; height: 34px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-control); padding: 0 9px; color: rgb(var(--muted)); font-size: 12px; cursor: pointer; }
+.iconButton { display: inline-flex; align-items: center; justify-content: center; height: 34px; width: 34px; padding: 0; color: rgb(var(--muted)); cursor: pointer; flex-shrink: 0; }
+.iconButton:hover { color: rgb(var(--ink)); }
+.iconButton[aria-expanded="true"], .iconButton[aria-pressed="true"] { background: var(--p-toolbar-hover); color: rgb(var(--ink)); }
+.primaryButton:global(.p-button) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 12px; background: rgb(var(--accent)); color: rgb(var(--accent-ink)); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.searchTrigger { display: flex; align-items: center; gap: 8px; width: 138px; height: 34px; padding: 0 9px; color: rgb(var(--muted)); font-size: 12px; cursor: pointer; }
+.toolbar :global(.p-toolbar-btn) { --p-button-radius: 999px; height: calc(var(--mindmap-dock-height) - 12px); border-radius: 999px; }
 .searchTrigger > kbd { margin-left: auto; font-family: var(--font-sans); color: rgb(var(--faint)); }
 .searchPanel, .optionsPanel { z-index: 90; border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); font-family: var(--font-sans); width: min(420px, calc(100vw - 24px)); overflow: hidden; }
 .searchField { display: flex; align-items: center; gap: 10px; padding: 14px; border-bottom: 1px solid rgb(var(--line)); color: rgb(var(--muted)); }
@@ -106,7 +106,7 @@
 .workspaceFooter { position: absolute; inset: auto 0 12px; z-index: 24; display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 0 16px 0 60px; background: transparent; pointer-events: none; color: rgb(var(--muted)); font-size: 12px; }
 .historyControls { display: flex; align-items: center; gap: 3px; padding: 4px 9px 4px 4px; border: 1px solid rgb(var(--line)); border-radius: 9px; background: var(--surface-floating); box-shadow: var(--shadow-float); pointer-events: auto; }
 .historyControls > span { margin-left: 9px; }
-.moveNotice { position: absolute; left: 50%; bottom: 58px; transform: translateX(-50%); z-index: 25; display: flex; align-items: center; gap: 9px; max-width: calc(100% - 32px); padding: 10px 14px; border: 1px solid rgb(var(--line)); border-radius: 9px; background: var(--surface-floating); box-shadow: var(--shadow-float); font-size: 12px; }
+.moveNotice { position: absolute; left: 50%; bottom: var(--mindmap-bottom-clearance); transform: translateX(-50%); z-index: 25; display: flex; align-items: center; gap: 9px; max-width: calc(100% - 32px); padding: 10px 14px; border: 1px solid rgb(var(--line)); border-radius: 9px; background: var(--surface-floating); box-shadow: var(--shadow-float); font-size: 12px; }
 .moveNotice > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .moveNotice > button { color: rgb(var(--accent-text)); font-weight: 600; cursor: pointer; }
 .editor :global(.mindmap-viewport) { background: rgb(var(--canvas)); }
@@ -173,35 +173,30 @@
 .todoMissing > svg { color: rgb(var(--warn)); }
 @media (max-width: 700px) { .workspaceFooter { flex-wrap: wrap; padding: 0 12px 0 60px; } }
 .progressChoices { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
-.inspector .mixedReset { display: inline-grid; place-items: center; width: 24px; height: 24px; min-width: 0; min-height: 0; margin-left: 4px; border: 1px solid rgb(var(--line)); border-radius: 50%; vertical-align: middle; background: rgb(var(--surface)); color: rgb(var(--muted)); }
-.mixedReset:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; }
-.progressChoice { position: relative; display: inline-flex; }
-.progressChoice > button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid transparent; border-radius: 6px; color: rgb(var(--ok)); }
-.progressChoice > button[aria-pressed="true"] { background: var(--surface-selected); border-color: var(--border-selected); color: rgb(var(--ink)); }
-.progressChoice > button:focus-visible { outline: 2px solid rgb(var(--ok)); outline-offset: 1px; }
-.progressChoice > button:disabled { opacity: .5; }
-.progressChoice > .progressReset { position: absolute; top: -4px; right: -4px; z-index: 1; width: 17px; height: 17px; min-width: 0; min-height: 0; border: 1px solid rgb(var(--line)); border-radius: 50%; background: rgb(var(--surface)); color: rgb(var(--muted)); }
+.progressChoices > button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid transparent; border-radius: 6px; color: rgb(var(--ok)); }
+.progressChoices > button[aria-pressed="true"] { background: var(--surface-selected); border-color: var(--border-selected); color: rgb(var(--ink)); }
+.progressChoices > button:focus-visible { outline: 2px solid rgb(var(--ok)); outline-offset: 1px; }
+.progressChoices > button:disabled { opacity: .5; }
 @media (pointer: fine) {
   .inspector .progressChoices { gap: 2px; }
-  .inspector .progressChoice > button:not(.progressReset) { width: 32px; height: 32px; }
+  .inspector .progressChoices > button { width: 32px; height: 32px; }
 }
 .progressCompact { display: inline-flex; align-items: center; color: rgb(var(--ok)); }
 .cardProgress { position: absolute; top: 13px; right: 14px; display: inline-flex; }
 .card:has(> .cardProgress) :global(.mindmap-node-title), .card:has(> .cardProgress) :global(.mindmap-inline-editor .cm-line:first-child) { padding-right: 24px; }
 .canvasTools { display: flex; align-items: center; gap: 4px; }
-.canvasTools > button { display: flex; align-items: center; gap: 8px; height: 34px; white-space: nowrap; padding: 0 10px; border: 1px solid transparent; border-radius: var(--radius-control); font-size: 12px; }
-.canvasTools > :global(.p-button) { background: transparent; box-shadow: none; }
-.canvasTools > button[aria-expanded="true"] { background: var(--surface-selected); border-color: var(--border-selected); color: rgb(var(--ink)); }
+.canvasTools > button { display: flex; align-items: center; gap: 8px; height: 34px; white-space: nowrap; padding: 0 10px; font-size: 12px; }
+.canvasTools > button[aria-expanded="true"] { background: var(--p-toolbar-hover); color: rgb(var(--ink)); }
 .canvasTools span { padding: 1px 5px; border-radius: 4px; background: rgb(var(--surface-2)); font-size: 12px; }
 .canvasTools .unplacedLabel { padding: 0; background: transparent; }
 .canvasTools > .depthCollapse { gap: 5px; cursor: pointer; }
-.canvasTools > .depthCollapse[data-collapsed="true"] { background: var(--surface-selected); border-color: var(--border-selected); color: rgb(var(--ink)); }
+.canvasTools > .depthCollapse[data-collapsed="true"] { background: var(--p-toolbar-hover); color: rgb(var(--ink)); }
 .canvasTools > .depthCollapse:disabled { opacity: .45; cursor: default; }
 .canvasTools .depthCollapseLabel, .canvasTools .depthCollapseCompact { padding: 0; background: transparent; font-size: inherit; }
 .canvasTools .depthCollapseCompact { display: none; }
 .canvasLayout { position: absolute; inset: 0; display: flex; min-width: 0; min-height: 0; }
 .canvasSurface { position: relative; min-width: 0; flex: 1; }
-.unplacedTray { width: 244px; flex-shrink: 0; overflow-y: auto; margin: var(--mindmap-controls-bottom) 0 56px 8px; padding: 12px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); background: var(--surface-overlay); box-shadow: var(--shadow-float); }
+.unplacedTray { width: 244px; flex-shrink: 0; overflow-y: auto; margin: var(--mindmap-controls-bottom) 0 var(--mindmap-bottom-clearance) 8px; padding: 12px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); background: var(--surface-overlay); box-shadow: var(--shadow-float); }
 .unplacedTray header { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
 .unplacedTray p { margin: 8px 0; font-size: 12px; color: rgb(var(--muted)); }
 .unplacedTray input { width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid rgb(var(--line)); border-radius: 6px; background: rgb(var(--surface)); font-size: 12px; }
@@ -217,15 +212,15 @@
 .todoDragGhost { position: fixed; z-index: 1000; max-width: 220px; padding: 10px 14px; border: 1px solid rgb(var(--accent)); border-radius: 9px; box-shadow: 0 8px 24px rgb(0 0 0 / .15); background: rgb(var(--surface)); font-size: 12px; pointer-events: none; }
 .card[data-todo-drop-target="true"] { outline: 3px solid rgb(var(--accent)); outline-offset: 4px; }
 @container (max-width: 1100px) {
-  .editor { --mindmap-controls-bottom: calc(2 * var(--mindmap-dock-height) + 24px); }
-  .canvasTools { top: calc(var(--mindmap-dock-height) + 16px); left: 8px; transform: none; }
+  .editor { --mindmap-controls-bottom: calc(2 * var(--mindmap-dock-height) + 24px); --mindmap-bottom-clearance: calc(2 * var(--mindmap-dock-height) + 24px); }
   .toolbarActions { top: calc(var(--mindmap-dock-height) + 16px); }
+  .workspaceFooter { bottom: calc(var(--mindmap-dock-height) + 16px); }
   .searchTrigger { width: 34px; justify-content: center; border-color: transparent; padding: 0; }
   .searchTrigger > span, .searchTrigger > kbd { display: none; }
 }
 @container (max-width: 700px) {
   .fontTools { display: none; }
-  .unplacedTray { position: absolute; top: var(--mindmap-controls-bottom); right: auto; bottom: 56px; left: 8px; z-index: 20; width: min(300px, calc(100% - 16px)); margin: 0; }
+  .unplacedTray { position: absolute; top: var(--mindmap-controls-bottom); right: auto; bottom: var(--mindmap-bottom-clearance); left: 8px; z-index: 20; width: min(300px, calc(100% - 16px)); margin: 0; }
 }
 @container (max-width: 520px) {
   .fontTools, .canvasTools .unplacedLabel, .primaryButton > span, .canvasTools .depthCollapseLabel { display: none; }
@@ -255,15 +250,16 @@
 
 @media (pointer: coarse) {
   .editor { --mindmap-dock-height: 56px; }
+  .toolbar :global(.p-toolbar-btn) { min-width: 44px; }
+  .workspaceFooter { padding-left: 72px; }
   .editor :global(.mindmap-collapse-toggle) { width: 44px; min-width: 44px; height: 44px; min-height: 44px; right: -52px; }
   .canvasTools > button, .toolbarActions > button, .primaryButton:global(.p-button), .searchTrigger, .iconButton,
   .viewTabs > button, .editToolbarButton, .inspector button, .inspector summary,
-  .searchResults > button, .optionRow, .outlineToggle, .outlineOpen, .progressChoice > button,
+  .searchResults > button, .optionRow, .outlineToggle, .outlineOpen, .progressChoices > button,
   .editor :global(.react-flow__controls-button) { min-height: 44px; }
-  .iconButton, .outlineToggle, .outlineOpen, .progressChoice > button,
+  .iconButton, .outlineToggle, .outlineOpen, .progressChoices > button,
   .editor :global(.react-flow__controls-button), .inspector :global(.mindmap-color-swatch) { min-width: 44px; }
   .inspector :global(.mindmap-color-swatch) { height: 44px; }
-  .progressChoice > .progressReset { width: 24px; height: 24px; min-width: 0; min-height: 0; }
   .unplacedOpen { width: 44px; height: 44px; }
 }
 

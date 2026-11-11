@@ -38,7 +38,7 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
     <MindmapTitleProvider key={`${slug}:${activeId}`}><div className={styles.screen}>
       <PageHeader
         compact
-        className={`${styles.pageHeader} p-glass-sm`}
+        className={`${styles.pageHeader} p-toolbar-group`}
         location="Mindmap"
         title={`${project.title} Mindmap`}
         subtitle={isPrimary ? "Primary research map" : "Planning map"}
@@ -46,7 +46,7 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
         readOnlyProject={isPublicDemoMode()}
         actions={
           <div className={styles.headerActions}>
-            <Link href={`/p/${slug}/paper`} className={styles.paperLink} aria-label="Open paper"><FileText size={14} /><span>Paper</span></Link>
+            <Link href={`/p/${slug}/paper`} className={`p-toolbar-btn ${styles.paperLink}`} aria-label="Open paper"><FileText size={14} /><span>Paper</span></Link>
             <MindmapSwitcher
               project={slug}
               activeId={activeId}

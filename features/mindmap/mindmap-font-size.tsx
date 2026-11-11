@@ -26,7 +26,7 @@ export function MindmapFontSize({ value, disabled = false, onChange }: SizeContr
   const anchor = useRef<HTMLButtonElement>(null);
   return <div className={styles.control}>
     <FastTooltip label="Mindmap appearance">
-      <button ref={anchor} type="button" className={styles.trigger} aria-label="Mindmap appearance" aria-expanded={open} onClick={() => setOpen(current => !current)}>
+      <button ref={anchor} type="button" className={`p-toolbar-btn ${styles.trigger}`} aria-label="Mindmap appearance" aria-expanded={open} onClick={() => setOpen(current => !current)}>
         <SlidersHorizontal size={15} /><span>{value} px</span>
       </button>
     </FastTooltip>
