@@ -181,6 +181,10 @@
 .progressChoice > button:focus-visible { outline: 2px solid rgb(var(--ok)); outline-offset: 1px; }
 .progressChoice > button:disabled { opacity: .5; }
 .progressChoice > .progressReset { position: absolute; top: -4px; right: -4px; z-index: 1; width: 17px; height: 17px; min-width: 0; min-height: 0; border: 1px solid rgb(var(--line)); border-radius: 50%; background: rgb(var(--surface)); color: rgb(var(--muted)); }
+@media (pointer: fine) {
+  .inspector .progressChoices { gap: 2px; }
+  .inspector .progressChoice > button:not(.progressReset) { width: 32px; height: 32px; }
+}
 .progressCompact { display: inline-flex; align-items: center; color: rgb(var(--ok)); }
 .cardProgress { position: absolute; top: 13px; right: 14px; display: inline-flex; }
 .card:has(> .cardProgress) :global(.mindmap-node-title), .card:has(> .cardProgress) :global(.mindmap-inline-editor .cm-line:first-child) { padding-right: 24px; }
@@ -220,6 +224,7 @@
   .searchTrigger > span, .searchTrigger > kbd { display: none; }
 }
 @container (max-width: 700px) {
+  .fontTools { display: none; }
   .unplacedTray { position: absolute; top: var(--mindmap-controls-bottom); right: auto; bottom: 56px; left: 8px; z-index: 20; width: min(300px, calc(100% - 16px)); margin: 0; }
 }
 @container (max-width: 520px) {
