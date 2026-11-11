@@ -2,17 +2,16 @@
  * Shared page-scoped WebMCP tools available on every project page.
  */
 
+import { safeUrl } from "@/lib/safe-url";
+import type { ProjectLink } from "@/lib/types";
 import { SHARED_INPUTS } from "./command-inputs";
 import { parseCommandInput } from "./command-schema";
 import {
-  PROJECT_WEBMCP_TOOL_NAMES,
-  SHARED_WEBMCP_SCHEMAS,
-  SETUP_WEBMCP_TOOL_NAMES,
+PROJECT_WEBMCP_TOOL_NAMES,
+SHARED_WEBMCP_SCHEMAS,
 } from "./mcp-tool-schemas";
-import { failResult, okResult, type OperationResult } from "./operation-result";
+import { failResult,okResult,type OperationResult } from "./operation-result";
 import { type PaperWebMcpTool } from "./webmcp-paper-contract";
-import { safeUrl } from "@/lib/safe-url";
-import type { ProjectLink } from "@/lib/types";
 
 export type CurrentLocation = {
   kind: "paper" | "mindmap" | "wiki" | "home" | "instructions";
@@ -23,7 +22,7 @@ export type CurrentLocation = {
   pageId?: string;
 };
 
-export { PROJECT_WEBMCP_TOOL_NAMES, SETUP_WEBMCP_TOOL_NAMES };
+export { PROJECT_WEBMCP_TOOL_NAMES };
 
 export type ProjectStateQuery = {
   detail?: "summary" | "full";
@@ -51,13 +50,8 @@ export type ProjectMetadataPatch = {
 export type SharedWebMcpActions = {
   syncProject?: (project: string, args: unknown) => Promise<OperationResult<unknown>>;
   getProjectState: (project: string, current?: CurrentLocation, query?: ProjectStateQuery) => Promise<unknown>;
-  searchProject: (project: string, query: string) => Promise<unknown>;
   resolveNavigation: (project: string, input: { id?: string; href?: string }) => Promise<{ href: string } | null>;
   readProjectSkill: (project: string, id: string, source?: "project" | "workspace" | "openbar") => Promise<unknown>;
-  getCapabilities: () => Promise<unknown>;
-  inspectRepository: (project: string) => Promise<unknown>;
-  previewConversion: (project: string, filePath: string, source: string, to: string, expandProject: boolean) => Promise<unknown>;
-  applyConversion: (project: string, planId: string, expectedHash: string, acknowledgeLoss: boolean, dryRun: boolean) => Promise<OperationResult<unknown>>;
   updateProject: (project: string, patch: ProjectMetadataPatch) => Promise<unknown>;
 };
 
@@ -77,78 +71,35 @@ function requiredString(args: Record<string, unknown>, key: string): string | Op
   return value;
 }
 
-function optionalBoolean(args: Record<string, unknown>, key: string): OperationResult<true> | null {
-  if (args[key] !== undefined && typeof args[key] !== "boolean") {
-    return failResult("invalid_arguments", `${key} must be a boolean.`, { retryable: false });
-  }
-  return null;
-}
+const READ_ONLY = new Set<string>(["get_project_state", "navigate_project", "read_project_skill"]);
 
-const READ_ONLY = new Set<string>([
-  "get_project_state",
-  "search_project",
-  "navigate_project",
-  "read_project_skill",
-  "get_capabilities",
-  "inspect_repository",
-  "preview_conversion",
-]);
-
-type SharedToolName =
-  | (typeof PROJECT_WEBMCP_TOOL_NAMES)[number]
-  | (typeof SETUP_WEBMCP_TOOL_NAMES)[number];
+type SharedToolName = keyof typeof SHARED_INPUTS;
 
 export type SharedWebMcpProfile = "full" | "public-demo";
 
-const PUBLIC_DEMO_PROJECT_TOOLS = [
-  "get_project_state",
-  "search_project",
-  "navigate_project",
-  "read_project_skill",
-] as const satisfies readonly SharedToolName[];
+const PUBLIC_DEMO_PROJECT_TOOLS = ["get_project_state","navigate_project","read_project_skill"] as const;
 
 const TOOL_META: Record<SharedToolName, { title: string; description: string }> = {
   sync_project: { title: "Review and resolve Git synchronization", description: "Inspect Git status, exact commit IDs and recovery refs. review_pull prepares an isolated merge and returns base/local/Git contents for conflicting files. Resolve whole files, then apply_pull with its token and resolutions. Save live editor drafts before reviewing. Local edits arriving during review require a fresh review. cancel_pull closes the review." },
   get_project_state: {
     title: "Read project state",
     description:
-      "Start here on every project visit. Read saved project state, @agent requests, TODO coverage, Git sync, and instruction/skill metadata. detail=full includes AGENTS.md bodies and all TODOs. Use get_paper_state or get_source_bundle for the browser's live draft.",
-  },
-  search_project: {
-    title: "Search the project",
-    description:
-      "Search paper headings, TeX source, TODO titles and details, comment text, mindmap titles, labels, and refs. Returns ids and hrefs that navigate_project can open. Does not modify project files.",
+      "Start here on every project visit, then call check_inbox at the start of each new agent session, including without earlier chat context. Read saved project state, @agent requests, TODO coverage, Git sync, and instruction/skill metadata. detail=full includes AGENTS.md bodies and all TODOs. Use get_paper_state or read_project_files for the browser's live draft.",
   },
   navigate_project: {
     title: "Navigate the project UI",
     description:
-      "Navigate the current OpenBar UI to a paper section, TODO, mindmap, or other project location returned by get_project_state or search_project. Use this directly rather than asking the user to navigate.",
+      "Navigate the current OpenBar UI to a paper section, TODO, mindmap, or other project location returned by get_project_state. Use this directly rather than asking the user to navigate.",
   },
   read_project_skill: {
     title: "Read a project skill",
     description:
       "Load one project, workspace, or bundled skill by its catalog ID when its description fits the task.",
   },
-  get_capabilities: {
-    title: "Read runtime capabilities",
-    description: "Return server compile and conversion capabilities. Does not modify files.",
-  },
-  inspect_repository: {
-    title: "Inspect the TeX repository",
-    description: "Inspect the manuscript include graph. Useful during import or repository setup, not during ordinary paper writing.",
-  },
-  preview_conversion: {
-    title: "Preview a conversion",
-    description: "Preview a Pandoc conversion of manuscript source. Setup-only.",
-  },
-  apply_conversion: {
-    title: "Apply a conversion",
-    description: "Apply a previously previewed conversion. Setup-only.",
-  },
   update_project: {
     title: "Update project metadata",
     description: "Update any editable project metadata: title, venue, tagline, overview, research kind, color, icon, label, links, collaborators, or archive state. TeX project metadata remains the shared source.",
-  },
+  }
 };
 
 export function sharedToolDescription(name: SharedToolName): string {
@@ -160,9 +111,7 @@ export function buildSharedWebMcpTools(host: SharedWebMcpHost, profile: SharedWe
   return names.map((name) => sharedTool(host, name));
 }
 
-export function buildSetupWebMcpTools(host: SharedWebMcpHost): PaperWebMcpTool[] {
-  return SETUP_WEBMCP_TOOL_NAMES.map((name) => sharedTool(host, name));
-}
+
 
 function sharedTool(host: SharedWebMcpHost, name: SharedToolName): PaperWebMcpTool {
   return {
@@ -205,11 +154,6 @@ async function executeSharedWebMcpTool(
           todoLimit: typeof args.todoLimit === "number" ? args.todoLimit : undefined,
         }));
       }
-      case "search_project": {
-        const query = requiredString(args, "query");
-        if (typeof query !== "string") return query;
-        return okResult(await host.actions.searchProject(host.project, query));
-      }
       case "navigate_project": {
         if (args.id !== undefined && (typeof args.id !== "string" || !args.id.trim())) {
           return failResult("invalid_arguments", "id must be a non-empty string.", { retryable: false });
@@ -238,47 +182,6 @@ async function executeSharedWebMcpTool(
         const id = requiredString(args, "id");
         if (typeof id !== "string") return id;
         return okResult(await host.actions.readProjectSkill(host.project, id, args.source as Parameters<SharedWebMcpActions["readProjectSkill"]>[2]));
-      }
-      case "get_capabilities":
-        return okResult(await host.actions.getCapabilities());
-      case "inspect_repository":
-        return okResult(await host.actions.inspectRepository(host.project));
-      case "preview_conversion": {
-        if (args.filePath !== undefined && (typeof args.filePath !== "string" || !args.filePath.trim())) {
-          return failResult("invalid_arguments", "filePath must be a non-empty string.", { retryable: false });
-        }
-        if (args.to !== undefined && (typeof args.to !== "string" || !args.to.trim())) {
-          return failResult("invalid_arguments", "to must be a non-empty string.", { retryable: false });
-        }
-        const expandCheck = optionalBoolean(args, "expandProject");
-        if (expandCheck) return expandCheck;
-        const expandProject = args.expandProject === true;
-        const plan = await host.actions.previewConversion(
-          host.project,
-          typeof args.filePath === "string" ? args.filePath : "paper.tex",
-          expandProject ? "" : (host.liveSource?.() || ""),
-          typeof args.to === "string" ? args.to : "html5",
-          expandProject,
-        );
-        return okResult(plan);
-      }
-      case "apply_conversion": {
-        const planId = requiredString(args, "planId");
-        if (typeof planId !== "string") return planId;
-        const expectedHash = requiredString(args, "expectedHash");
-        if (typeof expectedHash !== "string") return expectedHash;
-        const acknowledgeCheck = optionalBoolean(args, "acknowledgeLoss");
-        if (acknowledgeCheck) return acknowledgeCheck;
-        const dryRunCheck = optionalBoolean(args, "dryRun");
-        if (dryRunCheck) return dryRunCheck;
-        const result = await host.actions.applyConversion(
-          host.project,
-          planId,
-          expectedHash,
-          args.acknowledgeLoss === true,
-          args.dryRun === true,
-        );
-        return result.ok ? okResult(result.value) : result;
       }
       case "update_project": {
         const expectedHash = requiredString(args, "expectedHash");

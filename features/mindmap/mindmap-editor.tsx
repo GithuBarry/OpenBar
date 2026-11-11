@@ -1,6 +1,8 @@
 "use client";
 
 import { useProjectWriteSession } from "@/components/project-session/project-write-session";
+import { ResumeEditControl } from "@/components/project-session/resume-edit-control";
+import { registerProjectFileEditor } from "@/features/project-files-bridge";
 
 import "katex/dist/katex.min.css";
 import { Select } from "@/components/select";
@@ -28,6 +30,7 @@ import {
   Italic,
   Keyboard,
   LoaderCircle,
+  ListTodo,
   Link2,
   LockKeyhole,
   Minus,
@@ -205,9 +208,9 @@ export function MindmapEditor({
   const [session, rawDispatch] = useReducer(mindmapReducer, initialMindmap, createMindmapSession);
   const dispatch = useCallback((action: Parameters<typeof mindmapReducer>[1]) => {
     // Preserve navigation, hydration, and text typed before a conflict arrived.
-    const allowed = ["select", "clear-selection", "replace", "hydrate", "ack-save", "record-history", "edit-card", "edit-text"];
+    const allowed = ["select", "select-many", "clear-selection", "replace", "hydrate", "ack-save", "record-history", "edit-card", "edit-text"];
     if (remoteOutOfSyncRef.current && !allowed.includes(action.type)) return;
-    if (!["select", "clear-selection", "replace", "hydrate", "ack-save", "record-history"].includes(action.type)) remoteQueue.noteEdit();
+    if (!["select", "select-many", "clear-selection", "replace", "hydrate", "ack-save", "record-history"].includes(action.type)) remoteQueue.noteEdit();
     rawDispatch(action);
   }, [remoteQueue]);
   const sessionRef = useRef(session);
@@ -1460,10 +1463,17 @@ export function MindmapEditor({
   useEffect(() => {
     const browserWindow = window as Window & { __openbarFlushMindmap?: () => Promise<void> };
     browserWindow.__openbarFlushMindmap = flushPendingSaves;
+    const releaseFiles = registerProjectFileEditor(project, async (operation, writing) => {
+      await flushPendingSaves();
+      const result = await operation();
+      if (result.ok && writing) router.refresh();
+      return result;
+    });
     return () => {
+      releaseFiles();
       if (browserWindow.__openbarFlushMindmap === flushPendingSaves) delete browserWindow.__openbarFlushMindmap;
     };
-  }, [flushPendingSaves]);
+  }, [flushPendingSaves, project, router]);
 
   // Persist edits shortly after the user pauses.
   useEffect(() => {
@@ -1769,7 +1779,7 @@ export function MindmapEditor({
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement;
-    if (event.defaultPrevented || target.closest(".cm-editor")) return;
+    if (event.defaultPrevented || isEditableTarget(target)) return;
     const key = event.key.toLowerCase();
     if (event.key === "Escape" && cardMenuOpen) {
       event.preventDefault();
@@ -1777,6 +1787,12 @@ export function MindmapEditor({
       return;
     }
     if (target.closest("#mindmap-card-menu, button, a, input, textarea, select, .cm-editor")) return;
+    if ((event.metaKey || event.ctrlKey) && !event.altKey && key === "a" && viewMode === "map" && target.closest(".mindmap-viewport")) {
+      event.preventDefault();
+      event.stopPropagation();
+      dispatch({ type: "select-many", ids: flowNodes.map(node => node.id) });
+      return;
+    }
     if (readOnly && (event.key === "Tab" || event.key === "Enter" || event.key === "Backspace" || event.key === "Delete" || key === "e" || event.altKey)) return;
 
     if (event.key === "Tab") {
@@ -1788,7 +1804,8 @@ export function MindmapEditor({
       addSibling();
     } else if (event.key === "Backspace" || event.key === "Delete") {
       event.preventDefault();
-      deleteSelected();
+      event.stopPropagation();
+      if (!event.repeat) deleteSelected();
     } else if (key === "e") {
       event.preventDefault();
       if (selected) startEditing(selected.id);
@@ -2053,9 +2070,9 @@ export function MindmapEditor({
       onKeyDown={onKeyDown}
     >
       <header className={styles.toolbar} aria-label="Mindmap controls">
-        <div className={styles.canvasTools}>
+        <div className={cn("p-glass-sm", styles.canvasTools)} role="group" aria-label="Map view controls">
           {viewMode === "changes" && <button type="button" className="p-button p-button-default" onClick={() => setViewMode("map")}>Back to map</button>}
-          <button type="button" className="p-button p-button-default" aria-label="Unplaced paper TODOs" aria-expanded={unplacedOpen} onClick={() => { setUnplacedOpen((open) => !open); setViewMode("map"); }}>Unplaced <span>{unplacedCount}</span></button>
+          <button type="button" className="p-button p-button-default" aria-label="Unplaced paper TODOs" aria-expanded={unplacedOpen} onClick={() => { setUnplacedOpen((open) => !open); setViewMode("map"); }}><ListTodo size={15} aria-hidden="true" /><span className={styles.unplacedLabel}>Unplaced</span><span>{unplacedCount}</span></button>
           <FastTooltip label={expandAllFromToolbar ? "Expand all cards" : "Collapse depth 2+ (keep the root and its first-level branches visible)"}>
             <button type="button" className={cn("p-button p-button-default", styles.depthCollapse)} aria-label={expandAllFromToolbar ? "Expand all cards" : "Collapse all cards at depth 2 and deeper"}
               data-collapsed={depthCollapsed} disabled={firstLevelBranchIds.length === 0 && collapsedIds.size === 0}
@@ -2065,10 +2082,10 @@ export function MindmapEditor({
               <span className={styles.depthCollapseCompact} aria-hidden="true">{expandAllFromToolbar ? "All" : "2+"}</span>
             </button>
           </FastTooltip>
-          <div className="hidden sm:block"><MindmapFontSize value={mindmap.fontSize || 12} disabled={readOnly}
+          <div className={styles.fontTools}><MindmapFontSize value={mindmap.fontSize || 12} disabled={readOnly}
             onChange={fontSize => dispatch({ type: "set-font-size", fontSize })} /></div>
         </div>
-        <div className={styles.toolbarActions}>
+        <div className={cn("p-glass-sm", styles.toolbarActions)} role="group" aria-label="Map card controls">
           {selectMultiple && <button type="button" className={styles.iconButton} aria-label="Finish selecting cards" aria-pressed="true" onClick={() => { setSelectMultiple(false); setCardMenuOpen(true); }}><CheckSquare size={18} /></button>}
           <Popover.Root open={searchOpen || moveOpen} onOpenChange={(open) => { setSearchOpen(open); if (!open) setMoveOpen(false); }}>
             <Popover.Trigger asChild>
@@ -2160,6 +2177,7 @@ export function MindmapEditor({
           </Popover.Root>
         </div>
       </header>
+      <div className={styles.resumeDock}><ResumeEditControl /></div>
       <div className="mindmap-workspace">
 
         <div
@@ -2169,7 +2187,7 @@ export function MindmapEditor({
           aria-label={`Mindmap ${viewMode} view. Tab adds a child. Enter adds a sibling. E edits the selected card.`}
         >
           {viewMode === "map" ? (<div className={styles.canvasLayout}>
-          {unplacedOpen && unplacedCount > 0 && <MindmapUnplacedTray paperState={paperState} nodes={mindmap.nodes} selectedParentId={selected?.id || mindmap.rootId} onPlaceTodo={placeUnplacedTodo} />}
+          {unplacedOpen && unplacedCount > 0 && <MindmapUnplacedTray project={project} paperState={paperState} nodes={mindmap.nodes} selectedParentId={selected?.id || mindmap.rootId} onPlaceTodo={placeUnplacedTodo} />}
           <div className={styles.canvasSurface}>
           <MindmapCanvas
             virtualize={mindmap.nodes.length > 80 && !editingId && flowNodes.every(node => measuredCards.has(node.id))}
@@ -2481,7 +2499,7 @@ export function MindmapEditor({
               </div>
               <div className="mindmap-field">
                 <span>Priority</span>
-                <ChoiceButtons label="Card priority" value={selected.priority || ""} options={[{value:"",label:"Clear"}, ...["P0", "P1", "P2", "P3"].map(value => ({value,label:value}))]} onChange={(value) => dispatch({ type: "patch-node", id: selected.id, patch: { priority: value ? value as MindmapNode["priority"] : undefined } })} />
+                <ChoiceButtons label="Card priority" value={selected.priority || ""} options={["P0", "P1", "P2", "P3"].map(value => ({value,label:value}))} onChange={(value) => dispatch({ type: "patch-node", id: selected.id, patch: { priority: value as MindmapNode["priority"] } })} onClear={() => dispatch({ type: "patch-node", id: selected.id, patch: { priority: undefined } })} />
               </div>
             </div>
           </div>
@@ -2527,37 +2545,7 @@ export function MindmapEditor({
               )}
               <div className="mindmap-field">
                 <span>Accent</span>
-                <div className="mindmap-color-palette" role="group" aria-label="Card accent palette">
-                  {CARD_PALETTE.map((color) => (
-                    <FastTooltip key={color.value} label={color.label}><button
-                      type="button"
-                      className={cn("mindmap-color-swatch", selected.color === color.value && "mindmap-color-swatch-selected")}
-                      style={{ backgroundColor: color.value }}
-                      aria-label={color.label + " accent"}
-                      aria-pressed={selected.color === color.value}
-                      onClick={() => dispatch({ type: "patch-node", id: selected.id, patch: { color: color.value } })}
-                    /></FastTooltip>
-                  ))}
-                  <FastTooltip label="Use default accent"><button
-                    type="button"
-                    className={cn("mindmap-color-swatch mindmap-color-swatch-auto", !selected.color && "mindmap-color-swatch-selected")}
-                    aria-label="Use default accent"
-                    aria-pressed={!selected.color}
-                    onClick={() => dispatch({ type: "patch-node", id: selected.id, patch: { color: undefined } })}
-                  >
-                    <span aria-hidden="true">Auto</span>
-                  </button></FastTooltip>
-                </div>
-                <input
-                  value={selected.color || ""}
-                  onChange={(event) => dispatch({
-                    type: "patch-node",
-                    id: selected.id,
-                    patch: { color: event.target.value.trim() || undefined },
-                  })}
-                  placeholder="#785ef0 or CSS color"
-                  aria-label="Custom card accent"
-                />
+                <AccentPicker key={selected.id} value={selected.color || ""} label="Card accent" onChange={(color) => dispatch({ type: "patch-node", id: selected.id, patch: { color } })} />
               </div>
               <div
                 className="mindmap-card-assets"
@@ -2760,13 +2748,14 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, sections, read
               <datalist id="mindmap-label-suggestions">{projectLabels.map((tag) => <option key={tag} value={tag} />)}</datalist>
             </div>
             <div className="mindmap-field">
-              <span>Priority</span>
+              <span>Priority {priority === null && <button type="button" className={styles.mixedReset} aria-label="Clear selected cards priority" onClick={() => onPatch({ priority: undefined })}><X size={12} aria-hidden="true" /></button>}</span>
               {priority === null && mixed}
               <ChoiceButtons<string>
                 label="Selected cards priority"
                 value={priority ?? "__mixed__"}
-                options={[{ value: "", label: "Clear" }, ...["P0", "P1", "P2", "P3"].map((value) => ({ value, label: value }))]}
+                options={["P0", "P1", "P2", "P3"].map((value) => ({ value, label: value }))}
                 onChange={(value) => onPatch({ priority: value ? value as MindmapNode["priority"] : undefined })}
+                onClear={() => onPatch({ priority: undefined })}
               />
             </div>
           </div></div>
@@ -2778,7 +2767,7 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, sections, read
           <div className="mindmap-card-menu-section"><div className="mindmap-card-menu-section-body">
             {allOrdinary && (
               <div className="mindmap-field">
-                <span>Progress</span>
+                <span>Progress {progress === null && <button type="button" className={styles.mixedReset} aria-label="Clear selected cards progress" onClick={() => onPatch({ progress: undefined })}><X size={12} aria-hidden="true" /></button>}</span>
                 {progress === null && mixed}
                 <ProgressCircles value={progress ?? undefined} label="Selected cards progress" onChange={(value) => onPatch({ progress: value })} />
               </div>
@@ -2822,13 +2811,7 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, sections, read
             <div className="mindmap-field">
               <span>Accent</span>
               {color === null && mixed}
-              <div className="mindmap-color-palette" role="group" aria-label="Selected cards accent palette">
-                {CARD_PALETTE.map((option) => (
-                  <FastTooltip key={option.value} label={option.label}><button type="button" className={cn("mindmap-color-swatch", color === option.value && "mindmap-color-swatch-selected")} style={{ backgroundColor: option.value }} aria-label={option.label + " accent"} aria-pressed={color === option.value} onClick={() => onPatch({ color: option.value })} /></FastTooltip>
-                ))}
-                <FastTooltip label="Use default accent"><button type="button" className={cn("mindmap-color-swatch mindmap-color-swatch-auto", color === "" && "mindmap-color-swatch-selected")} aria-label="Use default accent" aria-pressed={color === ""} onClick={() => onPatch({ color: undefined })}><span aria-hidden="true">Auto</span></button></FastTooltip>
-              </div>
-              <input value={color ?? ""} onChange={(event) => onPatch({ color: event.target.value.trim() || undefined })} placeholder={color === null ? "Mixed accents" : "#785ef0 or CSS color"} aria-label="Custom selected cards accent" />
+              <AccentPicker key={cards.map((card) => card.id).join(" ")} value={color} label="Selected cards accent" onChange={(color) => onPatch({ color })} />
             </div>
           </div></div>
         </fieldset>
@@ -2856,7 +2839,28 @@ function InspectorSection({ id, open, onToggle, children }: {
   );
 }
 
-function MindmapUnplacedTray({ paperState, nodes, selectedParentId, onPlaceTodo }: {
+function AccentPicker({ value, label, onChange }: {
+  value: string | null;
+  label: string;
+  onChange: (color: string | undefined) => void;
+}) {
+  const [customOpen, setCustomOpen] = useState(false);
+  function choose(color?: string) {
+    setCustomOpen(false);
+    onChange(color);
+  }
+  return <>
+    <div className="mindmap-color-palette" role="group" aria-label={`${label} palette`}>
+      {CARD_PALETTE.map((option) => <FastTooltip key={option.value} label={option.label}><button type="button" className={cn("mindmap-color-swatch", value === option.value && "mindmap-color-swatch-selected")} style={{ backgroundColor: option.value }} aria-label={option.label + " accent"} aria-pressed={value === option.value} onClick={() => choose(option.value)} /></FastTooltip>)}
+      <FastTooltip label="Use default accent"><button type="button" className={cn("mindmap-color-swatch mindmap-color-swatch-auto", value === "" && "mindmap-color-swatch-selected")} aria-label="Use default accent" aria-pressed={value === ""} onClick={() => choose()}>Auto</button></FastTooltip>
+      <FastTooltip label="Custom accent"><button type="button" className="mindmap-color-swatch mindmap-color-swatch-auto" aria-label={`Custom ${label.toLowerCase()}`} aria-expanded={customOpen} onClick={() => setCustomOpen((open) => !open)}><Pencil size={13} aria-hidden="true" /></button></FastTooltip>
+    </div>
+    {customOpen && <input autoFocus value={value ?? ""} onChange={(event) => onChange(event.target.value.trim() || undefined)} placeholder="#785ef0 or CSS color" aria-label={`Custom ${label.toLowerCase()} value`} />}
+  </>;
+}
+
+function MindmapUnplacedTray({ project, paperState, nodes, selectedParentId, onPlaceTodo }: {
+  project: string;
   paperState?: ProjectState | null;
   nodes: ReadonlyArray<Pick<MindmapNode, "id" | "todoId" | "title" | "text">>;
   selectedParentId: string;
@@ -2877,7 +2881,7 @@ function MindmapUnplacedTray({ paperState, nodes, selectedParentId, onPlaceTodo 
     <ul>{visible.map((todo) => <li key={todo.id} data-unplaced-todo={todo.id}
       onPointerDown={(event) => {
         const target = event.target as HTMLElement;
-        if (event.button !== 0 || target.closest("[data-place-todo]")) return;
+        if (event.button !== 0 || target.closest("[data-place-todo], a")) return;
         if (event.pointerType === "touch" && !target.closest("[data-todo-drag-handle]")) return;
         drag.current = { todoId: todo.id, title: todo.title || "Paper TODO", x: event.clientX, y: event.clientY, active: false };
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -2899,7 +2903,7 @@ function MindmapUnplacedTray({ paperState, nodes, selectedParentId, onPlaceTodo 
         if (target && current) onPlaceTodo(current.todoId, target);
       }}
       onPointerCancel={() => { clearTarget(); setGhost(null); drag.current = null; }}>
-      <div className={styles.unplacedTitle}><FastTooltip label="Drag onto a card"><button type="button" data-todo-drag-handle aria-label={`Drag ${todo.title || "paper TODO"}`}>⠿</button></FastTooltip><strong><NodeRichText text={todo.title || "Paper TODO"} format="tex" /></strong></div>
+      <div className={styles.unplacedTitle}><FastTooltip label="Drag onto a card"><button type="button" data-todo-drag-handle aria-label={`Drag ${todo.title || "paper TODO"}`}>⠿</button></FastTooltip><strong><NodeRichText text={todo.title || "Paper TODO"} format="tex" /></strong><FastTooltip label="Open in editor"><Link className={styles.unplacedOpen} href={`/p/${project}/paper#${encodeURIComponent(todo.id)}`} aria-label="Open TODO in editor"><FileText size={15} aria-hidden="true" /></Link></FastTooltip></div>
       <div className={styles.unplacedCopy}><NodeRichText text={todo.text} format="tex" /></div>
       <FastTooltip label={`Place under ${destinationLabel}`}><button type="button" data-place-todo onClick={() => onPlaceTodo(todo.id, selectedParentId)}>Place under selected card</button></FastTooltip>
     </li>)}</ul>
@@ -3254,7 +3258,7 @@ function CanvasNode({
           ) : (
             <>
               {!title.trim() && !body.trim() && <div className={styles.cardPlaceholder}>New card</div>}
-              {title.trim() && <div className="mindmap-node-title"><NodeRichText text={title} format={node.contentFormat} tableLayout={node.tableLayout} /></div>}
+              {title.trim() && <div className={cn("mindmap-node-title", node.parentId === null && styles.rootTitle)}>{node.parentId === null ? <><span className={styles.rootAccent} aria-hidden="true" /><div className={styles.rootSubject}><NodeRichText text={title} format={node.contentFormat} tableLayout={node.tableLayout} /></div></> : <NodeRichText text={title} format={node.contentFormat} tableLayout={node.tableLayout} />}</div>}
               {body.trim() && <div className="mindmap-node-detail"><NodeRichText text={body} format={node.contentFormat} tableLayout={node.tableLayout} /></div>}
             </>
           )}
@@ -3493,8 +3497,10 @@ function ProgressCircles({ value, onChange, disabled = false, compact = false, l
 }) {
   if (compact) return <span role="img" className={styles.progressCompact} aria-label={`${label}: ${progressLabel(value)}`} title={`${label}: ${progressLabel(value)}`}><ProgressGlyph value={value ?? 0} size={16} /></span>;
   return <div className={styles.progressChoices} role="group" aria-label={label}>
-    <button type="button" className={styles.progressClear} aria-label={`Clear ${label.toLowerCase()}`} aria-pressed={value === undefined} disabled={disabled} onClick={() => onChange?.(undefined)}>Clear</button>
-    {MINDMAP_PROGRESS_STATES.map((state) => <FastTooltip key={state} label={state === "ditched" ? "Ditched" : state === 6 ? "Finished" : state === 0 ? "Ready to start" : `${Math.round(state / 6 * 100)}%`}><button type="button" aria-label={state === "ditched" ? `Mark ${label.toLowerCase()} ditched` : state === 6 ? `Finish ${label.toLowerCase()}` : `${label}: ${state} of 6`} aria-pressed={state === value} disabled={disabled} onClick={() => onChange?.(state)}><ProgressGlyph value={state} /></button></FastTooltip>)}
+    {MINDMAP_PROGRESS_STATES.map((state) => <span className={styles.progressChoice} key={state}>
+      <FastTooltip label={state === "ditched" ? "Ditched" : state === 6 ? "Finished" : state === 0 ? "Ready to start" : `${Math.round(state / 6 * 100)}%`}><button type="button" aria-label={state === "ditched" ? `Mark ${label.toLowerCase()} ditched` : state === 6 ? `Finish ${label.toLowerCase()}` : `${label}: ${state} of 6`} aria-pressed={state === value} disabled={disabled} onClick={() => onChange?.(state)}><ProgressGlyph value={state} /></button></FastTooltip>
+      {state === value && <FastTooltip label={`Clear ${label.toLowerCase()}`}><button type="button" className={styles.progressReset} aria-label={`Clear ${label.toLowerCase()}`} disabled={disabled} onClick={() => onChange?.(undefined)}><X size={10} aria-hidden="true" /></button></FastTooltip>}
+    </span>)}
   </div>;
 }
 
@@ -3566,5 +3572,5 @@ function relativeActivityLabel(at: string): string | null {
 }
 
 function isEditableTarget(target: EventTarget | null) {
-  return target instanceof HTMLElement && Boolean(target.closest("input, textarea, select, [contenteditable='true'], .cm-editor"));
+  return target instanceof HTMLElement && (target.isContentEditable || Boolean(target.closest("input, textarea, select, .cm-editor")));
 }

@@ -29,7 +29,8 @@ export default function AgentAccessPage() {
       </section>
       <section className="space-y-3" aria-labelledby="inbox-help">
         <h2 id="inbox-help" className="text-xl font-semibold">Talk to your agent from a mindmap</h2>
-        <p>Write <code>@agent</code> on a mindmap card, then tell your connected agent <strong>check updates</strong>. It calls <code>check_inbox</code>, reads the card, replies there, and marks the exact notification handled with <code>acknowledge_inbox</code>.</p>
+        <p>Write <code>@agent</code> on a mindmap card, then tell your connected agent <strong>tick</strong>, <strong>check updates</strong>, <strong>check inbox</strong>, or <strong>sync</strong>. It calls <code>check_inbox</code>, reads the card, replies there, and marks the exact notification handled with <code>acknowledge_inbox</code>.</p>
+        <p>Fresh agents also check the inbox after <code>get_project_state</code> at the start of each session, including when earlier chat context is unavailable. A request to sync Git or Overleaf checks the inbox first, then performs the requested synchronization.</p>
         <p>OpenBar also prefixes pending requests to tool results. Repeated IDs identify the same request. Editing the request creates a fresh notification. The Tools panel shows pending and handled requests and lets you reopen them. Your original request and paper TODO completion stay available.</p>
       </section>
       <section className="space-y-3" aria-labelledby="headless-help">

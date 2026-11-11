@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { sha256, writeTextAtomic } from "./codec";
-import { withProjectWriteLock } from "@/lib/research/project-lock";
+import { projectMetadataDir, projectWriteIdentityPath, withProjectWriteLock } from "@/lib/research/project-lock";
+import { isProtectedProjectPath } from "@/lib/research/project-files-contract";
 import { traverseInputGraph } from "./source-graph";
 
 const JOURNAL_VERSION = 1 as const;
@@ -12,11 +13,15 @@ export type SourceTransactionWrite = {
   filePath: string;
   previous: string | null;
   next: string | null;
+  encoding?: "base64";
+  derived?: "bibliography";
+  previousMode?: number;
 };
 
 export type SourceTransactionInput = {
   requestId: string;
   writes: SourceTransactionWrite[];
+  scope?: "project";
 };
 
 type SourceTransactionJournal = {
@@ -24,6 +29,7 @@ type SourceTransactionJournal = {
   requestId: string;
   createdAt: string;
   files: Array<SourceTransactionWrite & { previousHash: string | null; nextHash: string | null }>;
+  scope?: "project";
 };
 
 type TransactionDiagnostic = {
@@ -49,9 +55,10 @@ function isInside(root: string, candidate: string): boolean {
 
 /** Transaction journals may touch manuscript source and the map records used
  * by coordinated TODO conversion. Runtime state and Git metadata stay out. */
-function isAllowedTransactionLocation(relative: string, prefix = false): boolean {
+function isAllowedTransactionLocation(relative: string, prefix = false, projectScope = false, derived = false): boolean {
   const parts = relative.split("/").filter(Boolean);
   if (!parts.length) return prefix;
+  if (projectScope) return !isProtectedProjectPath(relative, prefix) || (derived && [".OpenBar/references.tex", "manuscript/openbarry/references.tex", "openbarry-references.tex", "manuscript/openbarry-references.tex"].some(file => file === relative || (prefix && file.startsWith(relative + "/"))));
   const lower = parts.map(part => part.toLowerCase());
   if (lower[0] === ".openbar" || lower[0] === "openbarry") {
     if (prefix && parts.length === 1) return true;
@@ -64,16 +71,14 @@ function isAllowedTransactionLocation(relative: string, prefix = false): boolean
 }
 
 function journalPathFor(manuscriptDir: string): string {
-  const root = path.resolve(manuscriptDir);
-  const stateDir = path.basename(root).toLowerCase() === "manuscript" ? "openbarry" : ".OpenBar";
-  return path.join(root, stateDir, JOURNAL_NAME);
+  return path.join(projectMetadataDir(manuscriptDir), JOURNAL_NAME);
 }
 
 export function sourceTransactionJournalPath(manuscriptDir: string): string {
   return journalPathFor(manuscriptDir);
 }
 
-function relativeFile(manuscriptDir: string, filePath: string): string {
+function relativeFile(manuscriptDir: string, filePath: string, projectScope = false, derived = false): string {
   const root = path.resolve(manuscriptDir);
   const normalized = filePath.trim().replace(/\\/g, "/");
   if (!normalized || path.posix.isAbsolute(normalized) || normalized.split("/").includes("..")) {
@@ -82,7 +87,7 @@ function relativeFile(manuscriptDir: string, filePath: string): string {
   const absolute = path.resolve(root, normalized);
   if (!isInside(root, absolute)) throw new Error(`Transaction path escapes the manuscript: "${filePath}".`);
   const relative = path.relative(root, absolute).split(path.sep).join("/");
-  if (!isAllowedTransactionLocation(relative)) throw new Error(`Transaction path is reserved for project or Git metadata: "${filePath}".`);
+  if (!isAllowedTransactionLocation(relative, false, projectScope, derived)) throw new Error(`Transaction path is reserved for project or Git metadata: "${filePath}".`);
   const realRoot = fs.realpathSync.native(root);
   let current = root;
   for (const component of path.relative(root, absolute).split(path.sep)) {
@@ -100,18 +105,19 @@ function relativeFile(manuscriptDir: string, filePath: string): string {
     catch { throw new Error(`Transaction path cannot be resolved safely: "${filePath}".`); }
     if (!isInside(realRoot, resolved)) throw new Error(`Transaction path resolves outside the manuscript: "${filePath}".`);
     const realRelative = path.relative(realRoot, resolved).split(path.sep).join("/");
-    if (!isAllowedTransactionLocation(realRelative, current !== absolute)) throw new Error(`Transaction path resolves to project or Git metadata: "${filePath}".`);
+    if (!isAllowedTransactionLocation(realRelative, current !== absolute, projectScope, derived)) throw new Error(`Transaction path resolves to project or Git metadata: "${filePath}".`);
   }
   return relative;
 }
 
-function validatedWrites(manuscriptDir: string, writes: SourceTransactionWrite[]): SourceTransactionJournal["files"] {
+function validatedWrites(manuscriptDir: string, writes: SourceTransactionWrite[], projectScope = false): SourceTransactionJournal["files"] {
   const seen = new Set<string>();
   let editableSources: Set<string> | undefined;
   return writes.map((write) => {
     if (!write || typeof write !== "object") throw new Error("A transaction file entry must be an object.");
-    const filePath = relativeFile(manuscriptDir, write.filePath);
-    if (!/\.tex$/i.test(filePath)) {
+    if (write.derived !== undefined && (write.derived !== "bibliography" || !projectScope)) throw new Error("Only project transactions can include derived bibliography writes.");
+    const filePath = relativeFile(manuscriptDir, write.filePath, projectScope, write.derived === "bibliography");
+    if (!projectScope && !/\.tex$/i.test(filePath)) {
       editableSources ??= new Set(traverseInputGraph(manuscriptDir).nodes.filter(node => node.editable).map(node => node.filePath));
       const absolute = path.resolve(manuscriptDir, filePath);
       const actual = fs.realpathSync.native(absolute);
@@ -123,18 +129,25 @@ function validatedWrites(manuscriptDir: string, writes: SourceTransactionWrite[]
     seen.add(filePath);
     if (write.previous !== null && typeof write.previous !== "string") throw new Error(`Transaction previous bytes for "${filePath}" are invalid.`);
     if (write.next !== null && typeof write.next !== "string") throw new Error(`Transaction next bytes for "${filePath}" are invalid.`);
+    if (write.encoding !== undefined && write.encoding !== "base64") throw new Error(`Transaction encoding for "${filePath}" is invalid.`);
+    if (write.previousMode !== undefined && (!Number.isInteger(write.previousMode) || write.previousMode < 0 || write.previousMode > 0o777)) throw new Error(`Transaction permissions for "${filePath}" are invalid.`);
+    if (write.encoding === "base64" && [write.previous, write.next].some(value => value !== null && Buffer.from(value, "base64").toString("base64") !== value)) throw new Error(`Transaction bytes for "${filePath}" need valid base64 encoding.`);
+    const bytes = (value: string) => write.encoding === "base64" ? Buffer.from(value, "base64") : value;
     return {
       filePath,
       previous: write.previous,
       next: write.next,
-      previousHash: write.previous === null ? null : sha256(write.previous),
-      nextHash: write.next === null ? null : sha256(write.next),
+      ...(write.encoding ? { encoding: write.encoding } : {}),
+      ...(write.derived ? { derived: write.derived } : {}),
+      ...(write.previousMode === undefined ? {} : { previousMode: write.previousMode }),
+      previousHash: write.previous === null ? null : sha256(bytes(write.previous)),
+      nextHash: write.next === null ? null : sha256(bytes(write.next)),
     };
   });
 }
 
-function validatedJournalFiles(manuscriptDir: string, entries: unknown[]): SourceTransactionJournal["files"] {
-  const files = validatedWrites(manuscriptDir, entries as SourceTransactionWrite[]);
+function validatedJournalFiles(manuscriptDir: string, entries: unknown[], projectScope = false): SourceTransactionJournal["files"] {
+  const files = validatedWrites(manuscriptDir, entries as SourceTransactionWrite[], projectScope);
   return files.map((file, index) => {
     const entry = entries[index];
     if (!entry || typeof entry !== "object") throw new Error("A transaction journal file entry must be an object.");
@@ -151,28 +164,29 @@ export function writeSourceTransactionJournal(manuscriptDir: string, input: Sour
   if (typeof input?.requestId !== "string" || !input.requestId.trim() || input.requestId.length > 200) {
     throw new Error("A source transaction needs a bounded request id.");
   }
-  const files = validatedWrites(manuscriptDir, input.writes);
+  const files = validatedWrites(input.scope === "project" ? projectWriteIdentityPath(manuscriptDir) : manuscriptDir, input.writes, input.scope === "project");
   if (!files.length) throw new Error("A source transaction needs at least one file.");
   const journal: SourceTransactionJournal = {
     version: JOURNAL_VERSION,
     requestId: input.requestId.trim(),
     createdAt: new Date().toISOString(),
     files,
+    ...(input.scope ? { scope: input.scope } : {}),
   };
   writeTextAtomic(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
   return journalPath;
 }
 
-function readBytes(file: string): string | null {
+function readBytes(file: string, encoding?: "base64"): string | null {
   try {
-    return fs.readFileSync(file, "utf8");
+    return fs.readFileSync(file).toString(encoding || "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
 }
 
-function writeBytes(file: string, value: string | null): void {
+function writeBytes(file: string, value: string | null, encoding?: "base64", mode?: number): void {
   if (value === null) {
     try {
       fs.unlinkSync(file);
@@ -181,7 +195,7 @@ function writeBytes(file: string, value: string | null): void {
     }
     return;
   }
-  writeTextAtomic(file, value);
+  writeTextAtomic(file, encoding === "base64" ? Buffer.from(value, "base64") : value, mode);
 }
 
 function failure(
@@ -212,21 +226,22 @@ function recoverUnderLock(manuscriptDir: string, journalPath: string): SourceTra
   }
   if (!parsed || typeof parsed !== "object") return failure(journalPath, "source_transaction_invalid", "The source transaction journal is not an object.", [path.relative(manuscriptDir, journalPath).split(path.sep).join("/")]);
   const record = parsed as Partial<SourceTransactionJournal>;
-  if (record.version !== JOURNAL_VERSION || typeof record.requestId !== "string" || !record.requestId.trim() || !Array.isArray(record.files)) {
+  if (record.version !== JOURNAL_VERSION || (record.scope !== undefined && record.scope !== "project") || typeof record.requestId !== "string" || !record.requestId.trim() || !Array.isArray(record.files)) {
     return failure(journalPath, "source_transaction_invalid", "The source transaction journal has an unsupported format.", [path.relative(manuscriptDir, journalPath).split(path.sep).join("/")]);
   }
   let files: SourceTransactionWrite[];
+  const transactionRoot = record.scope === "project" ? projectWriteIdentityPath(manuscriptDir) : manuscriptDir;
   try {
-    files = validatedJournalFiles(manuscriptDir, record.files);
+    files = validatedJournalFiles(transactionRoot, record.files, record.scope === "project");
   } catch (error) {
     return failure(journalPath, "source_transaction_invalid", `The source transaction journal is unsafe: ${error instanceof Error ? error.message : String(error)}`, [path.relative(manuscriptDir, journalPath).split(path.sep).join("/")]);
   }
-  const plan: Array<{ filePath: string; abs: string; previous: string | null }> = [];
+  const plan: Array<{ filePath: string; abs: string; previous: string | null; encoding?: "base64"; previousMode?: number }> = [];
   const conflicts: string[] = [];
   for (const file of files) {
-    const abs = path.resolve(manuscriptDir, file.filePath);
-    const current = readBytes(abs);
-    if (current === file.next) plan.push({ filePath: file.filePath, abs, previous: file.previous });
+    const abs = path.resolve(transactionRoot, file.filePath);
+    const current = readBytes(abs, file.encoding);
+    if (current === file.next) plan.push({ filePath: file.filePath, abs, previous: file.previous, encoding: file.encoding, previousMode: file.previousMode });
     else if (current !== file.previous) conflicts.push(file.filePath);
   }
   if (conflicts.length) {
@@ -235,7 +250,7 @@ function recoverUnderLock(manuscriptDir: string, journalPath: string): SourceTra
   const affected: string[] = [];
   for (const item of plan) {
     try {
-      writeBytes(item.abs, item.previous);
+      writeBytes(item.abs, item.previous, item.encoding, item.previousMode);
     } catch (error) {
       affected.push(item.filePath);
       continue;

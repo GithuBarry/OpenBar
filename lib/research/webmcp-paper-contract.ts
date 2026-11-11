@@ -9,85 +9,43 @@
  * schemas, or CAS / identity checks.
  */
 
-import { PAPER_INPUTS } from "./command-inputs";
-import { commandJsonSchemas, parseCommandInput } from "./command-schema";
+import type { BibliographyImportResult } from "@/lib/bibtex";
+import { MINDMAP_INPUTS,PAPER_INPUTS } from "./command-inputs";
+import { commandJsonSchemas,parseCommandInput } from "./command-schema";
 
+import { findMacroMatches,parseAnchorAttrs } from "@/lib/marker-codec";
+import { todoIsComplete,todoMetaFromAttrs,todoTitleFromAttrs } from "@/lib/todo-meta";
+import type { OperationResult,RemoteSyncOutcome,OperationDiagnostic as WebMcpDiagnostic } from "./operation-result";
 import {
-  failResult,
-  okResult,
-  WEBMCP_ERROR_CODES,
+failResult,
+okResult,
+WEBMCP_ERROR_CODES,
 } from "./operation-result";
-import type { RemoteSyncOutcome } from "./operation-result";
 import { analyzePaper } from "./paper-analysis";
-import { findMacroMatches, parseAnchorAttrs } from "@/lib/marker-codec";
-import { patchSectionTableCell } from "@/lib/tex-project/table-fragments";
-import { summarizeTabulars } from "@/lib/tex-project/table-ast";
-import { todoIsComplete, todoMetaFromAttrs, todoTitleFromAttrs } from "@/lib/todo-meta";
-import { previewTodoAtSection } from "./paper-todo-placement";
-import type { OperationDiagnostic as WebMcpDiagnostic, OperationResult } from "./operation-result";
 
 export {
-  failResult,
-  isOperationResult,
-  okResult,
-  OPERATION_ERROR_CODES,
-  WEBMCP_ERROR_CODES,
+failResult,
+isOperationResult,
+okResult,
+OPERATION_ERROR_CODES,
+WEBMCP_ERROR_CODES
 } from "./operation-result";
 export type {
-  OperationDiagnostic,
-  OperationDiagnostic as WebMcpDiagnostic,
-  OperationErrorCode as WebMcpErrorCode,
-  OperationResult,
+OperationDiagnostic,OperationResult,OperationDiagnostic as WebMcpDiagnostic,
+OperationErrorCode as WebMcpErrorCode
 } from "./operation-result";
 
 export const SECTION_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$";
 export const SECTION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
-export const PAPER_WEBMCP_TOOL_NAMES = [
-  "get_paper_state",
-  "get_paper_outline",
-  "read_paper_section",
-  "preview_paper_todo",
-  "add_paper_todo_at_section",
-  "relocate_paper_todo",
-  "navigate_paper_section",
-  "set_paper_reader_mode",
-  "replace_paper_section",
-  "patch_paper_table",
-  "remove_paper_todo",
-  "lint_paper",
-  "compile_paper",
-  "get_paper_compile",
-  "get_bibliography",
-] as const;
+export const PAPER_WEBMCP_TOOL_NAMES = ["get_paper_state","navigate_paper_section","set_paper_reader_mode","compile_paper","get_paper_compile"] as const;
 
 export type PaperWebMcpToolName = (typeof PAPER_WEBMCP_TOOL_NAMES)[number];
 
 /** Mindmap page capabilities. Must not be registered on a paper page. */
-export const MINDMAP_WEBMCP_TOOL_NAMES = [
-  "get_mindmap",
-  "focus_mindmap_node",
-  "add_mindmap_node",
-  "move_mindmap_node",
-  "delete_mindmap_node",
-  "delete_mindmap_branch",
-  "set_mindmap_collapsed",
-  "patch_mindmap_node",
-  "attach_mindmap_image",
-  "detach_mindmap_image",
-  "caption_mindmap_image",
-  "read_mindmap_image",
-  "highlight_mindmap_activity",
-  "place_todo_card",
-  "convert_card_to_todo",
-  "complete_todo",
-  "reopen_todo",
-  "focus_todo_in_paper",
-  "rename_mindmap",
-  "set_mindmap_font_size",
-] as const;
+export const MINDMAP_WEBMCP_TOOL_NAMES = ["get_mindmap","focus_mindmap_node","set_mindmap_collapsed","highlight_mindmap_activity","focus_todo_in_paper","apply_mindmap_edits"] as const;
 
-export type MindmapWebMcpToolName = (typeof MINDMAP_WEBMCP_TOOL_NAMES)[number];
+export type MindmapWebMcpToolName = keyof typeof MINDMAP_INPUTS;
 
 export type JsonSchemaObject = {
   type: "object";
@@ -234,6 +192,8 @@ export type PaperWebMcpHost = {
     | { status: string; jobId?: string; sourceHash?: string }
     | Promise<{ status: string; jobId?: string; sourceHash?: string }>;
   lint?: () => { readiness?: string; diagnostics: WebMcpDiagnostic[] };
+  importBibtex?: (bibtex: string, expectedHash: string, signal?: AbortSignal) =>
+    OperationResult<BibliographyImportResult> | Promise<OperationResult<BibliographyImportResult>>;
 };
 
 export type PaperWebMcpTool = {
@@ -259,31 +219,6 @@ const TOOL_META: Record<PaperWebMcpToolName, { title: string; description: strin
       "Return the live paper snapshot: revision, dirty flag, active section, outline, open TODO count, comments, markers, and compile state. Call this after navigate_project lands on the paper page. Project is fixed by the open page. \\obmarker is a paper-local hole, not a mindmap TODO.",
     readOnly: true,
   },
-  get_paper_outline: {
-    title: "Read paper outline",
-    description: "Return current section ids, titles, levels, TODO counts, and marker counts for the live paper.",
-    readOnly: true,
-  },
-  read_paper_section: {
-    title: "Read one paper section",
-    description: "Return the live TeX and revision for one section id. Unsaved editor edits are visible. Use this before replace_paper_section.",
-    readOnly: true,
-  },
-  preview_paper_todo: {
-    title: "Preview a paper TODO placement",
-    description: "Show the exact included file, insertion range, neighboring manuscript text, and proposed TeX TODO before writing it. This is read-only.",
-    readOnly: true,
-  },
-  add_paper_todo_at_section: {
-    title: "Add a paper TODO at a section",
-    description: "Insert a TeX-owned TODO at the selected current section's end after previewing it. Reuse the preview todoId on retry; the result separates the local save from Git synchronization.",
-    readOnly: false,
-  },
-  relocate_paper_todo: {
-    title: "Relocate one paper TODO",
-    description: "Move an existing TeX TODO to another current section without changing its id, title, text, completion, or map references. Read the target context first and pass the live revision.",
-    readOnly: false,
-  },
   navigate_paper_section: {
     title: "Navigate to a paper section",
     description: "Move the live document and editor to a current section id from get_paper_outline. The paper page must already be open.",
@@ -292,28 +227,6 @@ const TOOL_META: Record<PaperWebMcpToolName, { title: string; description: strin
   set_paper_reader_mode: {
     title: "Switch paper reader",
     description: "Switch the visible reader between the live document and the compiled PDF.",
-    readOnly: true,
-  },
-  replace_paper_section: {
-    title: "Replace a paper section",
-    description:
-      "Replace one manuscript section using the current live editor revision. Use read_paper_section first. Preserve tables, axes, captions, labels, TODOs, comments, markers, and intentionally incomplete cells. Make the smallest paper change that satisfies the request. For a single table cell, prefer patch_paper_table.",
-    readOnly: false,
-  },
-  patch_paper_table: {
-    title: "Patch one table cell",
-    description:
-      "Replace exactly one cell in a simple tabular. Pass tableIndex and a single {row, column, tex} update. Surrounding cells, markers, and axes stay as-is. Complex tables (multicolumn, multirow, tabularx, longtable) return capability_unavailable — use replace_paper_section carefully instead. \\obmarker cells are paper-local holes, not mindmap TODOs.",
-    readOnly: false,
-  },
-  remove_paper_todo: {
-    title: "Remove a paper TODO",
-    description: "Remove one \\obtodo by stable id through the live editor. Pass expectedRevision from the last read. Prefer complete_todo when the TODO should remain as completed metadata.",
-    readOnly: false,
-  },
-  lint_paper: {
-    title: "Lint the live paper",
-    description: "Return structured diagnostics for the live manuscript. Does not mutate the paper.",
     readOnly: true,
   },
   compile_paper: {
@@ -325,12 +238,7 @@ const TOOL_META: Record<PaperWebMcpToolName, { title: string; description: strin
     title: "Read paper compile result",
     description: "Read the current compile job, exact source hash, parsed file/line diagnostics, bounded raw log, and stale/PDF-current state. Poll this tool with the returned jobId until the state is no longer running; compile success is not research completion.",
     readOnly: true,
-  },
-  get_bibliography: {
-    title: "Read the bibliography",
-    description: "Return parsed citation keys for the open paper. Set raw to include BibTeX text. Does not add references.",
-    readOnly: true,
-  },
+  }
 };
 
 /** True when a WebMCP execute() leaked an MCP CallToolResult envelope. */
@@ -508,59 +416,6 @@ export function requireKnownCitations(keys: readonly string[], knownKeys: readon
   return okResult({ keys: [...keys] });
 }
 
-function defaultLint(snapshot: LivePaperSnapshot): { readiness?: string; diagnostics: WebMcpDiagnostic[] } {
-  const diagnostics: WebMcpDiagnostic[] = [];
-  for (const todo of liveTodos(snapshot).filter((item) => !item.completed)) {
-    diagnostics.push({
-      severity: "warning",
-      code: "open-todo",
-      message: todo.text || `Open TODO ${todo.id}`,
-      sectionId: todo.sectionId,
-    });
-  }
-  return { diagnostics };
-}
-
-function paperMutationFailure(host: PaperWebMcpHost, error: unknown): OperationResult<never> {
-  const code = error && typeof error === "object" && "code" in error
-    ? String((error as { code?: unknown }).code || "")
-    : "";
-  const message = error instanceof Error ? error.message : String(error);
-  const current = host.getSnapshot();
-  const remoteFailure = current.remoteSync && current.remoteSync.status !== "pushed"
-    ? { remote: current.remoteSync }
-    : {};
-  if (code === WEBMCP_ERROR_CODES.cancelled || /cancelled/i.test(message)) {
-    return failResult(WEBMCP_ERROR_CODES.cancelled, message || "Operation cancelled.", {
-      retryable: false,
-      currentRevision: current.revision,
-    });
-  }
-  if (code === WEBMCP_ERROR_CODES.stale_live_state || code === WEBMCP_ERROR_CODES.stale_selection) {
-    return failResult(code, message, { retryable: true, currentRevision: current.revision });
-  }
-  if (code === WEBMCP_ERROR_CODES.stale_disk_state || /conflict|hash|changed on disk|stale/i.test(message)) {
-    return failResult(WEBMCP_ERROR_CODES.stale_disk_state, message, {
-      retryable: true,
-      currentRevision: current.revision,
-      currentHash: current.persistedHash,
-    });
-  }
-  return failResult(code || "operation_failed", message || "Could not update the paper.", {
-    retryable: true,
-    currentRevision: current.revision,
-    ...remoteFailure,
-  });
-}
-
-function paperMutationSuccess<T>(host: PaperWebMcpHost, value: T): OperationResult<T> {
-  const current = host.getSnapshot();
-  return okResult(value, {
-    revision: current.revision,
-    ...(current.remoteSync ? { remote: current.remoteSync } : {}),
-  });
-}
-
 async function executeNamed(
   host: PaperWebMcpHost,
   name: PaperWebMcpToolName,
@@ -599,143 +454,6 @@ async function executeNamed(
         { revision: snapshot.revision },
       );
     }
-    case "get_paper_outline":
-      return okResult(outlineOf(snapshot), { revision: snapshot.revision });
-    case "read_paper_section": {
-      if (typeof args.sectionId !== "string") return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "sectionId must be a string.", { retryable: false, currentRevision: snapshot.revision });
-      const found = findLiveSection(snapshot, args.sectionId);
-      if (!found.ok) return found;
-      const section = found.value;
-      const maxChars = parseWebMcpMaxChars(args, snapshot.revision);
-      if (typeof maxChars !== "number") return maxChars;
-      const bounded = boundWebMcpText(section.tex, maxChars);
-      return okResult(
-        {
-          sectionId: section.id,
-          title: section.title,
-          level: section.level,
-          tex: bounded.text,
-          truncated: bounded.truncated,
-          totalCharacters: bounded.totalCharacters,
-          revision: snapshot.revision,
-          persistedHash: section.persistedHash,
-          todos: liveTodos(snapshot).filter((todo) => todo.sectionId === section.id),
-          comments: liveComments(snapshot).filter((comment) => comment.sectionId === section.id),
-          markers: liveMarkers(snapshot).filter((marker) => marker.sectionId === section.id),
-          tables: summarizeTabulars(section.tex),
-        },
-        { revision: snapshot.revision },
-      );
-    }
-    case "preview_paper_todo": {
-      if (typeof args.sectionId !== "string" || typeof args.text !== "string") {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "sectionId and text are required.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      if (args.title !== undefined && typeof args.title !== "string") {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "title must be a string.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      if (args.todoId !== undefined && typeof args.todoId !== "string") {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "todoId must be a string.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      const preview = previewTodoAtSection(snapshot.source, args.sectionId, args.text, typeof args.title === "string" ? args.title : undefined, typeof args.todoId === "string" ? args.todoId : undefined);
-      if (!preview.sectionFound || preview.error) {
-        return failResult(preview.sectionFound ? WEBMCP_ERROR_CODES.invalid_tex : WEBMCP_ERROR_CODES.unknown_section, preview.error || `Unknown paper section "${args.sectionId}".`, {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      return okResult(
-        {
-          todoId: preview.id,
-          sectionId: preview.sectionId,
-          filePath: preview.filePath,
-          from: preview.from,
-          to: preview.to,
-          before: preview.before,
-          after: preview.after,
-          proposedText: preview.nextSource.slice(preview.from, preview.to),
-          revision: snapshot.revision,
-        },
-        { revision: snapshot.revision },
-      );
-    }
-    case "add_paper_todo_at_section": {
-      const revision = assertLiveRevision(args.expectedRevision, snapshot.revision);
-      if (!revision.ok) return revision;
-      if (typeof args.sectionId !== "string" || typeof args.text !== "string") {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "sectionId and text are required.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      if (args.title !== undefined && typeof args.title !== "string") {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "title must be a string.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      if (args.todoId !== undefined && typeof args.todoId !== "string") {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "todoId must be a string.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      if (!host.addTodoAtSection) {
-        return failResult(WEBMCP_ERROR_CODES.capability_unavailable, "The live paper page cannot add a section TODO.", {
-          retryable: true,
-          currentRevision: snapshot.revision,
-        });
-      }
-      try {
-        const placement = await host.addTodoAtSection(
-          args.sectionId,
-          args.text,
-          typeof args.title === "string" ? args.title : undefined,
-          typeof args.todoId === "string" ? args.todoId : undefined,
-          options?.signal,
-        );
-        return paperMutationSuccess(host, placement);
-      } catch (error) {
-        return paperMutationFailure(host, error);
-      }
-    }
-    case "relocate_paper_todo": {
-      const revision = assertLiveRevision(args.expectedRevision, snapshot.revision);
-      if (!revision.ok) return revision;
-      if (typeof args.todoId !== "string" || typeof args.sectionId !== "string") {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "todoId and sectionId are required.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      if (!liveTodos(snapshot).some((todo) => todo.id === args.todoId)) {
-        return failResult(WEBMCP_ERROR_CODES.unknown_todo, `Unknown TODO "${args.todoId}".`, {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      if (!host.relocateTodo) {
-        return failResult(WEBMCP_ERROR_CODES.capability_unavailable, "The live paper page cannot relocate TODOs.", {
-          retryable: true,
-          currentRevision: snapshot.revision,
-        });
-      }
-      try {
-        const placement = await host.relocateTodo(args.todoId, args.sectionId, options?.signal);
-        return paperMutationSuccess(host, placement);
-      } catch (error) {
-        return paperMutationFailure(host, error);
-      }
-    }
     case "navigate_paper_section": {
       if (typeof args.sectionId !== "string") return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "sectionId must be a string.", { retryable: false, currentRevision: snapshot.revision });
       const found = findLiveSection(snapshot, args.sectionId);
@@ -750,204 +468,6 @@ async function executeNamed(
       }
       host.setReaderMode(mode);
       return okResult({ mode }, { revision: snapshot.revision });
-    }
-    case "replace_paper_section": {
-      if (typeof args.sectionId !== "string") return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "sectionId must be a string.", { retryable: false, currentRevision: snapshot.revision });
-      const found = findLiveSection(snapshot, args.sectionId);
-      if (!found.ok) return found;
-      const revision = assertLiveRevision(args.expectedRevision, snapshot.revision);
-      if (!revision.ok) return revision;
-      if (typeof args.tex !== "string") {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "tex must be a string.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      try {
-        await host.replaceSection(found.value.id, args.tex, options?.signal);
-      } catch (error) {
-        const code = error && typeof error === "object" && "code" in error ? String((error as { code: string }).code) : "";
-        const message = error instanceof Error ? error.message : "";
-        const staleDisk = code === "stale_disk_state" || message.includes("stale_disk_state");
-        const staleSelection = code === "stale_selection" || message.includes("stale_selection");
-        const cancelled = code === "cancelled" || message.toLowerCase().includes("cancelled");
-        if (cancelled) {
-          return failResult(WEBMCP_ERROR_CODES.cancelled, "Operation cancelled.", {
-            retryable: false,
-            currentRevision: snapshot.revision,
-          });
-        }
-        if (staleSelection || staleDisk) {
-          return failResult(staleDisk ? "stale_disk_state" : "stale_selection", error instanceof Error ? error.message : "Source selection is stale.", {
-            retryable: true,
-            currentRevision: snapshot.revision,
-            currentHash: error && typeof error === "object" && "currentHash" in error ? String((error as { currentHash?: unknown }).currentHash || "") : undefined,
-          });
-        }
-        throw error;
-      }
-      return paperMutationSuccess(host,
-        {
-          sectionId: found.value.id,
-          changed: { insertedCharacters: args.tex.length },
-        },
-      );
-    }
-    case "patch_paper_table": {
-      if (typeof args.sectionId !== "string") {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "sectionId must be a string.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      const found = findLiveSection(snapshot, args.sectionId);
-      if (!found.ok) return found;
-      const revision = assertLiveRevision(args.expectedRevision, snapshot.revision);
-      if (!revision.ok) return revision;
-      if (!Number.isInteger(args.tableIndex) || (args.tableIndex as number) < 0) {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "tableIndex must be a non-negative integer.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      const updates = args.updates;
-      if (!Array.isArray(updates) || updates.length !== 1) {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "patch_paper_table updates must contain exactly one cell.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      const update = updates[0];
-      if (!update || typeof update !== "object" || Array.isArray(update)) {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "Each update needs row, column, and tex.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      const cell = update as Record<string, unknown>;
-      if (!Number.isInteger(cell.row) || (cell.row as number) < 0 || !Number.isInteger(cell.column) || (cell.column as number) < 0) {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "row and column must be non-negative integers.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      if (typeof cell.tex !== "string") {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "tex must be a string.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      const patched = patchSectionTableCell(
-        found.value.tex,
-        args.tableIndex as number,
-        cell.row as number,
-        cell.column as number,
-        cell.tex,
-      );
-      if (!patched.ok) {
-        if (patched.reason === "complex") {
-          return failResult(
-            WEBMCP_ERROR_CODES.capability_unavailable,
-            "This table is too complex for patch_paper_table. Use replace_paper_section and keep unrelated cells.",
-            { retryable: false, currentRevision: snapshot.revision },
-          );
-        }
-        if (patched.reason === "comment_in_cell") {
-          return failResult(
-            WEBMCP_ERROR_CODES.capability_unavailable,
-            "This cell contains a TeX comment between its contents. Edit the source directly while preserving the comment.",
-            { retryable: false, currentRevision: snapshot.revision },
-          );
-        }
-        return failResult(
-          WEBMCP_ERROR_CODES.invalid_arguments,
-          patched.reason === "missing_table" ? `No table ${args.tableIndex} in this section.` : "Unknown table cell.",
-          { retryable: false, currentRevision: snapshot.revision },
-        );
-      }
-      try {
-        await host.replaceSection(found.value.id, patched.tex, options?.signal);
-      } catch (error) {
-        const code = error && typeof error === "object" && "code" in error ? String((error as { code: string }).code) : "";
-        const message = error instanceof Error ? error.message : "";
-        const staleDisk = code === "stale_disk_state" || message.includes("stale_disk_state");
-        const staleSelection = code === "stale_selection" || message.includes("stale_selection");
-        const cancelled = code === "cancelled" || message.toLowerCase().includes("cancelled");
-        if (cancelled) {
-          return failResult(WEBMCP_ERROR_CODES.cancelled, "Operation cancelled.", {
-            retryable: false,
-            currentRevision: snapshot.revision,
-          });
-        }
-        if (staleSelection || staleDisk) {
-          return failResult(staleDisk ? "stale_disk_state" : "stale_selection", error instanceof Error ? error.message : "Source selection is stale.", {
-            retryable: true,
-            currentRevision: snapshot.revision,
-            currentHash: error && typeof error === "object" && "currentHash" in error ? String((error as { currentHash?: unknown }).currentHash || "") : undefined,
-          });
-        }
-        throw error;
-      }
-      return paperMutationSuccess(host,
-        {
-          sectionId: found.value.id,
-          tableIndex: args.tableIndex,
-          row: cell.row,
-          column: cell.column,
-        },
-      );
-    }
-    case "remove_paper_todo": {
-      const revision = assertLiveRevision(args.expectedRevision, snapshot.revision);
-      if (!revision.ok) return revision;
-      if (typeof args.todoId !== "string") {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "todoId must be a string.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      const todoId = args.todoId;
-      if (!SECTION_ID_RE.test(todoId)) {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "todoId must be a stable id.", {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      const todo = liveTodos(snapshot).find((item) => item.id === todoId);
-      if (!todo) {
-        return failResult(WEBMCP_ERROR_CODES.unknown_todo, `Unknown TODO "${todoId}".`, {
-          retryable: false,
-          currentRevision: snapshot.revision,
-        });
-      }
-      try {
-        await host.removeTodo(todo.id, options?.signal);
-      } catch (error) {
-        const code = error && typeof error === "object" && "code" in error ? String((error as { code: string }).code) : "";
-        const message = error instanceof Error ? error.message : "";
-        const staleDisk = code === "stale_disk_state" || message.includes("stale_disk_state");
-        const staleSelection = code === "stale_selection" || message.includes("stale_selection");
-        const cancelled = code === "cancelled" || message.toLowerCase().includes("cancelled");
-        if (cancelled) {
-          return failResult(WEBMCP_ERROR_CODES.cancelled, "Operation cancelled.", {
-            retryable: false,
-            currentRevision: snapshot.revision,
-          });
-        }
-        if (staleSelection || staleDisk) {
-          return failResult(staleDisk ? "stale_disk_state" : "stale_selection", error instanceof Error ? error.message : "TODO selection is stale.", {
-            retryable: true,
-            currentRevision: snapshot.revision,
-            currentHash: error && typeof error === "object" && "currentHash" in error ? String((error as { currentHash?: unknown }).currentHash || "") : undefined,
-          });
-        }
-        throw error;
-      }
-      return paperMutationSuccess(host, { todoId: todo.id });
-    }
-    case "lint_paper": {
-      const report = host.lint ? host.lint() : defaultLint(snapshot);
-      return okResult(report, { revision: snapshot.revision, warnings: report.diagnostics });
     }
     case "compile_paper": {
       try {
@@ -993,28 +513,6 @@ async function executeNamed(
         ...(args.jobId !== undefined ? { jobIdMatches: compile.jobId === args.jobId } : {}),
         pdfCurrent: !snapshot.dirty && !snapshot.pendingSave && compile.state === "success" && compile.stale !== true && Boolean(compile.artifactBuildInputHash && compile.artifactBuildInputHash === compile.buildInputHash),
       }, { revision: snapshot.revision });
-    }
-    case "get_bibliography": {
-      if (args.raw !== undefined && typeof args.raw !== "boolean") {
-        return failResult(WEBMCP_ERROR_CODES.invalid_arguments, "raw must be a boolean.", { retryable: false, currentRevision: snapshot.revision });
-      }
-      const raw = args.raw === true;
-      const maxChars = parseWebMcpMaxChars(args, snapshot.revision);
-      if (typeof maxChars !== "number") return maxChars;
-      const bounded = raw && snapshot.bibliographyRaw != null
-        ? boundWebMcpText(snapshot.bibliographyRaw, maxChars)
-        : undefined;
-      return okResult(
-        {
-          keys: snapshot.bibliographyKeys,
-          ...(bounded ? {
-            raw: bounded.text,
-            truncated: bounded.truncated,
-            totalCharacters: bounded.totalCharacters,
-          } : {}),
-        },
-        { revision: snapshot.revision },
-      );
     }
   }
 }

@@ -12,6 +12,7 @@
 
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { z } from "zod";
 import { withBrowserProjectWriteSession } from "@/lib/server/project-write-session-request";
 import { withProjectWriteLock } from "@/lib/research/project-lock";
@@ -19,6 +20,7 @@ import { acquireProjectWriteSession, releaseProjectWriteSession, withProjectWrit
 
 import {
   getEditableTexPaper,
+  getBibliographyData,
   getPaperEditorState,
   getWikiPage,
   projectContentDir,
@@ -41,7 +43,11 @@ import {
 } from "@/lib/types";
 import { getPaperCompileStatus, requestPaperCompile } from "@/lib/tex-project/compile";
 import { synctexEdit, synctexView } from "@/lib/tex-project/synctex";
-import { FIGURE_MAX_BYTES, uploadFigureAsset, texPaths, readDocument, DRAFT_MINDMAP_ID, resolveMindmapStorageIdentity } from "@/lib/tex-project/project";
+import { FIGURE_MAX_BYTES, uploadFigureAsset, texPaths, readDocument, readBibliographyRaw, bibliographySourceFiles, parseBibliography, DRAFT_MINDMAP_ID, resolveMindmapStorageIdentity } from "@/lib/tex-project/project";
+import { importBibtex, previewBibtexImport } from "@/lib/research/bibliography-import";
+import { readProjectFiles, applyProjectEdits } from "@/lib/research/project-files";
+import type { ProjectFilesReadInput, ProjectFilesEditInput } from "@/lib/research/project-files-contract";
+import { isProtectedProjectPath } from "@/lib/research/project-files-contract";
 import { persistSourceBundle, applyConversionWrite } from "@/lib/tex-project/source-persist";
 import { syncProjectCommand } from "@/lib/research/sync-project-command";
 import { getOverleafSyncDetails, prepareForceSync, confirmForceSync, finishForceSync, type ForceSyncDirection, prepareOverleafPull, finishOverleafPull, type OverleafConflictChoice, commitOverleafGit, getProjectGitHistory, getOverleafGitStatus, pullOverleafGit, reconcileDirectPull, pushOverleafGit, refreshOverleafGitStatus, syncOverleafGit, OverleafSetupError } from "@/lib/tex-project/overleaf-git";
@@ -71,7 +77,7 @@ import { applyMindmapAction, newNodeId } from "@/features/mindmap/mindmap-state"
 import { analyzePaper } from "@/lib/research/paper-analysis";
 import type { SourceOperation } from "@/lib/research/operations";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
-import { stableJson, TexEnvelopeError } from "@/lib/tex-project/codec";
+import { sha256, stableJson, TexEnvelopeError } from "@/lib/tex-project/codec";
 import { requireProjectAccess, requireWorkbenchAccess } from "@/lib/server/project-access";
 import { assertAdministrativeWriteAllowed, isPublicDemoMode } from "@/lib/server/demo-mode";
 import { normalizeMindmap, mindmapDiskHash } from "@/lib/mindmap/mindmap";
@@ -585,6 +591,71 @@ export async function deleteMindmapAction(slug: string, id: string): Promise<voi
 export async function getEditablePaperAction(slug: string) {
   await requireProjectAccess(slug);
   return getPaperEditorState(slug);
+}
+
+export async function readProjectFilesAction(slug: string, input: ProjectFilesReadInput) {
+  await requireProjectAccess(slug);
+  return readProjectFiles(projectContentDir(slug), input);
+}
+
+export async function applyProjectEditsAction(slug: string, input: ProjectFilesEditInput) {
+  await requireProjectAccess(slug);
+  try { return await withBrowserProjectWriteSession(projectContentDir(slug), () => {
+    assertAdministrativeWriteAllowed("Project file edits");
+    const result = applyProjectEdits(projectContentDir(slug), input);
+    if (result.ok && !result.value.dryRun) {
+      recordActivity(slug, { operation: "apply_project_edits", resources: result.value.files.map(file => ({ kind: "paper", id: file.path })) });
+      bust(slug);
+    }
+    return result;
+  }); } catch (error) {
+    if (error instanceof ProjectWriteSessionError) return failResult(error.code, error.message, { retryable: true });
+    return failResult("file_operation_failed", error instanceof Error ? error.message : "Project files could not be saved.", { retryable: true });
+  }
+}
+
+export async function getBibliographyEditorAction(slug: string) {
+  await requireProjectAccess(slug);
+  const root = projectContentDir(slug);
+  const paths = new Set(bibliographySourceFiles(root).map(file => path.relative(root, file).split(path.sep).join("/")).filter(file => !isProtectedProjectPath(file)));
+  const listing = readProjectFiles(root, { paths: [".", path.relative(root, texPaths(root).manuscriptDir) || "."], limit: 2000 });
+  if (listing.ok) for (const entry of listing.value.entries) if (entry.kind === "file" && entry.path.toLowerCase().endsWith(".bib")) paths.add(entry.path);
+  return { paths: [...paths], ...getBibliographyData(slug) };
+}
+
+export async function readBibliographyFileAction(slug: string, file: string) {
+  await requireProjectAccess(slug);
+  if (!file.toLowerCase().endsWith(".bib")) return failResult("invalid_path", "Choose a .bib file.");
+  const result = readProjectFiles(projectContentDir(slug), { paths: [file], maxBytes: 2_000_000 });
+  if (!result.ok) return result;
+  const entry = result.value.entries[0];
+  if (!entry || entry.kind !== "file" || !entry.hash || entry.encoding !== "utf8" || entry.truncated) return failResult("invalid_arguments", "Open a UTF-8 bibliography up to 2 MB.");
+  const text = entry.content || "";
+  return okResult({ text, hash: entry.hash, entries: parseBibliography(text) });
+}
+
+export async function previewBibtexImportAction(slug: string, bibtex: string) {
+  await requireProjectAccess(slug);
+  return withProjectWriteLock(projectContentDir(slug), () => {
+    const raw = readBibliographyRaw(projectContentDir(slug));
+    const result = previewBibtexImport(raw, bibtex);
+    return result.ok ? okResult({ entries: result.value, hash: sha256(raw) }) : result;
+  });
+}
+
+export async function importBibtexAction(slug: string, bibtex: string, expectedHash: string) {
+  await requireProjectAccess(slug);
+  return withBrowserProjectWriteSession(projectContentDir(slug), () => {
+    const result = importBibtex(projectContentDir(slug), bibtex, expectedHash);
+    if (!result.ok) return result;
+    recordActivity(slug, {
+      operation: "import_bibtex",
+      resources: [{ kind: "paper", id: "bibliography" }],
+      title: result.value.addedKeys.join(", "),
+      href: `/p/${encodeURIComponent(slug)}/paper`,
+    });
+    return okResult({ ...result.value, paper: getPaperEditorState(slug) });
+  });
 }
 
 export async function persistSourceBundleAction(

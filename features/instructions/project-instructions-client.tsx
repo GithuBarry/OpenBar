@@ -1,27 +1,26 @@
 "use client";
 
-import { AGENT_GUIDANCE } from "@/lib/research/agent-guidance";
-import { OPENBAR_EXPECTATIONS } from "@/lib/research/expectations";
 import { ChoiceButtons } from "@/components/choice-buttons";
 import { useProjectWriteSession } from "@/components/project-session/project-write-session";
+import { registerProjectFileEditor } from "@/features/project-files-bridge";
+import { AGENT_GUIDANCE } from "@/lib/research/agent-guidance";
+import { OPENBAR_EXPECTATIONS } from "@/lib/research/expectations";
+import { failResult } from "@/lib/research/operation-result";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { LoaderCircle,Plus,Save,Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { LoaderCircle, Plus, Save, Trash2 } from "lucide-react";
+import { useEffect,useRef,useState,useTransition } from "react";
 
 import {
-  deleteProjectSkillAction,
-  deleteWorkspaceSkillAction,
-  readProjectSkillAction,
-  writeAgentsMdAction,
-  writeProjectSkillAction,
-  writeWorkspaceAgentsMdAction,
-  writeWorkspaceSkillAction,
+deleteProjectSkillAction,
+deleteWorkspaceSkillAction,
+readProjectSkillAction,
+writeAgentsMdAction,
+writeProjectSkillAction,
+writeWorkspaceAgentsMdAction,
+writeWorkspaceSkillAction,
 } from "@/app/actions";
-import { instructionsWebMcpActions, sharedWebMcpActions } from "@/features/webmcp-actions";
 import type { ProjectSkill } from "@/lib/research/project-skills";
-
-import { useInstructionsWebMcp } from "./use-instructions-webmcp";
 
 type SkillDraft = { id: string; name: string; body: string; source: "project" | "workspace"; expectedHash?: string };
 
@@ -48,14 +47,6 @@ export function ProjectInstructionsClient({
 }) {
   const router = useRouter();
   const { writable, setPendingWork } = useProjectWriteSession();
-  useInstructionsWebMcp({
-    project: slug,
-    actions: instructionsWebMcpActions,
-    sharedActions: sharedWebMcpActions,
-    refresh: () => router.refresh(),
-    navigate: (href) => router.push(href),
-    current: () => ({ kind: "instructions", href: `/p/${slug}/instructions` }),
-  });
   const [body, setBody] = useState(agentsBody);
   const [hash, setHash] = useState(agentsHash);
   const [workspaceBody, setWorkspaceBody] = useState(workspaceAgentsBody);
@@ -64,6 +55,13 @@ export function ProjectInstructionsClient({
   const [pending, startTransition] = useTransition();
   const [draft, setDraft] = useState<SkillDraft>({ id: "", name: "", body: "", source: "project" });
   const baseline = useRef({ slug, body: agentsBody, workspaceBody: workspaceAgentsBody });
+
+  useEffect(() => registerProjectFileEditor(slug, async (operation, writing) => {
+    if (body !== baseline.current.body || workspaceBody !== baseline.current.workspaceBody || draft.id || draft.body || pending) return failResult("conflict", "Save the open instruction draft before accessing project files.");
+    const result = await operation();
+    if (result.ok && writing) router.refresh();
+    return result;
+  }), [body, workspaceBody, draft.id, draft.body, pending, router, slug]);
 
   useEffect(() => {
     setPendingWork("instructions", body !== baseline.current.body || workspaceBody !== baseline.current.workspaceBody || Boolean(draft.id || draft.body) || pending);

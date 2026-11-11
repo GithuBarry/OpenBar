@@ -24,7 +24,7 @@ import {
 } from "./codec";
 import { deriveSections, stripSectionComments } from "./section-ranges";
 import { figureToTex } from "./obmd";
-import { composePaperTex, PAPER_REFERENCES_INPUT, readTexDocumentTitle, sectionCommandForLevel } from "./paper-compose";
+import { composePaperTex, PAPER_REFERENCES_FILE, PAPER_REFERENCES_INPUT, readTexDocumentTitle, sectionCommandForLevel } from "./paper-compose";
 import { prepareDocumentBody, inferDocumentFormat } from "./document-body";
 import { locateTexRoot, traverseInputGraph, orderedSourceRanges } from "./source-graph";
 import { normalizeTeXInputPath } from "./source-bundle-format";
@@ -492,12 +492,14 @@ export function writePaperProject(
   if (!fs.existsSync(paths.styleFile)) writeTextAtomic(paths.styleFile, openBarryStyle());
   if (!fs.existsSync(paths.bibliographyFile)) writeBibliographyRaw(projectDir, "");
   writeTextAtomic(paths.paperFile, paperRootTex(title, [...main, PAPER_REFERENCES_INPUT, ...appendixInputs]));
+  ensureBibliographyInput(projectDir);
   return readTexPaper(projectDir, "", title)!;
 }
 
 export { composePaperTex };
 
-export function readBibliographyRaw(projectDir: string): string {
+/** Existing declared BibTeX sources in include/declaration order, resolved inside the manuscript. */
+export function bibliographySourceFiles(projectDir: string): string[] {
   const paths = texPaths(projectDir);
   // Imported papers name their own BibTeX inputs. Resolve declarations from
   // the active TeX include graph using the compiler's manuscript directory.
@@ -520,38 +522,96 @@ export function readBibliographyRaw(projectDir: string): string {
           if (withinRoot === ".." || withinRoot.startsWith(`..${path.sep}`) || path.isAbsolute(withinRoot)
             || seenFiles.has(file) || !fs.statSync(file).isFile()) continue;
           seenFiles.add(file);
-          const content = fs.readFileSync(file, "utf8");
-          if (content.trim()) declaredSources.push(content);
+          declaredSources.push(file);
         } catch { /* A partial paper can retain references to missing files. */ }
       }
     }
   }
-  if (declaredSources.length) return declaredSources.join("\n");
+  return declaredSources;
+}
+
+export function readBibliographyRaw(projectDir: string): string {
+  const paths = texPaths(projectDir);
+  const sourceFiles = bibliographySourceFiles(projectDir);
+  const declaredSources = sourceFiles
+    .map(file => fs.readFileSync(file, "utf8"))
+    .filter(source => source.trim());
+  if (sourceFiles.length) return declaredSources.join("\n");
   const bibliographySources = paths.manuscriptDir === paths.projectDir
     ? [path.join(paths.projectDir, "references.bib"), path.join(paths.openBarDir, "references.bib")]
-    : [path.join(paths.openBarDir, "references.bib"), path.join(paths.manuscriptDir, "references.bib"), path.join(paths.projectDir, "references.bib")];
+    : [path.join(paths.manuscriptDir, "references.bib"), path.join(paths.projectDir, "references.bib"), path.join(paths.openBarDir, "references.bib")];
   for (const file of bibliographySources) {
     if (!fs.existsSync(file)) continue;
-    const content = fs.readFileSync(file, "utf8");
-    if (content.trim()) return content;
+    return fs.readFileSync(file, "utf8");
   }
   const record = readDataFile<BibliographyRecord>(paths.bibliographyFile, TEX_SCHEMAS.bibliography, "references");
   return record?.raw || "";
 }
 
 export function writeBibliographyRaw(projectDir: string, raw: string): void {
-  const paths = ensureTexProjectDirectories(projectDir);
+  ensureTexProjectDirectories(projectDir);
+  for (const write of bibliographyWrites(projectDir, raw)) writeTextAtomic(write.file, write.source);
+}
+
+/** Plan derived references separately when a filesystem batch already owns source bytes. */
+export function bibliographyWrites(projectDir: string, raw: string, includeSource = true): Array<{ file: string; source: string }> {
+  const paths = texPaths(projectDir);
   const normalized = raw.trim() ? `${raw.trim()}\n` : "";
   const record: BibliographyRecord = { raw: normalized, updatedAt: new Date().toISOString() };
   const referenceBody = bibliographyTex(normalized);
-  writeTextAtomic(
-    paths.bibliographyFile,
-    `${serializeDataFile(TEX_SCHEMAS.bibliography, "references", record, "Bibliography source. The rendered bibliography below is derived from this comment block.")}\n${referenceBody}`,
-  );
+  const inputWrites = bibliographyInputWrites(projectDir, normalized);
+  const writes = [{ file: paths.bibliographyFile, source: `${serializeDataFile(TEX_SCHEMAS.bibliography, "references", record, "Bibliography source. The rendered bibliography below is derived from this comment block.")}\n${referenceBody}` }];
   const sourceFile = paths.manuscriptDir === paths.projectDir
     ? path.join(paths.projectDir, "references.bib")
     : path.join(paths.openBarDir, "references.bib");
-  writeTextAtomic(sourceFile, normalized);
+  if (includeSource && !bibliographySourceFiles(projectDir).length) writes.push({ file: sourceFile, source: normalized });
+  return [...writes, ...inputWrites];
+}
+
+const BIBLIOGRAPHY_RENDER_HEADING = "% Generated by OpenBar from the project's bibliography.\n";
+
+/** Plan the managed renderer and path repair while preserving surrounding source bytes. */
+export function bibliographyInputWrites(projectDir: string, raw: string): Array<{ file: string; source: string }> {
+  const paths = texPaths(projectDir);
+  const writes: Array<{ file: string; source: string }> = [];
+  let managedInput = false;
+  for (const node of traverseInputGraph(paths.manuscriptDir).nodes.filter(node => node.editable)) {
+    const matches = [...maskTexLiterals(node.source).matchAll(/\\input\s*\{\s*(\.OpenBar\/references(?:\.tex)?|openbarry-references(?:\.tex)?)\s*\}/g)]
+      .filter(match => {
+        let precedingSlashes = 0;
+        for (let index = match.index! - 1; index >= 0 && node.source[index] === "\\"; index -= 1) precedingSlashes += 1;
+        return precedingSlashes % 2 === 0;
+      });
+    if (!matches.length) continue;
+    managedInput = true;
+    let source = node.source;
+    for (const match of matches.reverse()) {
+      const input = match[1]!;
+      if (!input.startsWith(".OpenBar/")) continue;
+      const from = match.index! + match[0].indexOf(input);
+      const replacement = input.endsWith(".tex") ? PAPER_REFERENCES_FILE : PAPER_REFERENCES_FILE.slice(0, -4);
+      source = source.slice(0, from) + replacement + source.slice(from + input.length);
+    }
+    if (source !== node.source) writes.push({ file: node.absPath, source });
+  }
+  if (!managedInput) return [];
+  const file = path.join(paths.manuscriptDir, PAPER_REFERENCES_FILE);
+  let previous: string | undefined;
+  try {
+    if (!fs.lstatSync(file).isFile()) throw new Error(`Keep ${PAPER_REFERENCES_FILE} as OpenBar's generated bibliography file.`);
+    previous = fs.readFileSync(file, "utf8");
+    if (!previous.startsWith(BIBLIOGRAPHY_RENDER_HEADING)) throw new Error(`Choose another name for the existing ${PAPER_REFERENCES_FILE} before preparing OpenBar's bibliography.`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const source = BIBLIOGRAPHY_RENDER_HEADING + bibliographyTex(raw);
+  if (source !== previous) writes.unshift({ file, source });
+  return writes;
+}
+
+/** Call under the project write lock before exporting or saving a managed bibliography. */
+export function ensureBibliographyInput(projectDir: string): void {
+  for (const write of bibliographyInputWrites(projectDir, readBibliographyRaw(projectDir))) writeTextAtomic(write.file, write.source);
 }
 
 export function readBibliography(projectDir: string): BibEntry[] {

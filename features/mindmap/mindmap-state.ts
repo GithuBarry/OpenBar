@@ -80,6 +80,7 @@ export type MindmapSessionAction =
   | { type: "hydrate"; mindmap: Mindmap }
   | { type: "ack-save"; base: Mindmap; saved: Mindmap }
   | { type: "select"; id: string; additive?: boolean }
+  | { type: "select-many"; ids: string[] }
   | { type: "clear-selection" }
   | { type: "undo" }
   | { type: "redo" }
@@ -481,6 +482,14 @@ export function mindmapReducer(state: MindmapSession, action: MindmapSessionActi
         };
       }
       return { ...state, selectedId: action.id, selectedIds: [...state.selectedIds, action.id] };
+    }
+    case "select-many": {
+      const known = indexMindmap(state.mindmap).nodeById;
+      const selectedIds = [...new Set(action.ids)].filter(id => known.has(id));
+      const selectedId = selectedIds.includes(state.selectedId) ? state.selectedId : selectedIds.at(-1) || state.mindmap.rootId;
+      return selectedId === state.selectedId && sameSelection(selectedIds, state.selectedIds)
+        ? state
+        : { ...state, selectedId, selectedIds };
     }
     case "clear-selection":
       return state.selectedIds.length === 0

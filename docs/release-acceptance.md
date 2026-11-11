@@ -94,7 +94,7 @@ the matching bearer token.
 
 1. Connect with the current official SDK client. Repeat with a 2025 client and the stdio bridge, using the SDK's stateless HTTP support.
 2. Call `tools/list` and confirm project reads, bounded paper and mindmap reads, batch preview and apply, activity, compile, and Git tools appear.
-3. Call `get_project_state`, `get_mindmap`, and `get_source_bundle` with bounded limits.
+3. Call `get_project_state`, `get_mindmap`, and `read_project_files` with bounded limits.
 4. Call one revision-checked map patch with a request id. Retry the same request id and confirm one durable receipt.
-5. Call `read_wiki_page` and confirm the registry contains no wiki mutation tool.
+5. Read an authored wiki file with `read_project_files`. Check protected state paths, stale hashes, dry runs, and whole-batch rollback through `apply_project_edits`.
 6. Remove or change the bearer token and confirm the endpoint returns HTTP 401 or 503 according to configuration state.

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import styles from "./mindmap-switcher.module.css";
-import { FileText, Network } from "lucide-react";
+import { FileText } from "lucide-react";
 import { notFound } from "next/navigation";
 
 import { PageHeader } from "@/components/shell/page-header";
@@ -35,15 +35,15 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
   });
 
   return (
-    <MindmapTitleProvider key={`${slug}:${activeId}`}><div className="flex h-screen min-h-0 flex-col overflow-hidden">
+    <MindmapTitleProvider key={`${slug}:${activeId}`}><div className={styles.screen}>
       <PageHeader
-        className={styles.pageHeader}
+        compact
+        className={`${styles.pageHeader} p-glass-sm`}
         location="Mindmap"
         title={`${project.title} Mindmap`}
         subtitle={isPrimary ? "Primary research map" : "Planning map"}
         project={project}
         readOnlyProject={isPublicDemoMode()}
-        icon={<Network size={18} />}
         actions={
           <div className={styles.headerActions}>
             <Link href={`/p/${slug}/paper`} className={styles.paperLink} aria-label="Open paper"><FileText size={14} /><span>Paper</span></Link>

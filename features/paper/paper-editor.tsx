@@ -5,12 +5,17 @@ import { bundleSections } from "@/lib/tex-project/section-ranges";
 import "katex/dist/katex.min.css";
 import { useGitAutoSync } from "@/components/use-git-auto-sync";
 import { useProjectWriteSession } from "@/components/project-session/project-write-session";
+import { ResumeEditControl } from "@/components/project-session/resume-edit-control";
 import { OverleafSyncNotice } from "@/components/overleaf-sync-notice";
 import { EditorNotice } from "@/components/editor-notice";
 import { PaperStatusControl } from "./paper-status-control";
 import { FastTooltip } from "@/components/fast-tooltip";
 import paperStyles from "./paper-outline-rail.module.css";
 import { CommentKindPicker } from "./comment-kind-picker";
+import { BibtexImport } from "./bibtex-import";
+import { BibliographyEditor } from "./bibliography-editor";
+import { registerProjectFileEditor, runProjectFileOperation } from "@/features/project-files-bridge";
+import { captureCitationSelection, resolveCitationSelection, type CitationSelection } from "./citation-selection";
 import { handlePaperAddShortcut, paperAddShortcut } from "./paper-add-shortcuts";
 import { PaperOutlineRail } from "./paper-outline-rail";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties } from "react";
@@ -23,6 +28,7 @@ import dynamic from "next/dynamic";
 import {
   ArrowLeft,
   Bold,
+  BookOpen,
   ChevronDown,
   CircleAlert,
   Code2,
@@ -38,8 +44,6 @@ import {
   ListChecks,
   ListTodo,
   LoaderCircle,
-  LockKeyhole,
-  LockKeyholeOpen,
   MessageSquareText,
   Quote,
   RefreshCw,
@@ -50,6 +54,9 @@ import {
 
 import {
   finishForceProjectSyncAction,
+  importBibtexAction,
+  getBibliographyEditorAction,
+  readBibliographyFileAction,
   placeTodoOnMindmapAction,
   removePaperTodoAction,
   synctexViewAction,
@@ -61,7 +68,7 @@ import type { ClientSourceBundle } from "@/lib/tex-project/source-bundle-format"
 import { inlineBundleIncludes, rebaseBundleSource, splitBundleSource } from "@/lib/tex-project/source-bundle-format";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/copy-text";
-import type { BibEntry } from "@/lib/bibtex";
+import type { BibEntry, BibliographyImportResult } from "@/lib/bibtex";
 import type { PaperCompileStatus } from "@/lib/tex-project/compile";
 import { getBrowserPaperCompileStatus, requestBrowserPaperCompile } from "./browser-compile";
 import { getBrowserEditablePaper, saveBrowserPaperSource } from "./browser-source";
@@ -95,7 +102,7 @@ import {
   getMindmapRemoteSyncQueue,
   type MindmapRemoteQueueEvent,
 } from "@/lib/research/mindmap-remote-sync-queue";
-import type { RemoteSyncOutcome } from "@/lib/research/operation-result";
+import { failResult, type OperationResult, type RemoteSyncOutcome } from "@/lib/research/operation-result";
 import { decodePaperSectionFragment, resolvePaperSectionRef } from "@/lib/research/artifact-link";
 import {
   COMPILE_POLL_MS,
@@ -324,8 +331,8 @@ export function PaperEditor({
   initialSections,
   initialBundle,
   sourceContext,
-  bibliography,
-  bibliographyRaw,
+  bibliography: initialBibliography,
+  bibliographyRaw: initialBibliographyRaw,
   placementTargets = [],
   boundTodoIds = [],
 }: {
@@ -340,7 +347,7 @@ export function PaperEditor({
   boundTodoIds?: string[];
 }) {
   const router = useRouter();
-  const { writable: sessionWritable, setPendingWork, restore: restoreEditing, canRestore, check: checkEditingAccess, checking: checkingEditingAccess, accessMessage } = useProjectWriteSession();
+  const { writable: sessionWritable, setPendingWork } = useProjectWriteSession();
   const sessionWritableRef = useRef(sessionWritable);
   sessionWritableRef.current = sessionWritable;
   const [restoreEditingAttention, setRestoreEditingAttention] = useState(false);
@@ -355,6 +362,8 @@ export function PaperEditor({
   const [sourceSnapshot, setSourceSnapshot] = useState({ value: initialSource, revision: 0 });
   const source = sourceSnapshot.value;
   const [savedSource, setSavedSource] = useState(initialSource);
+  const [bibliography, setBibliography] = useState(initialBibliography || []);
+  const [bibliographyRaw, setBibliographyRaw] = useState(initialBibliographyRaw || "");
   const [bundleHash, setBundleHash] = useState(initialBundle.bundleHash);
   const [bundleDiagnostics, setBundleDiagnostics] = useState(initialBundle.diagnostics);
   const [sourceContextState, setSourceContextState] = useState(sourceContext);
@@ -422,6 +431,10 @@ export function PaperEditor({
   }, []);
   const [activeBookmark, setActiveBookmark] = useState<string>("");
   const [citeOpen, setCiteOpen] = useState(false);
+  const [bibtexOpen, setBibtexOpen] = useState(false);
+  const [bibliographyOpen, setBibliographyOpen] = useState(false);
+  const [bibliographyFiles, setBibliographyFiles] = useState<string[]>([]);
+  const citationSelectionRef = useRef<CitationSelection | null>(null);
   const [citeQuery, setCiteQuery] = useState("");
   const [citeHighlight, setCiteHighlight] = useState(0);
   const [controlsHeight, setControlsHeight] = useState(50);
@@ -815,6 +828,7 @@ export function PaperEditor({
     const desktop = syncPanesRef.current && !narrow;
     for (const ed of Array.from(scroller.querySelectorAll(".ob-ed-heading")) as HTMLElement[]) {
       const key = headingKeyForElement(ed, edCounts);
+      if (!ed.getClientRects().length) continue;
       const pv = pvByKey.get(key);
       if (!pv || !sectionKeys.has(key)) continue;
       const editorContentTop = ed.getBoundingClientRect().top - editorRect.top + scroller.scrollTop;
@@ -829,6 +843,7 @@ export function PaperEditor({
     const maxEditor = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
     const maxPreview = Math.max(0, preview.scrollHeight - preview.clientHeight);
     const chunks = Array.from(scroller.querySelectorAll<HTMLElement>(".ob-nested-tex-slice[data-ob-file]")).flatMap((host) => {
+      if (!host.getClientRects().length) return [];
       const dom = host.querySelector<HTMLElement>(".cm-editor");
       const view = dom && EditorView.findFromDOM(dom);
       const from = Number(host.dataset.obSourceFrom);
@@ -1086,26 +1101,26 @@ export function PaperEditor({
     pdfFollowFrameRef.current = window.requestAnimationFrame(followPdf);
   }, [layout, updateActiveHeading]);
 
-  const applyHydrated = useCallback((paper: HydratedPaper) => {
-    const next = paper.bundle.source;
+  const applyHydrated = useCallback((paper: HydratedPaper, draft = paper.bundle.source) => {
+    const next = draft;
     setExpectedSections(paper.sections);
     expectedSectionsRef.current = paper.sections;
     sectionHashesRef.current = new Map(paper.sections.map((section) => [section.id, section.hash]));
     bundleHashRef.current = paper.bundle.bundleHash;
     sourceSegmentsRef.current = paper.bundle.segments.map(({ filePath, editable }) => ({ filePath, editable }));
     sourceRef.current = next;
-    savedSourceRef.current = next;
+    savedSourceRef.current = paper.bundle.source;
     revisionRef.current += 1;
     updateSource(next);
-    setSavedSource(next);
-    setLocalDirty(false);
+    setSavedSource(paper.bundle.source);
+    setLocalDirty(next !== paper.bundle.source);
     setBundleHash(paper.bundle.bundleHash);
     setBundleDiagnostics(paper.bundle.diagnostics);
     setSourceContextState(paper.sourceContext);
     setSaveError(null);
     setTodoRemovalError(null);
     setSaveConflict(false);
-    clearRecoveryDraft();
+    if (next === paper.bundle.source) clearRecoveryDraft();
     setCompile((current) => transitionCompileStatus(current, {
       state: current.state === "running" ? "running" : "idle",
       stale: true,
@@ -1758,6 +1773,33 @@ export function PaperEditor({
     editorRef.current?.insertAtCursor(text, false);
   }, []);
 
+  const restoreCitationCursor = useCallback((selection: CitationSelection | null, keys?: string[]) => {
+    const deadline = performance.now() + 2_000;
+    const restore = () => {
+      const editor = editorRef.current;
+      const range = selection && resolveCitationSelection(liveSource(), selection);
+      if (!editor || !range || !sessionWritableRef.current) {
+        setAgentNotice("Reference added. Select its position in the source, then choose the citation.");
+        return;
+      }
+      const citation = keys?.length ? `\\cite{${keys.join(",")}}` : "";
+      // Address the captured range directly. Focus and layout measurements can
+      // settle after a modal closes and a saved include graph mounts.
+      if (citation && editor.applyVirtualChange(range.from, range.to, citation)) {
+        editor.setSelection(range.from + citation.length, range.from + citation.length);
+        return;
+      }
+      if (!citation) {
+        editor.setSelection(range.from, range.to);
+        const current = editor.getVirtualSelection();
+        if (current?.from === range.from && current.to === range.to) return;
+      }
+      if (performance.now() < deadline) window.requestAnimationFrame(restore);
+      else setAgentNotice("Reference added. Select its position in the source, then choose the citation.");
+    };
+    window.requestAnimationFrame(restore);
+  }, [liveSource]);
+
   const insertAtSelection = useCallback((builder: (selected: string) => string, fallback: string) => {
     const sel = editorRef.current?.getSelection();
     const view = editorRef.current?.getView();
@@ -2166,8 +2208,91 @@ export function PaperEditor({
     });
   }, [saveNow]);
 
+  const reconcilePaperFiles = useCallback((paper: HydratedPaper | null, baseline: string) => {
+    if (!paper || paper.bundle.bundleHash === bundleHashRef.current) return;
+    const rebased = rebaseBundleSource(baseline, liveSource(), paper.bundle.source);
+    const pending = pendingSaveRef.current;
+    const queued = pending ? rebaseBundleSource(baseline, pending.text, paper.bundle.source) : null;
+    if (rebased.ok && (!queued || queued.ok)) {
+      if (pending && queued?.ok) pendingSaveRef.current = { ...pending, text: queued.source };
+      flushSync(() => applyHydrated(paper, rebased.source));
+    } else {
+      pendingSaveRef.current = null;
+      saveConflictRef.current = true;
+      setSaveConflict(true);
+      setSaveError("Files changed while this draft was being edited. Copy the draft before loading the saved paper.");
+      writeRecoveryDraft();
+    }
+  }, [applyHydrated, liveSource, writeRecoveryDraft]);
+
+  useEffect(() => registerProjectFileEditor(project, async (operation, writing) => {
+    if (liveSource() !== savedSourceRef.current && !await saveNow(liveSource())) return failResult("save_failed", "Save the open paper draft before accessing project files.");
+    const job = saveQueueRef.current.then(async () => {
+      const baseline = savedSourceRef.current;
+      const result = await operation();
+      if (result.ok && writing) {
+        const [paper, references] = await Promise.all([getBrowserEditablePaper(project), getBibliographyEditorAction(project)]);
+        reconcilePaperFiles(paper, baseline);
+        setBibliography(references.entries);
+        setBibliographyRaw(references.raw);
+        setBibliographyFiles(references.paths);
+        resetPreview(liveSource());
+        setCompile(current => transitionCompileStatus(current, { state: current.state === "running" ? "running" : "idle", stale: true }));
+        remoteQueue.noteEdit();
+        remoteSavePendingRef.current = true;
+        void pushRemote("OpenBar: edit project files", true);
+      }
+      return result;
+    });
+    saveQueueRef.current = job.then(() => undefined, () => undefined);
+    return job;
+  }), [liveSource, project, pushRemote, reconcilePaperFiles, remoteQueue, resetPreview, saveNow]);
+
+  const openBibliography = useCallback(async () => {
+    try {
+      const references = await getBibliographyEditorAction(project);
+      setBibliographyFiles(references.paths);
+      setBibliographyOpen(true);
+    } catch (error) { setAgentNotice(error instanceof Error ? error.message : "References are unavailable."); }
+  }, [project]);
+
+  const importReference = useCallback(async (bibtex: string, expectedHash: string, signal?: AbortSignal): Promise<OperationResult<BibliographyImportResult>> => {
+    if (!sessionWritableRef.current) return failResult("write_session_required", "Resume editing in this tab to add a reference.");
+    if (remoteOutOfSyncRef.current) return failResult("remote_conflict", "Synchronize Git to resume editing.");
+    if (liveSource() !== savedSourceRef.current && !await saveNow(liveSource(), signal)) {
+      return failResult(saveFailureRef.current?.code || "save_failed", saveFailureRef.current?.message || "Save this paper before adding a reference.");
+    }
+    // Serialize with paper saves because a first import can repair the managed
+    // bibliography include. Rebase that saved change into the mounted draft.
+    const job = saveQueueRef.current.then(async () => {
+      if (signal?.aborted) return failResult("cancelled", "Operation cancelled.");
+      const baseline = savedSourceRef.current;
+      const result = await importBibtexAction(project, bibtex, expectedHash);
+      if (!result.ok) return result;
+      const paper = result.value.paper;
+      flushSync(() => {
+        setBibliography(result.value.entries);
+        setBibliographyRaw(result.value.raw);
+      });
+      reconcilePaperFiles(paper, baseline);
+      resetPreview(liveSource());
+      setCompile(current => transitionCompileStatus(current, {
+        state: current.state === "running" ? "running" : "idle",
+        stale: true,
+        message: "References changed. Compile to refresh the PDF.",
+      }));
+      remoteQueue.noteEdit();
+      remoteSavePendingRef.current = true;
+      void pushRemote("OpenBar: add bibliography reference", true);
+      return result;
+    });
+    saveQueueRef.current = job.then(() => undefined, () => undefined);
+    return job;
+  }, [liveSource, project, pushRemote, reconcilePaperFiles, remoteQueue, resetPreview, saveNow]);
+
   usePaperWebMcp({
     sharedActions: sharedWebMcpActions,
+    importBibtex: importReference,
     getSnapshot: () => liveSnapshotFromSource({
       project,
       title,
@@ -2882,16 +3007,8 @@ export function PaperEditor({
             <div ref={formatPanelRef} className={cn("p-glass-sm", paperStyles.formatPanel)}>
             {restoreEditingAttention && <span aria-hidden="true" className={paperStyles.editingGlassTint} onAnimationEnd={() => setRestoreEditingAttention(false)} />}
             <div role="toolbar" aria-label="Paper editing" className={cn("ob-format-bar", paperStyles.editingToolbar, !sessionWritable && paperStyles.editingToolbarCompact)}>
-              {!sessionWritable && <div className={paperStyles.editingAccess}>
-                <button type="button" className={paperStyles.restoreEditing} disabled={!canRestore} onClick={restoreEditing} aria-label="Resume edit" title="Resume edit from the latest saved project. This transfers editing here. The previous session keeps its draft and switches to viewing.">
-                  <span className={paperStyles.restoreEditingLabel}>
-                    {canRestore ? <LockKeyholeOpen size={14} aria-hidden="true" /> : <LockKeyhole size={14} aria-hidden="true" />}
-                    <span className={paperStyles.restoreEditingText}>Resume edit</span>
-                  </span>
-                </button>
-                <span role="status" className="max-w-40 truncate text-[11px] text-muted" title={accessMessage}>{accessMessage}</span>
-                <button type="button" className={paperStyles.checkEditingAccess} disabled={checkingEditingAccess} aria-label="Check again" aria-busy={checkingEditingAccess} title="Check editing access again" onClick={() => { void checkEditingAccess(); }}><RefreshCw size={14} aria-hidden="true" /></button>
-              </div>}
+              {!sessionWritable && <ResumeEditControl className={paperStyles.editingAccess} />}
+              <Tool title="Open bibliography files" onClick={() => { void openBibliography(); }}><BookOpen size={15} /></Tool>
               <fieldset key={sessionWritable ? "editing" : "viewing"} className={paperStyles.editingTools} disabled={!sessionWritable} inert={!sessionWritable} aria-label="Formatting tools">
               {layout === "pdf" && <Tool title="Show source position in PDF" onClick={() => { void jumpToPdf(); }}><FileText size={15} /></Tool>}
               <Tool title="Bold (⌘B)" onClick={() => surround("\\textbf{", "}", "bold")}><Bold size={15} /></Tool>
@@ -2937,10 +3054,16 @@ export function PaperEditor({
                 <span className="font-medium">+ TODO</span>
               </Tool>
               <div ref={citeBtnRef} className="relative">
-                <Tool title="Insert Citation" accent onClick={() => setCiteOpen((o) => !o)}>
+                <Tool title="Insert Citation" accent onClick={() => {
+                  if (!citeOpen) citationSelectionRef.current = captureCitationSelection(liveSource(), editorRef.current?.getVirtualSelection() || null);
+                  setCiteOpen((o) => !o);
+                }}>
                   <Quote size={15} /><ChevronDown size={10} />
                 </Tool>
                 <AnchoredPop open={sessionWritable && citeOpen} anchorRef={citeBtnRef} origin="br" onDismiss={() => { setCiteOpen(false); setCiteQuery(""); }} className="ob-menu ob-menu-wide">
+                  <button type="button" className="ob-menu-item text-xs text-accent" onMouseDown={event => event.preventDefault()}
+                    onClick={() => { setCiteOpen(false); setCiteQuery(""); setBibtexOpen(true); }}>Paste BibTeX…</button>
+                  <button type="button" className="ob-menu-item text-xs" onClick={() => { setCiteOpen(false); void openBibliography(); }}>Open .bib file…</button>
                   {bibliography?.length ? (
                     <>
                       <input
@@ -2960,7 +3083,7 @@ export function PaperEditor({
                             event.preventDefault();
                             const entry = citeEntries[citeHighlight];
                             if (entry) {
-                              insertInline(`\\cite{${entry.key}}`);
+                              restoreCitationCursor(citationSelectionRef.current, [entry.key]);
                               setCiteOpen(false);
                               setCiteQuery("");
                             }
@@ -2975,7 +3098,7 @@ export function PaperEditor({
                           type="button"
                           className={cn("ob-menu-item text-xs", index === citeHighlight && "bg-accent-soft text-ink")}
                           onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => { insertInline(`\\cite{${entry.key}}`); setCiteOpen(false); setCiteQuery(""); }}
+                          onClick={() => { restoreCitationCursor(citationSelectionRef.current, [entry.key]); setCiteOpen(false); setCiteQuery(""); }}
                         >
                           <span className={cn("font-mono text-xs font-semibold", index === citeHighlight ? "text-ink" : "text-accent")}>\{entry.key}</span>
                           <span className="ml-2 truncate text-[11px] text-muted">{entry.fields.title || ""}</span>
@@ -2994,6 +3117,18 @@ export function PaperEditor({
           </Panel>
         </Group>
         </div>
+      <BibliographyEditor open={bibliographyOpen} onClose={() => setBibliographyOpen(false)} paths={bibliographyFiles} readOnly={!sessionWritable}
+        readFile={file => runProjectFileOperation(project, false, () => readBibliographyFileAction(project, file))}
+        saveFile={async (file, content, expectedHash) => {
+          const result = await sharedWebMcpActions.applyProjectEdits(project, { edits: [{ path: file, content, expectedHash }] });
+          return result.ok ? readBibliographyFileAction(project, file) : result;
+        }} />
+      {bibtexOpen && <BibtexImport project={project} onClose={() => setBibtexOpen(false)} onImport={async (bibtex, hash, cite) => {
+        const selection = citationSelectionRef.current;
+        const result = await importReference(bibtex, hash);
+        if (result.ok) restoreCitationCursor(selection, cite ? result.value.addedKeys : undefined);
+        return result;
+      }} />}
       {(hydrationPending || reviewingRemote || (!saveError && !todoRemovalError && remoteSaveError)) && <OverleafSyncNotice project={project} message={remoteSaveError || "Git review is in progress."} editingPaused={remoteOutOfSync || hydrationPending} floating attention={gitAttention} openRequest={gitDetailsOpenRequest}
         activeReview={reviewingRemote} quickPullAvailable={quickPullAvailable} onQuickPull={() => void quickPull()} pulling={applyingRemote}
         hydrationPending={hydrationPending} onReload={() => void retryHydration()}

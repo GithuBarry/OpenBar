@@ -130,7 +130,9 @@ A new agent session should work from WebMCP tool descriptions alone:
 ```text
 get_project_state
         ↓
-understand project
+check_inbox
+        ↓
+understand project and pending human requests
         ↓
 search_project
         ↓

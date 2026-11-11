@@ -1,16 +1,13 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
-import { Edit3, LoaderCircle, Save, Trash2, X } from "lucide-react";
+import { Edit3,LoaderCircle,Save,Trash2,X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useEffect,useState,useTransition } from "react";
 
-import { deleteWikiPageAction, patchWikiPageAction, renameWikiPageAction } from "@/app/actions";
-import { documentWebMcpActions, sharedWebMcpActions } from "@/features/webmcp-actions";
+import { deleteWikiPageAction,patchWikiPageAction,renameWikiPageAction } from "@/app/actions";
 import type { WikiPage } from "@/lib/types";
-
-import { useWikiWebMcp } from "./use-wiki-webmcp";
-import { WikiView, wikiBacklinks } from "./wiki-view";
+import { WikiView,wikiBacklinks } from "./wiki-view";
 
 export function WikiPageClient({ page, pages = [] }: { page: WikiPage; pages?: WikiPage[] }) {
   const router = useRouter();
@@ -23,21 +20,6 @@ export function WikiPageClient({ page, pages = [] }: { page: WikiPage; pages?: W
   const [saved, setSaved] = useState(false);
   const [pending, startTransition] = useTransition();
   const backlinks = wikiBacklinks(pages, page.slug);
-
-  useWikiWebMcp({
-    project: page.projectId,
-    kind: "wiki",
-    documentId: page.slug,
-    actions: documentWebMcpActions,
-    sharedActions: sharedWebMcpActions,
-    refresh: () => router.refresh(),
-    navigate: (href) => router.push(href),
-    current: () => ({
-      kind: "wiki",
-      href: `/p/${page.projectId}/wiki/${page.slug}`,
-      pageId: page.slug,
-    }),
-  });
 
   useEffect(() => {
     if (editing) return;

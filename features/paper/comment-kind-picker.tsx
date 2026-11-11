@@ -4,6 +4,10 @@ import { useState } from "react";
 import { Select } from "@/components/select";
 import { commentKindAppearance, commentKindValidationError, DEFAULT_COMMENT_KINDS } from "@/lib/comment-kinds";
 
+function KindDot({ kind }: { kind: string }) {
+  return <span aria-hidden="true" className={`ob-comment-kind-dot ob-comment-tone-${commentKindAppearance(kind).tone}`} />;
+}
+
 export function CommentKindPicker({ value, onChange, kinds }: {
   value: string;
   onChange: (value: string) => void;
@@ -23,7 +27,6 @@ export function CommentKindPicker({ value, onChange, kinds }: {
   const selected = Math.max(0, options.findIndex((item) => item.value.toLowerCase() === value.trim().toLowerCase()));
   return (
     <div className={`ob-comment-kind-picker ob-comment-tone-${appearance.tone}`}>
-      <span aria-hidden="true" className="ob-comment-kind-dot" />
       <Select
         label="Comment type"
         value={custom ? "custom" : String(selected)}
@@ -35,7 +38,7 @@ export function CommentKindPicker({ value, onChange, kinds }: {
             if (!commentKindValidationError(nextValue)) onChange(nextValue);
           }
         }}
-        options={[...options.map((item, index) => ({ value: String(index), label: item.label, disabled: !!commentKindValidationError(item.value) })), { value: "custom", label: "Custom type…" }]}
+        options={[...options.map((item, index) => ({ value: String(index), label: item.label, icon: <KindDot kind={item.value} />, disabled: !!commentKindValidationError(item.value) })), { value: "custom", label: "Custom type…", icon: <KindDot kind="" /> }]}
       />
       {custom && <input
         autoFocus

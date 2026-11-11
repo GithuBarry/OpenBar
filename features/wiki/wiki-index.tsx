@@ -1,16 +1,13 @@
 "use client";
 
+import { FileText,LoaderCircle,Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { FileText, LoaderCircle, Plus } from "lucide-react";
 
 import { saveWikiAction } from "@/app/actions";
-import { documentWebMcpActions, sharedWebMcpActions } from "@/features/webmcp-actions";
 import { WikiPage } from "@/lib/types";
 import { relativeTime } from "@/lib/utils";
-
-import { useWikiWebMcp } from "./use-wiki-webmcp";
 
 function snippet(body: string): string {
   const paragraph = body.replace(/^#+\s.*$/m, "").trim().split(/\n\n+/)[0] || "";
@@ -19,16 +16,6 @@ function snippet(body: string): string {
 
 export function WikiIndex({ slug, pages }: { slug: string; pages: WikiPage[] }) {
   const router = useRouter();
-  useWikiWebMcp({
-    project: slug,
-    kind: "wiki",
-    documentId: "",
-    actions: documentWebMcpActions,
-    sharedActions: sharedWebMcpActions,
-    refresh: () => router.refresh(),
-    navigate: (href) => router.push(href),
-    current: () => ({ kind: "wiki", href: `/p/${slug}/wiki` }),
-  });
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [query, setQuery] = useState("");

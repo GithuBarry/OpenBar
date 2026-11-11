@@ -19,6 +19,7 @@ export function PageHeader({
   sticky = true,
   project,
   readOnlyProject = false,
+  compact = false,
 }: {
   title: React.ReactNode;
   subtitle?: React.ReactNode;
@@ -29,6 +30,7 @@ export function PageHeader({
   sticky?: boolean;
   project?: Project;
   readOnlyProject?: boolean;
+  compact?: boolean;
 }) {
   const router = useRouter();
   const { writable, setPendingWork } = useProjectWriteSession();
@@ -99,7 +101,7 @@ export function PageHeader({
         className,
       )}
     >
-      {icon && (
+      {icon && !compact && (
         <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-surface-3 text-muted">
           {icon}
         </div>
@@ -167,7 +169,7 @@ export function PageHeader({
               <h1 className="ob-project-title ob-brand-font truncate text-base tracking-tight text-ink">
                 {project ? projectTitle || project.title : title}
               </h1>
-              {project && location && <span className="shrink-0 text-sm text-muted">/ {location}</span>}
+              {project && location && !compact && <span className="shrink-0 text-sm text-muted">/ {location}</span>}
               {project && !projectReadOnly && (
                 <button
                   type="button"
@@ -190,7 +192,7 @@ export function PageHeader({
               {saving && <LoaderCircle size={12} className="animate-spin text-accent" />}
             </div>
 
-            {(project ? projectTagline : subtitle) && (
+            {!compact && (project ? projectTagline : subtitle) && (
               <p
                 onClick={() => {
                   if (!project || projectReadOnly) return;
@@ -211,7 +213,7 @@ export function PageHeader({
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
-        <AgentReadyIndicator />
+        {!compact && <AgentReadyIndicator />}
         {actions}
       </div>
     </header>

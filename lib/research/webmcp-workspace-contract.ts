@@ -5,15 +5,15 @@
  * contract stays browser-safe and returns ordinary OperationResult values.
  */
 
+import type { MoveWorkspaceProjectInput,WorkspaceLayout } from "@/lib/workspace";
 import { WORKSPACE_INPUTS } from "./command-inputs";
 import { parseCommandInput } from "./command-schema";
-import { failResult, okResult, type OperationResult } from "./operation-result";
 import {
-  WORKSPACE_WEBMCP_SCHEMAS,
-  WORKSPACE_WEBMCP_TOOL_NAMES,
+WORKSPACE_WEBMCP_SCHEMAS,
+WORKSPACE_WEBMCP_TOOL_NAMES,
 } from "./mcp-tool-schemas";
+import { failResult,okResult,type OperationResult } from "./operation-result";
 import { type PaperWebMcpTool } from "./webmcp-paper-contract";
-import type { MoveWorkspaceProjectInput, WorkspaceLayout } from "@/lib/workspace";
 
 export { WORKSPACE_WEBMCP_TOOL_NAMES };
 
@@ -53,14 +53,10 @@ const TOOL_META: Record<WorkspaceToolName, { title: string; description: string 
     title: "Move a project",
     description: "Reorder, archive or restore a project using the current layout hash. beforeSlug and afterSlug identify adjacent destination-group neighbors. Omit both to append.",
   },
-  search_projects: {
-    title: "Search projects",
-    description: "Find workspace projects by slug, title, tagline, or label. Search is case-insensitive.",
-  },
   open_project: {
     title: "Open a project",
     description: "Open a project on its paper page. Use a slug returned by list_projects or search_projects.",
-  },
+  }
 };
 
 function requiredString(args: Record<string, unknown>, key: string): string | OperationResult<never> {
@@ -99,11 +95,6 @@ async function executeWorkspaceTool(
         return okResult(await host.actions.getWorkspaceLayout());
       case "move_project":
         return host.actions.moveProject(WORKSPACE_INPUTS.move_project.parse(args));
-      case "search_projects": {
-        const query = requiredString(args, "query");
-        if (typeof query !== "string") return query;
-        return okResult(await host.actions.searchProjects(query));
-      }
       case "open_project": {
         const slug = requiredString(args, "slug");
         if (typeof slug !== "string") return slug;

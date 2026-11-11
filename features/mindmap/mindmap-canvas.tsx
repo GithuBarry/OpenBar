@@ -230,7 +230,8 @@ function FlowCanvas({
       nodes={flowNodes}
       edges={edges}
       onNodesChange={(changes: NodeChange[]) => {
-        setControlledNodes((current) => applyNodeChanges(changes.filter((change) => change.type !== "select"), current.length ? current : baseFlowNodes) as Node<CardData>[]);
+        // Selection and deletion follow the manuscript-backed map reducer.
+        setControlledNodes((current) => applyNodeChanges(changes.filter((change) => change.type !== "select" && change.type !== "remove"), current.length ? current : baseFlowNodes) as Node<CardData>[]);
       }}
       nodeTypes={nodeTypes}
       onNodeClick={onNodeClick}
@@ -275,6 +276,7 @@ function FlowCanvas({
       nodesConnectable={false}
       elementsSelectable
       multiSelectionKeyCode="Shift"
+      deleteKeyCode={null}
       selectNodesOnDrag={false}
       panOnScroll
       zoomOnPinch

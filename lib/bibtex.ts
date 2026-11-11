@@ -13,6 +13,13 @@ export interface BibEntry {
   html?: string;
 }
 
+export type BibliographyImportResult = {
+  raw: string;
+  entries: BibEntry[];
+  hash: string;
+  addedKeys: string[];
+};
+
 // ---------------------------------------------------------------------------
 // Formatting
 // ---------------------------------------------------------------------------

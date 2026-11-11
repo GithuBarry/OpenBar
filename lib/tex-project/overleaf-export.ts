@@ -4,7 +4,7 @@ import { zipSync } from "fflate";
 import { withProjectWriteLockAsync } from "@/lib/research/project-lock";
 import { readCompilerConfig } from "./compile";
 import { isSafeCommittedPath, isSensitivePath, OverleafSetupError } from "./overleaf-git";
-import { texPaths } from "./project";
+import { ensureBibliographyInput, texPaths } from "./project";
 import { locateTexRoot, traverseInputGraph } from "./source-graph";
 import { sourceTransactionJournalPath } from "./source-transaction";
 
@@ -29,6 +29,7 @@ export async function prepareOverleafProject(projectDir: string, slug: string): 
     if (fs.existsSync(sourceTransactionJournalPath(root))) {
       throw new OverleafSetupError("Recover the interrupted manuscript save before preparing this project for Overleaf.");
     }
+    ensureBibliographyInput(projectDir);
     const files: Record<string, Uint8Array> = Object.create(null);
     let total = 0;
     let count = 0;

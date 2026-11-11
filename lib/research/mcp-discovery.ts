@@ -7,7 +7,7 @@ import { listProjects } from "@/lib/store"
 const guideUri = "openbar://guide"
 const templates = [
   { uriTemplate: "openbar://projects/{project}/state", name: "project-state", description: "Saved project context, instructions, paper and map identities.", mimeType: "application/json" },
-  { uriTemplate: "openbar://projects/{project}/source", name: "paper-source", description: "Bounded manuscript source and hashes.", mimeType: "application/json" },
+  { uriTemplate: "openbar://projects/{project}/files/{path}", name: "project-file", description: "Bounded authored project file bytes and SHA256 hashes.", mimeType: "application/json" },
   { uriTemplate: "openbar://projects/{project}/skills/{id}", name: "project-skill", description: "Project, workspace or bundled skill.", mimeType: "application/json" },
 ]
 
@@ -20,15 +20,16 @@ export function registerMcpDiscovery(server: Server, actor: string): void {
   server.setRequestHandler("resources/templates/list", async () => ({ resourceTemplates: templates }))
   server.setRequestHandler("resources/read", async ({ params: { uri } }, context) => {
     if (uri === guideUri) return { contents: [{ uri, mimeType: "text/plain", text: AGENT_GUIDANCE }] }
-    const match = uri.match(/^openbar:\/\/projects\/([^/]+)\/(state|source|skills\/([^/]+))$/)
+    const match = uri.match(/^openbar:\/\/projects\/([^/]+)\/(state|files\/(.+)|skills\/([^/]+))$/)
     if (!match) throw new ResourceNotFoundError(uri, "Unknown OpenBar resource URI.")
-    let project: string, id: string | undefined
+    let project: string, id: string | undefined, file: string | undefined
     try {
       project = decodeURIComponent(match[1])
-      id = match[3] ? decodeURIComponent(match[3]) : undefined
+      file = match[3] ? decodeURIComponent(match[3]) : undefined
+      id = match[4] ? decodeURIComponent(match[4]) : undefined
     } catch { throw new ProtocolError(-32602, "Malformed resource URI.") }
-    const name = match[2] === "state" ? "get_project_state" : match[2] === "source" ? "get_source_bundle" : "read_project_skill"
-    const result = await executeMcpTool(name, { project, ...(id ? { id } : {}) }, { actor, signal: context.mcpReq.signal })
+    const name = match[2] === "state" ? "get_project_state" : file ? "read_project_files" : "read_project_skill"
+    const result = await executeMcpTool(name, { project, ...(id ? { id } : {}), ...(file ? { paths: [file] } : {}) }, { actor, signal: context.mcpReq.signal })
     if (!result.ok) throw new ProtocolError(-32002, result.message, result)
     return { contents: [{ uri, mimeType: "application/json", text: JSON.stringify(result) }] }
   })

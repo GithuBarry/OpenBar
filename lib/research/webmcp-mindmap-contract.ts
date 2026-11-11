@@ -2,25 +2,24 @@
  * Mindmap page WebMCP tools. Schemas match the browser WebMCP mindmap contract.
  */
 
-import { MINDMAP_INPUTS } from "./command-inputs";
-import { commandJsonSchemas, parseCommandInput } from "./command-schema";
-import { failResult, okResult, WEBMCP_ERROR_CODES, type OperationResult, type RemoteSyncOutcome } from "./operation-result";
-import { MINDMAP_WEBMCP_TOOL_NAMES, type MindmapWebMcpToolName } from "./webmcp-paper-contract";
-import type { SharedWebMcpActions, CurrentLocation } from "./webmcp-shared-contract";
-import { ARTIFACT_KINDS, coercePaperSectionRefContext, isArtifactKind } from "./artifact-link";
+import { cautionValidationError,normalizeMindmapCaution,type MindmapCaution } from "@/lib/mindmap/caution";
+import { attachMindmapImage,captionMindmapImage,detachMindmapImage } from "@/lib/mindmap/image-refs";
+import { MAX_MINDMAP_LABEL_CHARS,MAX_MINDMAP_LABELS,normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import { safeUrl } from "@/lib/safe-url";
-import { artifactHref } from "./artifact-link";
-import { attachMindmapImage, captionMindmapImage, detachMindmapImage } from "@/lib/mindmap/image-refs";
-import { cautionValidationError, normalizeMindmapCaution, type MindmapCaution } from "@/lib/mindmap/caution";
-import type { ArtifactRef, Mindmap, MindmapNode, MindmapNodeShape } from "@/lib/types";
-import { MAX_MINDMAP_LABELS, MAX_MINDMAP_LABEL_CHARS, normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
+import type { ArtifactRef,Mindmap,MindmapNode,MindmapNodeShape } from "@/lib/types";
+import { coercePaperSectionRefContext,isArtifactKind } from "./artifact-link";
+import { MINDMAP_EDIT_INPUT,MINDMAP_INPUTS } from "./command-inputs";
+import { commandJsonSchema,commandJsonSchemas,parseCommandInput } from "./command-schema";
+import { failResult,okResult,WEBMCP_ERROR_CODES,type OperationResult,type RemoteSyncOutcome } from "./operation-result";
 import { isPrimaryMindmap as isPrimaryMindmapRole } from "./todo-map";
+import { MINDMAP_WEBMCP_TOOL_NAMES,type MindmapWebMcpToolName } from "./webmcp-paper-contract";
+import type { CurrentLocation,SharedWebMcpActions } from "./webmcp-shared-contract";
 
 export { isPrimaryMindmapRole as isPrimaryMindmap };
 
 const PRESENTATION_SHAPES = ["branch", "leaf", "callout"] as const;
 
-export { MAX_MINDMAP_LABELS, MAX_MINDMAP_LABEL_CHARS } from "@/lib/mindmap/node-metadata";
+export { MAX_MINDMAP_LABEL_CHARS,MAX_MINDMAP_LABELS } from "@/lib/mindmap/node-metadata";
 
 export type LiveMindmapNode = Pick<
   MindmapNode,
@@ -320,7 +319,7 @@ export async function executeMindmapWebMcpTool(
   if (!parsedArgs.ok) return parsedArgs;
   const args = parsedArgs.value;
   const snapshot = host.getSnapshot();
-  if (snapshot.editingBlocked && !["get_mindmap", "focus_mindmap_node", "read_mindmap_image", "focus_todo_in_paper", "set_mindmap_collapsed", "highlight_mindmap_activity"].includes(name)) return failResult("remote_conflict", "Editing is paused. Review and synchronize Git updates to resume.", true);
+  if (snapshot.editingBlocked && !["get_mindmap", "focus_mindmap_node", "focus_todo_in_paper", "set_mindmap_collapsed", "highlight_mindmap_activity"].includes(name)) return failResult("remote_conflict", "Editing is paused. Review and synchronize Git updates to resume.", true);
   const hasNode = (id: unknown): id is string => typeof id === "string" && snapshot.nodes.some((node) => node.id === id);
   switch (name) {
     case "get_mindmap": {
@@ -489,7 +488,7 @@ export async function executeMindmapWebMcpTool(
       if (args.label !== undefined && (typeof args.label !== "string" || args.label.length > 240)) return failResult("invalid_arguments", "label must be at most 240 characters.", false);
       const node = snapshot.nodes.find((item) => item.id === args.id)!;
       const ref: ArtifactRef = { kind: "figure", id: args.assetId.trim(), ...(typeof args.label === "string" && args.label.trim() ? { label: args.label.trim() } : {}) };
-      if (node.refs?.some(item => item.kind === "figure" && item.id !== ref.id)) return failResult("invalid_arguments", "This card already has an image. Use add_mindmap_node to create a child, then attach the image there.", false);
+      if (node.refs?.some(item => item.kind === "figure" && item.id !== ref.id)) return failResult("invalid_arguments", "This card already has an image. Use apply_mindmap_edits with operation add to create a child, then attach the image there.", false);
       const refs = attachMindmapImage(node.refs || [], ref);
       const result = await runPersistedMutation(host, () => host.patchNode(String(args.id), { refs }, snapshot.revision));
       return result.ok ? okResult({ id: args.id, assetId: ref.id, refs }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
@@ -515,13 +514,6 @@ export async function executeMindmapWebMcpTool(
       const refs = captionMindmapImage(node.refs || [], args.assetId, args.label);
       const result = await runPersistedMutation(host, () => host.patchNode(String(args.id), { refs }, snapshot.revision));
       return result.ok ? okResult({ id: args.id, assetId: args.assetId, refs }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
-    }
-    case "read_mindmap_image": {
-      if (!hasNode(args.id) || typeof args.assetId !== "string" || !args.assetId.trim()) return failResult("invalid_arguments", "A valid card id and assetId are required.", false);
-      const node = snapshot.nodes.find((item) => item.id === args.id)!;
-      const ref = node.refs?.find((item) => item.kind === "figure" && item.id === args.assetId);
-      if (!ref) return failResult("invalid_arguments", `Image "${args.assetId}" is not attached to this card.`, false);
-      return okResult({ id: args.id, ref, url: artifactHref(snapshot.project, ref), mediaType: "image", bounded: true }, { revision: snapshot.revision });
     }
     case "highlight_mindmap_activity": {
       if (args.clear === true) {
@@ -583,34 +575,6 @@ export async function executeMindmapWebMcpTool(
         },
       );
     }
-    case "complete_todo": {
-      if (typeof args.todoId !== "string" || !args.todoId.trim()) return failResult("invalid_arguments", "todoId is required.", false);
-      if (!host.completeTodo) return failResult("capability_unavailable", "This map cannot complete TODOs.", false);
-      try {
-        await host.completeTodo(String(args.todoId));
-      } catch (error) {
-        return mutationFailure(host, error);
-      }
-      const completedSnapshot = host.getSnapshot();
-      return okResult({ todoId: args.todoId, completed: true }, {
-        revision: completedSnapshot.revision,
-        ...(completedSnapshot.remoteSync ? { remote: completedSnapshot.remoteSync } : {}),
-      });
-    }
-    case "reopen_todo": {
-      if (typeof args.todoId !== "string" || !args.todoId.trim()) return failResult("invalid_arguments", "todoId is required.", false);
-      if (!host.reopenTodo) return failResult("capability_unavailable", "This map cannot reopen TODOs.", false);
-      try {
-        await host.reopenTodo(String(args.todoId));
-      } catch (error) {
-        return mutationFailure(host, error);
-      }
-      const reopenedSnapshot = host.getSnapshot();
-      return okResult({ todoId: args.todoId, completed: false }, {
-        revision: reopenedSnapshot.revision,
-        ...(reopenedSnapshot.remoteSync ? { remote: reopenedSnapshot.remoteSync } : {}),
-      });
-    }
     case "focus_todo_in_paper": {
       if (typeof args.todoId !== "string" || !args.todoId.trim()) return failResult("invalid_arguments", "todoId is required.", false);
       host.focusTodoInPaper?.(String(args.todoId));
@@ -641,15 +605,43 @@ export async function executeMindmapWebMcpTool(
   }
 }
 
+async function executeManagedMapEdit(host: MindmapWebMcpHost, raw: unknown): Promise<OperationResult<unknown>> {
+  const parsed = parseCommandInput(MINDMAP_EDIT_INPUT, raw, true);
+  if (!parsed.ok) return parsed;
+  const args = MINDMAP_EDIT_INPUT.parse(parsed.value);
+  const operations = {
+    add: "add_mindmap_node", patch: "patch_mindmap_node", move: "move_mindmap_node",
+    "delete-card": "delete_mindmap_node", "delete-branch": "delete_mindmap_branch",
+    "place-todo": "place_todo_card", "convert-to-todo": "convert_card_to_todo",
+    rename: "rename_mindmap", "font-size": "set_mindmap_font_size",
+    "attach-image": "attach_mindmap_image", "detach-image": "detach_mindmap_image", "caption-image": "caption_mindmap_image",
+  } as const;
+  if (!Object.hasOwn(operations, args.edit.operation)) return failResult("invalid_arguments", `Use a managed map operation: ${Object.keys(operations).join(", ")}.`, false);
+  const current = host.getSnapshot();
+  if (args.expectedDiskHash && args.expectedDiskHash !== current.diskHash) return failResult("stale_disk_state", "The saved map hash changed. Read get_mindmap again.", { retryable: true, currentHash: current.diskHash });
+  const name = operations[args.edit.operation as keyof typeof operations];
+  const input: Record<string, unknown> = { ...args.edit.args, expectedRevision: args.expectedRevision };
+  if ("requestId" in MINDMAP_INPUTS[name].shape) input.requestId = args.requestId;
+  return executeMindmapWebMcpTool(host, name, input);
+}
+
 export function buildMindmapWebMcpTools(host: MindmapWebMcpHost) {
-  return MINDMAP_WEBMCP_TOOL_NAMES.map((name) => ({
+  const tools = MINDMAP_WEBMCP_TOOL_NAMES.filter(name => name !== "apply_mindmap_edits").map((name) => ({
     name,
     title: name.replaceAll("_", " "),
     description: mindmapToolDescription(name),
     inputSchema: MINDMAP_WEBMCP_TOOL_SCHEMAS[name],
-    annotations: { readOnlyHint: name === "get_mindmap" || name === "focus_mindmap_node" || name === "read_mindmap_image", untrustedContentHint: true },
+    annotations: { readOnlyHint: name === "get_mindmap" || name === "focus_mindmap_node", untrustedContentHint: true },
     execute: (args?: unknown) => executeMindmapWebMcpTool(host, name, args),
   }));
+  return [...tools, {
+    name: "apply_mindmap_edits",
+    title: "Edit live mindmap state",
+    description: "Apply a live revision-checked operation. edit.operation: add, patch, move, delete-card, delete-branch, place-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image. args: add {parentId,title?,text?,caption?,caution?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?}, move {id,parentId,beforeId?,afterId?}, delete {id}, TODO placement {todoId,parentId}, conversion {id,sectionId?}, rename {title}, font-size {fontSize}, images {id,assetId,label?}. Cards delete promotes children, branch delete includes descendants. New cards remain Agent draft. Edit TODO text/completion through project files.",
+    inputSchema: commandJsonSchema(MINDMAP_EDIT_INPUT),
+    annotations: { readOnlyHint: false, destructiveHint: true, untrustedContentHint: true },
+    execute: (args?: unknown) => executeManagedMapEdit(host, args),
+  }];
 }
 
 export function mindmapToolDescription(name: MindmapWebMcpToolName): string {
@@ -677,24 +669,17 @@ export function mindmapToolDescription(name: MindmapWebMcpToolName): string {
   if (name === "patch_mindmap_node") {
     return "Edit supplied fields on one card using its current revision. Keep visible text brief. Put supporting detail in caption/background. Edit TODO title/text through update_todo.";
   }
-  if (name === "attach_mindmap_image") return "Attach one existing project image asset to an empty card. For an occupied card, use add_mindmap_node to create a child and attach there. Use read_mindmap_image to inspect it; this changes only this map's reference list.";
+  if (name === "attach_mindmap_image") return "Attach one existing project image asset to an empty card. For an occupied card, use apply_mindmap_edits with operation add to create a child and attach there. Use read_project_files to inspect the asset; this changes only this map's reference list.";
   if (name === "detach_mindmap_image") return "Detach one image reference from this card without deleting the shared project asset.";
   if (name === "caption_mindmap_image") return "Change one attached image's caption/alt label without changing the asset or other references.";
-  if (name === "read_mindmap_image") return "Read one attached image reference and its bounded project asset URL. The original asset remains available; no OCR or research claim is inferred.";
   if (name === "set_mindmap_collapsed") {
     return "Collapse or expand a branch in the browser view. This preference is stored locally per project and map, and it does not change the repository or Git state.";
   }
   if (name === "place_todo_card") {
-    return "Add a card for an existing TeX TODO to the currently open map. Use this after the paper page add_todo tool returns todoId, choose the intended parentId, and place the card in the Primary or selected secondary map. Each map may contain one card for a TODO. The same TODO may appear on Primary and multiple secondary maps. All cards share TeX-owned text and completion. This is a shared card, not a move from another map. If the TODO is already on this map, the existing card is returned unchanged.";
+    return "Add a card for an existing TeX TODO to the currently open map. Use the stable TODO id read from the current paper, choose the intended parentId, and place the card in the Primary or selected secondary map. Each map may contain one card for a TODO. The same TODO may appear on Primary and multiple secondary maps. All cards share TeX-owned text and completion. This is a shared card, not a move from another map. If the TODO is already on this map, the existing card is returned unchanged.";
   }
   if (name === "convert_card_to_todo") {
     return "Convert this ordinary card into a paper TODO using its title and main text, then bind the card to that TeX-owned id. Pass sectionId to target a current paper section, or omit it for a neutral insertion in the manuscript root. Hierarchy is preserved and completion is left unset. The result separates durable local saves from Git sync: status is pushed, pending, failed, or unconfigured. Reuse requestId to retry safely.";
-  }
-  if (name === "complete_todo") {
-    return "Set the TeX completed timestamp. Completing does not require new manuscript prose.";
-  }
-  if (name === "reopen_todo") {
-    return "Clear the TeX completed timestamp.";
   }
   if (name === "focus_todo_in_paper") {
     return "Open the paper at this TODO's TeX location.";

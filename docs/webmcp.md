@@ -6,8 +6,8 @@ Streamable HTTP MCP operates saved project state when a browser page is
 unavailable.
 
 The home page at `/` registers workspace tools. Every open project page
-registers four project context tools. Paper, mindmap, wiki, and instructions
-pages register the actions owned by their active page. Registration follows
+registers shared context and project file tools. Paper and mindmap pages add
+controls for their live editor and canvas. Registration follows
 the page lifecycle, so page-local tools leave when the page unmounts.
 
 On an open project page, **Tools** opens the browser WebMCP catalog and
@@ -19,7 +19,11 @@ link both discovery documents.
 
 ### Checking human updates
 
-"Check updates" and "check inbox" mean call `check_inbox`. A project page supplies
+At the start of every OpenBar agent session, including one without earlier chat
+context, call `check_inbox` after `get_project_state`. "Tick", "check updates",
+"check inbox", and "sync" mean call `check_inbox`. When sync also names a Git or
+Overleaf action, check the inbox first, then perform the requested synchronization.
+A project page supplies
 its project identity. The workspace and headless tool can check all projects.
 Saved `@agent` mentions generate content-addressed notifications with card links.
 Ordinary tool results prefix a bounded list of pending requests. MCP uses a leading
@@ -41,6 +45,7 @@ open /
 → list_projects or search_projects
 → open_project
 → get_project_state
+→ check_inbox
 → navigate_project
 → use paper, mindmap, wiki, or instructions tools
 ```
@@ -51,12 +56,12 @@ The steps have distinct roles:
    `search_projects` to find a project.
 2. Call `open_project` with the returned slug. OpenBar navigates to that
    project's paper page.
-3. Call `get_project_state` for compact orientation. Use
+3. Call `get_project_state` for compact orientation, then `check_inbox` for pending
+   human requests, including when earlier chat context is unavailable. Use
    `detail=full` when the agent needs every TODO and the full instruction
    bodies.
-4. Use `search_project` for paper, TODO, comment, mindmap, or wiki detail.
-   Pass a returned id or href to `navigate_project` so the visible UI opens
-   the matching location.
+4. Read the relevant files with `read_project_files`. Use `navigate_project`
+   with a project-state id or href to open the corresponding UI.
 5. Call the tools owned by the active paper, mindmap, wiki, or instructions
    page. Agent Ready shows the catalog available for the current page.
 
@@ -71,21 +76,35 @@ The steps have distinct roles:
 The workspace tools are read-oriented and use the home page to perform
 navigation.
 
-## Four project context tools
+## Shared project tools
 
-These tools are registered on every open project page. The open page supplies
-the project identity, so calls use the live project context.
+Every project page supplies its project identity and registers context, file,
+synchronization, navigation, and skill access tools. Start with
+`get_project_state`, then `check_inbox`.
 
 | Tool | Purpose |
 | --- | --- |
-| `get_project_state` | Return location, paper title, section TODO counts, Primary Unplaced, maps, recent activity, human card-removal decisions, skills, and the `AGENTS.md` path and hash. Summary is the default. Full detail includes instruction bodies and every TODO. |
-| `search_project` | Search paper headings and TeX, TODO titles and text, comments, mindmap titles, labels, refs, shared TODO text, and wiki pages. Results include ids and hrefs for navigation. |
-| `navigate_project` | Navigate the visible project UI to a location returned by `get_project_state` or `search_project`. |
-| `update_project` | Update editable project metadata such as the icon, title, overview, research kind, color, venue, tagline, label, links, collaborators, or archive state with the current project hash. |
+| `get_project_state` | Paper, TODO coverage, maps, Git state, human decisions, and instruction/skill metadata. Full detail includes instruction bodies and every TODO. |
+| `read_project_files` | List directories or read bounded UTF-8/base64 file content with exact SHA256 hashes. |
+| `apply_project_edits` | Create, replace, or delete authored files in one hash-checked transaction. |
+| `navigate_project` | Open a paper, TODO, map, or other location returned by project state. |
+| `read_project_skill` | Read a project, workspace, or bundled skill from the state catalog. |
+| `update_project` | Edit managed project metadata using its current project hash. |
+| `sync_project` | Inspect Git and review or resolve incoming changes. |
 
-Call `get_project_state` after `open_project`, then search or navigate to the
-specific work. `read_project_skill` is registered on the instructions page
-and reads a project, workspace, or bundled skill by id from project state.
+File paths resolve inside the project root. TeX, BibTeX, figures, scripts,
+`AGENTS.md`, and authored skills/wiki documents are accessible. OpenBar project,
+map, runtime records, Git metadata, and the generated reference renderer stay
+behind their managed operations. Authored skills and wiki documents inside
+legacy metadata folders remain accessible.
+
+File writes supply the exact previous `hash`, or `expectedHash: null` for a new
+file. `content: null` deletes a file. A destination create and source delete in
+one batch moves it. Binary files use `encoding: "base64"`. `dryRun: true`
+validates the entire batch. Each batch checks all hashes before saving and uses
+the existing recovery journal for rollback. Bibliography changes refresh their
+derived renderer. Browser file operations save the mounted draft first and
+reconcile saved files into the live editor, preserving concurrent draft edits.
 
 `humanDecisions` records cards removed through the human mindmap interface,
 including their map, title, text, and whether the card was an agent draft.
@@ -113,102 +132,42 @@ for a retry. HTTP requests have independent transport state, so JSON-RPC IDs
 identify calls within a transport exchange rather than serving as durable retry
 keys.
 
-Native MCP changes TODO completion through `update_todo` with the TODO `id` and
-`completed: true` or `completed: false`. Card deletion uses
-`preview_mindmap_batch` followed by `apply_mindmap_batch` with the same
-`selectedIds` and `deleteMode`. The `cards` mode promotes surviving children,
-and `branches` removes selected cards and their descendants. Supply the current
-revision and preview token even for one card. Browser WebMCP retains the live
-completion and deletion actions supplied by its active page.
+Native MCP exposes 16 focused tools: workspace layout, project context,
+inbox, project files, managed map edits, metadata, Git synchronization,
+compilation, activity, and skill reading. TeX file edits own TODO text and
+completion. Managed map operations own placement and presentation.
 
 ## Page-local tools
 
-### Paper
+The paper page adds `get_paper_state`, `navigate_paper_section`,
+`set_paper_reader_mode`, `compile_paper`, and `get_paper_compile`. Its snapshot
+includes live draft state. File tools handle source, references, annotations,
+sections, and tables through their ordinary authored files.
 
-The paper page registers structured manuscript tools:
+The mindmap page adds `get_mindmap`, `apply_mindmap_edits`, and canvas navigation,
+collapse, and activity controls. `apply_mindmap_edits` wraps the existing guarded
+operations in a compact `edit: {operation, args}` envelope. Each operation
+validates its arguments, revision, disk hash, and retry identity. New cards
+remain Agent draft until the human saves or deletes them.
 
-- `get_paper_state`, `get_paper_outline`, and `read_paper_section`
-- `navigate_paper_section` and `set_paper_reader_mode`
-- `replace_paper_section`, `patch_paper_table`, and
-  `remove_paper_todo`
-- `lint_paper`, `compile_paper`, and `get_bibliography`
-
-It also registers raw source and TeX annotation tools:
-
-- `get_source_bundle`, `read_source_range`, and
-  `replace_source_range`
-- `add_comment`, `add_todo`, `update_todo`,
-  `complete_todo`, and `reopen_todo`
-
-The open paper supplies the project and live editor. The agent passes a
-section id or source range plus the current revision when a write needs
-revision-checked state.
-
-### Mindmap
-
-The mindmap page registers:
-
-- `get_mindmap`, `focus_mindmap_node`, `add_mindmap_node`,
-  `move_mindmap_node`, `delete_mindmap_node`, and
-  `set_mindmap_collapsed`
-- `patch_mindmap_node`, `highlight_mindmap_activity`, and
-  `rename_mindmap`
-- `place_todo_card`, `convert_card_to_todo`, `complete_todo`,
-  `reopen_todo`, and `focus_todo_in_paper`
+For deletion, preview a batch and apply its returned token. `deleteMode: "cards"`
+promotes surviving children. `deleteMode: "branches"` removes selected subtrees.
 
 `set_mindmap_collapsed` changes the browser-local view preference for the
-current project and map. The preference is returned under `viewLocal` by the
-browser `get_mindmap` tool and remains outside the durable map record.
+current project and map. Browser `get_mindmap` returns it under `viewLocal`.
 
-TeX owns each TODO id, title, text, and completion. A map owns card
-placement, labels, refs, progress, optional P0–P3 priority, table layout,
-and appearance. Primary covers every
-paper TODO through its tree or Primary Unplaced. Secondary maps reuse selected
-TODOs, and the same TODO can appear once on each map.
+TeX owns each TODO id, title, text, and completion. Each map owns placement,
+labels, refs, optional progress/priority, table layout, and appearance. Primary
+covers paper TODOs through its tree or Primary Unplaced. Secondary maps can
+reuse a TODO once per map.
 
-`convert_card_to_todo` accepts an optional stable paper section id. Omit it to
-insert the new TODO at a neutral location in the manuscript root. The result
-reports the resolved section when one was supplied.
-
-### Wiki
-
-An open wiki page registers bounded reads and preview. Wiki mutation tools
-return `capability_unavailable` in this release. Existing wiki files remain
-readable supporting memory, and paper TODOs remain the operational work.
-
-### Instructions and setup
-
-The instructions page registers:
-
-- `read_project_skill`
-- `write_agents_md`, `write_project_skill`, and
-  `delete_project_skill`
-- `write_workspace_agents_md`, `write_workspace_skill`, and
-  `delete_workspace_skill`
-
-Repository setup adds `get_capabilities`, `inspect_repository`,
-`preview_conversion`, and `apply_conversion`. These tools support
-repository import, TeX include-graph inspection, and explicit document
-conversion.
-
-## Raw TeX repository inspection
-
-Models can inspect the TeX repository directly for raw source details. On the
-paper page, `get_source_bundle` returns the live include-graph source, file
-segments, and current revision. `read_source_range` returns exact characters
-from that live paper source. `inspect_repository` on the instructions page
-reports the manuscript include graph for repository setup and import.
-
-Use `get_paper_state` or `read_paper_section` before a source edit. Pass
-the returned revision to `replace_source_range` or
-`replace_paper_section`. Changes appear in the live editor and save through
-the same revision and hash checks as human edits. `compile_paper` flushes
-live edits and starts the paper build.
+Wiki and instructions pages use the shared file tools for authored documents.
+Their human editor actions remain available in the UI.
 
 Preserve tables, row and column axes, captions, labels, TODOs, comments,
 markers, and intentionally incomplete cells. `\obmarker` is a local paper
 hole. `\obtodo` is operational work that appears on Primary, initially in
-Primary Unplaced.
+Primary Unplaced. `compile_paper` saves live edits and starts the paper build.
 
 ## Live state and visible actions
 
@@ -298,7 +257,7 @@ visible paragraphs with red and amber accents. `caption` opens through the
 card’s collapsed notes disclosure. `caution.background` appears in the
 collapsed Background notes section. All note fields are map-owned, including on TODO cards.
 
-Both `add_mindmap_node` and `patch_mindmap_node` accept `caption` and `caution`.
+`apply_mindmap_edits` operations `add` and `patch` accept `caption` and `caution`.
 Supplying `caution` replaces all its fields, and `{}` clears them. An empty
 `caption` clears the notes. Existing scalar caution text and retired
 `minor` text migrate into `caption`, preserving the text and its existing

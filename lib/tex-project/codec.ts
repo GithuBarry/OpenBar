@@ -316,13 +316,16 @@ export async function withWriteLockAsync<T>(file: string, operation: () => Promi
   }
 }
 
-export function writeTextAtomic(file: string, text: string): void {
+export function writeTextAtomic(file: string, text: string | Buffer, mode?: number): void {
   const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true });
   const tmp = path.join(dir, `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
   let descriptor: number | undefined;
   try {
+    try { mode ??= fs.statSync(file).mode & 0o777; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     descriptor = fs.openSync(tmp, "w");
+    if (mode !== undefined) fs.fchmodSync(descriptor, mode);
     fs.writeFileSync(descriptor, text, "utf8");
     fs.fsyncSync(descriptor);
     fs.closeSync(descriptor);

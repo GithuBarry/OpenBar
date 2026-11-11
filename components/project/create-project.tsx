@@ -22,7 +22,7 @@ function OverleafProjectLinkField({ value, onChange }: { value: string; onChange
     Overleaf project URL
     <input value={value} onChange={event => onChange(event.target.value)} type="text" required maxLength={2048}
       placeholder="https://www.overleaf.com/project/…" className="p-field input mt-1 text-sm" />
-    <span className="mt-1 block font-normal text-muted">Paste the editor or Git URL. OpenBar uses the host’s Overleaf Git access.</span>
+    <span className="mt-1 block font-normal text-muted">Paste the project URL from Overleaf’s address bar.</span>
   </label>;
 }
 
@@ -226,24 +226,35 @@ export function ConnectOverleafButton({ project, disabled = false }: { project: 
             <option value="existing">Use an existing project</option>
           </select>
         </label>
-        {destination === "new" ? <div className="space-y-2 text-xs text-muted">
-          <p>Create a new Overleaf project with your saved paper, figures, references, and maps.</p>
-          {prepared ? <form action="https://www.overleaf.com/docs" method="post" target="_blank" rel="noopener noreferrer" className="flex flex-wrap items-center gap-3">
-            <input type="hidden" name="snip_uri" value={prepared.snipUri} />
-            <input type="hidden" name="main_document" value={prepared.mainDocument} />
-            <input type="hidden" name="engine" value={prepared.engine} />
-            <button type="submit" className="p-button p-button-primary btn-primary text-xs"><ServiceIcon service="overleaf" />Create in Overleaf<ExternalLink size={12} aria-hidden="true" /></button>
-            <a href={prepared.snipUri} download={prepared.filename} className="text-accent hover:underline">Download ZIP</a>
-          </form> : <button type="button" className="p-button p-button-default btn-outline text-xs" onClick={() => {
-            setPreparing(true);
-            setError("");
-            void prepareOverleafProjectAction(project.slug).then(result => {
-              if (result.ok) setPrepared(result);
-              else setError(result.message);
-            }).catch(() => setError("OpenBar could not prepare the paper. Try again.")).finally(() => setPreparing(false));
-          }}>{preparing ? <><LoaderCircle size={12} className="animate-spin" />Preparing files…</> : "Prepare source files"}</button>}
-          <p>Overleaf opens in a new tab. After creating the project, paste its URL below to enable sync. You can also upload the ZIP through Overleaf’s New project menu.</p>
-        </div> : <p className="text-xs text-muted"><OverleafDashboard>Open your Overleaf projects</OverleafDashboard> and choose a blank project or an Overleaf copy with the same files.</p>}
+        {destination === "new" ? <>
+          <section className="space-y-2 text-xs text-muted">
+            <h3 className="font-semibold text-ink">(1) Prepare saved paper</h3>
+            <p>Includes your saved paper, figures, references, and maps.</p>
+            <button type="button" className="p-button p-button-default btn-outline text-xs" onClick={() => {
+              setPreparing(true);
+              setPrepared(undefined);
+              setError("");
+              void prepareOverleafProjectAction(project.slug).then(result => {
+                if (result.ok) setPrepared(result);
+                else setError(result.message);
+              }).catch(() => setError("OpenBar could not prepare the paper. Try again.")).finally(() => setPreparing(false));
+            }}>{preparing ? <><LoaderCircle size={12} className="animate-spin" />Preparing files…</> : prepared ? "Prepare again" : "Prepare source files"}</button>
+          </section>
+          <section className="space-y-2 text-xs text-muted">
+            <h3 className="font-semibold text-ink">(2) Create in Overleaf</h3>
+            {prepared ? <form action="https://www.overleaf.com/docs" method="post" target="_blank" rel="noopener noreferrer" className="flex flex-wrap items-center gap-3">
+              <input type="hidden" name="snip_uri" value={prepared.snipUri} />
+              <input type="hidden" name="main_document" value={prepared.mainDocument} />
+              <input type="hidden" name="engine" value={prepared.engine} />
+              <button type="submit" className="p-button p-button-primary btn-primary text-xs"><ServiceIcon service="overleaf" />Create in Overleaf<ExternalLink size={12} aria-hidden="true" /></button>
+              <a href={prepared.snipUri} download={prepared.filename} className="text-accent hover:underline">Download ZIP</a>
+            </form> : <button type="button" className="p-button p-button-primary btn-primary text-xs" disabled><ServiceIcon service="overleaf" />Create in Overleaf<ExternalLink size={12} aria-hidden="true" /></button>}
+            <p>Opens in a new tab. You can also upload the ZIP through Overleaf’s New project menu.</p>
+          </section>
+        </> : <section className="space-y-2 text-xs text-muted">
+          <h3 className="font-semibold text-ink">(1) Choose an Overleaf project</h3>
+          <p><OverleafDashboard>Open your Overleaf projects</OverleafDashboard> and choose a blank project or a copy with the same files.</p>
+        </section>}
       </fieldset>}
       <form className="space-y-3" onSubmit={event => {
         event.preventDefault();
@@ -258,8 +269,12 @@ export function ConnectOverleafButton({ project, disabled = false }: { project: 
           else { setOpen(false); router.refresh(); }
         }).catch(() => setError("OpenBar could not connect this project. Try again.")).finally(() => setSaving(false));
       }}>
-        {message ? <p className="text-sm text-muted" role="status">{message}</p> : <fieldset disabled={saving || preparing} className="min-w-0">
-          <OverleafProjectLinkField value={url} onChange={setUrl} />
+        {message ? <p className="text-sm text-muted" role="status">{message}</p> : <fieldset disabled={saving || preparing} className="min-w-0 space-y-3">
+          <section className="space-y-2">
+            <h3 className="text-xs font-semibold text-ink">{destination === "new" ? "(3) Paste URL and connect" : "(2) Paste the project URL"}</h3>
+            <OverleafProjectLinkField value={url} onChange={setUrl} />
+          </section>
+          {destination === "existing" && <h3 className="text-xs font-semibold text-ink">(3) Connect and sync</h3>}
         </fieldset>}
         {error && <p className="text-xs text-danger" role="alert">{error}</p>}
         <div className="flex justify-end gap-2">

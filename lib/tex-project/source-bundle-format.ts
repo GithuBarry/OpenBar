@@ -1,4 +1,5 @@
 import { maskTexLiterals } from "./tex-literals";
+import { PAPER_REFERENCES_FILE } from "./paper-compose";
 
 /**
  * Browser-safe SourceBundle banners and range helpers.
@@ -111,6 +112,7 @@ export function isPassthroughInclude(raw: string): boolean {
     || path.endsWith(".bib")
     || /(^|\/)references\.tex$/.test(path)
     || normalized === ".OpenBar/references.tex"
+    || normalized === PAPER_REFERENCES_FILE
     || path.includes("openbarry/references")
   );
 }

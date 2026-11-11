@@ -9,6 +9,7 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
+  type CSSProperties,
 } from "react";
 
 import { Transaction } from "@codemirror/state";
@@ -40,6 +41,9 @@ type NestedItem = {
   showLabel: boolean;
   lineOffset: number;
   includedFile?: string;
+  ancestors: string[];
+  scopes: string[];
+  includedScope?: string;
 };
 
 function buildNestedItems(source: string): NestedItem[] {
@@ -47,7 +51,7 @@ function buildNestedItems(source: string): NestedItem[] {
   if (!parts.length) return [];
   const items: NestedItem[] = [];
   const counts = new Map<string, number>();
-  const addFile = (part: ReturnType<typeof splitBundleSource>[number], ancestry: Set<string>, showLabel: boolean) => {
+  const addFile = (part: ReturnType<typeof splitBundleSource>[number], ancestry: Set<string>, showLabel: boolean, scopes: string[] = []) => {
     const slices = sliceRootByIncludes(part.body);
     let emitted = false;
     for (let index = 0; index < slices.length; index += 1) {
@@ -67,6 +71,8 @@ function buildNestedItems(source: string): NestedItem[] {
             localTo: slice.to,
             showLabel: showLabel || emitted,
             lineOffset: part.body.slice(0, slice.from).split("\n").length - 1,
+            ancestors: [...ancestry],
+            scopes,
           });
           emitted = true;
         }
@@ -75,12 +81,15 @@ function buildNestedItems(source: string): NestedItem[] {
       }
       const child = lookupBundlePartFrom(parts, slice.raw, part.filePath);
       if (child && !ancestry.has(child.filePath)) {
+        const includedScope = `${scopes.at(-1) || ""}/${part.filePath}:${index}`;
         items.push({ kind: "file", key: `include:${[...ancestry].join(":")}:${index}`, filePath: part.filePath,
           text: part.body.slice(slice.from, slice.to), headingCounts: seed,
           virtualFrom: part.bodyFrom + slice.from, virtualTo: part.bodyFrom + slice.to,
           localFrom: slice.from, localTo: slice.to, showLabel: false, includedFile: child.filePath,
+          ancestors: [...ancestry],
+          scopes, includedScope,
           lineOffset: part.body.slice(0, slice.from).split("\n").length - 1 });
-        addFile(child, new Set([...ancestry, child.filePath]), false);
+        addFile(child, new Set([...ancestry, child.filePath]), false, [...scopes, includedScope]);
         emitted = true;
         continue;
       }
@@ -98,6 +107,8 @@ function buildNestedItems(source: string): NestedItem[] {
         localTo: slice.to,
         showLabel: true,
         lineOffset: part.body.slice(0, slice.from).split("\n").length - 1,
+        ancestors: [...ancestry],
+        scopes,
       });
       emitted = true;
     }
@@ -114,6 +125,8 @@ function buildNestedItems(source: string): NestedItem[] {
         localTo: 0,
         showLabel: true,
         lineOffset: 0,
+        ancestors: [...ancestry],
+        scopes,
       });
     }
   };
@@ -200,6 +213,31 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
   const [live, setLive] = useState(value);
   const [find, setFind] = useState<{ file: string; selection: string }>();
   const findInputRef = useRef<HTMLInputElement>(null);
+  const foldStorageKey = `openbar:paper-file-folds:v1:${encodeURIComponent(project)}:${encodeURIComponent(rootFile)}`;
+  const foldStorageKeyRef = useRef(foldStorageKey);
+  foldStorageKeyRef.current = foldStorageKey;
+  const [foldedFiles, setFoldedFiles] = useState<Set<string>>(() => new Set());
+  const [hoveredScope, setHoveredScope] = useState<{ key: string; depth: number }>();
+  const [focusedScope, setFocusedScope] = useState<{ key: string; depth: number }>();
+  const activeScope = hoveredScope ?? focusedScope;
+  const foldedFilesRef = useRef(foldedFiles);
+  useLayoutEffect(() => {
+    let stored: unknown;
+    try { stored = JSON.parse(window.localStorage.getItem(foldStorageKey) || "[]"); } catch { /* Use the expanded view when storage is unavailable. */ }
+    const next = new Set<string>(Array.isArray(stored) ? stored.filter((file): file is string => typeof file === "string" && file !== rootFile) : []);
+    foldedFilesRef.current = next;
+    setFoldedFiles(next);
+  }, [foldStorageKey, rootFile]);
+  const updateFoldedFiles = useCallback((next: Set<string>) => {
+    foldedFilesRef.current = next;
+    setFoldedFiles(next);
+    try { window.localStorage.setItem(foldStorageKeyRef.current, JSON.stringify([...next].sort())); } catch { /* Keep the current tab's view preference. */ }
+  }, []);
+  const toggleFile = (filePath: string) => {
+    const next = new Set(foldedFilesRef.current);
+    if (!next.delete(filePath)) next.add(filePath);
+    updateFoldedFiles(next);
+  };
   useLayoutEffect(() => {
     // A newer keystroke can arrive between the parent render and this effect.
     if (valueRevision !== currentRevision()) return;
@@ -220,6 +258,13 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
   const itemsRef = useRef(items);
   if (live === sourceRef.current) itemsRef.current = items;
   const readyKeysRef = useRef(new Set<string>());
+  useLayoutEffect(() => {
+    for (const handle of handlesRef.current.values()) {
+      const view = handle.getView();
+      if (view?.dom.getClientRects().length) view.requestMeasure();
+    }
+    onScroll?.();
+  }, [foldedFiles, onScroll]);
   const reportReady = (key: string) => {
     readyKeysRef.current.add(key);
     const keys = itemsRef.current.length
@@ -240,9 +285,26 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
     return hits.at(-1) || files.find((item) => from < item.virtualFrom) || files[0];
   };
 
-  const revealSlot = (slot: NestedItem) => {
-    const boundary = scrollerRef.current?.querySelector<HTMLDetailsElement>(`details[data-ob-nested-key="${CSS.escape(slot.key)}"]`);
-    if (boundary) boundary.open = true;
+  const revealSlot = (slot: NestedItem, afterReveal?: () => void) => {
+    const next = new Set(foldedFilesRef.current);
+    const changed = slot.ancestors.map(file => next.delete(file)).some(Boolean);
+    const reveal = () => {
+      const boundary = scrollerRef.current?.querySelector<HTMLDetailsElement>(`details[data-ob-nested-key="${CSS.escape(slot.key)}"]`);
+      if (boundary) boundary.open = true;
+      handlesRef.current.get(slot.key)?.getView()?.requestMeasure();
+      afterReveal?.();
+    };
+    if (changed) {
+      updateFoldedFiles(next);
+      requestAnimationFrame(reveal);
+    } else reveal();
+  };
+
+  const revealFocused = () => {
+    const key = focusedKeyRef.current;
+    const slot = itemsRef.current.find(item => item.key === key);
+    if (slot) revealSlot(slot, () => { if (key) handlesRef.current.get(key)?.focus(); });
+    else focusedHandle()?.focus();
   };
 
   const bindHandle = (key: string) => (handle: TexCodeMirrorHandle | null) => {
@@ -258,13 +320,14 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
       else options?.onDone?.();
       return;
     }
-    revealSlot(slot);
-    const handle = handlesRef.current.get(slot.key);
-    const view = handle?.getView();
-    const scroller = scrollerRef.current;
-    if (!handle || !view || !scroller) { options?.onDone?.(); return; }
-    const localFrom = Math.max(0, Math.min(view.state.doc.length, from - slot.virtualFrom));
-    handle.revealRange(localFrom, Math.max(0, to - slot.virtualFrom), { ...options, scrollContainer: scroller });
+    revealSlot(slot, () => {
+      const handle = handlesRef.current.get(slot.key);
+      const view = handle?.getView();
+      const scroller = scrollerRef.current;
+      if (!handle || !view || !scroller || (options?.isCurrent && !options.isCurrent())) { options?.onDone?.(); return; }
+      const localFrom = Math.max(0, Math.min(view.state.doc.length, from - slot.virtualFrom));
+      handle.revealRange(localFrom, Math.max(0, to - slot.virtualFrom), { ...options, scrollContainer: scroller });
+    });
   };
 
   const commit = (next: string) => {
@@ -291,12 +354,13 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
       const handle = handlesRef.current.get(start.key);
       const view = handle?.getView();
       if (view) {
+        if (view.state.doc.toString() !== start.text) return false;
         const localFrom = Math.max(0, from - start.virtualFrom);
         const localTo = Math.max(localFrom, to - start.virtualFrom);
-        revealSlot(start);
         const sel = view.state.selection.main;
         const intersects = sel.to >= localFrom && sel.from <= localTo;
         const hadFocus = view.hasFocus;
+        revealSlot(start, () => { if (hadFocus || intersects) view.focus(); });
         view.dispatch({
           changes: { from: localFrom, to: Math.min(localTo, view.state.doc.length), insert },
           ...(intersects ? { selection: { anchor: localFrom + insert.length }, scrollIntoView: true } : {}),
@@ -314,7 +378,7 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
 
   useImperativeHandle(ref, () => ({
     focus: () => {
-      focusedHandle()?.focus();
+      revealFocused();
     },
     getScroller: () => scrollerRef.current ?? focusedHandle()?.getScroller() ?? null,
     getView: () => focusedHandle()?.getView() ?? null,
@@ -322,20 +386,21 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
     setSelection: (from, to) => {
       const slot = slotForVirtual(from);
       if (!slot) return;
-      revealSlot(slot);
-      const handle = handlesRef.current.get(slot.key);
-      handle?.getView()?.requestMeasure();
-      handle?.setSelection(Math.max(0, from - slot.virtualFrom), Math.max(0, to - slot.virtualFrom));
-      scrollerRef.current
-        ?.querySelector(`[data-ob-nested-key="${CSS.escape(slot.key)}"]`)
-        ?.scrollIntoView({ block: "start" });
+      revealSlot(slot, () => {
+        handlesRef.current.get(slot.key)?.setSelection(Math.max(0, from - slot.virtualFrom), Math.max(0, to - slot.virtualFrom));
+        scrollerRef.current
+          ?.querySelector(`[data-ob-nested-key="${CSS.escape(slot.key)}"]`)
+          ?.scrollIntoView({ block: "start" });
+      });
     },
     revealRange,
     surround: (open, close, placeholderText) => {
+      revealFocused();
       focusedHandle()?.surround(open, close, placeholderText);
     },
-    format: (syntax, kind) => focusedHandle()?.format(syntax, kind) ?? false,
+    format: (syntax, kind) => { revealFocused(); return focusedHandle()?.format(syntax, kind) ?? false; },
     insertAtCursor: (text, asBlock) => {
+      revealFocused();
       focusedHandle()?.insertAtCursor(text, asBlock);
     },
     getLiveSource: () => sourceRef.current,
@@ -423,6 +488,10 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
     >
       {items.map((item) => {
         if (!item.text.length && !item.showLabel) return null;
+        const hidden = item.ancestors.some(file => foldedFiles.has(file));
+        const depth = Math.min(8, item.ancestors.length - 1);
+        const guide = activeScope && (item.scopes.includes(activeScope.key) || item.includedScope === activeScope.key);
+        const scopeStyle = { "--file-depth": depth, "--guide-depth": activeScope?.depth ?? 0 } as CSSProperties;
         const editor = (
           <TexCodeMirror
             ref={bindHandle(item.key)}
@@ -451,20 +520,28 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
           />
         );
         if (item.includedFile) {
+          const expanded = !foldedFiles.has(item.includedFile);
           return (
-            <details key={item.key} data-ob-nested-key={item.key} data-ob-file={item.filePath} data-ob-line-start={item.lineOffset + 1} className={styles.includeBoundary}
-              onToggle={(event) => { if (event.currentTarget.open) handlesRef.current.get(item.key)?.getView()?.requestMeasure(); }}>
-              <summary title={`Show ${item.filePath}:${item.lineOffset + 1}`}>
+            <div key={item.key} hidden={hidden} style={scopeStyle} className={cn(styles.includeBoundary, guide && styles.ancestryGuide)}
+              onPointerEnter={() => setHoveredScope({ key: item.includedScope!, depth })}
+              onPointerLeave={() => setHoveredScope(current => current?.key === item.includedScope ? undefined : current)}
+              onFocus={() => setFocusedScope({ key: item.includedScope!, depth })}
+              onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocusedScope(current => current?.key === item.includedScope ? undefined : current); }}>
+              <button type="button" className={styles.fileToggle} aria-expanded={expanded}
+                title={`${expanded ? "Collapse" : "Expand"} ${item.includedFile}`}
+                onClick={() => toggleFile(item.includedFile!)}>
                 <code>{item.includedFile}</code>
-              </summary>
-              <div className={styles.includeSource}>
-                {editor}
-              </div>
-            </details>
+              </button>
+              <details data-ob-nested-key={item.key} data-ob-file={item.filePath} data-ob-line-start={item.lineOffset + 1} className={styles.includeLine}
+                onToggle={(event) => { if (event.currentTarget.open) handlesRef.current.get(item.key)?.getView()?.requestMeasure(); }}>
+                <summary aria-label={`Include line in ${item.filePath}:${item.lineOffset + 1}`} title={`Show include line in ${item.filePath}:${item.lineOffset + 1}`}>Source</summary>
+                <div className={styles.includeSource}>{editor}</div>
+              </details>
+            </div>
           );
         }
         return (
-          <div key={item.key} data-ob-file={item.filePath} data-ob-line-start={item.lineOffset + 1} data-ob-source-from={item.virtualFrom} data-ob-source-to={item.virtualTo} data-ob-nested-key={item.key} className={cn("ob-nested-tex-slice", item.showLabel && "ob-nested-tex-card")}>
+          <div key={item.key} hidden={hidden} style={scopeStyle} data-ob-file={item.filePath} data-ob-line-start={item.lineOffset + 1} data-ob-source-from={item.virtualFrom} data-ob-source-to={item.virtualTo} data-ob-nested-key={item.key} className={cn("ob-nested-tex-slice", item.showLabel && "ob-nested-tex-card", guide && styles.ancestryGuide)}>
             {item.showLabel && (
               <div className="ob-nested-tex-card-label">
                 <code>{item.filePath}</code>

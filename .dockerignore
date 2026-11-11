@@ -8,7 +8,6 @@ content/workspace.tex
 .worktrees
 .scratch
 scratch
-.superpowers
 *.log
 *.tmp
 .DS_Store

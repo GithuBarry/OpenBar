@@ -1,212 +1,60 @@
 # OpenBar
 
-OpenBar is a **paper-first research workbench**. The manuscript defines the
-work. The Primary mindmap covers every paper TODO. Secondary maps reuse
-selected TODOs as different views of the same work. Browser agents operate
-the same repository state as the researcher.
+A research-paper workspace for people and agents. Edit the LaTeX manuscript,
+organize its TODOs in mindmaps, and keep the paper, references, and figures in
+one project repository.
 
-> OpenBar turns the research paper into an agent-operable research plan.
-
-See [docs/architecture.md](docs/architecture.md) for the product model and
-[docs/webmcp.md](docs/webmcp.md) for the browser WebMCP tool contract.
-
-## What it provides
-
-- A live TeX editor for the real include graph, with companion preview and PDF compile
-- Inline manuscript TODOs, comments, and local holes (\obtodo, \obcomment, \obmarker) that survive Git and other editors
-- A Primary mindmap covering every paper TODO, placed in its tree or visible in Primary Unplaced
-- Optional secondary maps that reuse selected TODOs with their own placement, labels, refs, progress, and appearance
-- Incomplete tables, planned figures, and marker cells as useful paper state that agents fill incrementally
-- Browser WebMCP as the sole agent interface, with tools registered from the active page
-- Optional wiki Markdown notes, project `AGENTS.md`, and skills (`skills/*/SKILL.md`, workspace `content/skills`)
-
-## Agent interface
-
-OpenBar exposes browser WebMCP tools from the page the agent is using. The
-workspace home registers workspace tools. Opening a project adds four project
-context tools. Paper, mindmap, wiki, and instructions pages register the
-actions owned by the active page. The Agent Ready control shows the current
-catalog on an open project page.
-
-A fresh agent follows this journey:
-
-```text
-open /
-→ list_projects or search_projects
-→ open_project
-→ get_project_state
-→ navigate_project
-→ use paper, mindmap, wiki, or instructions tools
-```
-
-### Home workspace tools on `/`
-
-| Tool | Purpose |
+| Plan in mindmaps | Edit the paper |
 | --- | --- |
-| `list_projects` | List workspace projects with paper links and identity details. |
-| `search_projects` | Find projects by slug, title, tagline, or label. |
-| `open_project` | Open the paper page for a slug returned by the list or search tools. |
+| ![Mindmap with inline card editing and paper TODOs](docs/images/mindmap.png) | ![LaTeX editor beside the paper reader](docs/images/paper-editor.png) |
 
-### Four project context tools
+## What you can do
 
-These tools are registered on every open project page. The open page supplies
-the project identity.
+- Edit LaTeX with file folding, a reader, PDF preview, and citation completion.
+- Keep TODOs, comments, questions, and unfinished results beside the relevant prose.
+- Organize paper TODOs in a Primary mindmap and optional secondary maps.
+- Read and edit `.bib` files, paste references, insert citations, and connect to Overleaf.
+- Give agents project file access through MCP or WebMCP, with protected app state and an inbox for `@agent` mentions.
 
-| Tool | Purpose |
-| --- | --- |
-| `get_project_state` | Read compact orientation: current location, paper title, section TODO counts, Primary Unplaced, maps, recent activity, skills, and the `AGENTS.md` path and hash. Use `detail=full` for instruction bodies and every TODO. |
-| `search_project` | Search paper headings and TeX, TODOs, comments, mindmap text, labels, refs, and wiki pages. Results include ids and hrefs for navigation. |
-| `navigate_project` | Move the visible project UI to a location returned by `get_project_state` or `search_project`. |
-| `update_project` | Update editable project metadata such as the icon, title, overview, research kind, color, venue, tagline, label, links, collaborators, or archive state with the current project hash. |
+## Run locally
 
-### Page-local tools
-
-- **Paper** — manuscript reading and editing with `get_paper_state`,
-  `get_paper_outline`, `read_paper_section`,
-  `navigate_paper_section`, `set_paper_reader_mode`,
-  `replace_paper_section`, `patch_paper_table`,
-  `remove_paper_todo`, `lint_paper`, `compile_paper`, and
-  `get_bibliography`. Raw TeX tools include `get_source_bundle`,
-  `read_source_range`, `replace_source_range`, `add_comment`,
-  `add_todo`, `update_todo`, `complete_todo`, and
-  `reopen_todo`.
-- **Mindmap** — `get_mindmap`, `focus_mindmap_node`,
-  `add_mindmap_node`, `move_mindmap_node`, `delete_mindmap_node`,
-  `patch_mindmap_node`,
-  `highlight_mindmap_activity`, `place_todo_card`,
-  `convert_card_to_todo`, `complete_todo`, `reopen_todo`,
-  `focus_todo_in_paper`, and `rename_mindmap`.
-- **Wiki** — bounded page reads and `render_preview` for the open page.
-  Wiki mutation capabilities report `capability_unavailable` in this release.
-- **Instructions** — `read_project_skill`,
-  `write_agents_md`, `write_project_skill`, `delete_project_skill`,
-  `write_workspace_agents_md`, `write_workspace_skill`, and
-  `delete_workspace_skill`. Repository setup adds
-  `get_capabilities`, `inspect_repository`, `preview_conversion`, and
-  `apply_conversion`.
-
-Page-local tools use live editor state, selected cards, navigation, focus, and
-the visible actions of their page. Their project and document identity comes
-from the active page. TeX owns TODO identity, text, and completion. Each map
-owns its card placement, labels, refs, progress, and appearance.
-Mindmap collapse is a browser-local view preference stored per project and map.
-The browser mindmap WebMCP exposes that view state. Headless MCP reads and
-writes durable map content.
-
-## Project inventory boundary
-
-The supported product inventory is the web content-store project inventory at
-`OPENBARRY_CONTENT/projects/<slug>`. The web home page and workspace WebMCP
-derive their project results from that content store.
-
-`pnpm openbar projects list` and `pnpm openbar doctor --all` inspect the
-machine-local workspace registry. This is an experimental CLI inventory for
-registered checkout paths and local diagnostics. Registry results are separate
-from web results until registration and web integration share one inventory.
-The CLI human output, help text, and JSON metadata identify this boundary.
-
-## Disposable public demo deployment
-
-The Cloudflare deployment runs a disposable public-demo boundary behind
-Cloudflare Access. Its allowlist comes from `OPENBAR_DEMO_SLUGS`. It exposes
-the configured project fixtures with their manuscript source, figures, maps,
-annotations, and project notes. Other workspace projects remain outside the
-demo image.
-
-The demo banner identifies shared disposable state. The `Reset demo` control
-restores configured projects from the fixture source. The server also enforces
-the allowlist and disables workspace administration, imports, uploads,
-instruction writes, and skill writes in demo mode.
-
-The deployment keeps authored changes in its writable Container content tree.
-Container replacement or recovery can return that tree to the image fixture.
-Use persistent content storage with backup and restore for durable researcher
-hosting.
-
-## Main routes
-
-- `/` — workspace project list and workspace WebMCP tools
-- `/p/<slug>/paper` — manuscript editor, preview, PDF, and TODOs
-- `/p/<slug>/mindmap` — Primary map with Unplaced TODOs and Recent activity
-- `/p/<slug>/mindmap/<mapId>` — secondary map with selected shared TODOs
-- `/p/<slug>/wiki` — optional supporting Markdown memory
-- `/p/<slug>/instructions` — `AGENTS.md`, skills, and setup tools
-- `/about` — product model and Agent Ready guide
-
-`/p/<slug>` redirects to the paper.
-
-## Local setup
-
-The repository targets Node 26.8.1 from [.nvmrc](.nvmrc) and pins pnpm 11.9.0 in
-`package.json`.
+Use the Node version in [.nvmrc](.nvmrc) and the pnpm version in
+[package.json](package.json).
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-Set `OPENBARRY_CONTENT` to the mounted content directory when the repository
-content lives elsewhere. The local workspace runs against that directory.
+Open [localhost:3000](http://localhost:3000). Projects live under
+`content/projects/<slug>`. Set `OPENBARRY_CONTENT` to use another content directory.
 
-### LaTeX language assistance
+TeX Live with `latexmk` enables PDF compilation.
+[TexLab](https://github.com/latex-lsp/texlab) adds LaTeX completion. See the
+deployment guide for optional conversion tools.
 
-Install [TexLab](https://github.com/latex-lsp/texlab/releases) and make `texlab`
-available on `PATH` before starting OpenBar to enable additional LaTeX
-completion. The container image includes TexLab 5.26.0. In the paper editor,
-press **Ctrl-Space** to request suggestions. The editor shows whether TexLab
-or basic completion is active.
+## Connect an agent
 
-Each request sends the current unsaved source bundle to a short-lived TexLab
-process in a temporary directory. OpenBar opens the complete included files
-and maps suggestions back to the active editor slice. Suggestions requiring
-snippet expansion, edits to other ranges, or additional edits are omitted.
-The existing completion engine remains available. The shared public demo uses
-basic completion because its visitors share the application process. TexLab
-uses the host process's filesystem and operating-system privileges, so a
-deployment serving untrusted manuscripts needs an isolated worker. TexLab is
-GPL-3.0 licensed. Its source is available at
-<https://github.com/latex-lsp/texlab/tree/v5.26.0>.
+Open `/agents` in the running app for connection instructions. Start with
+`get_project_state` to read the current paper, maps, instructions, and available
+skills. Say “check updates” to inspect the agent inbox.
 
-To seed configured project fixtures into a disposable content directory:
+The manuscript owns TODO text and completion. Each mindmap owns its layout,
+labels, and presentation. Browser preferences stay on the current device.
 
-```bash
-OPENBARRY_CONTENT=/tmp/openbar-content \
-OPENBAR_DEMO_SLUGS=private-project-a,private-project-b \
-OPENBAR_DEMO_FIXTURE=/path/to/project-fixtures \
-pnpm seed:demo
-```
+## Documentation
 
-## Release preparation
+- [Architecture and product model](docs/architecture.md)
+- [MCP and WebMCP operations](docs/webmcp.md)
+- [Hosting and deployment](deploy/README.md)
+- [Release checks](docs/release-acceptance.md)
+- [Agent instructions](AGENTS.md)
+
+## Development
 
 ```bash
 pnpm typecheck
 pnpm build
-pnpm openbar doctor --all
-git diff --check
 ```
 
-Browser WebMCP uses the manual journey documented in
-[docs/release-acceptance.md](docs/release-acceptance.md).
-
-GitHub Actions runs type checking and a production build from a clean checkout
-with the declared Node and pnpm versions. Docker image creation remains a
-separate deployment operation. Run it with
-`pnpm docker:build` as described in [deploy/README.md](deploy/README.md).
-
-For the private Cloudflare Worker plus Container package, use the build,
-Workers Builds, optional local Container, Access, and custom-hostname steps in
-[deploy/README.md](deploy/README.md).
-
-## Repository state
-
-Research content belongs in the project files:
-
-- manuscript TeX, bibliography, figures, tables
-- `\obtodo[id=…]` / `\obcomment` / `\obmarker` annotations
-- mindmap files (`role=draft` = Primary, `role=planning` = secondary, maps own placement, labels, refs)
-- `AGENTS.md` and `skills/*/SKILL.md` (project and workspace)
-
-Browser storage is for personal interface preferences such as theme, sidebar
-visibility, and the local planning-map viewpoint.
-
-OpenBar is released under the [MIT License](LICENSE).
+[MIT license](LICENSE).

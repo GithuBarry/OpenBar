@@ -10,6 +10,7 @@ import { maskTexLiterals, TEX_LITERAL_ENVIRONMENTS } from "./tex-literals";
 import { discoverTexHeadings } from "./tex-structure";
 import { getDataBlock, sha256 } from "./codec";
 import { isEnvironment, isMacro, mandatoryArgs, nodesToPlainText, parseTex } from "./tex-ast";
+import { PAPER_REFERENCES_FILE } from "./paper-compose";
 
 export type SourceDiagnostic = {
   severity: "error" | "warning" | "info";
@@ -85,7 +86,7 @@ export function existingConfiguredTexRoot(manuscriptDir: string, preferred: stri
 function classify(rel: string, hasSectionMeta: boolean): GraphNode["kind"] {
   const lower = rel.toLowerCase();
   if (lower.endsWith(".sty") || lower.endsWith(".cls")) return "style";
-  if (lower.endsWith(".bib") || /(^|\/)(references|bibliography)(?:\.[^/]*)?$/.test(lower)) return "bibliography";
+  if (lower.endsWith(".bib") || rel === PAPER_REFERENCES_FILE || /(^|\/)(references|bibliography)(?:\.[^/]*)?$/.test(lower)) return "bibliography";
   if (hasSectionMeta) return "section";
   return "include";
 }

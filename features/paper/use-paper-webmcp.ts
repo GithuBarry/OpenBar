@@ -1,26 +1,26 @@
 "use client";
 
-import { bundleSections, deriveSections } from "@/lib/tex-project/section-ranges";
-import { useEffect, useRef } from "react";
+import { bundleSections,deriveSections } from "@/lib/tex-project/section-ranges";
 import { Annotation } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
+import { useEffect,useRef } from "react";
 
-import {
-  buildPaperWebMcpTools,
-  type LivePaperSection,
-  type LivePaperSnapshot,
-  type LivePaperTodo,
-} from "@/lib/research/webmcp-paper-contract";
 import type { RemoteSyncOutcome } from "@/lib/research/operation-result";
-import { buildPaperSourceWebMcpTools, type PaperSourceHost } from "@/lib/research/webmcp-source-contract";
-import { registerWebMcpToolsIndependent, waitForModelContext } from "@/lib/research/webmcp-register";
+import {
+buildPaperWebMcpTools,
+type LivePaperSection,
+type LivePaperSnapshot,
+type LivePaperTodo,
+} from "@/lib/research/webmcp-paper-contract";
+import { registerWebMcpToolsIndependent,waitForModelContext } from "@/lib/research/webmcp-register";
+import { type PaperSourceHost } from "@/lib/research/webmcp-source-contract";
 import { lintPaperSource } from "@/lib/tex-project/tex-lint";
 
 import {
-  collectEditorTodos,
-  listBookmarks,
-  parseEditorSections,
-  type PaperEditorSection,
+collectEditorTodos,
+listBookmarks,
+parseEditorSections,
+type PaperEditorSection,
 } from "./tex-source";
 
 export const webmcpOrigin = Annotation.define<"human" | "webmcp">();
@@ -203,11 +203,14 @@ export function usePaperWebMcp(host: PaperSourceHost): void {
         removeTodo: (todoId, signal) => hostRef.current.removeTodo(todoId, signal),
         compile: (signal) => hostRef.current.compile(signal),
         lint: () => (hostRef.current.lint ? hostRef.current.lint() : { diagnostics: [] }),
+        importBibtex: (bibtex, expectedHash, signal) => {
+          if (!hostRef.current.importBibtex) throw new Error("The live paper page cannot import bibliography entries.");
+          return hostRef.current.importBibtex(bibtex, expectedHash, signal);
+        },
         replaceRange: (from, to, text, signal) => hostRef.current.replaceRange(from, to, text, signal),
       };
       const tools = [
         ...buildPaperWebMcpTools(bound),
-        ...buildPaperSourceWebMcpTools(bound),
       ];
       const registration = await registerWebMcpToolsIndependent(
         modelContext,
