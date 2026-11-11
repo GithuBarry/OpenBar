@@ -9,8 +9,8 @@ type RemoteState = "checking" | "pending" | "syncing" | "synced" | "changed" | "
 /** Each check reports its own save destination. */
 export function SaveChecks({ saved, synced, size = 14 }: { saved: boolean; synced: boolean; size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
-    <path d="m1 12 5 5L17 6" stroke={`rgb(var(--${saved ? synced ? "accent" : "warn" : "muted"}))`} />
-    <path d="m7 12 5 5L23 6" stroke={`rgb(var(--${saved && synced ? "accent" : "muted"}))`} />
+    <path d="m1 12 5 5L17 6" stroke={`rgb(var(--${saved ? "accent" : "muted"}))`} />
+    <path d="m7 12 5 5L23 6" stroke={`rgb(var(--${saved ? synced ? "accent" : "ink" : "muted"}))`} />
   </svg>;
 }
 
