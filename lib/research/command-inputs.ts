@@ -29,7 +29,7 @@ export const INBOX_INPUTS = {
 
 export const PAPER_INPUTS = {
   get_paper_state: z.strictObject({  }),
-  navigate_paper_section: z.strictObject({ sectionId: z.string().regex(new RegExp("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")).describe("Current section id from get_paper_outline. The open page supplies the project; do not pass project.") }),
+  navigate_paper_section: z.strictObject({ sectionId: z.string().regex(new RegExp("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")).describe("Current section id from get_paper_state.outline. The open page supplies the project.") }),
   set_paper_reader_mode: z.strictObject({ mode: z.enum(["document", "pdf"]).describe("Show the live document or the compiled PDF in the paper reader.") }),
   compile_paper: z.strictObject({  }),
   get_paper_compile: z.strictObject({ jobId: z.string().describe("Optional compile job id to compare with the live result.").optional() })
