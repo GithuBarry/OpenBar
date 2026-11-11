@@ -1,4 +1,4 @@
-.editor { --mindmap-dock-height: 46px; --mindmap-controls-bottom: calc(var(--mindmap-dock-height) + 16px); --mindmap-bottom-clearance: calc(var(--mindmap-dock-height) + 16px); --overleaf-notice-top: var(--mindmap-controls-bottom); position: relative; height: 100%; min-height: 0; overflow: hidden; background: rgb(var(--canvas)); container-type: inline-size; }
+.editor { --mindmap-dock-height: 46px; --mindmap-dock-bottom: 10px; --mindmap-controls-bottom: calc(var(--mindmap-dock-height) + 16px); --mindmap-bottom-clearance: calc(var(--mindmap-dock-bottom) + var(--mindmap-dock-height) + 8px); --overleaf-notice-top: var(--mindmap-controls-bottom); position: relative; height: 100%; min-height: 0; overflow: hidden; background: rgb(var(--canvas)); container-type: size; }
 .inspector { position: absolute; top: var(--mindmap-controls-bottom); right: 8px; z-index: 26; display: flex; min-height: 0; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; background: var(--surface-overlay); color: rgb(var(--ink)); padding: 0; font-family: var(--font-sans); width: 304px; max-height: calc(100% - var(--mindmap-controls-bottom) - var(--mindmap-bottom-clearance)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); margin: 0; box-shadow: var(--shadow-pop); }
 .inspector > * { flex-shrink: 0; }
 @media (max-width: 600px) {
@@ -58,7 +58,7 @@
 .toolbar { position: absolute; inset: 0; z-index: 24; pointer-events: none; }
 .toolbarActions, .canvasTools { position: absolute; top: 8px; width: max-content; height: var(--mindmap-dock-height); max-width: calc(100% - 16px); overflow-x: auto; overflow-y: hidden; padding: 6px; border-radius: 999px; scrollbar-width: none; pointer-events: auto; }
 .toolbarActions { right: 8px; }
-.canvasTools { top: auto; bottom: 8px; left: 50%; transform: translateX(-50%); }
+.canvasTools { top: auto; bottom: var(--mindmap-dock-bottom); left: 50%; transform: translateX(-50%); }
 .resumeDock { position: absolute; z-index: 30; bottom: var(--mindmap-bottom-clearance); left: 50%; width: max-content; max-width: calc(100% - 24px); transform: translateX(-50%); }
 .resumeDock:empty { display: none; }
 .viewTabs { display: flex; gap: 4px; align-items: center; min-width: 0; }
@@ -73,7 +73,7 @@
 .primaryButton:global(.p-button) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 12px; background: rgb(var(--accent)); color: rgb(var(--accent-ink)); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
 .searchTrigger { display: flex; align-items: center; gap: 8px; width: 138px; height: 34px; padding: 0 9px; color: rgb(var(--muted)); font-size: 12px; cursor: pointer; }
 .toolbar :global(.p-toolbar-btn) { --p-button-radius: 999px; height: calc(var(--mindmap-dock-height) - 12px); border-radius: 999px; }
-.searchTrigger > kbd { margin-left: auto; font-family: var(--font-sans); color: rgb(var(--faint)); }
+.searchTrigger > kbd { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; margin-left: auto; width: 20px; height: 22px; border: 1px solid rgb(var(--line)); border-radius: 6px; background: rgb(var(--surface-2)); color: rgb(var(--muted)); font: 12px/1 var(--font-mono); }
 .searchPanel, .optionsPanel { z-index: 90; border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); font-family: var(--font-sans); width: min(420px, calc(100vw - 24px)); overflow: hidden; }
 .searchField { display: flex; align-items: center; gap: 10px; padding: 14px; border-bottom: 1px solid rgb(var(--line)); color: rgb(var(--muted)); }
 .searchField > input { flex: 1; min-width: 0; background: transparent; outline: none; font-size: 13px; color: rgb(var(--ink)); }
@@ -119,6 +119,7 @@
 .toolbar button:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: -2px; }
 @media (max-width: 899px) { .inspector { width: min(304px, calc(100% - 16px)); } }
 @media (max-width: 600px) { .workspaceFooter { padding-inline: 12px; } }
+@media (min-width: 1024px) { .editor { --mindmap-dock-bottom: 10cqh; } }
 
 .card:global(.mindmap-node-card) { --card-title-size: calc(14px * var(--map-font-scale, 1)); --card-title-line: calc(19px * var(--map-font-scale, 1)); --card-title-weight: 600; --card-body-size: calc(12px * var(--map-font-scale, 1)); --card-body-line: calc(17px * var(--map-font-scale, 1)); padding: 12px 14px; min-height: 45px; }
 .card:global(.mindmap-node-root) { --card-title-size: calc(17px * var(--map-font-scale, 1)); --card-title-line: calc(21px * var(--map-font-scale, 1)); --card-title-weight: 650; }
@@ -212,9 +213,9 @@
 .todoDragGhost { position: fixed; z-index: 1000; max-width: 220px; padding: 10px 14px; border: 1px solid rgb(var(--accent)); border-radius: 9px; box-shadow: 0 8px 24px rgb(0 0 0 / .15); background: rgb(var(--surface)); font-size: 12px; pointer-events: none; }
 .card[data-todo-drop-target="true"] { outline: 3px solid rgb(var(--accent)); outline-offset: 4px; }
 @container (max-width: 1100px) {
-  .editor { --mindmap-controls-bottom: calc(2 * var(--mindmap-dock-height) + 24px); --mindmap-bottom-clearance: calc(2 * var(--mindmap-dock-height) + 24px); }
+  .editor { --mindmap-controls-bottom: calc(2 * var(--mindmap-dock-height) + 24px); --mindmap-bottom-clearance: calc(var(--mindmap-dock-bottom) + 2 * var(--mindmap-dock-height) + 16px); }
   .toolbarActions { top: calc(var(--mindmap-dock-height) + 16px); }
-  .workspaceFooter { bottom: calc(var(--mindmap-dock-height) + 16px); }
+  .workspaceFooter { bottom: calc(var(--mindmap-dock-bottom) + var(--mindmap-dock-height) + 8px); }
   .searchTrigger { width: 34px; justify-content: center; border-color: transparent; padding: 0; }
   .searchTrigger > span, .searchTrigger > kbd { display: none; }
 }

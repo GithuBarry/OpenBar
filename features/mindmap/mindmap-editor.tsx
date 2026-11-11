@@ -854,6 +854,23 @@ export function MindmapEditor({
   const [moveOpen, setMoveOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchIndex, setSearchIndex] = useState(0);
+  const searchTriggerRef = useRef<HTMLButtonElement>(null);
+  const searchPanelRef = useRef<HTMLDivElement>(null);
+  const searchDismissedOutsideRef = useRef(false);
+  useEffect(() => {
+    if (!searchOpen && !moveOpen) return;
+    searchDismissedOutsideRef.current = false;
+    // Canvas gestures intercept bubbling events used by the popover's dismissal.
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (searchTriggerRef.current?.contains(target) || searchPanelRef.current?.contains(target)) return;
+      searchDismissedOutsideRef.current = true;
+      setSearchOpen(false);
+      setMoveOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [searchOpen, moveOpen]);
   useEffect(() => {
     if (!searchOpen && !moveOpen) return;
     document.getElementById(`mindmap-search-result-${searchIndex}`)?.scrollIntoView({ block: "nearest" });
@@ -2097,12 +2114,13 @@ export function MindmapEditor({
           {selectMultiple && <button type="button" className={cn("p-toolbar-btn", styles.iconButton)} aria-label="Finish selecting cards" aria-pressed="true" onClick={() => { setSelectMultiple(false); setCardMenuOpen(true); }}><CheckSquare size={18} /></button>}
           <Popover.Root open={searchOpen || moveOpen} onOpenChange={(open) => { setSearchOpen(open); if (!open) setMoveOpen(false); }}>
             <Popover.Trigger asChild>
-              <button type="button" className={cn("p-toolbar-btn", styles.searchTrigger)} aria-label="Find a card" onClick={() => { setMoveQuery(""); setSearchIndex(0); }}>
+              <button ref={searchTriggerRef} type="button" className={cn("p-toolbar-btn", styles.searchTrigger)} aria-label="Find a card" onClick={() => { setMoveQuery(""); setSearchIndex(0); }}>
                 <Search size={15} /><span>Find a card</span><kbd>/</kbd>
               </button>
             </Popover.Trigger>
             <Popover.Portal>
-              <Popover.Content className={styles.searchPanel} sideOffset={10} align="end" collisionPadding={12} aria-label={moveOpen ? "Move card" : "Find a card"}>
+              <Popover.Content ref={searchPanelRef} className={styles.searchPanel} sideOffset={10} align="end" collisionPadding={12} aria-label={moveOpen ? "Move card" : "Find a card"}
+                onCloseAutoFocus={(event) => { if (searchDismissedOutsideRef.current) event.preventDefault(); }}>
                 <div className={styles.searchField}>
                   <Search size={17} />
                   <input autoFocus value={moveQuery} placeholder={moveOpen ? "Move under…" : "Search titles, text, and labels…"} aria-label={moveOpen ? "Search move destination" : "Search cards"} role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="mindmap-search-results" aria-activedescendant={visibleSearchResults[searchIndex] ? `mindmap-search-result-${searchIndex}` : undefined}

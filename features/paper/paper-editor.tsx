@@ -3018,7 +3018,7 @@ export function PaperEditor({
             <div ref={formatPanelRef} className={cn("p-glass-sm", paperStyles.formatPanel)}>
             {restoreEditingAttention && <span aria-hidden="true" className={paperStyles.editingGlassTint} onAnimationEnd={() => setRestoreEditingAttention(false)} />}
             <div role="toolbar" aria-label="Paper editing" className={cn("ob-format-bar", paperStyles.editingToolbar, !sessionWritable && paperStyles.editingToolbarCompact)}>
-              {!sessionWritable && <ResumeEditControl className={paperStyles.editingAccess} />}
+              {!sessionWritable && <ResumeEditControl embedded className={paperStyles.editingAccess} />}
               <Tool title="Open bibliography files" onClick={() => { void openBibliography(); }}><BookOpen size={15} /></Tool>
               <fieldset key={sessionWritable ? "editing" : "viewing"} className={paperStyles.editingTools} disabled={!sessionWritable} inert={!sessionWritable} aria-label="Formatting tools">
               {layout === "pdf" && <Tool title="Show source position in PDF" onClick={() => { void jumpToPdf(); }}><FileText size={15} /></Tool>}
