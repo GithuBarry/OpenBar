@@ -2231,22 +2231,33 @@ export function PaperEditor({
       const baseline = savedSourceRef.current;
       const result = await operation();
       if (result.ok && writing) {
+        try {
         const [paper, references] = await Promise.all([getBrowserEditablePaper(project), getBibliographyEditorAction(project)]);
+        if (!paper) throw new Error("The saved paper is unavailable.");
         reconcilePaperFiles(paper, baseline);
-        setBibliography(references.entries);
-        setBibliographyRaw(references.raw);
-        setBibliographyFiles(references.paths);
+        flushSync(() => {
+          setBibliography(references.entries);
+          setBibliographyRaw(references.raw);
+          setBibliographyFiles(references.paths);
+        });
         resetPreview(liveSource());
         setCompile(current => transitionCompileStatus(current, { state: current.state === "running" ? "running" : "idle", stale: true }));
         remoteQueue.noteEdit();
         remoteSavePendingRef.current = true;
         void pushRemote("OpenBar: edit project files", true);
+        } catch (error) {
+          const message = `Files saved. Reload the editor to refresh them. ${error instanceof Error ? error.message : String(error)}`;
+          writeRecoveryDraft();
+          pendingSaveRef.current = null;
+          requirePaperHydration(message);
+          return { ...result, warnings: [...(result.warnings || []), { severity: "warning" as const, code: "editor_refresh_pending", message }] };
+        }
       }
       return result;
     });
     saveQueueRef.current = job.then(() => undefined, () => undefined);
     return job;
-  }), [liveSource, project, pushRemote, reconcilePaperFiles, remoteQueue, resetPreview, saveNow]);
+  }), [liveSource, project, pushRemote, reconcilePaperFiles, remoteQueue, resetPreview, saveNow, writeRecoveryDraft]);
 
   const openBibliography = useCallback(async () => {
     try {

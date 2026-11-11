@@ -28,10 +28,11 @@ export function BibliographyEditor({ open, onClose, paths, readOnly = false, rea
 }) {
   const { setPendingWork } = useProjectWriteSession();
   const [selected, setSelected] = useState("");
-  const path = paths.includes(selected) ? selected : paths[0] || "";
   const [mode, setMode] = useState<"reader" | "source">("reader");
   const [query, setQuery] = useState("");
   const [files, setFiles] = useState<Record<string, FileDraft>>({});
+  const availablePaths = [...new Set([...paths, ...Object.keys(files).filter(path => files[path]!.draft !== files[path]!.text)])];
+  const path = availablePaths.includes(selected) ? selected : availablePaths[0] || "";
   const filesRef = useRef(files);
   filesRef.current = files;
   const callbacks = useRef({ readFile, saveFile });
@@ -127,8 +128,8 @@ export function BibliographyEditor({ open, onClose, paths, readOnly = false, rea
       <h2>Bibliography</h2>
       <button type="button" className="p-button p-button-borderless btn-ghost" aria-label="Close bibliography" disabled={saving} onClick={onClose}><X size={16} aria-hidden="true" /></button>
     </div>
-    <select className="p-field input text-sm" aria-label="Bibliography file" value={path} disabled={!paths.length || saving} onChange={event => { setSelected(event.target.value); setFailure(undefined); setNotice(""); setQuery(""); }}>
-      {paths.length ? paths.map(filePath => <option key={filePath} value={filePath}>{filePath}</option>) : <option value="">No .bib files</option>}
+    <select className="p-field input text-sm" aria-label="Bibliography file" value={path} disabled={!availablePaths.length || saving} onChange={event => { setSelected(event.target.value); setFailure(undefined); setNotice(""); setQuery(""); }}>
+      {availablePaths.length ? availablePaths.map(filePath => <option key={filePath} value={filePath}>{filePath}</option>) : <option value="">No .bib files</option>}
     </select>
     <div className={styles.tools}>
       <ChoiceButtons<"reader" | "source"> label="Bibliography view" value={mode} options={[{ value: "reader", label: "Reader" }, { value: "source", label: "Source" }]} onChange={setMode} />

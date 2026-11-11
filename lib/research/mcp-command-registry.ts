@@ -149,7 +149,7 @@ function assertDiskHash(map: Mindmap, expected: string | undefined): void {
 function pendingRemote(): RemoteSyncOutcome {
   return {
     status: "pending",
-    message: "Saved locally. Projects with a Git remote can run sync_git to publish changes.",
+    message: "Saved locally. Projects with a Git remote can run sync_project to publish changes.",
     retryable: true,
   };
 }
@@ -1018,12 +1018,6 @@ async function executeCommand(name: string, args: unknown, context: McpCommandCo
     return caught(error);
   }
 }
-
-export const dormantWikiMutationResult = (): OperationResult<never> => failResult(
-  "capability_unavailable",
-  "Wiki mutations are unavailable in this release. Use bounded wiki reads and preserve the existing wiki files.",
-  { retryable: false },
-);
 
 /** All tool transports retain their result while surfacing pending human requests. */
 export async function executeMcpTool(name: string, args: unknown, context: McpCommandContext): Promise<OperationResult<unknown> & { notifications?: AgentInbox | { error: string } }> {
