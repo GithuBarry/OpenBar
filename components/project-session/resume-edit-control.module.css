@@ -1,0 +1,9 @@
+.control { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; color: rgb(var(--ink)); }
+.trigger { display: inline-flex; min-width: 0; }
+.control button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 34px; padding: 0 10px; border-radius: var(--radius-control); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.control button:enabled:hover { color: rgb(var(--accent-text)); background: var(--surface-selected); }
+.control button:focus-visible, .trigger:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: -2px; border-radius: var(--radius-control); }
+.control button:disabled { color: rgb(var(--muted)); opacity: 1; }
+.control .retry { width: 34px; flex-shrink: 0; padding: 0; color: rgb(var(--accent-text)); }
+.retry:disabled { opacity: .5; }
+@media (pointer: coarse) { .control button { height: 44px; } .control .retry { width: 44px; } }

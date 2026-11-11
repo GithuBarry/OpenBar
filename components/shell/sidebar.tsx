@@ -102,11 +102,11 @@ export function Sidebar({
 
         <div className="mt-auto border-t border-line p-3">
           <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 whitespace-nowrap">
               <Link href="/" className="text-xs text-muted hover:text-ink">All projects</Link>
               <Link href="/about" className="text-xs text-muted hover:text-ink">About</Link>
             </div>
-            <div className="flex items-center gap-2"><AgentReadyIndicator /><ThemeToggle /></div>
+            <div className="flex shrink-0 items-center gap-2"><AgentReadyIndicator /><ThemeToggle compact /></div>
           </div>
           {publicDemo && activeSlug && <div className="mt-3"><ResetDemoButton slug={activeSlug} /></div>}
           {!publicDemo && writable && <button type="button" className="mt-3 text-xs text-muted disabled:opacity-50" disabled={!canRelease} onClick={() => { void release(); }}>Release editing access</button>}

@@ -14,12 +14,13 @@ type SessionContext = {
   check: () => Promise<void>;
   checking: boolean;
   accessMessage: string;
+  accessError: string | null;
   inspect: () => Promise<Status>;
   resumeEdit: (expectedOwnerGeneration: string | null) => Promise<Status>;
   pendingLocalWork: boolean;
 };
 
-const WriteSessionContext = createContext<SessionContext>({ writable: true, setPendingWork: () => {}, release: async () => {}, canRelease: false, restore: () => {}, canRestore: false, check: async () => {}, checking: false, accessMessage: "", inspect: async () => { throw new Error("Open a project to check editing access."); }, resumeEdit: async () => { throw new Error("Open a project to resume editing."); }, pendingLocalWork: false });
+const WriteSessionContext = createContext<SessionContext>({ writable: true, setPendingWork: () => {}, release: async () => {}, canRelease: false, restore: () => {}, canRestore: false, check: async () => {}, checking: false, accessMessage: "", accessError: null, inspect: async () => { throw new Error("Open a project to check editing access."); }, resumeEdit: async () => { throw new Error("Open a project to resume editing."); }, pendingLocalWork: false });
 export function useProjectWriteSession() { return useContext(WriteSessionContext); }
 
 // This module is scoped to one browser document. It carries an idle lease
@@ -46,6 +47,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
   const [status, setStatus] = useState<Status | null>(null);
   const [writable, setWritable] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [idleYielded, setIdleYielded] = useState(false);
   const [pendingWork, setPendingWorkState] = useState(false);
@@ -107,13 +109,15 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
       body: JSON.stringify({ action, sessionId: existing?.sessionId || newSessionId(), credential: existing, expectedOwnerGeneration }),
       cache: "no-store",
     });
-    return response.json() as Promise<{ ok: boolean; status?: Status; credential?: Credential; message?: string }>;
+    const result = await response.json().catch(() => null) as { ok: boolean; status?: Status; credential?: Credential; message?: string } | null;
+    if (!result) throw new Error(`Editing access returned HTTP ${response.status} ${response.statusText}.`);
+    return result;
   }, [endpoint]);
 
   const readStatus = useCallback(async () => {
     const response = await fetch(endpoint, { cache: "no-store", ...(credential.current ? { headers: { [PROJECT_WRITE_SESSION_HEADER]: JSON.stringify(credential.current) } } : {}) });
-    const result = await response.json() as { status?: Status };
-    if (!response.ok || !result.status) throw new Error("Could not check editing access.");
+    const result = await response.json().catch(() => null) as { status?: Status; message?: string } | null;
+    if (!response.ok || !result?.status) throw new Error(result?.message || `Editing access returned HTTP ${response.status} ${response.statusText}.`);
     return result.status;
   }, [endpoint]);
 
@@ -128,6 +132,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
   const inspect = useCallback(async () => {
     const current = credential.current;
     const next = await readStatus();
+    setAccessError(null);
     if (mounted.current && credential.current === current) {
       setStatus(next);
       if (current && !next.writable) {
@@ -142,14 +147,16 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
   const check = useCallback(async () => {
     setWorking(true);
     setMessage(null);
+    setAccessError(null);
     try { await inspect(); }
-    catch { if (mounted.current) setMessage("Could not check editing access. Try again."); }
+    catch (error) { if (mounted.current) setAccessError(`Access check failed. ${error instanceof Error ? error.message : String(error)}`); }
     finally { if (mounted.current) setWorking(false); }
   }, [inspect]);
 
   const claim = useCallback(async (resume?: Credential, refresh = true) => {
     setWorking(true);
     setMessage(null);
+    setAccessError(null);
     try {
       const result = await request(resume ? "resume" : "acquire", resume);
       if (!mounted.current) {
@@ -171,9 +178,9 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
         setWritable(false);
         if (result.message) setMessage(result.message);
       }
-    } catch {
+    } catch (error) {
       setWritable(false);
-      setMessage("Could not check editing access. Your open draft stays in this tab.");
+      setAccessError(`Resume edit failed. ${error instanceof Error ? error.message : String(error)}`);
     } finally { setWorking(false); }
   }, [record, request, router]);
 
@@ -182,6 +189,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
     if (!current || (!idle && pendingKeys.current.size) || pendingRequests.current || releasing.current) return;
     releasing.current = true;
     setWorking(true);
+    setAccessError(null);
     try {
       const result = await request("release", current);
       if (result.status) setStatus(result.status);
@@ -190,7 +198,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
       setWritable(false);
       setIdleYielded(idle);
       setMessage(null);
-    } catch { setMessage("Could not release editing access. Try again."); }
+    } catch (error) { setAccessError(`Release failed. ${error instanceof Error ? error.message : String(error)}`); }
     finally { releasing.current = false; setWorking(false); }
   }, [record, request]);
 
@@ -211,7 +219,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
         setStatus(next);
         if (firstCheck.current && next.state === "available") await claim(undefined, false);
         firstCheck.current = false;
-      } catch { if (!stopped) setMessage("Could not check editing access."); }
+      } catch (error) { if (!stopped) setAccessError(`Access check failed. ${error instanceof Error ? error.message : String(error)}`); }
     };
     // Deferring startup lets development-mode effect replay cancel the first
     // setup before it sends a lease request.
@@ -229,12 +237,12 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
           if (stopped || credential.current !== current) return;
           if (result.status) setStatus(result.status);
           if (!result.ok) { record(null); setWritable(false); setMessage(result.message || "Editing access changed. Your open draft stays in this tab."); }
-          else { setWritable(true); setMessage(null); }
+          else { setWritable(true); setMessage(null); setAccessError(null); }
         } else {
           const next = await readStatus();
-          if (!stopped && credential.current === current) setStatus(next);
+          if (!stopped && credential.current === current) { setStatus(next); setAccessError(null); }
         }
-      } catch { if (!stopped && credential.current === current) { setWritable(false); setMessage("Could not check editing access. Your open draft stays in this tab."); } }
+      } catch (error) { if (!stopped && credential.current === current) { setWritable(false); setAccessError(`Access check failed. ${error instanceof Error ? error.message : String(error)}`); } }
     }, PROJECT_WRITE_SESSION_HEARTBEAT_MS);
     const activity = () => { lastActivity.current = Date.now(); };
     const focus = () => { void check(); };
@@ -280,6 +288,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
     if (pendingKeys.current.size && !replaceDraft) throw Object.assign(new Error("Your draft stays in this tab. Copy or download it and use Resume edit here, or open a fresh project tab."), { code: "conflict" });
     setWorking(true);
     setMessage(null);
+    setAccessError(null);
     try {
       const result = await request("takeover", undefined, expectedOwnerGeneration);
       if (!mounted.current) {
@@ -299,7 +308,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
       reloadTimer.current = window.setTimeout(() => { reloadTimer.current = null; window.location.reload(); }, 150);
       return result.status;
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Editing access could not be resumed. Try again.");
+      setAccessError(`Resume edit failed. ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     } finally { setWorking(false); }
   }, [record, request, working]);
@@ -311,8 +320,8 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
     }
     void resumeEdit(status.ownerGeneration, true).catch(() => {});
   }, [resumeEdit, status, working]);
-  const accessMessage = message || (working || !status ? "Checking editing access…" : idleYielded ? `Session idled. ${status.state === "occupied" ? "Another session is editing." : "Editing lock yielded."}` : status.state === "occupied" ? "Another session is editing." : pendingWork && heldWriterLease.current ? "Copy or download your draft before restoring access" : "Viewing only");
-  const context = useMemo(() => ({ writable: publicDemo ? true : writable, setPendingWork, release, canRelease: writable && !working && !pendingWork && pendingRequestCount === 0, restore, canRestore: !publicDemo && !working && !writable && Boolean(status) && pendingRequestCount === 0, check, checking: working, accessMessage, inspect, resumeEdit, pendingLocalWork: pendingWork }), [publicDemo, writable, setPendingWork, release, working, pendingWork, pendingRequestCount, restore, status, check, accessMessage, inspect, resumeEdit]);
+  const accessMessage = accessError || message || (working || !status ? "Checking access…" : idleYielded ? "Session idle. Editing paused." : status.state === "occupied" ? "Another session is editing." : pendingWork && heldWriterLease.current ? "Save your draft first." : "View only");
+  const context = useMemo(() => ({ writable: publicDemo ? true : writable, setPendingWork, release, canRelease: writable && !working && !pendingWork && pendingRequestCount === 0, restore, canRestore: !publicDemo && !working && !writable && Boolean(status) && pendingRequestCount === 0, check, checking: working, accessMessage, accessError, inspect, resumeEdit, pendingLocalWork: pendingWork }), [publicDemo, writable, setPendingWork, release, working, pendingWork, pendingRequestCount, restore, status, check, accessMessage, accessError, inspect, resumeEdit]);
   return <WriteSessionContext.Provider value={context}>
     {children}
   </WriteSessionContext.Provider>;

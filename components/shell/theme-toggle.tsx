@@ -17,18 +17,17 @@ function ThemeSwatch({ theme }: { theme: typeof THEMES[number] }) {
     style={{ background: `linear-gradient(135deg, ${theme.background} 50%, ${theme.foreground} 50%)` }} />;
 }
 
-export function ThemeToggle({ className }: { className?: string }) {
+export function ThemeToggle({ className, compact = false }: { className?: string; compact?: boolean }) {
   const { theme, setTheme } = useTheme();
   const current = THEMES.find(option => option.value === theme) || THEMES[0];
   return <DropdownMenu.Root>
     <DropdownMenu.Trigger asChild>
-      <button type="button" aria-label={`Color theme: ${current.label}`} className={cn(
+      <button type="button" aria-label={`Color theme: ${current.label}`} style={compact ? { width: 30, minWidth: 30, height: 30, padding: 0, justifyContent: "center", flexShrink: 0 } : undefined} className={cn(
         "p-button p-button-glass ob-glass-button",
         className,
       )}>
         <ThemeSwatch theme={current} />
-        <span>Color</span>
-        <ChevronDown size={12} aria-hidden="true" />
+        {!compact && <><span>Color</span><ChevronDown size={12} aria-hidden="true" /></>}
       </button>
     </DropdownMenu.Trigger>
     <MenuSurface align="end" className="min-w-36 p-1">

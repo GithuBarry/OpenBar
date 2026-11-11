@@ -742,6 +742,7 @@ button, a, [role="button"] { touch-action: manipulation; }
   padding: 0.45rem 0.6rem;
 }
 .input:focus { outline: 2px solid rgb(var(--accent) / 0.4); outline-offset: 0; border-color: rgb(var(--accent)); }
+select.input { appearance: auto; cursor: pointer; }
 .input.todo-search-input { padding: 0.25rem 0.5rem 0.25rem 1.75rem; }
 
 /* Current section breadcrumb. No motion. Mobile shows only the leaf heading. */
@@ -915,11 +916,12 @@ button, a, [role="button"] { touch-action: manipulation; }
   --p-sidebar-text: rgb(var(--ink));
   --p-sidebar-text-dim: rgb(var(--muted));
   --p-sidebar-icon: rgb(var(--accent));
-  --p-sidebar-icon-selected: rgb(var(--ink));
+  --p-sidebar-icon-selected: rgb(var(--accent-text));
   --p-sidebar-selected: var(--surface-selected);
   background: rgb(var(--sidebar));
   border-right: 1px solid rgb(var(--line));
 }
+.ob-sidebar .p-sidebar-row.p-selected { color: rgb(var(--accent-text)); }
 [data-theme="dark"] .ob-sidebar {
   box-shadow: inset 1px 0 0 rgb(255 255 255 / 0.06);
 }
@@ -1034,24 +1036,6 @@ button, a, [role="button"] { touch-action: manipulation; }
 }
 
 /* ---- Editable mindmap ---- */
-.mindmap-activity {
-  display: flex;
-  flex-shrink: 0;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 0;
-  border-bottom: 1px solid rgb(var(--line));
-  background: rgb(var(--surface-2));
-  padding: 0.3rem 0.55rem 0.35rem;
-}
-.mindmap-activity-warn { margin: 0; font-size: 11px; }
-.mindmap-activity-row {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-width: 0;
-  overflow-x: auto;
-}
 .mindmap-peer-view { min-height: 0; flex: 1; overflow: auto; padding: clamp(1rem, 3vw, 2.2rem); background: rgb(var(--canvas)); }
 .mindmap-peer-view-heading { display: flex; max-width: 58rem; align-items: end; justify-content: space-between; gap: 1rem; margin: 0 auto 1rem; border-bottom: 1px solid rgb(var(--line)); padding-bottom: 0.8rem; }
 .mindmap-peer-view-heading h2 { margin: 0.12rem 0 0; color: rgb(var(--ink)); font-family: var(--font-serif); font-size: 1.25rem; }
@@ -1066,41 +1050,6 @@ button, a, [role="button"] { touch-action: manipulation; }
 .mindmap-unplaced-item p { margin: 0.18rem 0; color: rgb(var(--muted)); font-size: 0.74rem; white-space: pre-wrap; }
 .mindmap-unplaced-item small, .mindmap-peer-empty, .mindmap-peer-warning { color: rgb(var(--faint)); font-size: 0.68rem; }
 .mindmap-peer-empty, .mindmap-peer-warning { max-width: 58rem; margin: 1rem auto; }
-.mindmap-activity-label {
-  flex-shrink: 0;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgb(var(--faint));
-}
-.mindmap-activity-item {
-  display: inline-flex;
-  max-width: 220px;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 0.35rem;
-  border: 1px solid rgb(var(--line));
-  border-radius: 6px;
-  background: rgb(var(--surface));
-  padding: 0.2rem 0.45rem;
-  font-size: 12px;
-  color: rgb(var(--ink));
-}
-.mindmap-activity-date input {
-  height: 28px;
-  border: 1px solid rgb(var(--line));
-  border-radius: 6px;
-  background: rgb(var(--surface));
-  color: rgb(var(--ink));
-  padding: 0 0.35rem;
-  font-size: 0.72rem;
-}
-.mindmap-activity-button-active {
-  border-color: var(--border-selected) !important;
-  background: var(--surface-selected) !important;
-  color: rgb(var(--ink)) !important;
-}
 .mindmap-workspace { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; }
 .mindmap-toolbar-button {
   white-space: nowrap;
@@ -1944,7 +1893,9 @@ button, a, [role="button"] { touch-action: manipulation; }
 .ob-git-merge-editor .cm-merge-revert button { padding: 2px 5px; border-radius: 4px; color: rgb(var(--accent-text)); background: rgb(var(--surface)); }
 
 .ob-comment-add-group { display: inline-flex; align-items: center; height: 34px; gap: 0; border: 0; border-radius: 6px; }
+.ob-comment-add-group:is(:hover, :focus-within), .ob-comment-add-group:has([data-state="open"]) { background: rgb(var(--surface-2)); }
 .ob-comment-add-group > .ob-comment-add-action { height: 34px; border-radius: 6px 0 0 6px; background: transparent; }
+.ob-comment-add-group > .ob-comment-add-action:hover { background: transparent; }
 .ob-comment-add-group > .ob-comment-kind-picker { height: 34px; border: 0; padding-left: 3px; }
 .ob-comment-add-group select { height: 34px; padding-block: 0; background: transparent; }
 @media (max-width: 1023px), (pointer: coarse) { .ob-comment-add-group, .ob-comment-add-group > .ob-comment-add-action, .ob-comment-add-group > .ob-comment-kind-picker, .ob-comment-add-group select { height: 44px; } }
