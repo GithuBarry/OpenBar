@@ -148,6 +148,25 @@ pnpm dev
 Set `OPENBARRY_CONTENT` to the mounted content directory when the repository
 content lives elsewhere. The local workspace runs against that directory.
 
+### LaTeX language assistance
+
+Install [TexLab](https://github.com/latex-lsp/texlab/releases) and make `texlab`
+available on `PATH` before starting OpenBar to enable additional LaTeX
+completion. The container image includes TexLab 5.26.0. In the paper editor,
+press **Ctrl-Space** to request suggestions. The editor shows whether TexLab
+or basic completion is active.
+
+Each request sends the current unsaved source bundle to a short-lived TexLab
+process in a temporary directory. OpenBar opens the complete included files
+and maps suggestions back to the active editor slice. Suggestions requiring
+snippet expansion, edits to other ranges, or additional edits are omitted.
+The existing completion engine remains available. The shared public demo uses
+basic completion because its visitors share the application process. TexLab
+uses the host process's filesystem and operating-system privileges, so a
+deployment serving untrusted manuscripts needs an isolated worker. TexLab is
+GPL-3.0 licensed. Its source is available at
+<https://github.com/latex-lsp/texlab/tree/v5.26.0>.
+
 To seed configured project fixtures into a disposable content directory:
 
 ```bash

@@ -43,6 +43,7 @@ import { boundaryLineNumbers } from "./boundary-line-numbers";
 import { autocompletion, completionKeymap, acceptCompletion } from "@codemirror/autocomplete";
 import { latex, latexCompletionSource, latexLanguage } from "codemirror-lang-latex";
 import { projectCompletions, type PaperCompletionContext } from "./latex-completion";
+import { latexLspCompletions, type LatexLspContext } from "./latex-lsp-completion";
 import { commentKindsSource, metadataMarkers } from "./metadata-markers";
 import { obMarkerDecorations, headingCountSeed } from "./ob-cm-decorations";
 import { bannerRanges } from "@/lib/tex-project/source-bundle-format";
@@ -485,6 +486,7 @@ export type TexCodeMirrorProps = {
   texHighlighting?: boolean;
   lineOffset?: number;
   getCompletionContext?: () => PaperCompletionContext;
+  getLspContext?: () => LatexLspContext | undefined;
   headingCounts?: Map<string, number>;
   focusContext?: TexFocusContext | null;
 };
@@ -529,11 +531,14 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
     texHighlighting = true,
     lineOffset = 0,
     getCompletionContext,
+    getLspContext,
     headingCounts,
     focusContext = null,
   }, ref) {
     const completionContextRef = useRef(getCompletionContext);
     completionContextRef.current = getCompletionContext;
+    const lspContextRef = useRef(getLspContext);
+    lspContextRef.current = getLspContext;
     const hostRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const highlightTimerRef = useRef<number | null>(null);
@@ -666,7 +671,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
       const host = hostRef.current;
       if (!host) return;
 
-      const completion = autocompletion({ override: [latexCompletionSource(true), projectCompletions(() => completionContextRef.current?.() ?? { source: viewRef.current?.state.doc.toString() || valueRef.current, citationKeys: [] })] });
+      const completion = autocompletion({ override: [latexCompletionSource(true), projectCompletions(() => completionContextRef.current?.() ?? { source: viewRef.current?.state.doc.toString() || valueRef.current, citationKeys: [] }), latexLspCompletions(() => lspContextRef.current?.())] });
       const placeholderComp = placeholderCompRef.current;
       const seedComp = seedCompRef.current;
       const compact = variantRef.current === "compact";
@@ -829,7 +834,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
 
     useEffect(() => {
       viewRef.current?.dispatch({
-        effects: languageCompRef.current.reconfigure(texHighlighting ? [latexSyntax(), autocompletion({ override: [latexCompletionSource(true), projectCompletions(() => completionContextRef.current?.() ?? { source: viewRef.current?.state.doc.toString() || valueRef.current, citationKeys: [] })] })] : []),
+        effects: languageCompRef.current.reconfigure(texHighlighting ? [latexSyntax(), autocompletion({ override: [latexCompletionSource(true), projectCompletions(() => completionContextRef.current?.() ?? { source: viewRef.current?.state.doc.toString() || valueRef.current, citationKeys: [] }), latexLspCompletions(() => lspContextRef.current?.())] })] : []),
       });
     }, [texHighlighting]);
 

@@ -22,7 +22,7 @@ const NODE_VERSION = packageJson.engines.node.replace(/^>=/, "")
 const PNPM_VERSION = packageJson.packageManager.split("@")[1]
 
 const DAILY_FLOW = [
-  ["Create a paper", "In your private workspace, choose New project, enter a title, and select Create. OpenBar opens the paper with an Introduction and a starter TODO."],
+  ["Create a paper", "In your private workspace, choose New project, enter a title, and choose where the project should live. A fresh paper opens with an Introduction and a starter TODO."],
   ["Write and check saving", "Edit the manuscript, wait for the save indicator, then reload to confirm your edit is saved. Open Instructions to add the project’s AGENTS.md and any useful skills."],
   ["Check the shared TODO", "Open Mindmap and find the starter TODO in the Primary map or Primary Unplaced. Completing it updates the paper and every map that uses it."],
   ["Compile the paper", "Return to Paper and select Recompile, then open PDF. Check that the PDF reflects your text. A compilation error includes the TeX log for diagnosing missing packages or source errors."],
@@ -46,7 +46,7 @@ export default async function AboutPage() {
 
       <section className="mx-auto max-w-6xl px-6 py-10 sm:py-12">
         <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-accent">Research workbench</p>
-        <h1 className="mt-4 max-w-4xl font-serif text-4xl font-semibold leading-[1.04] tracking-tight sm:text-6xl">
+        <h1 className="mt-4 max-w-4xl font-sans text-4xl font-semibold leading-[1.04] tracking-tight sm:text-6xl">
           Set up your research workspace.
         </h1>
         <p className="mt-6 max-w-3xl text-base leading-7 text-muted sm:text-lg">
@@ -62,7 +62,7 @@ export default async function AboutPage() {
       <section id="local-setup" aria-labelledby="local-setup-heading" className="scroll-mt-24 border-y border-line bg-surface/50">
         <div className="mx-auto max-w-6xl px-6 py-10">
           <div className="flex items-center gap-2 text-accent"><Settings2 size={17} /><p className="text-sm font-semibold">Local setup</p></div>
-          <h2 id="local-setup-heading" className="mt-3 font-serif text-3xl font-semibold tracking-tight">Run OpenBar on your computer.</h2>
+          <h2 id="local-setup-heading" className="mt-3 font-sans text-3xl font-semibold tracking-tight">Run OpenBar on your computer.</h2>
           <p className="mt-3 text-sm leading-6 text-muted">These commands use a macOS, Linux, or WSL terminal. If someone already hosts your workspace, go straight to <a href="#first-paper" className="text-accent underline">your first paper</a>.</p>
           <ol className="mt-6 grid gap-5 lg:grid-cols-2">
             <li className="min-w-0 rounded-xl border border-line bg-canvas p-5">
@@ -95,9 +95,9 @@ export default async function AboutPage() {
       <section id="first-paper" aria-labelledby="first-paper-heading" className="mx-auto grid max-w-6xl scroll-mt-24 gap-6 px-6 py-10 lg:grid-cols-[0.9fr_1.1fr]">
         <div>
           <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-accent">First paper</p>
-          <h2 id="first-paper-heading" className="mt-3 font-serif text-3xl font-semibold tracking-tight">Check the whole writing loop.</h2>
+          <h2 id="first-paper-heading" className="mt-3 font-sans text-3xl font-semibold tracking-tight">Check the whole writing loop.</h2>
           <p className="mt-4 text-sm leading-6 text-muted">
-            A new project starts with local file saving. For Git history, initialize a repository inside the project. Remote synchronization also needs a configured remote. The save indicator reports these stages separately.
+            Keep a paper in OpenBar or connect it to Overleaf during setup. Use your Overleaf dashboard to select an existing project or check the name and create a blank one. For a paper you already started in OpenBar, use Connect Overleaf on its project card. The paper’s save indicator reports local saves and Git sync separately.
           </p>
           <Link href="/" className="p-button p-button-default btn-outline mt-4 text-sm">Open workspace <ArrowRight size={14} /></Link>
           <p className="mt-4 text-sm leading-6 text-muted">An existing OpenBar project can be copied into the content folder’s <code>projects</code> directory. Keep its manuscript, bibliography, figures, and hidden <code>.OpenBar</code> metadata together, then reload the workspace.</p>
@@ -118,7 +118,7 @@ export default async function AboutPage() {
       <section id="agent-setup" aria-labelledby="agent-setup-heading" className="scroll-mt-24 border-y border-line bg-surface/50">
         <div className="mx-auto max-w-6xl px-6 py-10">
           <div className="flex items-center gap-2 text-accent"><LockKeyhole size={17} /><p className="text-sm font-semibold">Agent access</p></div>
-          <h2 id="agent-setup-heading" className="mt-3 font-serif text-3xl font-semibold tracking-tight">Connect the agent you use.</h2>
+          <h2 id="agent-setup-heading" className="mt-3 font-sans text-3xl font-semibold tracking-tight">Connect the agent you use.</h2>
           <div className="mt-5 grid gap-5 lg:grid-cols-2">
             <div className="rounded-xl border border-line bg-canvas p-5">
               <h3 className="text-sm font-semibold">Browser agent</h3>
@@ -138,7 +138,7 @@ export default async function AboutPage() {
       <section className="mx-auto grid max-w-6xl gap-6 px-6 py-10 lg:grid-cols-[1.15fr_0.85fr]">
         <div>
           <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-accent">How state stays durable</p>
-          <h2 className="mt-3 font-serif text-3xl font-semibold tracking-tight">Research work stays in files you can inspect and edit.</h2>
+          <h2 className="mt-3 font-sans text-3xl font-semibold tracking-tight">Research work stays in files you can inspect and edit.</h2>
           <p className="mt-4 max-w-2xl text-sm leading-6 text-muted">
             Manuscripts, project metadata, mindmaps, and source records are represented in the project directory. TeX owns TODO identity, text, and completion, while each map owns card placement, labels, refs, progress, and appearance. Device preferences such as theme, sidebar visibility, and the local planning-map viewpoint remain personal browser settings.
           </p>

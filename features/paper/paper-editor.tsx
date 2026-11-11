@@ -2845,6 +2845,7 @@ export function PaperEditor({
               }}
             >
             <NestedBundleEditor
+              project={project}
               rootFile={initialBundle.rootFile}
               segments={sourceSegmentsRef.current}
               manualScrollMeasurement={narrow || coarsePointer}

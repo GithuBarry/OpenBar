@@ -162,6 +162,7 @@ function localFocusContext(
 }
 
 export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
+  project: string;
   rootFile: string;
   segments: Pick<ClientSourceSegment, "filePath" | "editable">[];
   value: string;
@@ -176,7 +177,22 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
   placeholder?: string;
   className?: string;
   focusContext?: TexFocusContext | null;
-}>(function NestedBundleEditor({ rootFile, segments, value, valueRevision, currentRevision, readOnly = false, citationKeys = [], onDocChanges, onScroll, manualScrollMeasurement = true, onReadyProgress, placeholder, className, focusContext = null }, ref) {
+}>(function NestedBundleEditor({ project, rootFile, segments, value, valueRevision, currentRevision, readOnly = false, citationKeys = [], onDocChanges, onScroll, manualScrollMeasurement = true, onReadyProgress, placeholder, className, focusContext = null }, ref) {
+  const [lspStatus, setLspStatus] = useState<"checking" | "available" | "missing" | "demo">("checking");
+  const lspAvailable = lspStatus === "available";
+  useEffect(() => {
+    const controller = new AbortController();
+    setLspStatus("checking");
+    fetch(`/api/p/${encodeURIComponent(project)}/paper/language`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : { available: false })
+      .then((result: unknown) => {
+        if (!result || typeof result !== "object") return setLspStatus("missing");
+        if ("available" in result && result.available === true) return setLspStatus("available");
+        setLspStatus("reason" in result && result.reason === "demo" ? "demo" : "missing");
+      })
+      .catch(() => { if (!controller.signal.aborted) setLspStatus("missing"); });
+    return () => controller.abort();
+  }, [project]);
   const readOnlyRef = useRef(readOnly);
   readOnlyRef.current = readOnly;
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -418,6 +434,7 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
             value={item.text}
             isValueCurrent={() => itemsRef.current.find((entry) => entry.key === item.key)?.text === item.text}
             getCompletionContext={() => ({ source: sourceRef.current, citationKeys })}
+            getLspContext={() => ({ project, source: sourceRef.current, file: item.filePath, fileFrom: item.localFrom, available: lspAvailable })}
             headingCounts={item.headingCounts}
             placeholder={placeholder}
             onFocus={() => {
