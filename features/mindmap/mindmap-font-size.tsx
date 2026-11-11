@@ -6,12 +6,13 @@ import { AArrowDown, AArrowUp, RotateCcw, SlidersHorizontal } from "lucide-react
 import { ChoiceButtons } from "@/components/choice-buttons";
 import { FastTooltip } from "@/components/fast-tooltip";
 import { AnchoredPop } from "@/components/pop";
+import { DEFAULT_MINDMAP_FONT_SIZE } from "@/lib/mindmap/mindmap";
 import { CardCaution } from "./card-caution";
 import styles from "./mindmap-font-size.module.css";
 
 const MIN_SIZE = 10;
 const MAX_SIZE = 20;
-const DEFAULT_SIZE = 12;
+const DEFAULT_SIZE = DEFAULT_MINDMAP_FONT_SIZE;
 const PRESETS = [
   { value: 10, label: "Compact" },
   { value: DEFAULT_SIZE, label: "Standard" },
@@ -26,7 +27,7 @@ export function MindmapFontSize({ value, disabled = false, onChange }: SizeContr
   const anchor = useRef<HTMLButtonElement>(null);
   return <div className={styles.control}>
     <FastTooltip label="Mindmap appearance">
-      <button ref={anchor} type="button" className={`p-toolbar-btn ${styles.trigger}`} aria-label="Mindmap appearance" aria-expanded={open} onClick={() => setOpen(current => !current)}>
+      <button ref={anchor} type="button" className={`p-button p-button-glass ob-glass-button ${styles.trigger}`} aria-label="Mindmap appearance" aria-expanded={open} onClick={() => setOpen(current => !current)}>
         <SlidersHorizontal size={15} /><span>{value} px</span>
       </button>
     </FastTooltip>

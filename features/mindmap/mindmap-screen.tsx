@@ -34,11 +34,10 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
     mapId: activeId,
   });
 
-  return (
-    <MindmapTitleProvider key={`${slug}:${activeId}`}><div className={styles.screen}>
-      <PageHeader
+  const header = (
+    <PageHeader
         compact
-        className={`${styles.pageHeader} p-toolbar-group`}
+        className={styles.pageHeader}
         location="Mindmap"
         title={`${project.title} Mindmap`}
         subtitle={isPrimary ? "Primary research map" : "Planning map"}
@@ -46,7 +45,7 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
         readOnlyProject={isPublicDemoMode()}
         actions={
           <div className={styles.headerActions}>
-            <Link href={`/p/${slug}/paper`} className={`p-toolbar-btn ${styles.paperLink}`} aria-label="Open paper"><FileText size={14} /><span>Paper</span></Link>
+            <Link href={`/p/${slug}/paper`} className={`p-button p-button-glass ob-glass-button ${styles.paperLink}`} aria-label="Open paper"><FileText size={14} /><span>Paper</span></Link>
             <MindmapSwitcher
               project={slug}
               activeId={activeId}
@@ -60,10 +59,15 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
           </div>
         }
       />
+  );
+
+  return (
+    <MindmapTitleProvider key={`${slug}:${activeId}`}><div className={styles.screen}>
       <div className="min-h-0 flex-1 overflow-hidden">
         <MindmapEditor
           key={`${slug}:${activeId}`}
           project={slug}
+          header={header}
           initialMindmap={mindmap}
           draftMindmap={isPrimary ? primaryFallback : null}
           paperState={state}

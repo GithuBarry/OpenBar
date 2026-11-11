@@ -7,6 +7,8 @@ import { coerceArtifactRef } from "@/lib/research/artifact-link";
 import { indexMindmap, persistableMindmap } from "@/lib/mindmap-index";
 import { sha256Hex } from "@/lib/mindmap/sha256";
 
+export const DEFAULT_MINDMAP_FONT_SIZE = 13;
+
 export function normalizeMindmap(mindmap: Mindmap): Mindmap {
   const cleaned = persistableMindmap(mindmap);
   const index = indexMindmap(cleaned);

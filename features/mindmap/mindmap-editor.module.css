@@ -56,23 +56,17 @@
 /* The workspace owns its chrome and geometry as one component. */
 .editor > :global(.mindmap-workspace) { position: absolute; inset: 0; }
 .toolbar { position: absolute; inset: 0; z-index: 24; pointer-events: none; }
-.toolbarActions, .canvasTools { position: absolute; top: 8px; width: max-content; height: var(--mindmap-dock-height); max-width: calc(100% - 16px); overflow-x: auto; overflow-y: hidden; padding: 6px; border-radius: 999px; scrollbar-width: none; pointer-events: auto; }
-.toolbarActions { right: 8px; }
+.toolbar > .projectBar, .toolbar > .canvasTools { position: absolute; width: max-content; height: var(--mindmap-dock-height); min-height: 0; max-width: calc(100% - 16px); flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; overflow-y: hidden; pointer-events: auto; }
+.projectBar { top: 8px; left: 8px; }
+.projectBar > :global(.ob-chrome-header) { flex: 0 1 auto; min-width: 0; }
 .canvasTools { top: auto; bottom: var(--mindmap-dock-bottom); left: 50%; transform: translateX(-50%); }
 .resumeDock { position: absolute; z-index: 30; bottom: var(--mindmap-bottom-clearance); left: 50%; width: max-content; max-width: calc(100% - 24px); transform: translateX(-50%); }
 .resumeDock:empty { display: none; }
-.viewTabs { display: flex; gap: 4px; align-items: center; min-width: 0; }
-.viewTabs > button { display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border-radius: 7px; color: rgb(var(--muted)); font-size: 12px; font-weight: 500; white-space: nowrap; cursor: pointer; }
-.viewTabs > button[aria-selected="true"] { color: rgb(var(--ink)); background: var(--surface-selected); box-shadow: inset 0 0 0 1px var(--border-selected); }
-.viewTabs > button:hover { color: rgb(var(--ink)); }
-.viewTabs > button > span { font-size: 12px; min-width: 18px; padding: 1px 4px; border-radius: 5px; background: rgb(var(--accent) / .09); color: rgb(var(--ink)); }
 .toolbarActions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-.iconButton { display: inline-flex; align-items: center; justify-content: center; height: 34px; width: 34px; padding: 0; color: rgb(var(--muted)); cursor: pointer; flex-shrink: 0; }
-.iconButton:hover { color: rgb(var(--ink)); }
-.iconButton[aria-expanded="true"], .iconButton[aria-pressed="true"] { background: var(--p-toolbar-hover); color: rgb(var(--ink)); }
-.primaryButton:global(.p-button) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 12px; background: rgb(var(--accent)); color: rgb(var(--accent-ink)); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.toolbar .iconButton { width: 34px; padding: 0; }
 .searchTrigger { display: flex; align-items: center; gap: 8px; width: 138px; height: 34px; padding: 0 9px; color: rgb(var(--muted)); font-size: 12px; cursor: pointer; }
-.toolbar :global(.p-toolbar-btn) { --p-button-radius: 999px; height: calc(var(--mindmap-dock-height) - 12px); border-radius: 999px; }
+.saveStatus { display: flex; align-items: center; flex-shrink: 0; }
+.saveStatus > button > svg { width: 18px; height: 18px; }
 .searchTrigger > kbd { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; margin-left: auto; width: 20px; height: 22px; border: 1px solid rgb(var(--line)); border-radius: 6px; background: rgb(var(--surface-2)); color: rgb(var(--muted)); font: 12px/1 var(--font-mono); }
 .searchPanel, .optionsPanel { z-index: 90; border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); font-family: var(--font-sans); width: min(420px, calc(100vw - 24px)); overflow: hidden; }
 .searchField { display: flex; align-items: center; gap: 10px; padding: 14px; border-bottom: 1px solid rgb(var(--line)); color: rgb(var(--muted)); }
@@ -120,7 +114,7 @@
 @media (max-width: 899px) { .inspector { width: min(304px, calc(100% - 16px)); } }
 @media (max-width: 600px) { .workspaceFooter { padding-inline: 12px; } }
 @media (min-width: 1024px) { .editor { --mindmap-dock-bottom: 10cqh; } }
-@media (max-width: 1023px) { .editor { --mindmap-resume-height: 56px; } }
+@media (max-width: 1023px) { .editor { --mindmap-dock-height: 56px; --mindmap-resume-height: 56px; } }
 
 .card:global(.mindmap-node-card) { --card-title-size: calc(14px * var(--map-font-scale, 1)); --card-title-line: calc(19px * var(--map-font-scale, 1)); --card-title-weight: 600; --card-body-size: calc(12px * var(--map-font-scale, 1)); --card-body-line: calc(17px * var(--map-font-scale, 1)); padding: 12px 14px; min-height: 45px; }
 .card:global(.mindmap-node-root) { --card-title-size: calc(17px * var(--map-font-scale, 1)); --card-title-line: calc(21px * var(--map-font-scale, 1)); --card-title-weight: 650; }
@@ -187,14 +181,8 @@
 .cardProgress { position: absolute; top: 13px; right: 14px; display: inline-flex; }
 .card:has(> .cardProgress) :global(.mindmap-node-title), .card:has(> .cardProgress) :global(.mindmap-inline-editor .cm-line:first-child) { padding-right: 24px; }
 .canvasTools { display: flex; align-items: center; gap: 4px; }
-.canvasTools > button { display: flex; align-items: center; gap: 8px; height: 34px; white-space: nowrap; padding: 0 10px; font-size: 12px; }
-.canvasTools > button[aria-expanded="true"] { background: var(--p-toolbar-hover); color: rgb(var(--ink)); }
-.canvasTools span { padding: 1px 5px; border-radius: 4px; background: rgb(var(--surface-2)); font-size: 12px; }
-.canvasTools .unplacedLabel { padding: 0; background: transparent; }
 .canvasTools > .depthCollapse { gap: 5px; cursor: pointer; }
-.canvasTools > .depthCollapse[data-collapsed="true"] { background: var(--p-toolbar-hover); color: rgb(var(--ink)); }
 .canvasTools > .depthCollapse:disabled { opacity: .45; cursor: default; }
-.canvasTools .depthCollapseLabel, .canvasTools .depthCollapseCompact { padding: 0; background: transparent; font-size: inherit; }
 .canvasTools .depthCollapseCompact { display: none; }
 .canvasLayout { position: absolute; inset: 0; display: flex; min-width: 0; min-height: 0; }
 .canvasSurface { position: relative; min-width: 0; flex: 1; }
@@ -216,25 +204,22 @@
 @container (max-width: 1100px) {
   .editor:has(:global([data-resume-edit])) .inspector,
   .editor:has(:global([data-resume-edit])) .unplacedTray { --mindmap-panel-bottom-clearance: calc(var(--mindmap-bottom-clearance) + var(--mindmap-resume-height) + 8px); }
-  .editor { --mindmap-controls-bottom: calc(2 * var(--mindmap-dock-height) + 24px); --mindmap-bottom-clearance: calc(var(--mindmap-dock-bottom) + 2 * var(--mindmap-dock-height) + 16px); }
-  .toolbarActions { top: calc(var(--mindmap-dock-height) + 16px); }
+  .editor { --mindmap-bottom-clearance: calc(var(--mindmap-dock-bottom) + 2 * var(--mindmap-dock-height) + 16px); }
   .workspaceFooter { bottom: calc(var(--mindmap-dock-bottom) + var(--mindmap-dock-height) + 8px); }
   .searchTrigger { width: 34px; justify-content: center; border-color: transparent; padding: 0; }
   .searchTrigger > span, .searchTrigger > kbd { display: none; }
 }
 @container (max-width: 700px) {
-  .fontTools { display: none; }
+  .fontTools button > span { display: none; }
+  .fontTools button { width: 34px; padding: 0; }
+  .editor :global(.react-flow__controls) { bottom: calc(var(--mindmap-dock-bottom) + var(--mindmap-dock-height) + 8px); }
   .unplacedTray { position: absolute; top: var(--mindmap-controls-bottom); right: auto; bottom: var(--mindmap-panel-bottom-clearance, var(--mindmap-bottom-clearance)); left: 8px; z-index: 20; width: min(300px, calc(100% - 16px)); margin: 0; }
 }
 @container (max-width: 520px) {
-  .fontTools, .canvasTools .unplacedLabel, .primaryButton > span, .canvasTools .depthCollapseLabel { display: none; }
+  .canvasTools .unplacedLabel, .primaryButton > span, .canvasTools .depthCollapseLabel { display: none; }
   .historyControls > span { display: none; }
   .canvasTools .depthCollapseCompact { display: inline; }
   .primaryButton:global(.p-button) { width: 34px; padding-inline: 0; }
-}
-@container (max-width: 330px) {
-  .editor { --mindmap-controls-bottom: calc(3 * var(--mindmap-dock-height) + 32px); }
-  .toolbarActions { top: calc(2 * var(--mindmap-dock-height) + 24px); left: 8px; right: auto; }
 }
 .editToolbar:global(.p-glass-sm) { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 7px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-glass); color: rgb(var(--ink)); max-width: calc(100vw - 60px); }
 .editToolbarButton { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 34px; min-height: 34px; padding: 4px 6px; border-radius: 6px; color: rgb(var(--ink)); font-size: 12px; }
@@ -255,11 +240,11 @@
 
 @media (pointer: coarse) {
   .editor { --mindmap-dock-height: 56px; }
-  .toolbar :global(.p-toolbar-btn) { min-width: 44px; }
+  .toolbar :global(.ob-glass-button.p-button) { min-width: 44px; }
   .workspaceFooter { padding-left: 72px; }
   .editor :global(.mindmap-collapse-toggle) { width: 44px; min-width: 44px; height: 44px; min-height: 44px; right: -52px; }
   .canvasTools > button, .toolbarActions > button, .primaryButton:global(.p-button), .searchTrigger, .iconButton,
-  .viewTabs > button, .editToolbarButton, .inspector button, .inspector summary,
+  .editToolbarButton, .inspector button, .inspector summary,
   .searchResults > button, .optionRow, .outlineToggle, .outlineOpen, .progressChoices > button,
   .editor :global(.react-flow__controls-button) { min-height: 44px; }
   .iconButton, .outlineToggle, .outlineOpen, .progressChoices > button,

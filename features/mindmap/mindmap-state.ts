@@ -1,5 +1,5 @@
 import { byOrder, indexMindmap, type MindmapIndex } from "@/lib/mindmap-index";
-import { normalizeMindmap } from "@/lib/mindmap/mindmap";
+import { DEFAULT_MINDMAP_FONT_SIZE, normalizeMindmap } from "@/lib/mindmap/mindmap";
 import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import { normalizeMindmapCaution, type MindmapCaution } from "@/lib/mindmap/caution";
 import type { Mindmap, MindmapNode } from "@/lib/types";
@@ -453,7 +453,7 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
     }
     case "set-font-size": {
       const fontSize = Math.max(10, Math.min(20, Math.round(action.fontSize)));
-      if (!Number.isFinite(fontSize) || fontSize === (mindmap.fontSize || 12)) return { mindmap };
+      if (!Number.isFinite(fontSize) || fontSize === (mindmap.fontSize || DEFAULT_MINDMAP_FONT_SIZE)) return { mindmap };
       return { mindmap: { ...mindmap, fontSize, updatedAt: new Date().toISOString() } };
     }
     case "rename-map": {
