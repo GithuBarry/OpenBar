@@ -693,6 +693,12 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
               foldGutter(),
               foldService.of(packageFoldService),
             ]),
+            ...(variantRef.current === "nested" ? [EditorView.decorations.compute(["doc"], (state) => {
+              const end = state.doc.length;
+              if (!end || state.doc.sliceString(end - 1, end) !== "\n") return Decoration.none;
+              // The newline separates source slices without adding a display row.
+              return Decoration.set([Decoration.replace({}).range(end - 1, end)]);
+            })] : []),
             EditorView.lineWrapping,
             EditorState.tabSize.of(2),
             indentUnit.of("  "),

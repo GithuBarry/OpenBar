@@ -427,7 +427,7 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
           <TexCodeMirror
             ref={bindHandle(item.key)}
             onReady={() => reportReady(item.key)}
-            variant={item.includedFile ? "compact" : "nested"}
+            variant="nested"
             nativeSearch={false}
             readOnly={readOnly}
             lineOffset={item.lineOffset}
@@ -454,12 +454,10 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
           return (
             <details key={item.key} data-ob-nested-key={item.key} data-ob-file={item.filePath} data-ob-line-start={item.lineOffset + 1} className={styles.includeBoundary}
               onToggle={(event) => { if (event.currentTarget.open) handlesRef.current.get(item.key)?.getView()?.requestMeasure(); }}>
-              <summary title="Show or edit the include source">
+              <summary title={`Show ${item.filePath}:${item.lineOffset + 1}`}>
                 <code>{item.includedFile}</code>
-                <span className={styles.includeOrigin}>{item.filePath}:{item.lineOffset + 1}</span>
               </summary>
               <div className={styles.includeSource}>
-                <span className={styles.includeSourceLabel}>Include source</span>
                 {editor}
               </div>
             </details>
