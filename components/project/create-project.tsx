@@ -3,9 +3,10 @@
 import { useRouter } from "next/navigation";
 import { cloneElement, useState, type ReactElement } from "react";
 import { Modal } from "@/components/modal";
-import { ArrowUpRight, LoaderCircle, Plus } from "lucide-react";
+import { ArrowUpRight, ExternalLink, LoaderCircle, Plus } from "lucide-react";
+import { ServiceIcon } from "@/components/service-icon";
 
-import { checkProjectNameAction, connectProjectOverleafAction, createProjectAction } from "@/app/actions";
+import { checkProjectNameAction, connectProjectOverleafAction, createProjectAction, prepareOverleafProjectAction } from "@/app/actions";
 import { overleafProjectId } from "@/lib/server/git-url";
 import type { NewProjectInput } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -196,9 +197,12 @@ export function CreateProjectButton({
   );
 }
 
-export function ConnectOverleafButton({ project }: { project: { slug: string; title: string } }) {
+export function ConnectOverleafButton({ project, disabled = false }: { project: { slug: string; title: string }; disabled?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [destination, setDestination] = useState("new");
+  const [preparing, setPreparing] = useState(false);
+  const [prepared, setPrepared] = useState<Extract<Awaited<ReturnType<typeof prepareOverleafProjectAction>>, { ok: true }>>();
   const [url, setUrl] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -206,37 +210,66 @@ export function ConnectOverleafButton({ project }: { project: { slug: string; ti
 
   function close() {
     setOpen(false);
+    setPrepared(undefined);
     if (message) router.refresh();
   }
 
-  return <Modal open={open} onClose={close} busy={saving} title="Connect this paper to Overleaf" className="w-[29rem] p-4"
-    trigger={<button type="button" className="p-button p-button-default btn-outline text-xs" onClick={() => { setOpen(true); setError(""); }}>Connect Overleaf</button>}>
-    <form className="space-y-3" onSubmit={event => {
-      event.preventDefault();
-      if (message) { close(); return; }
-      const id = overleafProjectId(url);
-      if (!id) { setError("Paste an Overleaf editor or Git URL."); return; }
-      setSaving(true);
-      setError("");
-      void connectProjectOverleafAction(project.slug, `https://www.overleaf.com/project/${id}`).then(result => {
-        if (!result.ok) setError(result.message);
-        else if (result.message) setMessage(result.message);
-        else { setOpen(false); router.refresh(); }
-      }).catch(() => setError("OpenBar could not connect this project. Try again.")).finally(() => setSaving(false));
-    }}>
+  return <Modal open={open} onClose={close} busy={saving || preparing} title="Connect this paper to Overleaf" className="w-[29rem] p-4"
+    trigger={<button type="button" className="p-button p-button-default btn-outline ob-connect-overleaf text-xs" disabled={disabled} title={disabled ? "This project already has a Git checkout." : undefined} onClick={() => { setOpen(true); setError(""); setPrepared(undefined); }}><ServiceIcon service="overleaf" />Connect Overleaf</button>}>
+    <div className="space-y-3">
       <p className="text-sm font-semibold text-ink">Connect {project.title} to Overleaf</p>
-      {message ? <p className="text-sm text-muted" role="status">{message}</p> : <fieldset disabled={saving} className="min-w-0 space-y-3">
-        <p className="text-xs text-muted"><OverleafDashboard>Open your Overleaf projects</OverleafDashboard>. Search for this title before creating a blank project. Choose a blank project or an Overleaf copy with the same files.</p>
-        <OverleafProjectLinkField value={url} onChange={setUrl} />
+      {!message && <fieldset disabled={saving || preparing} className="min-w-0 space-y-3">
+        <label className="block text-xs font-semibold text-ink">
+          Overleaf project
+          <select className="p-field input mt-1 text-sm" value={destination} onChange={event => { setDestination(event.target.value); setError(""); }}>
+            <option value="new">Create from this paper</option>
+            <option value="existing">Use an existing project</option>
+          </select>
+        </label>
+        {destination === "new" ? <div className="space-y-2 text-xs text-muted">
+          <p>Create a new Overleaf project with your saved paper, figures, references, and maps.</p>
+          {prepared ? <form action="https://www.overleaf.com/docs" method="post" target="_blank" rel="noopener noreferrer" className="flex flex-wrap items-center gap-3">
+            <input type="hidden" name="snip_uri" value={prepared.snipUri} />
+            <input type="hidden" name="main_document" value={prepared.mainDocument} />
+            <input type="hidden" name="engine" value={prepared.engine} />
+            <button type="submit" className="p-button p-button-primary btn-primary text-xs"><ServiceIcon service="overleaf" />Create in Overleaf<ExternalLink size={12} aria-hidden="true" /></button>
+            <a href={prepared.snipUri} download={prepared.filename} className="text-accent hover:underline">Download ZIP</a>
+          </form> : <button type="button" className="p-button p-button-default btn-outline text-xs" onClick={() => {
+            setPreparing(true);
+            setError("");
+            void prepareOverleafProjectAction(project.slug).then(result => {
+              if (result.ok) setPrepared(result);
+              else setError(result.message);
+            }).catch(() => setError("OpenBar could not prepare the paper. Try again.")).finally(() => setPreparing(false));
+          }}>{preparing ? <><LoaderCircle size={12} className="animate-spin" />Preparing files…</> : "Prepare source files"}</button>}
+          <p>Overleaf opens in a new tab. After creating the project, paste its URL below to enable sync. You can also upload the ZIP through Overleaf’s New project menu.</p>
+        </div> : <p className="text-xs text-muted"><OverleafDashboard>Open your Overleaf projects</OverleafDashboard> and choose a blank project or an Overleaf copy with the same files.</p>}
       </fieldset>}
-      {error && <p className="text-xs text-danger" role="alert">{error}</p>}
-      <div className="flex justify-end gap-2">
-        {!message && <button type="button" className="p-button p-button-borderless btn-ghost text-xs" disabled={saving} onClick={close}>Cancel</button>}
-        <button type="submit" className="p-button p-button-primary btn-primary text-xs" disabled={saving || (!message && !url.trim())}>
-          {saving && <LoaderCircle size={12} className="animate-spin" />}
-          {message ? "Done" : "Connect and sync"}
-        </button>
-      </div>
-    </form>
+      <form className="space-y-3" onSubmit={event => {
+        event.preventDefault();
+        if (message) { close(); return; }
+        const id = overleafProjectId(url);
+        if (!id) { setError("Paste an Overleaf editor or Git URL."); return; }
+        setSaving(true);
+        setError("");
+        void connectProjectOverleafAction(project.slug, `https://www.overleaf.com/project/${id}`).then(result => {
+          if (!result.ok) setError(result.message);
+          else if (result.message) setMessage(result.message);
+          else { setOpen(false); router.refresh(); }
+        }).catch(() => setError("OpenBar could not connect this project. Try again.")).finally(() => setSaving(false));
+      }}>
+        {message ? <p className="text-sm text-muted" role="status">{message}</p> : <fieldset disabled={saving || preparing} className="min-w-0">
+          <OverleafProjectLinkField value={url} onChange={setUrl} />
+        </fieldset>}
+        {error && <p className="text-xs text-danger" role="alert">{error}</p>}
+        <div className="flex justify-end gap-2">
+          {!message && <button type="button" className="p-button p-button-borderless btn-ghost text-xs" disabled={saving || preparing} onClick={close}>Cancel</button>}
+          <button type="submit" className="p-button p-button-primary btn-primary text-xs" disabled={saving || preparing || (!message && !url.trim())}>
+            {saving && <LoaderCircle size={12} className="animate-spin" />}
+            {message ? "Done" : "Connect and sync"}
+          </button>
+        </div>
+      </form>
+    </div>
   </Modal>;
 }

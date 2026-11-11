@@ -89,7 +89,7 @@ function gitErrorMessage(error: unknown): string {
   return redactSensitiveText(String(error));
 }
 
-function isSensitivePath(file: string): boolean {
+export function isSensitivePath(file: string): boolean {
   const normalized = file.replaceAll("\\", "/").toLowerCase();
   const base = normalized.split("/").pop() || normalized;
   return (
@@ -736,7 +736,7 @@ function preStagedPaths(entries: PorcelainEntry[]): string[] {
     .flatMap((entry) => [entry.path, entry.origPath].filter((file): file is string => Boolean(file)));
 }
 
-function isSafeCommittedPath(file: string): boolean {
+export function isSafeCommittedPath(file: string): boolean {
   const normalized = file.replaceAll("\\", "/");
   return !normalized.startsWith(".git/")
     && !normalized.includes("/.git/")

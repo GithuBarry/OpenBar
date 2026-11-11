@@ -684,6 +684,10 @@ button, a, [role="button"] { touch-action: manipulation; }
   .btn-ghost:hover { background: rgb(var(--surface-2)); color: rgb(var(--ink)); }
   .btn-primary:hover { background: rgb(var(--accent) / 0.9); }
 }
+.btn-outline.ob-connect-overleaf {
+  color: rgb(var(--accent-text));
+}
+.ob-connect-overleaf:disabled { pointer-events: auto; }
 .p-button > svg { fill: none; }
 /* Keep accessible labels out of the button's flex layout. */
 .p-button > .sr-only { position: absolute; }

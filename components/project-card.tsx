@@ -5,7 +5,7 @@ import { ChoiceButtons } from "./choice-buttons";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
-import { ArrowUpRight, Edit3, FileText, LoaderCircle, Network, Plus, X } from "lucide-react";
+import { Edit3, ExternalLink, FileText, LoaderCircle, Network, Plus, X } from "lucide-react";
 
 import { saveProjectFromHomeAction } from "@/app/actions";
 import { takeProjectNavigationSession } from "@/components/project-session/project-write-session";
@@ -14,6 +14,7 @@ import type { Project, ProjectLink } from "@/lib/types";
 import type { ProjectGitDestination } from "@/lib/tex-project/overleaf-git";
 import { cn } from "@/lib/utils";
 import { ConnectOverleafButton } from "./project/create-project";
+import { ServiceIcon } from "./service-icon";
 
 function formatDate(iso?: string) {
   if (!iso) return "recently";
@@ -446,19 +447,12 @@ export function ProjectCard({
           <nav aria-label={`${project.title} links`} className="mt-2.5 flex flex-wrap gap-1.5 text-xs">
             <Quick href={`/p/${project.slug}/paper`} icon={<FileText size={13} />} label="Paper" />
             <Quick href={`/p/${project.slug}/mindmap`} icon={<Network size={13} />} label="Mindmap" />
+            {destination?.kind === "overleaf" && !(project.links ?? []).some(link => safeUrl(link.url) === destination.url) && (
+              <ExternalProjectLink link={{ kind: "overleaf", label: "Overleaf", url: destination.url }} projectTitle={project.title} />
+            )}
+            {!project.archivedAt && destination && destination.kind !== "overleaf" && <ConnectOverleafButton project={project} disabled={destination.kind === "git"} />}
             {(project.links ?? []).map((link, index) => <ExternalProjectLink key={`${link.url}-${index}`} link={link} projectTitle={project.title} />)}
           </nav>
-          {destination && <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
-            {destination.kind === "overleaf" ? <>
-              <span>Overleaf connected</span>
-              <a href={destination.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
-                Open in Overleaf <ArrowUpRight size={12} aria-hidden="true" />
-              </a>
-            </> : <>
-              <span>{destination.kind === "git" ? "Git checkout · Overleaf disconnected" : "OpenBar only"}</span>
-              {destination.kind === "local" && <ConnectOverleafButton project={project} />}
-            </>}
-          </div>}
           {error && <p className="mt-2 text-xs text-danger" role="alert">{error}</p>}
       </div>
       </div>
@@ -474,6 +468,9 @@ function ExternalProjectLink({ link, projectTitle }: { link: ProjectLink; projec
   const href = safeUrl(link.url)
   if (!href) return null
   const hostname = new URL(href).hostname
+  const service = /(^|\.)github\.com$/.test(hostname) ? "github"
+    : link.kind === "arxiv" || /(^|\.)arxiv\.org$/.test(hostname) ? "arxiv"
+    : link.kind === "overleaf" || /(^|\.)overleaf\.com$/.test(hostname) ? "overleaf" : undefined
   const label = link.label.trim() || hostname
   return (
     <a
@@ -484,8 +481,9 @@ function ExternalProjectLink({ link, projectTitle }: { link: ProjectLink; projec
       title={`${label} (${hostname})`}
       className="p-button p-button-default btn-outline min-w-0 max-w-full text-xs"
     >
+      {service && <ServiceIcon service={service} />}
       <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{label}</span>
-      <ArrowUpRight size={13} className="shrink-0" aria-hidden="true" />
+      <ExternalLink size={13} className="shrink-0" aria-hidden="true" />
     </a>
   )
 }

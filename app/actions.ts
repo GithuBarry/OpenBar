@@ -45,6 +45,7 @@ import { FIGURE_MAX_BYTES, uploadFigureAsset, texPaths, readDocument, DRAFT_MIND
 import { persistSourceBundle, applyConversionWrite } from "@/lib/tex-project/source-persist";
 import { syncProjectCommand } from "@/lib/research/sync-project-command";
 import { getOverleafSyncDetails, prepareForceSync, confirmForceSync, finishForceSync, type ForceSyncDirection, prepareOverleafPull, finishOverleafPull, type OverleafConflictChoice, commitOverleafGit, getProjectGitHistory, getOverleafGitStatus, pullOverleafGit, reconcileDirectPull, pushOverleafGit, refreshOverleafGitStatus, syncOverleafGit, OverleafSetupError } from "@/lib/tex-project/overleaf-git";
+import { prepareOverleafProject } from "@/lib/tex-project/overleaf-export";
 import { inspectRepository } from "@/lib/tex-project/source-graph";
 import { getConversionPlan, previewManuscriptConversion } from "@/lib/tex-project/pandoc";
 import { getRuntimeCapabilities } from "@/lib/research/capabilities";
@@ -378,6 +379,16 @@ export async function connectProjectOverleafAction(slug: string, overleafUrl: st
     return { ok: true as const, message };
   } catch (error) {
     return { ok: false as const, message: error instanceof OverleafSetupError ? error.message : "OpenBar could not connect this project. Check the workspace and try again." };
+  }
+}
+
+export async function prepareOverleafProjectAction(slug: string) {
+  await requireProjectAccess(slug);
+  assertAdministrativeWriteAllowed("Overleaf project export");
+  try {
+    return { ok: true as const, ...await prepareOverleafProject(projectContentDir(slug), slug) };
+  } catch (error) {
+    return { ok: false as const, message: error instanceof OverleafSetupError ? error.message : "OpenBar could not prepare this saved project for Overleaf. Save the project and try again." };
   }
 }
 
