@@ -8,6 +8,25 @@ export type GitRemoteInspection = {
   reason?: string;
 };
 
+/** Normalize an Overleaf Cloud editor or Git link without carrying credentials. */
+export function overleafProjectId(value: string): string | undefined {
+  const link = value.trim();
+  const ssh = /^git@git\.overleaf\.com:([a-f0-9]{24})$/i.exec(link);
+  if (ssh) return ssh[1]!.toLowerCase();
+  try {
+    const url = new URL(link);
+    if (url.protocol !== "https:" || url.port || url.password) return undefined;
+    const git = url.hostname === "git.overleaf.com";
+    if (url.username && !(git && url.username === "git")) return undefined;
+    if (!git && url.hostname !== "www.overleaf.com" && url.hostname !== "overleaf.com") return undefined;
+    const pathname = git ? url.pathname : url.pathname.replace(/^\/project(?=\/)/, "");
+    if (!git && pathname === url.pathname) return undefined;
+    return /^\/([a-f0-9]{24})\/?$/i.exec(pathname)?.[1]?.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
 export function inspectGitRemote(value: string): GitRemoteInspection {
   const remote = value.trim();
   if (!remote || /\s/.test(remote)) return { ok: false, reason: "invalid" };
