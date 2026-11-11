@@ -5,7 +5,7 @@ import Link from "next/link";
 import * as Dialog from "@radix-ui/react-dialog";
 import { FastTooltip } from "@/components/fast-tooltip";
 import styles from "./sidebar.module.css";
-import { BookOpenText, Network, PanelLeft, PanelLeftClose } from "lucide-react";
+import { PanelLeft, PanelLeftClose, LockKeyhole, LockKeyholeOpen } from "lucide-react";
 
 import { Project } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -14,12 +14,13 @@ import { ProjectSwitcher } from "./project-switcher";
 import { ThemeToggle } from "./theme-toggle";
 import { SidebarNav } from "./sidebar-nav";
 import { ResetDemoButton } from "@/components/demo/reset-demo-button";
+import { useProjectWriteSession } from "@/components/project-session/project-write-session";
 
 const STORAGE_KEY = "ob-sidebar";
 
 /**
  * Left rail on project pages. Hidden state is local to this browser
- * (localStorage) and defaults to closed on small screens.
+ * (localStorage) and defaults to closed.
  */
 export function Sidebar({
   projects,
@@ -36,15 +37,16 @@ export function Sidebar({
 }) {
   const active = projects.find((p) => p.slug === activeSlug);
   const base = active ? `/p/${active.slug}` : "";
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [ready, setReady] = useState(false);
   const [narrow, setNarrow] = useState(false);
+  const { writable, canRelease, release, restore, canRestore, accessMessage } = useProjectWriteSession();
 
   useEffect(() => {
     const narrow = window.matchMedia("(max-width: 767px)");
     const applyViewport = () => {
-      let desktopOpen = true;
-      try { desktopOpen = window.localStorage.getItem(STORAGE_KEY) !== "0"; } catch { /* Keep navigation available when storage is restricted. */ }
+      let desktopOpen = false;
+      try { desktopOpen = window.localStorage.getItem(STORAGE_KEY) === "1"; } catch { /* The collapsed rail remains available. */ }
       setNarrow(narrow.matches);
       setOpen(narrow.matches ? false : desktopOpen);
       setReady(true);
@@ -65,7 +67,8 @@ export function Sidebar({
     ? [
         { href: `${base}/paper`, label: "Paper", icon: "drafts" as const },
         { href: `${base}/mindmap`, label: "Mindmap", icon: "mindmap" as const },
-        ...(!publicDemo ? [{ href: `${base}/instructions`, label: "Instructions", icon: "overview" as const, group: "more" as const }] : []),
+        { href: `${base}/wiki`, label: "Wiki", icon: "notes" as const },
+        ...(!publicDemo ? [{ href: `${base}/instructions`, label: "Instructions", icon: "instructions" as const, group: "more" as const }] : []),
       ]
     : [
         { href: "/", label: "All projects", icon: "overview" as const, exact: true },
@@ -105,17 +108,19 @@ export function Sidebar({
             <ThemeToggle />
           </div>
           {publicDemo && activeSlug && <div className="mt-3"><ResetDemoButton slug={activeSlug} /></div>}
+          {!publicDemo && writable && <button type="button" className="mt-3 text-xs text-muted disabled:opacity-50" disabled={!canRelease} onClick={() => { void release(); }}>Release editing access</button>}
+          {!publicDemo && !writable && <div className="mt-3 text-xs text-muted"><button type="button" className="text-accent disabled:opacity-50" disabled={!canRestore} onClick={restore}>Restore editing access</button>{!canRestore && <span className="block mt-1" role="status">{accessMessage}</span>}</div>}
         </div>
   </>;
   return (
     <Dialog.Root open={narrow && open} onOpenChange={changeOpen}>
-      {ready && (!open || narrow) && (
-        <nav className={styles.collapsedRail} aria-label="Project navigation">
+      {(!open || narrow) && (
+        <nav className={cn("p-glass-sm", styles.collapsedRail)} aria-label="Project navigation">
+          <FastTooltip label="All projects"><Link href="/" aria-label={`${workspaceName} home`} className={styles.collapsedLogo}><WorkspaceMark compact /></Link></FastTooltip>
           <FastTooltip label="Show sidebar"><Dialog.Trigger asChild><button type="button" aria-label="Show sidebar" onClick={() => changeOpen(true)}><PanelLeft size={18} aria-hidden="true" /></button></Dialog.Trigger></FastTooltip>
-          {active && <>
-            <FastTooltip label="Paper"><Link href={`${base}/paper`} aria-label="Paper"><BookOpenText size={18} aria-hidden="true" /></Link></FastTooltip>
-            <FastTooltip label="Mindmap"><Link href={`${base}/mindmap`} aria-label="Mindmap"><Network size={18} aria-hidden="true" /></Link></FastTooltip>
-          </>}
+          {active && <SidebarNav items={nav} compact />}
+          {!publicDemo && writable && <FastTooltip label={canRelease ? "Release editing access" : "Finish saving before releasing editing access"}><button type="button" aria-label="Release editing access" disabled={!canRelease} onClick={() => { void release(); }}><LockKeyholeOpen size={18} /></button></FastTooltip>}
+          {!publicDemo && !writable && <FastTooltip label={canRestore ? "Restore editing access" : accessMessage}><button type="button" aria-label="Restore editing access" title={canRestore ? "Restore editing access" : accessMessage} disabled={!canRestore} onClick={restore}><LockKeyhole size={18} /></button></FastTooltip>}
         </nav>
       )}
       {narrow ? (

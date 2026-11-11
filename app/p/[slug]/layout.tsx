@@ -1,11 +1,11 @@
 import { notFound } from "next/navigation";
 
-import { getProject, listVisibleProjects } from "@/lib/store";
+import { getProjectMetadata } from "@/lib/store";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
 import { requireProjectPage } from "@/lib/server/project-access";
 import { Sidebar } from "@/components/shell/sidebar";
 import { ProjectAgentShell } from "@/components/shell/project-agent-shell";
-import { getWorkspaceSettings } from "@/lib/workspace";
+import { getWorkspaceLayout, getWorkspaceSettings } from "@/lib/workspace";
 import { getProjectAgentMentions } from "@/lib/research/project-state";
 
 export const dynamic = "force-dynamic";
@@ -19,9 +19,9 @@ export default async function ProjectLayout({
 }) {
   const { slug } = await params;
   await requireProjectPage(slug);
-  const project = getProject(slug);
+  const project = getProjectMetadata(slug);
   if (!project) notFound();
-  const projects = listVisibleProjects();
+  const projects = getWorkspaceLayout().projects;
   const workspace = getWorkspaceSettings();
   const publicDemo = isPublicDemoMode();
 

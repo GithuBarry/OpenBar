@@ -1,7 +1,8 @@
 import Link from "next/link";
 
-import { getEditableTexPaper } from "@/lib/store";
+import { getEditableTexPaper, projectContentDir } from "@/lib/store";
 import { analyzePaper, paperTodoIsOpen } from "@/lib/research/paper-analysis";
+import { getProjectGitDestination } from "@/lib/tex-project/overleaf-git";
 import { requireWorkbenchPage } from "@/lib/server/project-access";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
 import { AboutFeatureGrid } from "@/components/about-features";
@@ -24,32 +25,35 @@ export default async function Home() {
   const layout = getWorkspaceLayout();
   const projects = layout.projects;
   const publicDemo = isPublicDemoMode();
-  const rows = projects.map((project) => {
+  const rows = await Promise.all(projects.map(async (project) => {
     const paper = getEditableTexPaper(project.slug);
     const todos = paper ? analyzePaper(paper.source).todos.filter(paperTodoIsOpen).length : 0;
-    return { project, todos };
-  });
+    const destination = publicDemo ? undefined : await getProjectGitDestination(projectContentDir(project.slug));
+    return { project, todos, destination };
+  }));
 
   return (
     <main id="main-content" tabIndex={-1} className="ob-main-brand min-h-screen bg-canvas">
       <WorkspaceWebMcp />
-      <header className="ob-chrome-header ob-home-header sticky top-0 z-10">
-        <div className="ob-home-header-inner mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-4">
-          <div className="ob-home-header-brand flex min-w-0 items-center gap-4">
-            <WorkspaceMark />
-            <WorkspaceIdentity workspace={workspace} readOnly={publicDemo} />
+      <div className="flex h-dvh flex-col">
+        <header className="ob-chrome-header ob-home-header shrink-0 sticky top-0 z-10">
+          <div className="ob-home-header-inner mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-4">
+            <div className="ob-home-header-brand flex min-w-0 items-center gap-4">
+              <WorkspaceMark />
+              <WorkspaceIdentity workspace={workspace} />
+            </div>
+            <div className="ob-home-header-actions flex items-center gap-4">
+              <ThemeToggle />
+              <AgentReadyIndicator />
+              {publicDemo ? <ResetDemoButton slug={projects[0]?.slug || "private-project-a"} /> : <CreateProjectButton />}
+            </div>
           </div>
-          <div className="ob-home-header-actions flex items-center gap-4">
-            <ThemeToggle />
-            <AgentReadyIndicator />
-            {publicDemo ? <ResetDemoButton slug={projects[0]?.slug || "private-project-a"} /> : <CreateProjectButton />}
-          </div>
-        </div>
-      </header>
+        </header>
 
-      {publicDemo && <PublicDemoNotice />}
+        {publicDemo && <PublicDemoNotice />}
 
-      <ProjectBoard rows={rows} initialHash={layout.hash} readOnly={publicDemo} />
+        <ProjectBoard rows={rows} initialHash={layout.hash} readOnly={publicDemo} />
+      </div>
 
       <section id="about" className="pb-20 pt-20 sm:pb-28 sm:pt-28">
         <div className="mx-auto mb-5 max-w-6xl px-6">
@@ -57,7 +61,7 @@ export default async function Home() {
         </div>
         <AboutFeatureGrid />
         <div className="mx-auto max-w-6xl px-6 pt-10">
-          <h2 className="mt-3 max-w-4xl font-serif text-2xl font-semibold tracking-tight sm:text-3xl">
+          <h2 className="mt-3 max-w-4xl font-sans text-2xl font-semibold tracking-tight sm:text-3xl">
             A shared place for the paper, the plan, and the work around them.
           </h2>
           <p className="mt-4 max-w-3xl text-sm leading-6 text-muted sm:text-base">

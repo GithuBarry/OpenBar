@@ -23,7 +23,7 @@ export function ThemeToggle({ className }: { className?: string }) {
   return <DropdownMenu.Root>
     <DropdownMenu.Trigger asChild>
       <button type="button" aria-label={`Color theme: ${current.label}`} className={cn(
-        "ob-press inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-xs text-muted transition-colors hover:bg-surface-3 hover:text-ink",
+        "p-button p-button-glass ob-glass-button",
         className,
       )}>
         <ThemeSwatch theme={current} />

@@ -1,12 +1,13 @@
-.group:global(.p-segmented) { display: flex; flex-wrap: wrap; width: fit-content; max-width: 100%; height: auto; gap: 2px; padding: 2px; --p-color-current: rgb(var(--accent)); --p-seg-min-width: 0; --p-seg-padding-x: 9px; --p-seg-font-size: 11px; --p-seg-radius: 5px; }
+.group:global(.p-segmented) { display: flex; flex-wrap: wrap; width: fit-content; max-width: 100%; height: auto; gap: 2px; padding: 2px; background: rgb(var(--surface-2)); font-family: inherit; --p-seg-min-width: 0; --p-seg-padding-x: 9px; --p-seg-font-size: 12px; --p-seg-radius: 5px; }
 .group:global(.p-segmented)::before { display: none; }
-.group :global(.p-segment) { min-height: 26px; }
+.group :global(.p-segment) { min-height: 34px; }
 .group :global(.p-segment)::before { display: none; }
-.group :global(.p-segment > span) { line-height: 1.25; }
-.group:global(.p-segmented) :global(.p-segment > input:checked + span) { background: var(--p-seg-pill); color: rgb(var(--accent-ink)); }
-.group:global(.p-segmented) :global(.p-segment:active > input:checked:not(:disabled) + span) { background: var(--p-seg-pill-pressed); }
+.group :global(.p-segment > span) { color: rgb(var(--muted)); line-height: 1.25; }
+.group:global(.p-segmented) :global(.p-segment > input:checked + span) { background: var(--surface-selected); box-shadow: inset 0 0 0 1px var(--border-selected); color: rgb(var(--ink)); }
+.group:global(.p-segmented) :global(.p-segment:active > input:checked:not(:disabled) + span) { background: var(--surface-selected); }
+.group:global(.p-segmented) :global(.p-segment > input:focus-visible + span) { outline: 2px solid rgb(var(--accent-text)); outline-offset: 2px; }
 @supports selector(:has(*)) {
-  .group:global(.p-segmented):has(input:checked) :global(.p-segment > input:checked + span) { background: var(--p-seg-pill); color: rgb(var(--accent-ink)); }
-  .group:global(.p-segmented):has(input:checked) :global(.p-segment:active > input:checked:not(:disabled) + span) { background: var(--p-seg-pill-pressed); }
+  .group:global(.p-segmented):has(input:checked) :global(.p-segment > input:checked + span) { background: var(--surface-selected); color: rgb(var(--ink)); }
+  .group:global(.p-segmented):has(input:checked) :global(.p-segment:active > input:checked:not(:disabled) + span) { background: var(--surface-selected); }
 }
 @media (pointer: coarse) { .group :global(.p-segment) { min-height: 44px; } }

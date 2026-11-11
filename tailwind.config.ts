@@ -31,6 +31,15 @@ const config: Config = {
         warn: withVar("--warn"),
         ok: withVar("--ok"),
       },
+      textColor: {
+        accent: {
+          DEFAULT: withVar("--accent-text"),
+          ink: withVar("--accent-ink"),
+        },
+        danger: withVar("--danger-text"),
+        warn: withVar("--warn-text"),
+        ok: withVar("--ok-text"),
+      },
       maxWidth: {
         prose: "72ch",
       },

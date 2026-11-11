@@ -1,23 +1,24 @@
-.board { width: min(100%, 72rem); margin-inline: auto; padding-inline: 1.5rem; }
-.group { border: 1px solid transparent; border-radius: 1rem; transition: background 140ms ease, border-color 140ms ease; }
-.active { padding-block: 1rem; }
+.board { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow-y: auto; width: min(100%, 72rem); margin-inline: auto; padding-inline: 1.5rem; }
+.group { flex-shrink: 0; border: 1px solid transparent; border-radius: 1rem; transition: background 140ms ease, border-color 140ms ease; }
+.active { padding-block: 1rem 2rem; }
 .grid { display: grid; align-items: start; gap: 1rem 2rem; }
 .sortable { min-width: 0; }
 .dropTarget { border-radius: 1rem; outline: 2px solid rgb(var(--accent) / 0.6); outline-offset: 3px; }
 .dragging { opacity: 0.3; }
 .handle { display: inline-grid; width: 32px; height: 32px; flex: none; place-items: center; border-radius: 6px; color: rgb(var(--faint)); cursor: grab; touch-action: none; transition: color 120ms ease, background 120ms ease; }
-.handle:hover, .handle:focus-visible { color: rgb(var(--accent)); background: rgb(var(--accent-soft)); }
+.handle:hover, .handle:focus-visible { color: rgb(var(--ink)); background: var(--surface-selected); }
 .handle:active { cursor: grabbing; }
-.archive { margin-top: 0.5rem; padding: 1.25rem; border-color: rgb(var(--line)); background: rgb(var(--surface-2) / 0.45); }
+.archive { margin-top: auto; padding: 1.25rem; border-color: rgb(var(--line)); background: rgb(var(--surface-2) / 0.45); }
 .archiveHeading { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; color: rgb(var(--muted)); font-size: 0.875rem; font-weight: 600; }
 .empty { grid-column: 1 / -1; display: grid; place-items: center; min-height: 7rem; margin: 0; border: 1px dashed rgb(var(--line)); border-radius: 0.75rem; padding: 1.5rem; color: rgb(var(--faint)); font-size: 0.875rem; text-align: center; }
 .ready { border-style: dashed; border-color: rgb(var(--accent) / 0.3); }
 .over { border-color: rgb(var(--accent)); background: rgb(var(--accent) / 0.06); }
 .dragPreview { display: flex; align-items: center; gap: 0.75rem; padding: 1.25rem; border: 1px solid rgb(var(--accent) / 0.35); border-radius: 1rem; background: rgb(var(--surface)); box-shadow: 0 12px 35px rgb(0 0 0 / 0.15); color: rgb(var(--ink)); }
-.error { margin-top: 1rem; padding: 0.75rem; border: 1px solid rgb(var(--danger) / 0.35); border-radius: 0.5rem; color: rgb(var(--danger)); font-size: 0.875rem; }
-.aboutCueSlot { display: flex; justify-content: center; padding: 1.5rem 1.5rem 0; }
-.aboutCue { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.6rem 1.1rem; border: 1px solid rgb(var(--line)); border-radius: 999px; background: rgb(var(--surface)); box-shadow: 0 3px 14px rgb(0 0 0 / 0.07); color: rgb(var(--muted)); font-size: 0.8rem; }
-.aboutCue:hover { color: rgb(var(--accent)); border-color: rgb(var(--accent) / 0.4); }
+.error { margin-top: 1rem; padding: 0.75rem; border: 1px solid rgb(var(--danger) / 0.35); border-radius: 0.5rem; color: rgb(var(--danger-text)); font-size: 0.875rem; }
+.aboutCueSlot { display: flex; flex-shrink: 0; justify-content: center; padding: 1.5rem 1.5rem 2rem; }
+.aboutCue { --p-button-height: 40px; --p-button-font-size: 13px; --p-button-padding-x: 18px; gap: 8px; }
+.aboutCue:hover { color: rgb(var(--accent-text)); }
+.archiveToggle { grid-column: 1 / -1; justify-self: start; }
 @media (min-width: 768px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (hover: none), (pointer: coarse) { .handle { width: 44px; height: 44px; } }
 @media (prefers-reduced-motion: reduce) { .group, .handle { transition: none; } }

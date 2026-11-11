@@ -5,12 +5,15 @@ import { ChoiceButtons } from "./choice-buttons";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
-import { ArrowUpRight, BookOpenText, Edit3, LoaderCircle, Network, Plus, X } from "lucide-react";
+import { ArrowUpRight, Edit3, FileText, LoaderCircle, Network, Plus, X } from "lucide-react";
 
-import { saveProjectAction } from "@/app/actions";
+import { saveProjectFromHomeAction } from "@/app/actions";
+import { takeProjectNavigationSession } from "@/components/project-session/project-write-session";
 import { safeUrl } from "@/lib/safe-url";
 import type { Project, ProjectLink } from "@/lib/types";
+import type { ProjectGitDestination } from "@/lib/tex-project/overleaf-git";
 import { cn } from "@/lib/utils";
+import { ConnectOverleafButton } from "./project/create-project";
 
 function formatDate(iso?: string) {
   if (!iso) return "recently";
@@ -42,6 +45,7 @@ function Field({
   value,
   onChange,
   placeholder,
+  hint,
   multiline = false,
   removable = false,
   onRemove,
@@ -52,6 +56,7 @@ function Field({
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
+  hint?: string;
   multiline?: boolean;
   removable?: boolean;
   onRemove?: () => void;
@@ -60,12 +65,12 @@ function Field({
   return (
     <div className="block">
       <div className="mb-1 flex items-center justify-between gap-2">
-        <label htmlFor={id} className="text-[10px] font-semibold uppercase tracking-wide text-faint">{label}</label>
+        <label htmlFor={id} className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</label>
         {removable && (
           <button
             type="button"
             onClick={onRemove}
-            className="inline-flex items-center gap-0.5 text-[10px] text-muted hover:text-ink"
+            className="inline-flex items-center gap-0.5 text-xs text-muted hover:text-ink [@media(pointer:coarse)]:min-h-11"
             aria-label={`Remove ${label}`}
           >
             <X size={10} /> Remove
@@ -89,9 +94,11 @@ function Field({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
+          aria-describedby={hint ? `${id}-hint` : undefined}
           className="p-field input text-sm"
         />
       )}
+      {hint && <p id={`${id}-hint`} className="mt-1 text-[11px] leading-tight text-muted">{hint}</p>}
     </div>
   );
 }
@@ -99,11 +106,13 @@ function Field({
 export function ProjectCard({
   project,
   todos,
+  destination,
   dragHandle,
   pendingMessage,
 }: {
   project: Project;
   todos: number;
+  destination?: ProjectGitDestination;
   dragHandle?: React.ReactNode;
   pendingMessage?: string;
 }) {
@@ -159,11 +168,15 @@ export function ProjectCard({
     setSavingMessage(archiveChanged ? patch.archivedAt ? "Archiving project…" : "Restoring project…" : "Saving project…");
     startTransition(async () => {
       try {
-        await saveProjectAction({
+        const result = await saveProjectFromHomeAction({
           ...project,
           ...patch,
           updatedAt: new Date().toISOString(),
-        });
+        }, takeProjectNavigationSession(project.slug));
+        if (!result.ok) {
+          setError(result.message);
+          return;
+        }
         if (close) setEditing(false);
         router.refresh();
       } catch (err) {
@@ -228,13 +241,14 @@ export function ProjectCard({
           saveForm();
         }}
       >
-          <div className="grid grid-cols-[4.5rem_1fr] gap-2">
+          <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-2">
             <Field
               id={`project-${project.slug}-icon`}
-              label="Icon"
+              label="Project icon"
               value={icon}
               onChange={setIcon}
               placeholder="🧪"
+              hint="Type or paste an emoji."
               inputRef={iconInputRef}
             />
             <Field
@@ -307,11 +321,11 @@ export function ProjectCard({
           />
           <div className="block">
             <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-faint">Links</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted">Links</span>
               <button
                 type="button"
                 onClick={() => setLinks((current) => [...current, { label: "", url: "", kind: "web" }])}
-                className="text-[10px] text-muted hover:text-ink"
+                className="text-xs text-muted hover:text-ink [@media(pointer:coarse)]:min-h-11"
               >
                 + Add link
               </button>
@@ -350,7 +364,7 @@ export function ProjectCard({
             <input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} />
             Archive this project in the workspace
           </label>
-          {error && <p className="text-xs text-danger">{error}</p>}
+          {error && <p className="text-xs text-danger" role="alert">{error}</p>}
           <div className="flex items-center gap-2">
             <button type="submit" disabled={pending} className="p-button p-button-primary btn-primary px-2.5 py-1 text-xs">
               {pending ? "Saving…" : "Save"}
@@ -370,14 +384,14 @@ export function ProjectCard({
               <button
                 type="button"
                 onClick={() => openEditor("icon")}
-                className="ob-press inline-flex h-7 min-w-6 shrink-0 items-center justify-center rounded px-0.5 text-lg leading-none hover:bg-surface-2"
-                title="Edit project icon"
-                aria-label="Edit project icon"
+                className="ob-press inline-flex h-7 min-w-6 shrink-0 items-center justify-center rounded px-0.5 text-lg leading-none hover:bg-surface-2 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11"
+                title="Change project icon"
+                aria-label="Change project icon"
               >
                 {project.icon ?? "🧪"}
               </button>
               <Link href={`/p/${project.slug}/paper`} className="group min-w-0">
-                <h2 className="ob-brand-font truncate text-lg transition-colors duration-ui group-hover:text-accent">
+                <h2 className="ob-project-title ob-brand-font truncate text-lg transition-colors duration-ui group-hover:text-accent">
                   {project.title}
                 </h2>
               </Link>
@@ -424,16 +438,28 @@ export function ProjectCard({
             </div>
           )}
 
-          <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] leading-5 text-faint">
+          <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs leading-5 text-muted">
             {(project.label || project.venue) && <span className="min-w-0 text-muted [overflow-wrap:anywhere]">{[project.label, project.venue].filter(Boolean).join(", ")}</span>}
             <time className="ml-auto" dateTime={project.lastEditedAt || project.updatedAt} title={`Latest saved project change: ${new Date(project.lastEditedAt || project.updatedAt).toLocaleString()}${project.createdAt ? `, created ${formatDate(project.createdAt)}` : ""}`}>Edited {formatEditedDate(project.lastEditedAt || project.updatedAt, now)}</time>
           </div>
 
           <nav aria-label={`${project.title} links`} className="mt-2.5 flex flex-wrap gap-1.5 text-xs">
-            <Quick href={`/p/${project.slug}/paper`} icon={<BookOpenText size={13} />} label="Paper" />
+            <Quick href={`/p/${project.slug}/paper`} icon={<FileText size={13} />} label="Paper" />
             <Quick href={`/p/${project.slug}/mindmap`} icon={<Network size={13} />} label="Mindmap" />
             {(project.links ?? []).map((link, index) => <ExternalProjectLink key={`${link.url}-${index}`} link={link} projectTitle={project.title} />)}
           </nav>
+          {destination && <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+            {destination.kind === "overleaf" ? <>
+              <span>Overleaf connected</span>
+              <a href={destination.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
+                Open in Overleaf <ArrowUpRight size={12} aria-hidden="true" />
+              </a>
+            </> : <>
+              <span>{destination.kind === "git" ? "Git checkout · Overleaf disconnected" : "OpenBar only"}</span>
+              {destination.kind === "local" && <ConnectOverleafButton project={project} />}
+            </>}
+          </div>}
+          {error && <p className="mt-2 text-xs text-danger" role="alert">{error}</p>}
       </div>
       </div>
       {busyMessage && <div className="ob-home-card-loading" role="status" aria-live="polite">

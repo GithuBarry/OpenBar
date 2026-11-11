@@ -56,17 +56,12 @@ export function AgentReadyIndicator() {
   useEffect(() => {
     if (!open) return;
     const inspectHost = () => {
-      const legacyContext = (navigator as Navigator & {
-        modelContext?: { registerTool?: unknown };
-      }).modelContext;
       setHostStatus(
         !window.isSecureContext
           ? "WebMCP requires a secure browser context. Open this page over HTTPS or localhost."
           : typeof document.modelContext?.registerTool === "function"
             ? "The browser provides document.modelContext. If no tools appear, registration has not completed; reload this page and check for registration errors below."
-            : typeof legacyContext?.registerTool === "function"
-              ? "This browser provides navigator.modelContext. OpenBar supports this native API and registers tools automatically. Registration diagnostics appear below."
-              : "Browser automation can use window.openbarAgent.listTools() and executeTool(name, args). Native WebMCP integrations can enable their browser support and reload.",
+            : "Browser automation can use window.openbarAgent.listTools() and executeTool(name, args). Native WebMCP integrations can enable their browser support and reload.",
       );
     };
     inspectHost();

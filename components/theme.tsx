@@ -14,7 +14,7 @@ const ORDER: Theme[] = ["paper", "light", "dark"];
 
 /** Inline script that sets the theme before paint to avoid a flash. */
 export function ThemeScript() {
-  const js = `(function(){try{var t=localStorage.getItem('ob-theme');if(!t){t='paper';}document.documentElement.setAttribute('data-theme',t);document.documentElement.setAttribute('data-p-theme',t==='dark'?'darkmode':'lightmode');}catch(e){}})();`;
+  const js = `(function(){try{var t=localStorage.getItem('ob-theme');if(!t){t='paper';}document.documentElement.setAttribute('data-theme',t);document.documentElement.setAttribute('data-p-theme',t==='dark'?'darkmode':'lightmode');document.documentElement.classList.toggle('p-dark-mode',t==='dark');}catch(e){}})();`;
   return <script dangerouslySetInnerHTML={{ __html: js }} />;
 }
 
@@ -30,6 +30,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     setThemeState(t);
     document.documentElement.setAttribute("data-theme", t);
     document.documentElement.setAttribute("data-p-theme", t === "dark" ? "darkmode" : "lightmode");
+    document.documentElement.classList.toggle("p-dark-mode", t === "dark");
     try {
       localStorage.setItem("ob-theme", t);
     } catch {}
