@@ -15,7 +15,7 @@ import {
 } from "@/lib/research/webmcp-register";
 import { FastTooltip } from "@/components/fast-tooltip";
 import { cn } from "@/lib/utils";
-import { requestInbox, useInboxWebMcp } from "@/features/use-inbox-webmcp";
+import { requestInbox, useInboxProject } from "@/features/use-inbox-webmcp";
 import type { AgentInbox, InboxNotification } from "@/lib/research/agent-inbox-contract";
 
 const SURFACE_LABEL: Partial<Record<WebMcpSurface, string>> = {
@@ -31,7 +31,7 @@ const SURFACE_LABEL: Partial<Record<WebMcpSurface, string>> = {
 const SURFACE_ORDER: WebMcpSurface[] = ["workspace", "shared", "paper", "mindmap", "wiki", "instructions", "setup"];
 
 export function AgentReadyIndicator() {
-  const project = useInboxWebMcp();
+  const project = useInboxProject();
   const [catalog, setCatalog] = useState<WebMcpCatalogEntry[]>([]);
   const [diagnostics, setDiagnostics] = useState<WebMcpDiagnostic[]>([]);
   const [open, setOpen] = useState(false);

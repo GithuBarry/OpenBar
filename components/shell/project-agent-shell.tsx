@@ -6,6 +6,7 @@ import { useSharedProjectWebMcp } from "@/features/use-shared-webmcp";
 import type { CurrentLocation } from "@/lib/research/webmcp-shared-contract";
 import { ProjectWriteSession } from "@/components/project-session/project-write-session";
 import { SessionWebMcp } from "@/features/use-session-webmcp";
+import { useInboxWebMcp } from "@/features/use-inbox-webmcp";
 
 function locationFromPath(project: string, pathname: string): CurrentLocation {
   const href = pathname;
@@ -32,6 +33,7 @@ export function ProjectAgentShell({
   publicDemo?: boolean;
 }) {
   const pathname = usePathname();
+  useInboxWebMcp(project);
   useSharedProjectWebMcp({
     project,
     profile: publicDemo ? "public-demo" : "full",

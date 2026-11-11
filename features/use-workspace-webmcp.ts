@@ -9,8 +9,10 @@ import {
   type WorkspaceWebMcpHost,
 } from "@/lib/research/webmcp-workspace-contract";
 import { registerWebMcpToolsIndependent, waitForModelContext } from "@/lib/research/webmcp-register";
+import { useInboxWebMcp } from "@/features/use-inbox-webmcp";
 
 export function useWorkspaceWebMcp(host: WorkspaceWebMcpHost): void {
+  useInboxWebMcp();
   const hostRef = useRef(host);
   hostRef.current = host;
 

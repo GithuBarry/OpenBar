@@ -44,12 +44,14 @@ export async function requestInbox<T>(
   }
 }
 
-/** Keep inbox tools available in the current project and on the workspace page. */
-export function useInboxWebMcp(): string | undefined {
+export function useInboxProject(): string | undefined {
   const pathname = usePathname();
   const segment = pathname.match(/^\/p\/([^/]+)(?:\/|$)/)?.[1];
-  const project = segment ? decodeURIComponent(segment) : undefined;
+  return segment ? decodeURIComponent(segment) : undefined;
+}
 
+/** Mount with the project shell or workspace, independently of visible controls. */
+export function useInboxWebMcp(project?: string): void {
   useEffect(() => {
     const controller = new AbortController();
     let release: (() => void) | undefined;
@@ -82,5 +84,4 @@ export function useInboxWebMcp(): string | undefined {
     };
   }, [project]);
 
-  return project;
 }

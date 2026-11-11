@@ -15,6 +15,7 @@ import { ThemeToggle } from "./theme-toggle";
 import { SidebarNav } from "./sidebar-nav";
 import { ResetDemoButton } from "@/components/demo/reset-demo-button";
 import { useProjectWriteSession } from "@/components/project-session/project-write-session";
+import { AgentReadyIndicator } from "./agent-ready";
 
 const STORAGE_KEY = "ob-sidebar";
 
@@ -105,7 +106,7 @@ export function Sidebar({
               <Link href="/" className="text-xs text-muted hover:text-ink">All projects</Link>
               <Link href="/about" className="text-xs text-muted hover:text-ink">About</Link>
             </div>
-            <ThemeToggle />
+            <div className="flex items-center gap-2"><AgentReadyIndicator /><ThemeToggle /></div>
           </div>
           {publicDemo && activeSlug && <div className="mt-3"><ResetDemoButton slug={activeSlug} /></div>}
           {!publicDemo && writable && <button type="button" className="mt-3 text-xs text-muted disabled:opacity-50" disabled={!canRelease} onClick={() => { void release(); }}>Release editing access</button>}
@@ -121,6 +122,7 @@ export function Sidebar({
           {active && <SidebarNav items={nav} compact />}
           {!publicDemo && writable && <FastTooltip label={canRelease ? "Release editing access" : "Finish saving before releasing editing access"}><button type="button" aria-label="Release editing access" disabled={!canRelease} onClick={() => { void release(); }}><LockKeyholeOpen size={18} /></button></FastTooltip>}
           {!publicDemo && !writable && <FastTooltip label={canRestore ? "Restore editing access" : accessMessage}><button type="button" aria-label="Restore editing access" title={canRestore ? "Restore editing access" : accessMessage} disabled={!canRestore} onClick={restore}><LockKeyhole size={18} /></button></FastTooltip>}
+          <div className="mt-auto"><AgentReadyIndicator /></div>
         </nav>
       )}
       {narrow ? (
