@@ -1,5 +1,6 @@
 import type {} from "webmcp-types";
 import { failResult } from "./operation-result";
+import { formatInboxPrefix, type AgentInbox } from "./agent-inbox-contract";
 
 export type WebMcpRegistration = {
   name: string;
@@ -37,6 +38,21 @@ type BrowserAgentBridge = {
 declare global { interface Window { openbarAgent?: BrowserAgentBridge } }
 const pageTools = new Map<string, { tool: WebMcpTool; owner: symbol }>();
 const browserFallback: WebMcpModelContext = { async registerTool() {} };
+
+async function prefixBrowserInbox(result: unknown, signal?: AbortSignal): Promise<unknown> {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+  const project = window.location.pathname.match(/^\/p\/([^/]+)/)?.[1];
+  const search = new URLSearchParams({ limit: "3", ...(project ? { project: decodeURIComponent(project) } : {}) });
+  try {
+    const response = await fetch(`/api/agent-inbox?${search}`, { cache: "no-store", signal: AbortSignal.any([AbortSignal.timeout(3000), ...(signal ? [signal] : [])]) });
+    const inbox = await response.json() as { ok: boolean; value?: AgentInbox };
+    if (!response.ok || !inbox.ok || !inbox.value) throw new Error("Inbox unavailable");
+    const prefix = formatInboxPrefix(inbox.value);
+    return prefix ? { notifications: { prefix, ...inbox.value }, ...result } : result;
+  } catch {
+    return { notifications: { error: "OpenBar inbox could not be checked. Call check_inbox to retry." }, ...result };
+  }
+}
 
 function exposeBrowserBridge(): void {
   window.openbarAgent = {
@@ -172,9 +188,10 @@ export async function registerWebMcpToolsIndependent(
       try {
         const registeredTool: WebMcpTool = {
           ...tool,
-          execute: (args, options) => {
+          execute: async (args, options) => {
             if (!owner.active || signal.aborted) return unavailableToolResult(tool.name);
-            return tool.execute(args, options);
+            const result = await tool.execute(args, options);
+            return tool.name === "check_inbox" || tool.name === "acknowledge_inbox" ? result : prefixBrowserInbox(result, options?.signal);
           },
         };
         pageTools.set(tool.name, { tool: registeredTool, owner: owner.id });

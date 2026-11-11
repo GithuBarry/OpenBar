@@ -27,6 +27,11 @@ export const WORKSPACE_INPUTS = {
   open_project: z.strictObject({ slug: z.string().describe("Project slug from list_projects or search_projects.") }),
 };
 
+export const INBOX_INPUTS = {
+  check_inbox: z.strictObject({ limit: z.number().int().min(1).max(50).optional(), includeAcknowledged: z.boolean().optional() }),
+  acknowledge_inbox: z.strictObject({ ids: z.array(diskHash).min(1).max(50), acknowledged: z.boolean().optional() }),
+};
+
 export const DOCUMENT_INPUTS = {
   read_document: z.strictObject({ kind: z.string().optional(), id: z.string() }),
   patch_document: z.strictObject({ kind: z.string().optional(), id: z.string(), baseHash: z.string(), body: z.string() }),
@@ -99,6 +104,8 @@ export const MINDMAP_INPUTS = {
 };
 
 export const MCP_INPUTS = {
+  check_inbox: INBOX_INPUTS.check_inbox.extend({ project: projectId.optional() }),
+  acknowledge_inbox: INBOX_INPUTS.acknowledge_inbox.extend({ project: projectId.optional() }),
   get_workspace_layout: WORKSPACE_INPUTS.get_workspace_layout,
   move_project: WORKSPACE_INPUTS.move_project,
   upload_figure: z.strictObject({ project: projectId, filename: z.string().min(1).max(240), base64: z.string().min(1).max(2800000), requestId: z.string().optional() }),

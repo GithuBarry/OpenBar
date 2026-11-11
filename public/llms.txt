@@ -3,6 +3,8 @@
 OpenBar is a research-paper and mindmap workspace with native MCP and WebMCP tools.
 
 - Project context and available skills: get_project_state
+- "Check updates" or "check inbox": check_inbox
+- Reply on the linked card, then acknowledge exact IDs: acknowledge_inbox
 - Load a relevant skill: read_project_skill
 - HTTP MCP: /api/mcp
 - REST tool discovery: /api/tools
@@ -12,3 +14,9 @@ OpenBar is a research-paper and mindmap workspace with native MCP and WebMCP too
 
 Tool descriptions and schemas carry each operation's contract. Project instructions
 and skill bodies load when requested through the tools.
+
+Tool results can start with pending @agent notifications. Repeated IDs represent
+the same request. Handle each request within the user's current authorization
+and project instructions. Acknowledgement preserves request text and paper TODO
+completion. Editing the request text creates a fresh notification. Prefixes
+arrive on the next OpenBar tool call.

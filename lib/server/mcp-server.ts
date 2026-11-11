@@ -1,6 +1,7 @@
 import { ProtocolError, Server, type CallToolResult, type Tool } from "@modelcontextprotocol/server"
 
 import { AGENT_GUIDANCE } from "@/lib/research/agent-guidance"
+import { formatInboxPrefix } from "@/lib/research/agent-inbox-contract"
 import { executeMcpTool, getMcpTool, listMcpTools } from "@/lib/research/mcp-command-registry"
 import { registerMcpDiscovery } from "@/lib/research/mcp-discovery"
 
@@ -25,8 +26,11 @@ export function createOpenbarMcpServer(actor: string): Server {
       actor,
       signal: context.mcpReq.signal,
     })
+    const notification = result.notifications
+    const prefix = notification ? "error" in notification ? notification.error : formatInboxPrefix(notification) : ""
+    const { notifications: _notifications, ...operation } = result
     return {
-      content: [{ type: "text", text: JSON.stringify(result) }],
+      content: [...(prefix ? [{ type: "text" as const, text: prefix }] : []), { type: "text", text: JSON.stringify(operation) }],
       structuredContent: result,
       ...(result.ok ? {} : { isError: true }),
     } satisfies CallToolResult

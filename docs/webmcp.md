@@ -17,6 +17,23 @@ link both discovery documents.
 
 ## Navigation journey
 
+### Checking human updates
+
+"Check updates" and "check inbox" mean call `check_inbox`. A project page supplies
+its project identity. The workspace and headless tool can check all projects.
+Saved `@agent` mentions generate content-addressed notifications with card links.
+Ordinary tool results prefix a bounded list of pending requests. MCP uses a leading
+text content block and a `notifications` field. REST and WebMCP preserve the normal
+operation result and place `notifications` first.
+
+Read the linked context and reply on the card within the current user instructions,
+then call `acknowledge_inbox` with the exact IDs. Repeated IDs identify the same
+request. Editing mention-bearing text produces a new ID. Receipts store delivery
+IDs in machine runtime storage, while the paper and map own the request text.
+Acknowledgement preserves paper TODO completion. `includeAcknowledged` shows handled
+items and `acknowledged=false` reopens them. Humans can do both in the Tools panel.
+Notifications arrive with the next OpenBar call. An idle agent can check explicitly.
+
 A memoryless agent follows this path:
 
 ```text

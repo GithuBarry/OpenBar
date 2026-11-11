@@ -703,10 +703,10 @@ export function getProjectState(slug: string, current?: CurrentLocation): Projec
   });
 }
 
-export function getProjectAgentMentions(slug: string) {
+export function getProjectAgentMentions(slug: string, limit = 50) {
   const paper = getEditableTexPaper(slug);
   const todos = paper ? analyzePaper(paper.source).todos.map(todo => ({ ...todo, completed: !paperTodoIsOpen(todo) })) : [];
-  return collectAgentMentions(slug, listMindmaps(slug), todos);
+  return collectAgentMentions(slug, listMindmaps(slug), todos, limit);
 }
 
 export function projectStateForAgent(state: ProjectState, query: ProjectStateQuery = {}): unknown {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import * as Popover from "@radix-ui/react-popover";
 import { PopoverSurface } from "@/components/pop";
@@ -15,6 +15,8 @@ import {
 } from "@/lib/research/webmcp-register";
 import { FastTooltip } from "@/components/fast-tooltip";
 import { cn } from "@/lib/utils";
+import { requestInbox, useInboxWebMcp } from "@/features/use-inbox-webmcp";
+import type { AgentInbox, InboxNotification } from "@/lib/research/agent-inbox-contract";
 
 const SURFACE_LABEL: Partial<Record<WebMcpSurface, string>> = {
   workspace: "Workspace",
@@ -29,6 +31,7 @@ const SURFACE_LABEL: Partial<Record<WebMcpSurface, string>> = {
 const SURFACE_ORDER: WebMcpSurface[] = ["workspace", "shared", "paper", "mindmap", "wiki", "instructions", "setup"];
 
 export function AgentReadyIndicator() {
+  const project = useInboxWebMcp();
   const [catalog, setCatalog] = useState<WebMcpCatalogEntry[]>([]);
   const [diagnostics, setDiagnostics] = useState<WebMcpDiagnostic[]>([]);
   const [open, setOpen] = useState(false);
@@ -109,6 +112,7 @@ export function AgentReadyIndicator() {
         <PopoverSurface className="ob-agent-ready-panel" align="end" sideOffset={8} collisionPadding={12} aria-label="MCP and WebMCP agent tools">
           <p className="ob-agent-ready-heading">Tools and agent access</p>
           <Link href="/agents" className="text-xs text-accent underline">How to connect a browser or headless agent</Link>
+          <AgentInboxPanel project={project} />
           <p className="ob-agent-ready-heading mt-3">{statusText}</p>
           {ready ? (
             grouped.map(({ surface, tools }) => (
@@ -145,4 +149,79 @@ export function AgentReadyIndicator() {
     </Popover.Root>
     </>
   );
+}
+
+function AgentInboxPanel({ project }: { project?: string }) {
+  const [inbox, setInbox] = useState<AgentInbox | null>(null);
+  const [includeAcknowledged, setIncludeAcknowledged] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const revision = useRef(0);
+
+  const refresh = useCallback(async () => {
+    const current = ++revision.current;
+    setBusy(true);
+    setError(null);
+    const result = await requestInbox<AgentInbox>("GET", project, { limit: 50, includeAcknowledged });
+    if (revision.current !== current) return;
+    if (result.ok) setInbox(result.value);
+    else setError(result.message);
+    setBusy(false);
+  }, [project, includeAcknowledged]);
+
+  useEffect(() => {
+    setInbox(null);
+    void refresh();
+    const changed = () => { void refresh(); };
+    window.addEventListener("openbar-inbox-updated", changed);
+    return () => {
+      revision.current++;
+      window.removeEventListener("openbar-inbox-updated", changed);
+    };
+  }, [refresh]);
+
+  const acknowledge = async (notification: InboxNotification) => {
+    const current = ++revision.current;
+    setBusy(true);
+    setError(null);
+    const result = await requestInbox("POST", notification.project, {
+      ids: [notification.id], acknowledged: !notification.acknowledged,
+    });
+    if (revision.current !== current) return;
+    if (result.ok) await refresh();
+    else {
+      setError(result.message);
+      setBusy(false);
+    }
+  };
+
+  return <section className="mt-3 border-b border-line pb-3" aria-label="Agent inbox" data-agent-inbox>
+    <div className="flex items-center justify-between gap-2">
+      <p className="ob-agent-ready-heading">Agent inbox</p>
+      <button type="button" className="btn-ghost px-2 py-1 text-xs" onClick={() => { void refresh(); }} disabled={busy}>Refresh</button>
+    </div>
+    <p className="ob-agent-ready-empty">Ask your agent “check updates” to read your mindmap mentions.</p>
+    <label className="my-2 flex items-center gap-2 text-xs text-muted">
+      <input type="checkbox" checked={includeAcknowledged} disabled={busy} onChange={(event) => setIncludeAcknowledged(event.target.checked)} />
+      Include handled messages
+    </label>
+    {error && <p className="text-xs text-danger" role="alert">{error}</p>}
+    {busy && <p className="ob-agent-ready-empty" role="status">Checking updates…</p>}
+    {inbox && <>
+      {inbox.notifications.length === 0 && <p className="ob-agent-ready-empty">Your inbox is clear.</p>}
+      <ul className="max-h-60 space-y-2 overflow-y-auto" aria-label="Mindmap messages">
+        {inbox.notifications.map((notification) => <li key={notification.id} className="rounded-md border border-line p-2" data-inbox-notification={notification.id} data-acknowledged={notification.acknowledged}>
+          <div className="mb-1 flex items-center justify-between gap-2 text-xs text-muted">
+            <span>{notification.project}</span><span>{notification.acknowledged ? "Handled" : "Pending"}</span>
+          </div>
+          <p className="whitespace-pre-wrap break-words text-xs leading-snug">{notification.text}</p>
+          <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+            <Link href={notification.href} className="text-accent underline">Open card</Link>
+            <button type="button" className="btn-ghost px-2 py-1" disabled={busy} onClick={() => { void acknowledge(notification); }}>{notification.acknowledged ? "Reopen" : "Mark handled"}</button>
+          </div>
+        </li>)}
+      </ul>
+      {inbox.hasMore && <p className="ob-agent-ready-empty mt-2">More messages are available. Handle the pending messages and refresh.</p>}
+    </>}
+  </section>;
 }

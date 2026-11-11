@@ -4,6 +4,10 @@ OpenBar exposes native MCP and WebMCP tools for research projects. Start with `g
 
 After changing application code or styles, rebuild and restart the running local OpenBar service, then verify the live app before reporting completion.
 
+## Agent inbox and response prefixes
+
+When the human says "check updates" or "check inbox", call `check_inbox`. Saved mindmap `@agent` mentions are requests whose text stays in the paper or map. OpenBar tool results may start with pending notifications. Read the linked card and its current context, reply there within the user's instructions, then call `acknowledge_inbox` with the exact notification IDs. Repeated IDs represent the same request. Editing the request text produces a new ID. Acknowledgement records handling, while paper TODO completion follows the research decision. The Tools panel lets humans inspect, handle, and reopen notifications. Prefixes arrive with the next OpenBar tool call.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 ## This is NOT the Next.js you know

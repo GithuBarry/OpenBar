@@ -1,5 +1,7 @@
 import "server-only";
 import { MCP_INPUTS } from "./command-inputs";
+import { acknowledgeAgentInbox, readAgentInbox } from "./agent-inbox";
+import { INBOX_TOOL_DESCRIPTIONS, type AgentInbox } from "./agent-inbox-contract";
 import { commandJsonSchema, parseCommandInput } from "./command-schema";
 import { artifactRefSchema } from "@/lib/schemas";
 import { inspectRepository } from "@/lib/tex-project/source-graph";
@@ -1184,6 +1186,8 @@ async function executeMapImage(name: string, raw: unknown, context: McpCommandCo
 }
 
 export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
+  tool("check_inbox", "Check OpenBar updates", INBOX_TOOL_DESCRIPTIONS.check_inbox, async raw => okResult(readAgentInbox(MCP_INPUTS.check_inbox.parse(raw))), { readOnlyHint: true }),
+  tool("acknowledge_inbox", "Handle OpenBar notifications", INBOX_TOOL_DESCRIPTIONS.acknowledge_inbox, async raw => okResult(await acknowledgeAgentInbox(MCP_INPUTS.acknowledge_inbox.parse(raw)))),
   tool("upload_figure", "Upload a figure asset", "Store a base64 encoded project figure up to 2 MB. Returns an asset path for attach_mindmap_image.", async (raw, context) => {
     const args = asObject(raw)!;
     const project = projectArg(args);
@@ -1431,7 +1435,7 @@ export function listMcpTools(): McpToolDefinition[] {
   return [...MCP_TOOL_REGISTRY];
 }
 
-export async function executeMcpTool(name: string, args: unknown, context: McpCommandContext): Promise<OperationResult<unknown>> {
+async function executeCommand(name: string, args: unknown, context: McpCommandContext): Promise<OperationResult<unknown>> {
   if (isUnsupportedHeadlessViewPreferenceTool(name)) return unsupportedHeadlessViewPreferenceResult(name);
   const entry = getMcpTool(name);
   if (!entry) return failResult("invalid_arguments", `Unknown MCP tool "${name}".`, { retryable: false });
@@ -1456,3 +1460,16 @@ export const dormantWikiMutationResult = (): OperationResult<never> => failResul
   "Wiki mutations are unavailable in this release. Use bounded wiki reads and preserve the existing wiki files.",
   { retryable: false },
 );
+
+/** All tool transports retain their result while surfacing pending human requests. */
+export async function executeMcpTool(name: string, args: unknown, context: McpCommandContext): Promise<OperationResult<unknown> & { notifications?: AgentInbox | { error: string } }> {
+  const result = await executeCommand(name, args, context);
+  if (name === "check_inbox" || name === "acknowledge_inbox") return result;
+  try {
+    const record = asObject(args);
+    const inbox = readAgentInbox({ project: typeof record?.project === "string" ? record.project : undefined, limit: 3 });
+    return inbox.count ? { notifications: inbox, ...result } : result;
+  } catch {
+    return { notifications: { error: "OpenBar inbox could not be checked. Call check_inbox to retry." }, ...result };
+  }
+}

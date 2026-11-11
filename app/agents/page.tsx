@@ -27,6 +27,11 @@ export default function AgentAccessPage() {
         <p>Discover tools through your browser integration. <code>get_project_state</code> returns project context and instruction and skill metadata. Load relevant detail through the tools as needed. The active browser page supplies the project identity.</p>
         <p>Use the labeled interface for visual verification or a capability missing from the tool catalog. Prefer WebMCP for supported operations.</p>
       </section>
+      <section className="space-y-3" aria-labelledby="inbox-help">
+        <h2 id="inbox-help" className="text-xl font-semibold">Talk to your agent from a mindmap</h2>
+        <p>Write <code>@agent</code> on a mindmap card, then tell your connected agent <strong>check updates</strong>. It calls <code>check_inbox</code>, reads the card, replies there, and marks the exact notification handled with <code>acknowledge_inbox</code>.</p>
+        <p>OpenBar also prefixes pending requests to tool results. Repeated IDs identify the same request. Editing the request creates a fresh notification. The Tools panel shows pending and handled requests and lets you reopen them. Your original request and paper TODO completion stay available.</p>
+      </section>
       <section className="space-y-3" aria-labelledby="headless-help">
         <h2 id="headless-help" className="text-xl font-semibold">Connect a headless client</h2>
         <p>Configure a Streamable HTTP MCP connection to <code>{'<OpenBar origin>/api/mcp'}</code>. Supply <code>Authorization: Bearer &lt;access token&gt;</code> using the server’s configured <code>OPENBARRY_ACCESS_TOKEN</code>, or its allowed Cloudflare Access identity. The workspace owner supplies credentials.</p>
