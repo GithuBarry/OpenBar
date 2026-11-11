@@ -145,13 +145,11 @@ type MindmapRemotePushResult = Awaited<ReturnType<typeof pushBrowserProject>>;
 type Point = { x: number; y: number };
 type Dimensions = { width: number; height: number };
 type MindmapViewMode = "map" | "changes";
-type InspectorSectionId = "organization" | "appearance" | "more";
+type InspectorSectionId = "more";
 type InlineCardSession = { nodeId: string; commit: () => Promise<boolean> };
 
 const INSPECTOR_SECTION_LABELS: Record<InspectorSectionId, string> = {
-  organization: "Organization",
-  appearance: "Appearance",
-  more: "More actions",
+  more: "Notes & actions",
 };
 
 interface CanvasLayout {
@@ -2298,9 +2296,7 @@ export function MindmapEditor({
           cards={selectedCards}
           rootId={mindmap.rootId}
           projectLabels={projectLabels}
-          sections={inspectorSections}
           readOnly={readOnly}
-          onToggleSection={toggleInspectorSection}
           onClose={() => setCardMenuOpen(false)}
           onPatch={(patch) => {
             setSaveError(null);
@@ -2451,7 +2447,7 @@ export function MindmapEditor({
             </div>
           )}
 
-          <InspectorSection id="organization" open={Boolean(inspectorSections.organization)} onToggle={() => toggleInspectorSection("organization")}>
+          <section className={styles.inspectorGroup}>
           <fieldset disabled={readOnly || convertingCardId === selected.id} className="mindmap-card-menu-fields">
           <div className="mindmap-card-menu-section">
             <div className="mindmap-card-menu-section-body">
@@ -2479,7 +2475,7 @@ export function MindmapEditor({
                   value={labelDraft}
                   list="mindmap-label-suggestions"
                   maxLength={MAX_MINDMAP_LABEL_CHARS}
-                  placeholder="Add a label and press Enter"
+                  placeholder="Add a label…"
                   aria-label="Add label"
                   disabled={(selected.tags || []).length >= MAX_MINDMAP_LABELS}
                   onChange={(event) => setLabelDraft(event.target.value)}
@@ -2504,13 +2500,13 @@ export function MindmapEditor({
             </div>
           </div>
           </fieldset>
-          </InspectorSection>
+          </section>
 
-          <InspectorSection id="appearance" open={Boolean(inspectorSections.appearance)} onToggle={() => toggleInspectorSection("appearance")}>
+          <section className={styles.inspectorGroup}>
           <fieldset disabled={readOnly || convertingCardId === selected.id} className="mindmap-card-menu-fields">
           <div className="mindmap-card-menu-section">
             <div className="mindmap-card-menu-section-body">
-              <div className="mindmap-field">
+              <div className={"mindmap-field " + styles.progressField}>
                 <span>Progress</span>
                 <ProgressCircles
                   value={selected.progress}
@@ -2521,9 +2517,9 @@ export function MindmapEditor({
                 {progressNotice?.id === selected.id && <small role="status">{progressNotice.text}</small>}
               </div>
               <div className="mindmap-field">
-                <span>Content format</span>
+                <span>Format</span>
                 {selected.todoId ? <span className="mindmap-paper-format-note">TeX shared with the paper</span> : (
-                <ChoiceButtons label="Card content format" value={selected.contentFormat || "plain"} options={[{value:"plain",label:"Plain"},{value:"markdown",label:"Markdown"},{value:"tex",label:"TeX"}]} onChange={(value) => dispatch({ type: "patch-node", id: selected.id, patch: { contentFormat: value as MindmapNode["contentFormat"] } })} />
+                <ChoiceButtons label="Card content format" value={selected.contentFormat || "plain"} options={[{value:"plain",label:"Plain"},{value:"markdown",label:"MD"},{value:"tex",label:"TeX"}]} onChange={(value) => dispatch({ type: "patch-node", id: selected.id, patch: { contentFormat: value as MindmapNode["contentFormat"] } })} />
                 )}
               </div>
               {!selected.todoId && selected.contentFormat === "markdown" && markdownTableColumns(selected.text) > 0 && (
@@ -2607,7 +2603,7 @@ export function MindmapEditor({
             </div>
           </div>
           </fieldset>
-          </InspectorSection>
+          </section>
 
           <InspectorSection id="more" open={Boolean(inspectorSections.more)} onToggle={() => toggleInspectorSection("more")}>
           <fieldset disabled={readOnly || convertingCardId === selected.id} className="mindmap-card-menu-fields">
@@ -2684,14 +2680,12 @@ function commonCardValue<T>(cards: MindmapNode[], read: (card: MindmapNode) => T
   return cards.every((card) => Object.is(read(card), first)) ? first : null;
 }
 
-function MultiCardInspector({ open, cards, rootId, projectLabels, sections, readOnly, onToggleSection, onClose, onPatch, onUpdateTag }: {
+function MultiCardInspector({ open, cards, rootId, projectLabels, readOnly, onClose, onPatch, onUpdateTag }: {
   open: boolean;
   cards: MindmapNode[];
   rootId: string;
   projectLabels: string[];
-  sections: Partial<Record<InspectorSectionId, boolean>>;
   readOnly: boolean;
-  onToggleSection: (id: InspectorSectionId) => void;
   onClose: () => void;
   onPatch: (patch: MindmapNodePatch) => void;
   onUpdateTag: (tag: string, operation: "add" | "remove") => void;
@@ -2723,7 +2717,7 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, sections, read
       <p id="mindmap-card-menu-description" className="sr-only">Shared controls for {cards.length} selected cards.</p>
       <p className={styles.multiSelectionHint}>Shift-click cards to add or remove them from this selection.</p>
 
-      <InspectorSection id="organization" open={Boolean(sections.organization)} onToggle={() => onToggleSection("organization")}>
+      <section className={styles.inspectorGroup}>
         <fieldset disabled={readOnly} className="mindmap-card-menu-fields">
           <div className="mindmap-card-menu-section"><div className="mindmap-card-menu-section-body">
             <div className="mindmap-field">
@@ -2733,7 +2727,7 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, sections, read
                 value={labelDraft}
                 list="mindmap-label-suggestions"
                 maxLength={MAX_MINDMAP_LABEL_CHARS}
-                placeholder="Add a label to all selected cards"
+                placeholder="Add a label…"
                 aria-label="Add label to selected cards"
                 onChange={(event) => setLabelDraft(event.target.value)}
                 onKeyDown={(event) => {
@@ -2760,13 +2754,13 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, sections, read
             </div>
           </div></div>
         </fieldset>
-      </InspectorSection>
+      </section>
 
-      <InspectorSection id="appearance" open={Boolean(sections.appearance)} onToggle={() => onToggleSection("appearance")}>
+      <section className={styles.inspectorGroup}>
         <fieldset disabled={readOnly} className="mindmap-card-menu-fields">
           <div className="mindmap-card-menu-section"><div className="mindmap-card-menu-section-body">
             {allOrdinary && (
-              <div className="mindmap-field">
+              <div className={"mindmap-field " + styles.progressField}>
                 <span>Progress {progress === null && <button type="button" className={styles.mixedReset} aria-label="Clear selected cards progress" onClick={() => onPatch({ progress: undefined })}><X size={12} aria-hidden="true" /></button>}</span>
                 {progress === null && mixed}
                 <ProgressCircles value={progress ?? undefined} label="Selected cards progress" onChange={(value) => onPatch({ progress: value })} />
@@ -2774,12 +2768,12 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, sections, read
             )}
             {allOrdinary && (
               <div className="mindmap-field">
-                <span>Content format</span>
+                <span>Format</span>
                 {contentFormat === null && mixed}
                 <ChoiceButtons<string>
                   label="Selected cards content format"
                   value={contentFormat ?? "__mixed__"}
-                  options={[{ value: "plain", label: "Plain" }, { value: "markdown", label: "Markdown" }, { value: "tex", label: "TeX" }]}
+                  options={[{ value: "plain", label: "Plain" }, { value: "markdown", label: "MD" }, { value: "tex", label: "TeX" }]}
                   onChange={(value) => onPatch({ contentFormat: value as MindmapNode["contentFormat"] })}
                 />
               </div>
@@ -2815,7 +2809,7 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, sections, read
             </div>
           </div></div>
         </fieldset>
-      </InspectorSection>
+      </section>
     </aside>
   );
 }
