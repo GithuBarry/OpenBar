@@ -3,6 +3,7 @@
 import { AGENT_GUIDANCE } from "@/lib/research/agent-guidance";
 import { OPENBAR_EXPECTATIONS } from "@/lib/research/expectations";
 import { ChoiceButtons } from "@/components/choice-buttons";
+import { useProjectWriteSession } from "@/components/project-session/project-write-session";
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -46,6 +47,7 @@ export function ProjectInstructionsClient({
   workspaceSkills: ProjectSkill[];
 }) {
   const router = useRouter();
+  const { writable, setPendingWork } = useProjectWriteSession();
   useInstructionsWebMcp({
     project: slug,
     actions: instructionsWebMcpActions,
@@ -62,6 +64,11 @@ export function ProjectInstructionsClient({
   const [pending, startTransition] = useTransition();
   const [draft, setDraft] = useState<SkillDraft>({ id: "", name: "", body: "", source: "project" });
   const baseline = useRef({ slug, body: agentsBody, workspaceBody: workspaceAgentsBody });
+
+  useEffect(() => {
+    setPendingWork("instructions", body !== baseline.current.body || workspaceBody !== baseline.current.workspaceBody || Boolean(draft.id || draft.body) || pending);
+    return () => setPendingWork("instructions", false);
+  }, [body, workspaceBody, draft.id, draft.body, pending, setPendingWork]);
 
   useEffect(() => {
     const previous = baseline.current;
@@ -130,7 +137,7 @@ export function ProjectInstructionsClient({
   };
 
   return (
-    <div className="space-y-8">
+    <fieldset disabled={!writable} className="space-y-8">
       <section className="space-y-3" aria-label="Instruction layers">
         <h2 className="text-base font-semibold">Instruction layers</h2>
         <nav className="grid gap-3 sm:grid-cols-3" aria-label="Instruction scopes">
@@ -214,7 +221,7 @@ export function ProjectInstructionsClient({
         <details><summary className="cursor-pointer text-sm font-medium">Shared product rules</summary><ol className="mt-3 list-decimal space-y-2 pl-5 text-xs leading-5 text-muted">{OPENBAR_EXPECTATIONS.map(rule => <li key={rule}>{rule}</li>)}</ol></details>
       </section>
       {error && <p className="text-xs text-danger" role="alert">{error}</p>}
-    </div>
+    </fieldset>
   );
 }
 

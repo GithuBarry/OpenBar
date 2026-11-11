@@ -7,10 +7,12 @@ import { cn } from "@/lib/utils";
 import { saveProjectAction } from "@/app/actions";
 import type { Project } from "@/lib/types";
 import { AgentReadyIndicator } from "@/components/shell/agent-ready";
+import { useProjectWriteSession } from "@/components/project-session/project-write-session";
 
 export function PageHeader({
   title,
   subtitle,
+  location,
   icon,
   actions,
   className,
@@ -20,6 +22,7 @@ export function PageHeader({
 }: {
   title: React.ReactNode;
   subtitle?: React.ReactNode;
+  location?: React.ReactNode;
   icon?: React.ReactNode;
   actions?: React.ReactNode;
   className?: string;
@@ -28,12 +31,19 @@ export function PageHeader({
   readOnlyProject?: boolean;
 }) {
   const router = useRouter();
+  const { writable, setPendingWork } = useProjectWriteSession();
+  const projectReadOnly = readOnlyProject || !writable;
   const [editing, setEditing] = useState(false);
   const [projectTitle, setProjectTitle] = useState(project?.title || "");
   const [projectTagline, setProjectTagline] = useState(project?.tagline || "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPendingWork("project-header", editing || saving);
+    return () => setPendingWork("project-header", false);
+  }, [editing, saving, setPendingWork]);
 
   useEffect(() => {
     setProjectTitle(project?.title || "");
@@ -157,7 +167,8 @@ export function PageHeader({
               <h1 className="ob-project-title ob-brand-font truncate text-base tracking-tight text-ink">
                 {project ? projectTitle || project.title : title}
               </h1>
-              {project && !readOnlyProject && (
+              {project && location && <span className="shrink-0 text-sm text-muted">/ {location}</span>}
+              {project && !projectReadOnly && (
                 <button
                   type="button"
                   onClick={() => {
@@ -182,15 +193,15 @@ export function PageHeader({
             {(project ? projectTagline : subtitle) && (
               <p
                 onClick={() => {
-                  if (!project || readOnlyProject) return;
+                  if (!project || projectReadOnly) return;
                   setSaveError(null);
                   setEditing(true);
                 }}
                 className={cn(
                   "hidden truncate text-xs text-muted sm:block",
-                  project && !readOnlyProject && "cursor-pointer transition-colors hover:text-ink",
+                  project && !projectReadOnly && "cursor-pointer transition-colors hover:text-ink",
                 )}
-                title={project && !readOnlyProject ? "Click to edit description" : undefined}
+                title={project && !projectReadOnly ? "Click to edit description" : undefined}
               >
                 {project ? projectTagline : subtitle}
               </p>

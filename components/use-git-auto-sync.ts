@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { pullBrowserProject } from "@/lib/research/browser-git-sync"
+import { pullBrowserProject, type PendingBrowserPull } from "@/lib/research/browser-git-sync"
 import type { OverleafGitStatus } from "@/lib/tex-project/overleaf-git"
 
 type Options = {
@@ -12,7 +12,8 @@ type Options = {
   push?: () => Promise<{ ok: boolean }>
   check: () => Promise<OverleafGitStatus | undefined>
   onApplying: (applying: boolean) => void
-  onApplied: () => Promise<void>
+  onApplied: (pending: PendingBrowserPull) => Promise<void>
+  onPullUncertain: (pending: PendingBrowserPull) => void
   onError: (message: string) => void
 }
 
@@ -24,6 +25,7 @@ export function useGitAutoSync(options: Options) {
     let stopped = false
     let running = false
     let failures = 0
+    let checkFailures = 0
     let timer: ReturnType<typeof setTimeout> | undefined
     const visible = () => document.visibilityState === "visible"
     const reviewing = () => Boolean(document.querySelector("[data-ob-modal]"))
@@ -35,17 +37,23 @@ export function useGitAutoSync(options: Options) {
       if (stopped || running || !visible()) return
       if (latest.current.isBusy() || reviewing()) { schedule(); return }
       running = true
+      let applying = false
+      let checked = false
       try {
         const status = await latest.current.check()
         if (stopped) return
-        if (!status || status.error) { failures += 1; if (status?.error) latest.current.onError(status.error); return }
-        if (!status.isGitRepo || !status.isOverleafRemote) { failures = 4; return }
+        if (!status) return
+        if (status.error) { failures += 1; checkFailures += 1; if (checkFailures >= 3) latest.current.onError(status.error); return }
+        if (!status.isGitRepo || !status.isOverleafRemote) { failures = 4; checkFailures = 0; return }
         if (!Number.isSafeInteger(status.ahead) || !Number.isSafeInteger(status.behind)
           || status.ahead! < 0 || status.behind! < 0 || typeof status.isClean !== "boolean") {
           failures += 1
-          latest.current.onError("Git synchronization status could not be verified. Check the remote connection and try again.")
+          checkFailures += 1
+          if (checkFailures >= 3) latest.current.onError("Git synchronization status could not be verified. Check the remote connection and try again.")
           return
         }
+        checked = true
+        checkFailures = 0
         if (status.behind === 0 && (status.ahead! > 0 || status.isClean === false)) {
           if (!visible() || reviewing() || !latest.current.canPush?.() || !latest.current.push) return
           const result = await latest.current.push()
@@ -56,17 +64,19 @@ export function useGitAutoSync(options: Options) {
         if ((status.behind || 0) === 0 || (status.ahead || 0) > 0 || !status.isClean) return
         if (!visible() || reviewing() || !latest.current.canPull()) return
         // Enter the editing guard synchronously before starting the request.
+        applying = true
         latest.current.onApplying(true)
-        const result = await pullBrowserProject(options.project)
+        const result = await pullBrowserProject(options.project, pending => { if (!stopped) latest.current.onPullUncertain(pending) })
         if (stopped) return
         if (!result.ok) throw new Error(result.message)
-        await latest.current.onApplied()
+        await latest.current.onApplied(result)
         failures = 0
       } catch (error) {
         failures += 1
-        if (!stopped) latest.current.onError(error instanceof Error ? error.message : "Automatic Git synchronization failed.")
+        if (!checked) checkFailures += 1
+        if (!stopped && (applying || checked || checkFailures >= 3)) latest.current.onError(error instanceof Error ? error.message : "Automatic Git synchronization failed.")
       } finally {
-        if (!stopped) latest.current.onApplying(false)
+        if (!stopped && applying) latest.current.onApplying(false)
         running = false
         schedule()
       }

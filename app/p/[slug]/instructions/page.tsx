@@ -10,7 +10,7 @@ import {
   hashText,
   workspaceRoot,
 } from "@/lib/research/project-skills";
-import { getProject, projectContentDir } from "@/lib/store";
+import { getProjectMetadata, projectContentDir } from "@/lib/store";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
 import { requireProjectPage } from "@/lib/server/project-access";
 
@@ -22,7 +22,7 @@ export default async function InstructionsPage({
   const { slug } = await params;
   await requireProjectPage(slug);
   if (isPublicDemoMode()) notFound();
-  const project = getProject(slug);
+  const project = getProjectMetadata(slug);
   if (!project) notFound();
   const root = projectContentDir(slug);
   const agents = findAgentsMd(root);

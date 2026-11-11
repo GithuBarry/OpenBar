@@ -3,6 +3,7 @@ import { normalizeMindmap } from "@/lib/mindmap/mindmap";
 import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import { normalizeMindmapCaution, type MindmapCaution } from "@/lib/mindmap/caution";
 import type { Mindmap, MindmapNode } from "@/lib/types";
+import { mergeSavedMindmap } from "@/lib/mindmap/merge-saved";
 
 export { byOrder, indexMindmap };
 export type { MindmapIndex };
@@ -77,8 +78,7 @@ export type MindmapTreeAction =
 export type MindmapSessionAction =
   | MindmapTreeAction
   | { type: "hydrate"; mindmap: Mindmap }
-  | { type: "ack-save"; diskHash?: string; persistedRevision?: number; updatedAt?: string }
-  | { type: "rebase-disk-hash"; diskHash?: string }
+  | { type: "ack-save"; base: Mindmap; saved: Mindmap }
   | { type: "select"; id: string; additive?: boolean }
   | { type: "clear-selection" }
   | { type: "undo" }
@@ -492,19 +492,9 @@ export function mindmapReducer(state: MindmapSession, action: MindmapSessionActi
       return { ...next, selectedIds };
     }
     case "ack-save": {
-      const mindmap = {
-        ...state.mindmap,
-        ...(action.diskHash !== undefined ? { diskHash: action.diskHash } : {}),
-        ...(action.persistedRevision !== undefined ? { revision: action.persistedRevision } : {}),
-        ...(action.updatedAt !== undefined ? { updatedAt: action.updatedAt } : {}),
-      };
+      const mindmap = mergeSavedMindmap(action.base, action.saved, state.mindmap);
       return { ...state, mindmap };
     }
-    case "rebase-disk-hash":
-      return {
-        ...state,
-        mindmap: { ...state.mindmap, diskHash: action.diskHash },
-      };
     case "revert": {
       const restored = cloneMindmap(action.mindmap);
       if (mapSignature(restored) === mapSignature(state.mindmap)) return state;

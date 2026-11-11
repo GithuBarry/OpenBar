@@ -7,8 +7,18 @@ import type { PaperPreviewResult, PreviewBatch, PreviewChange, PreviewWorkerIn, 
 
 const PREVIEW_DEBOUNCE_MS = 150;
 const PREVIEW_MAX_WAIT_MS = 500;
-const WORKER_RESPONSE_TIMEOUT_MS = 5_000;
+const WORKER_RESPONSE_TIMEOUT_MS = 30_000;
 const MAX_PENDING_BYTES = 256 * 1024;
+const MAX_PENDING_BATCHES = 1_000;
+const PROGRESS_MESSAGES: Record<NonNullable<PreviewWorkerOut["stage"]>, string> = {
+  includes: "Collecting included files…",
+  parsing: "Reading LaTeX…",
+  formatting: "Formatting the document…",
+  math: "Rendering equations and references…",
+  assembling: "Assembling the preview…",
+  recovering: "Recovering the preview by section…",
+  counting: "Counting words…",
+};
 
 export function usePreviewWorker(options: {
   bibliography?: BibEntry[];
@@ -18,12 +28,14 @@ export function usePreviewWorker(options: {
   result: PaperPreviewResult | null;
   revision: number;
   workerError: string | null;
+  progress: string;
   reset: (source: string) => void;
   applyChanges: (changes: PreviewChange[], length: number) => void;
   dispose: () => void;
 } {
   const workerRef = useRef<Worker | null>(null);
   const pendingRef = useRef<PreviewWorkerIn | null>(null);
+  const pendingBytesRef = useRef(0);
   const busyRef = useRef(false);
   const revisionRef = useRef(0);
   const renderedRevisionRef = useRef(0);
@@ -38,9 +50,11 @@ export function usePreviewWorker(options: {
   const bibliographyRef = useRef(options.bibliography);
   const assetBaseUrlRef = useRef(options.assetBaseUrl);
   const getLiveSourceRef = useRef(options.getLiveSource);
+  const hasResultRef = useRef(false);
   const [result, setResult] = useState<PaperPreviewResult | null>(null);
   const [revision, setRevision] = useState(0);
   const [workerError, setWorkerError] = useState<string | null>(null);
+  const [progress, setProgress] = useState("Starting document preview…");
   bibliographyRef.current = options.bibliography;
   assetBaseUrlRef.current = options.assetBaseUrl;
   getLiveSourceRef.current = options.getLiveSource;
@@ -61,18 +75,32 @@ export function usePreviewWorker(options: {
     const pending = pendingRef.current;
     if (!pending || message.type === "reset") {
       pendingRef.current = message;
+      pendingBytesRef.current = message.type === "changes"
+        ? message.batches.reduce((total, batch) => total + JSON.stringify(batch).length, 0)
+        : 0;
       return;
     }
     if (pending.type === "reset") {
       const live = getLiveSourceRef.current?.();
       if (live != null) pending.source = live;
-      if (message.type === "changes") pending.revision = message.batches.at(-1)?.revision || pending.revision;
+      if (message.type === "changes") {
+        // A caller can omit getLiveSource. Fold the queued transactions into
+        // the reset snapshot so its revision still describes its contents.
+        if (live == null) {
+          for (const batch of message.batches) {
+            for (const change of [...batch.changes].sort((a, b) => b.from - a.from)) {
+              pending.source = `${pending.source.slice(0, change.from)}${change.insert}${pending.source.slice(change.to)}`;
+            }
+          }
+        }
+        pending.revision = message.batches.at(-1)?.revision || pending.revision;
+      }
       return;
     }
     if (message.type !== "changes") return;
-    const bytes = pending.batches.reduce((total, batch) => total + JSON.stringify(batch).length, 0)
-      + message.batches.reduce((total, batch) => total + JSON.stringify(batch).length, 0);
-    if (bytes > MAX_PENDING_BYTES) {
+    const incomingBytes = message.batches.reduce((total, batch) => total + JSON.stringify(batch).length, 0);
+    const bytes = pendingBytesRef.current + incomingBytes;
+    if (bytes > MAX_PENDING_BYTES || pending.batches.length + message.batches.length > MAX_PENDING_BATCHES) {
       const live = getLiveSourceRef.current?.();
       if (live != null) {
         pendingRef.current = {
@@ -83,10 +111,12 @@ export function usePreviewWorker(options: {
           bibliography: bibliographyRef.current,
           assetBaseUrl: assetBaseUrlRef.current,
         };
+        pendingBytesRef.current = 0;
         return;
       }
     }
     pending.batches.push(...message.batches);
+    pendingBytesRef.current = bytes;
   }, []);
 
   const sendNow = useCallback((message: PreviewWorkerIn) => {
@@ -114,6 +144,7 @@ export function usePreviewWorker(options: {
     const pending = pendingRef.current;
     if (!pending || busyRef.current || !workerRef.current) return;
     pendingRef.current = null;
+    pendingBytesRef.current = 0;
     sendNow(pending);
   }, [clearDispatchTimers, sendNow]);
 
@@ -138,6 +169,7 @@ export function usePreviewWorker(options: {
         bibliography: bibliographyRef.current,
         assetBaseUrl: assetBaseUrlRef.current,
       };
+      pendingBytesRef.current = 0;
     };
 
     const recoverWorker = (message: string) => {
@@ -164,9 +196,15 @@ export function usePreviewWorker(options: {
       workerRef.current = worker;
       worker.onmessage = (event: MessageEvent<PreviewWorkerOut>) => {
         if (workerRef.current !== worker) return;
+        const payload = event.data;
+        if (payload.type === "progress") {
+          if (!hasResultRef.current && payload.generation === generationRef.current && payload.stage) {
+            setProgress(PROGRESS_MESSAGES[payload.stage]);
+          }
+          return;
+        }
         clearResponseTimer();
         busyRef.current = false;
-        const payload = event.data;
         if (payload.generation !== generationRef.current) {
           flushPending();
           return;
@@ -184,6 +222,7 @@ export function usePreviewWorker(options: {
               bibliography: bibliographyRef.current,
               assetBaseUrl: assetBaseUrlRef.current,
             };
+            pendingBytesRef.current = 0;
           }
           flushPending();
           return;
@@ -193,6 +232,7 @@ export function usePreviewWorker(options: {
           return;
         }
         if (payload.result) {
+          hasResultRef.current = true;
           renderedRevisionRef.current = payload.revision;
           setRevision(payload.revision);
           setResult(payload.result);
@@ -219,6 +259,7 @@ export function usePreviewWorker(options: {
       workerRef.current = null;
       busyRef.current = false;
       pendingRef.current = null;
+      pendingBytesRef.current = 0;
     };
   }, [clearDispatchTimers, clearResponseTimer, flushPending]);
 
@@ -234,6 +275,7 @@ export function usePreviewWorker(options: {
       bibliography: bibliographyRef.current,
       assetBaseUrl: assetBaseUrlRef.current,
     };
+    pendingBytesRef.current = 0;
     if (!workerRef.current && !disposedRef.current) createWorkerRef.current?.();
     flushPending();
   }, [clearDispatchTimers, flushPending]);
@@ -254,11 +296,12 @@ export function usePreviewWorker(options: {
     clearResponseTimer();
     generationRef.current += 1;
     pendingRef.current = null;
+    pendingBytesRef.current = 0;
     workerRef.current?.terminate();
     workerRef.current = null;
     busyRef.current = false;
     disposedRef.current = true;
   }, [clearDispatchTimers, clearResponseTimer]);
 
-  return { result, revision, workerError, reset, applyChanges, dispose };
+  return { result, revision, workerError, progress, reset, applyChanges, dispose };
 }

@@ -7,6 +7,7 @@ import {
   useMemo,
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
 } from "react";
 
@@ -17,12 +18,14 @@ import {
   replaceBundlePart,
   sliceRootByIncludes,
   splitBundleSource,
+  type ClientSourceSegment,
 } from "@/lib/tex-project/source-bundle-format";
 import styles from "./nested-bundle-editor.module.css";
 import { cn } from "@/lib/utils";
 
 import { TexCodeMirror, type TexCodeMirrorHandle, type TexDocChange, type TexFocusContext } from "./tex-codemirror";
 import { accumulateHeadingCounts } from "./tex-source";
+import { PaperFindReplace } from "./paper-find-replace";
 
 type NestedItem = {
   kind: "file";
@@ -159,28 +162,56 @@ function localFocusContext(
 }
 
 export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
+  rootFile: string;
+  segments: Pick<ClientSourceSegment, "filePath" | "editable">[];
   value: string;
+  valueRevision: number;
+  currentRevision: () => number;
   readOnly?: boolean;
   citationKeys?: string[];
   onDocChanges: (changes: TexDocChange[], length: number) => void;
   onScroll?: () => void;
+  manualScrollMeasurement?: boolean;
+  onReadyProgress?: (ready: number, total: number, filePath?: string) => void;
   placeholder?: string;
   className?: string;
   focusContext?: TexFocusContext | null;
-}>(function NestedBundleEditor({ value, readOnly = false, citationKeys = [], onDocChanges, onScroll, placeholder, className, focusContext = null }, ref) {
+}>(function NestedBundleEditor({ rootFile, segments, value, valueRevision, currentRevision, readOnly = false, citationKeys = [], onDocChanges, onScroll, manualScrollMeasurement = true, onReadyProgress, placeholder, className, focusContext = null }, ref) {
   const readOnlyRef = useRef(readOnly);
   readOnlyRef.current = readOnly;
   const scrollerRef = useRef<HTMLDivElement>(null);
   const sourceRef = useRef(value);
   const [live, setLive] = useState(value);
-  useEffect(() => { sourceRef.current = value; setLive(value); }, [value]);
+  const [find, setFind] = useState<{ file: string; selection: string }>();
+  const findInputRef = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    // A newer keystroke can arrive between the parent render and this effect.
+    if (valueRevision !== currentRevision()) return;
+    sourceRef.current = value;
+    setLive(value);
+  }, [value, valueRevision, currentRevision]);
   const onChangeRef = useRef(onDocChanges);
   onChangeRef.current = onDocChanges;
   const handlesRef = useRef(new Map<string, TexCodeMirrorHandle>());
   const focusedKeyRef = useRef<string | null>(null);
-  const items = useMemo(() => buildNestedItems(live), [live]);
+  const itemsCacheRef = useRef<{ source: string; items: NestedItem[] } | null>(null);
+  const items = useMemo(() => {
+    if (itemsCacheRef.current?.source === live) return itemsCacheRef.current.items;
+    const nextItems = buildNestedItems(live);
+    itemsCacheRef.current = { source: live, items: nextItems };
+    return nextItems;
+  }, [live]);
   const itemsRef = useRef(items);
-  itemsRef.current = items;
+  if (live === sourceRef.current) itemsRef.current = items;
+  const readyKeysRef = useRef(new Set<string>());
+  const reportReady = (key: string) => {
+    readyKeysRef.current.add(key);
+    const keys = itemsRef.current.length
+      ? itemsRef.current.filter((item) => item.text.length || item.showLabel).map((item) => item.key)
+      : ["pane"];
+    onReadyProgress?.(keys.filter((itemKey) => readyKeysRef.current.has(itemKey)).length, keys.length,
+      itemsRef.current.find((item) => item.key === key)?.filePath);
+  };
 
   const focusedHandle = () => {
     const key = focusedKeyRef.current;
@@ -203,6 +234,23 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
     else handlesRef.current.delete(key);
   };
 
+  const revealRange: TexCodeMirrorHandle["revealRange"] = (from, to, options) => {
+    const slot = slotForVirtual(from);
+    if (!slot) {
+      const fallback = handlesRef.current.get("pane");
+      if (fallback) fallback.revealRange(from, to, options);
+      else options?.onDone?.();
+      return;
+    }
+    revealSlot(slot);
+    const handle = handlesRef.current.get(slot.key);
+    const view = handle?.getView();
+    const scroller = scrollerRef.current;
+    if (!handle || !view || !scroller) { options?.onDone?.(); return; }
+    const localFrom = Math.max(0, Math.min(view.state.doc.length, from - slot.virtualFrom));
+    handle.revealRange(localFrom, Math.max(0, to - slot.virtualFrom), { ...options, scrollContainer: scroller });
+  };
+
   const commit = (next: string) => {
     if (readOnlyRef.current) return;
     const previous = sourceRef.current;
@@ -213,6 +261,7 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
     while (to > from && end > from && previous[to - 1] === next[end - 1]) { to -= 1; end -= 1; }
     sourceRef.current = next;
     itemsRef.current = buildNestedItems(next);
+    itemsCacheRef.current = { source: next, items: itemsRef.current };
     setLive(next);
     onChangeRef.current([{ from, to, insert: next.slice(from, end) }], next.length);
   };
@@ -251,7 +300,7 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
     focus: () => {
       focusedHandle()?.focus();
     },
-    getScroller: () => scrollerRef.current,
+    getScroller: () => scrollerRef.current ?? focusedHandle()?.getScroller() ?? null,
     getView: () => focusedHandle()?.getView() ?? null,
     getSelection: () => focusedHandle()?.getSelection() ?? null,
     setSelection: (from, to) => {
@@ -265,6 +314,7 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
         ?.querySelector(`[data-ob-nested-key="${CSS.escape(slot.key)}"]`)
         ?.scrollIntoView({ block: "start" });
     },
+    revealRange,
     surround: (open, close, placeholderText) => {
       focusedHandle()?.surround(open, close, placeholderText);
     },
@@ -283,12 +333,60 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
     applyVirtualChange,
   }), [applyVirtualChange]);
 
-  if (!items.length) {
-    return (
+  const closeFind = () => {
+    setFind(undefined);
+    focusedHandle()?.focus();
+  };
+
+  return <div data-ob-paper-editor data-find-open={Boolean(find)} className={cn(styles.workspace, className)}
+    onKeyDownCapture={event => {
+      if (event.key === "Escape" && find) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeFind();
+      }
+      if (event.key.toLowerCase() !== "f" || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (find) {
+        findInputRef.current?.focus();
+        findInputRef.current?.select();
+        return;
+      }
+      const owner = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-ob-nested-key]") : null;
+      const key = owner?.dataset.obNestedKey ?? focusedKeyRef.current;
+      const view = (key ? handlesRef.current.get(key) : focusedHandle())?.getView();
+      const range = view?.state.selection.main;
+      const selection = view && range ? view.state.sliceDoc(range.from, range.to) : "";
+      const slot = itemsRef.current.find(item => item.key === key);
+      setFind({ file: slot?.filePath ?? rootFile, selection: selection.includes("\n") ? "" : selection });
+    }}>
+    {find && <PaperFindReplace
+      source={live}
+      rootFile={rootFile}
+      segments={segments}
+      openedFile={find.file}
+      selectedText={find.selection}
+      readOnly={readOnly}
+      inputRef={findInputRef}
+      onReveal={revealRange}
+      onEdit={(before, after) => {
+        if (readOnlyRef.current || before !== sourceRef.current) return false;
+        const prior = splitBundleSource(before);
+        const next = splitBundleSource(after);
+        if (prior.length !== next.length || prior.some((part, index) => part.filePath !== next[index]?.filePath)) return false;
+        commit(after);
+        return true;
+      }}
+      onClose={closeFind}
+    />}
+    {!items.length ? (
       <TexCodeMirror
         ref={(handle) => bindHandle("pane")(handle)}
+        onReady={() => reportReady("pane")}
         value={live}
         readOnly={readOnly}
+        nativeSearch={false}
         onChange={commit}
         onScroll={onScroll}
         onFocus={() => {
@@ -296,18 +394,14 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
         }}
         placeholder={placeholder}
         focusContext={focusContext}
-        className={className}
       />
-    );
-  }
-
-  return (
+    ) : (
     <div
       ref={scrollerRef}
       data-ob-scroll="paper-editor"
-      className={cn(styles.editor, className)}
+      className={styles.editor}
       onScroll={() => {
-        for (const handle of handlesRef.current.values()) handle.getView()?.requestMeasure();
+        if (manualScrollMeasurement) for (const handle of handlesRef.current.values()) handle.getView()?.requestMeasure();
         onScroll?.();
       }}
     >
@@ -316,10 +410,13 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
         const editor = (
           <TexCodeMirror
             ref={bindHandle(item.key)}
+            onReady={() => reportReady(item.key)}
             variant={item.includedFile ? "compact" : "nested"}
+            nativeSearch={false}
             readOnly={readOnly}
             lineOffset={item.lineOffset}
             value={item.text}
+            isValueCurrent={() => itemsRef.current.find((entry) => entry.key === item.key)?.text === item.text}
             getCompletionContext={() => ({ source: sourceRef.current, citationKeys })}
             headingCounts={item.headingCounts}
             placeholder={placeholder}
@@ -352,7 +449,7 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
           );
         }
         return (
-          <div key={item.key} data-ob-file={item.filePath} data-ob-line-start={item.lineOffset + 1} data-ob-nested-key={item.key} className={cn("ob-nested-tex-slice", item.showLabel && "ob-nested-tex-card")}>
+          <div key={item.key} data-ob-file={item.filePath} data-ob-line-start={item.lineOffset + 1} data-ob-source-from={item.virtualFrom} data-ob-source-to={item.virtualTo} data-ob-nested-key={item.key} className={cn("ob-nested-tex-slice", item.showLabel && "ob-nested-tex-card")}>
             {item.showLabel && (
               <div className="ob-nested-tex-card-label">
                 <code>{item.filePath}</code>
@@ -363,7 +460,8 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
         );
       })}
     </div>
-  );
+    )}
+  </div>;
 });
 
 NestedBundleEditor.displayName = "NestedBundleEditor";

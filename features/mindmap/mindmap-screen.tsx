@@ -1,19 +1,20 @@
 import Link from "next/link";
 import styles from "./mindmap-switcher.module.css";
-import { BookOpenText, Network } from "lucide-react";
+import { FileText, Network } from "lucide-react";
 import { notFound } from "next/navigation";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { MindmapEditor } from "@/features/mindmap/mindmap-editor";
 import { MindmapSwitcher } from "@/features/mindmap/mindmap-switcher";
+import { MindmapTitleProvider } from "@/features/mindmap/mindmap-title-context";
 import { deriveMindmap } from "@/lib/mindmap-derive";
 import { getProjectState } from "@/lib/research/project-state";
 import { isPrimaryMindmap } from "@/lib/research/todo-map";
-import { DRAFT_MINDMAP_ID, getMindmap, getProject, listMindmaps } from "@/lib/store";
+import { DRAFT_MINDMAP_ID, getMindmap, getProjectMetadata, listMindmaps } from "@/lib/store";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
 
 export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; mapId?: string }) {
-  const project = getProject(slug);
+  const project = getProjectMetadata(slug);
   if (!project) notFound();
 
   const mapId = !rawMapId || rawMapId === "mindmap" ? DRAFT_MINDMAP_ID : rawMapId;
@@ -34,9 +35,10 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
   });
 
   return (
-    <div className="flex h-screen min-h-0 flex-col overflow-hidden">
+    <MindmapTitleProvider key={`${slug}:${activeId}`}><div className="flex h-screen min-h-0 flex-col overflow-hidden">
       <PageHeader
         className={styles.pageHeader}
+        location="Mindmap"
         title={`${project.title} Mindmap`}
         subtitle={isPrimary ? "Primary research map" : "Planning map"}
         project={project}
@@ -44,7 +46,7 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
         icon={<Network size={18} />}
         actions={
           <div className={styles.headerActions}>
-            <Link href={`/p/${slug}/paper`} className={styles.paperLink} aria-label="Open paper"><BookOpenText size={14} /><span>Paper</span></Link>
+            <Link href={`/p/${slug}/paper`} className={styles.paperLink} aria-label="Open paper"><FileText size={14} /><span>Paper</span></Link>
             <MindmapSwitcher
               project={slug}
               activeId={activeId}
@@ -67,6 +69,6 @@ export async function MindmapScreen({ slug, mapId: rawMapId }: { slug: string; m
           paperState={state}
         />
       </div>
-    </div>
+    </div></MindmapTitleProvider>
   );
 }

@@ -3,7 +3,7 @@ import { NotebookTabs } from "lucide-react";
 
 import { PageHeader } from "@/components/shell/page-header";
 import { WikiIndex } from "@/features/wiki/wiki-index";
-import { getProject, listWiki } from "@/lib/store";
+import { getProjectMetadata, listWiki } from "@/lib/store";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
 import { requireProjectPage } from "@/lib/server/project-access";
 
@@ -14,7 +14,7 @@ export default async function WikiPage({
 }) {
   const { slug } = await params;
   await requireProjectPage(slug);
-  const project = getProject(slug);
+  const project = getProjectMetadata(slug);
   if (!project) notFound();
 
   return (
@@ -22,6 +22,7 @@ export default async function WikiPage({
       <PageHeader
         title={project.title}
         subtitle="Supporting notes"
+        location="Wiki"
         project={project}
         readOnlyProject={isPublicDemoMode()}
         icon={<NotebookTabs size={18} />}

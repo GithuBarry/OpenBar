@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 import type { BibEntry } from "@/lib/bibtex";
-import { renderPreviewDocument, type PreviewResult } from "@/lib/tex-project/preview-html";
+import { renderPreviewDocument, type PreviewHtmlOptions, type PreviewResult } from "@/lib/tex-project/preview-html";
 import { inlineBundleIncludes } from "@/lib/tex-project/source-bundle-format";
 import { countPaperWords } from "./paper-stats";
 
@@ -31,10 +31,11 @@ export type PreviewWorkerIn =
 export type PaperPreviewResult = PreviewResult & { wordCount: number };
 
 export type PreviewWorkerOut = {
-  type: "result" | "desync";
+  type: "result" | "desync" | "progress";
   generation: number;
   revision: number;
   result?: PaperPreviewResult;
+  stage?: Parameters<NonNullable<PreviewHtmlOptions["onProgress"]>>[0] | "counting";
 };
 
 let source = "";
@@ -72,7 +73,13 @@ function pump(): void {
   rendering = true;
   const revision = latestRevision;
   const snapshot = source;
-  const result = { ...renderPreviewDocument(snapshot, { bibliography, assetBaseUrl }), wordCount: countPaperWords(inlineBundleIncludes(snapshot)) };
+  const preview = renderPreviewDocument(snapshot, {
+    bibliography,
+    assetBaseUrl,
+    onProgress: (stage) => self.postMessage({ type: "progress", generation, revision, stage } satisfies PreviewWorkerOut),
+  });
+  self.postMessage({ type: "progress", generation, revision, stage: "counting" } satisfies PreviewWorkerOut);
+  const result = { ...preview, wordCount: countPaperWords(inlineBundleIncludes(snapshot)) };
   // Publish this completed snapshot even when another edit is queued. The
   // next message will schedule a newer render; withholding every result
   // during continuous typing makes the preview appear frozen indefinitely.

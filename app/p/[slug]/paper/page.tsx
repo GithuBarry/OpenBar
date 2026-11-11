@@ -1,11 +1,6 @@
 import { notFound } from "next/navigation";
-import { BookOpenText } from "lucide-react";
-
-import { PageHeader } from "@/components/shell/page-header";
 import { PaperEditor } from "@/features/paper/paper-editor";
-import { PaperReadingShell } from "@/features/paper/paper-reading-shell";
-import { DRAFT_MINDMAP_ID, getBibliography, getBibliographyRaw, getMindmap, getPaperEditorState, getProject } from "@/lib/store";
-import { isPublicDemoMode } from "@/lib/server/demo-mode";
+import { DRAFT_MINDMAP_ID, getBibliographyData, getMindmap, getPaperEditorState, getProjectMetadata } from "@/lib/store";
 import { requireProjectPage } from "@/lib/server/project-access";
 
 /**
@@ -20,7 +15,7 @@ export default async function PaperPage({
 }) {
   const { slug } = await params;
   await requireProjectPage(slug);
-  const project = getProject(slug);
+  const project = getProjectMetadata(slug);
   if (!project) notFound();
 
   const paper = getPaperEditorState(slug);
@@ -30,34 +25,26 @@ export default async function PaperPage({
     label: ((node.title?.trim() || node.text.split("\n")[0].trim() || node.todoId || node.id)).slice(0, 80),
   }));
   const boundTodoIds = (map?.nodes || []).flatMap((node) => (node.todoId ? [node.todoId] : []));
-  const bibliography = getBibliography(slug);
+  const bibliography = getBibliographyData(slug);
 
   return (
-    <PaperReadingShell header={
-      <PageHeader
-        title={project.title}
-        subtitle={project.tagline || `${project.title} manuscript`}
-        project={project}
-        readOnlyProject={isPublicDemoMode()}
-        icon={<BookOpenText size={18} />}
-      />
-    }>
-        {paper ? (
-          <PaperEditor
-            key={slug}
-            project={slug}
-            title={paper.title}
-            initialSections={paper.sections}
-            initialBundle={paper.bundle}
-            sourceContext={paper.sourceContext}
-            bibliography={bibliography}
-            bibliographyRaw={getBibliographyRaw(slug)}
-            placementTargets={placementTargets}
-            boundTodoIds={boundTodoIds}
-          />
-        ) : (
-          <p className="rounded-lg border border-line bg-surface px-4 py-3 text-sm text-muted">This project has no TeX manuscript yet.</p>
-        )}
-    </PaperReadingShell>
+    <div className="h-full min-h-0 w-full overflow-clip">
+      {paper ? (
+        <PaperEditor
+          key={slug}
+          project={slug}
+          title={paper.title}
+          initialSections={paper.sections}
+          initialBundle={paper.bundle}
+          sourceContext={paper.sourceContext}
+          bibliography={bibliography.entries}
+          bibliographyRaw={bibliography.raw}
+          placementTargets={placementTargets}
+          boundTodoIds={boundTodoIds}
+        />
+      ) : (
+        <p className="rounded-lg border border-line bg-surface px-4 py-3 text-sm text-muted">This project has no TeX manuscript yet.</p>
+      )}
+    </div>
   );
 }

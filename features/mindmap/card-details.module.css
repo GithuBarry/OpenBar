@@ -1,26 +1,32 @@
 .propertyList { display: grid; gap: 3px; }
-.propertyRow { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr) 24px; align-items: center; gap: 5px; padding: 3px 0; border-bottom: 1px solid rgb(var(--line) / .55); }
+.propertyRow { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr) 34px; align-items: center; gap: 5px; padding: 3px 0; border-bottom: 1px solid rgb(var(--line) / .55); }
 .propertyName { grid-column: 1; grid-row: 1; }
 .removeButton { grid-column: 3; grid-row: 1; }
-.properties .propertyRow > input[type], .properties .addEditor input[type], .properties .addEditor :global(.ob-select) { min-width: 0; min-height: 30px; height: 30px; padding: 4px 6px; font-size: 11px; line-height: 20px; }
+.properties .propertyRow > input[type], .properties .addEditor input[type], .properties .addEditor :global(.ob-select) { min-width: 0; min-height: 30px; height: 30px; padding: 4px 6px; font-size: 12px; line-height: 20px; }
 .properties .propertyRow > input[type] { border-color: transparent; background: transparent; }
 .properties .propertyRow > input[type]:hover { border-color: rgb(var(--line)); }
 .properties .propertyRow > input[type]:focus { border-color: rgb(var(--accent)); background: rgb(var(--canvas)); }
-.booleanValue { display: flex; grid-column: 2; grid-row: 1; align-items: center; gap: 6px; min-height: 30px; font-size: 11px; }
+.booleanValue { display: flex; grid-column: 2; grid-row: 1; align-items: center; gap: 6px; min-height: 30px; font-size: 12px; }
 .properties .booleanValue > input[type="checkbox"] { width: 15px; height: 15px; min-height: 15px; padding: 0; accent-color: rgb(var(--accent)); }
-.iconButton { display: inline-flex; justify-content: center; align-items: center; width: 24px; min-height: 28px; padding: 0; border-radius: 4px; color: rgb(var(--muted)); cursor: pointer; }
+.iconButton { display: inline-flex; justify-content: center; align-items: center; width: 34px; min-height: 34px; padding: 0; border-radius: 4px; color: rgb(var(--muted)); cursor: pointer; }
 .iconButton:hover { background: rgb(var(--surface-2)); color: rgb(var(--ink)); }
 .iconButton:disabled { opacity: .4; cursor: default; }
 .iconButton:focus-visible, .addButton:focus-visible, .structuredToggle:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; }
 .structuredDisclosure { grid-column: 2; grid-row: 1; min-width: 0; }
 .structuredDisclosure[open] { grid-column: 1 / -1; grid-row: 2; }
-.structuredToggle { display: flex; align-items: center; gap: 3px; min-width: 0; min-height: 30px; padding: 0 3px; list-style: none; font-size: 11px; text-align: left; color: rgb(var(--muted)); cursor: pointer; }
+.structuredToggle { display: flex; align-items: center; gap: 3px; min-width: 0; min-height: 30px; padding: 0 3px; list-style: none; font-size: 12px; text-align: left; color: rgb(var(--muted)); cursor: pointer; }
 .structuredToggle::-webkit-details-marker { display: none; }
 .structuredToggle > svg { flex-shrink: 0; }
 .structuredDisclosure[open] > .structuredToggle > svg { transform: rotate(90deg); }
-.properties .structuredValue { grid-column: 1 / -1; min-height: 96px; font-family: var(--font-mono); font-size: 11px; }
-.addButton { display: inline-flex; align-items: center; justify-self: start; gap: 5px; min-height: 30px; padding: 3px 0; color: rgb(var(--accent)); font-size: 11px; cursor: pointer; }
+.properties .structuredValue { grid-column: 1 / -1; min-height: 96px; font-family: var(--font-mono); font-size: 12px; }
+.addButton { display: inline-flex; align-items: center; justify-self: start; gap: 5px; min-height: 30px; padding: 3px 0; color: rgb(var(--accent-text)); font-size: 12px; cursor: pointer; }
 .addEditor { display: grid; gap: 5px; padding: 6px 0; }
 .addFields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 5px; }
-.addValue { display: grid; grid-template-columns: minmax(0, 1fr) 24px 24px; align-items: start; gap: 5px; }
+.addValue { display: grid; grid-template-columns: minmax(0, 1fr) 34px 34px; align-items: start; gap: 5px; }
 .addValue > .structuredValue { grid-column: 1; }
+@media (pointer: coarse) {
+  .propertyRow { grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr) 44px; }
+  .addValue { grid-template-columns: minmax(0, 1fr) 44px 44px; }
+  .iconButton { width: 44px; min-height: 44px; }
+  .structuredToggle, .addButton, .booleanValue { min-height: 44px; }
+}

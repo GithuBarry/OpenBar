@@ -1,10 +1,61 @@
+.workspace {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.workspace[data-find-open="true"] { padding-top: var(--source-toolbar-top, 0px); }
+.workspace > .editor,
+.workspace > :global(.ob-cm-root) {
+  flex: 1;
+  min-height: 0;
+  padding-top: var(--source-toolbar-top, 0px);
+  padding-bottom: var(--source-toolbar-bottom, 3rem);
+}
+.workspace[data-find-open="true"] > .editor,
+.workspace[data-find-open="true"] > :global(.ob-cm-root) { padding-top: 0; }
 .editor {
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 0 3rem;
   background: rgb(var(--surface));
 }
+.findPanel {
+  z-index: 1;
+  display: grid;
+  flex: none;
+  gap: 5px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgb(var(--line));
+  background: rgb(var(--surface));
+  color: rgb(var(--muted));
+  font-size: 12px;
+}
+.findRow, .findOptions, .findStatus, .findScope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.findRow > input, .findScope { flex: 1; min-width: 0; }
+.findScope { white-space: nowrap; }
+.findScope select {
+  min-width: 0;
+  flex: 1;
+  padding: 4px 6px;
+  border: 1px solid rgb(var(--line));
+  border-radius: 6px;
+  background: rgb(var(--surface-2));
+  color: rgb(var(--ink));
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+}
+.findPanel input:global(.p-field), .findPanel button { min-height: 30px; padding: 3px 8px; font-size: inherit; }
+.findOptions { flex-wrap: wrap; gap: 4px 12px; }
+.findOptions label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.findStatus { min-height: 22px; justify-content: space-between; }
+.findStatus > span { min-width: 0; overflow-wrap: anywhere; }
+.findStatus code { color: rgb(var(--ink)); font-family: var(--font-mono); }
 .editor :global(.ob-nested-tex-slice) {
   margin: 0;
   min-width: 0;
@@ -63,9 +114,6 @@
 }
 
 .editor :global(.ob-nested-tex-card-label) {
-  position: sticky;
-  top: 0;
-  z-index: 2;
   padding: 0.3rem 0.5rem;
   background: rgb(var(--surface));
 }

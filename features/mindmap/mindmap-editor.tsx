@@ -1,7 +1,10 @@
 "use client";
 
+import { useProjectWriteSession } from "@/components/project-session/project-write-session";
+
 import "katex/dist/katex.min.css";
 import { Select } from "@/components/select";
+import { getBrowserEditablePaper } from "@/features/paper/browser-source";
 import { FastTooltip } from "@/components/fast-tooltip";
 import styles from "./mindmap-editor.module.css";
 import { RichText as NodeRichText } from "@/components/rich-text";
@@ -47,8 +50,9 @@ import { useGitAutoSync } from "@/components/use-git-auto-sync";
 import { OverleafSyncNotice } from "@/components/overleaf-sync-notice";
 import { EditorNotice } from "@/components/editor-notice";
 import { SaveSyncStatus } from "@/components/save-sync-status";
-import { convertMindmapCardToTodoAction, persistPaperTodoAction, removePaperTodoAction, uploadMindmapImageAction } from "@/app/actions";
-import { getBrowserGitStatus, pushBrowserProject } from "@/lib/research/browser-git-sync";
+import { convertMindmapCardToTodoAction, finishForceProjectSyncAction, persistPaperTodoAction, removePaperTodoAction, uploadMindmapImageAction } from "@/app/actions";
+import { clearPendingBrowserPull, getBrowserGitStatus, pullBrowserProject, pushBrowserProject, readPendingBrowserPull, requireGitPullBarrier, type PendingBrowserPull } from "@/lib/research/browser-git-sync";
+import { clearPendingForcePull, finishForceRequest, readPendingForcePull, requireResolvedForcePull, type ForcePullReconciliation, type PendingForcePull } from "@/lib/research/force-sync-client";
 import { sharedWebMcpActions } from "@/features/webmcp-actions";
 import {
   cloneMindmap,
@@ -73,6 +77,7 @@ import {
 import { indentMindmapNode, mindmapMoveTargets, outdentMindmapNode, type MindmapDrop } from "@/lib/mindmap/drop-targets";
 import { mindmapDiskHash } from "@/lib/mindmap/mindmap";
 import { createMindmapSaveQueue } from "@/lib/mindmap/save-queue";
+import { mergeSavedMindmap } from "@/lib/mindmap/merge-saved";
 import { isOutdatedMindmapPage, loadBrowserMindmap, saveBrowserMindmap } from "@/lib/mindmap/browser-save";
 import { mindmapRecoveryKey, readMindmapRecovery, writeMindmapRecovery, type MindmapRecoveryDraft } from "@/lib/mindmap/browser-recovery";
 import {
@@ -118,6 +123,7 @@ import { MindmapChangesView } from "./mindmap-changes";
 import { CardLinks, CardProperties } from "./card-details";
 import { TexCodeMirror, type TexCodeMirrorHandle } from "@/features/paper/tex-codemirror";
 import { MindmapFontSize, MindmapFontSizeSlider } from "./mindmap-font-size";
+import { useMindmapTitle } from "./mindmap-title-context";
 
 const AUTOSAVE_DELAY = 700;
 const LAST_WEEK_DAYS = 7;
@@ -157,120 +163,10 @@ interface CanvasLayout {
   height: number;
 }
 
-const MINDMAP_NODE_FIELDS: ReadonlyArray<keyof MindmapNode> = [
-  "id",
-  "title",
-  "text",
-  "caption",
-  "caution",
-  "todoId",
-  "parentId",
-  "shape",
-  "agentDraft",
-  "metadata",
-  "contentFormat",
-  "color",
-  "tags",
-  "progress",
-  "priority",
-  "tableLayout",
-  "refs",
-  "order",
-  "createdAt",
-  "updatedAt",
-];
-
-const MINDMAP_FIELDS: ReadonlyArray<keyof Mindmap> = [
-  "projectId",
-  "id",
-  "title",
-  "role",
-  "rootId",
-  "createdAt",
-  "updatedAt",
-  "activityWindowDays",
-  "fontSize",
-];
-
-function valuesEqual(left: unknown, right: unknown): boolean {
-  if (Object.is(left, right)) return true;
-  try {
-    return JSON.stringify(left) === JSON.stringify(right);
-  } catch {
-    return false;
-  }
-}
-
 function mindmapRemoteCheckpoint(mindmap: Mindmap): string {
   return `${mindmap.id || "draft"}:${mindmap.revision ?? 0}:${mindmap.diskHash || mindmapDiskHash(mindmap)}`;
 }
 
-function mergeConvertedNode(base: MindmapNode, saved: MindmapNode, latest: MindmapNode): MindmapNode {
-  const merged = { ...saved };
-  for (const field of MINDMAP_NODE_FIELDS) {
-    if (valuesEqual(latest[field], base[field])) continue;
-    const value = latest[field];
-    if (value === undefined) delete merged[field];
-    else merged[field] = value as never;
-  }
-  // The server conversion binds the card to TeX. Keep that canonical shape
-  // even when an ordinary-card edit arrived while the request was in flight.
-  if (merged.todoId?.trim()) {
-    delete merged.title;
-    merged.text = "";
-  }
-  return merged;
-}
-
-/**
- * Apply the server's conversion delta onto edits made while it was in flight.
- * Conversion changes one node's TODO binding. A three-way merge keeps local
- * card edits, additions, moves, and deletions attached to the fresh disk hash.
- */
-function mergeMindmapAfterConversion(base: Mindmap, saved: Mindmap, latest: Mindmap): Mindmap {
-  const baseById = new Map(base.nodes.map((node) => [node.id, node]));
-  const savedById = new Map(saved.nodes.map((node) => [node.id, node]));
-  const latestById = new Map(latest.nodes.map((node) => [node.id, node]));
-  const baseIds = base.nodes.map((node) => node.id);
-  const latestIds = latest.nodes.map((node) => node.id);
-  const localStructureChanged = !valuesEqual(baseIds, latestIds);
-  const orderedIds = localStructureChanged
-    ? latestIds
-    : saved.nodes.map((node) => node.id);
-  const seen = new Set<string>();
-  const nodes: MindmapNode[] = [];
-
-  for (const id of [...orderedIds, ...saved.nodes.map((node) => node.id)]) {
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const baseNode = baseById.get(id);
-    const savedNode = savedById.get(id);
-    const latestNode = latestById.get(id);
-
-    // A local deletion remains effective after the server adds the binding.
-    if (!latestNode && baseNode) continue;
-    if (latestNode && baseNode && savedNode) {
-      nodes.push(mergeConvertedNode(baseNode, savedNode, latestNode));
-    } else if (latestNode && !baseNode) {
-      nodes.push({ ...latestNode });
-    } else if (savedNode) {
-      nodes.push({ ...savedNode });
-    }
-  }
-
-  const merged: Mindmap = { ...saved, nodes };
-  for (const field of MINDMAP_FIELDS) {
-    if (valuesEqual(latest[field], base[field])) continue;
-    const value = latest[field];
-    if (value === undefined) delete merged[field];
-    else merged[field] = value as never;
-  }
-  // These fields identify the persisted server snapshot used by the next CAS
-  // save. Local content remains dirty through the saved-signature comparison.
-  merged.revision = saved.revision;
-  merged.diskHash = saved.diskHash;
-  return merged;
-}
 
 export function MindmapEditor({
   project,
@@ -285,22 +181,35 @@ export function MindmapEditor({
   paperState?: ProjectState | null;
 }) {
   const router = useRouter();
+  const { writable: sessionWritable, setPendingWork } = useProjectWriteSession();
+  const sessionWritableRef = useRef(sessionWritable);
+  sessionWritableRef.current = sessionWritable;
   const remoteQueue = useMemo(
     () => getMindmapRemoteSyncQueue<MindmapRemotePushResult>(project, (result) => result.ok),
     [project],
   );
   const [remoteOutOfSync, setRemoteOutOfSync] = useState(false);
+  const [quickPullAvailable, setQuickPullAvailable] = useState(false);
+  const quickPullErrorRef = useRef<string | null>(null);
+  const [hydrationPending, setHydrationPending] = useState(false);
+  const hydrationPendingRef = useRef(false);
+  const forceReconciliationRef = useRef<ForcePullReconciliation | null>(null);
+  const forcePullRef = useRef<PendingForcePull | null>(null);
+  const directPullBarrierRef = useRef<string | null>(null);
+  const directPullPersistedRef = useRef(true);
+  const [reconciliationPending, setReconciliationPending] = useState(false);
   const [applyingRemote, setApplyingRemote] = useState(false);
   const applyingRemoteRef = useRef(false);
   const remoteOutOfSyncRef = useRef(false);
-  remoteOutOfSyncRef.current = remoteOutOfSync || applyingRemoteRef.current;
+  remoteOutOfSyncRef.current = remoteOutOfSync || applyingRemoteRef.current || hydrationPendingRef.current;
   const [session, rawDispatch] = useReducer(mindmapReducer, initialMindmap, createMindmapSession);
   const dispatch = useCallback((action: Parameters<typeof mindmapReducer>[1]) => {
     // Preserve navigation, hydration, and text typed before a conflict arrived.
-    const allowed = ["select", "clear-selection", "replace", "hydrate", "ack-save", "rebase-disk-hash", "record-history", "edit-card", "edit-text"];
+    const allowed = ["select", "clear-selection", "replace", "hydrate", "ack-save", "record-history", "edit-card", "edit-text"];
     if (remoteOutOfSyncRef.current && !allowed.includes(action.type)) return;
+    if (!["select", "clear-selection", "replace", "hydrate", "ack-save", "record-history"].includes(action.type)) remoteQueue.noteEdit();
     rawDispatch(action);
-  }, []);
+  }, [remoteQueue]);
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const { mindmap, selectedId, selectedIds, past: history, future, revision } = session;
@@ -311,13 +220,46 @@ export function MindmapEditor({
   const recoveryLoadedRef = useRef(false);
   const [recoveryStored, setRecoveryStored] = useState<boolean | null>(null);
   const refreshingWithRecoveryRef = useRef(false);
+  const localSaveQueue = useMemo(() => createMindmapSaveQueue(), []);
   const paperSourceHashRef = useRef<string | undefined>(paperState?.paper?.sourceHash);
+  const paperMutationGenerationRef = useRef(0);
+  const recordPaperSourceHash = useCallback((hash?: string) => {
+    if (hash) paperSourceHashRef.current = hash;
+  }, []);
   const convertingCardIdRef = useRef<string | null>(null);
   const conversionStartingCardIdRef = useRef<string | null>(null);
   const pendingConversionRefreshRef = useRef<{ cardId: string; todoId: string } | null>(null);
   useEffect(() => {
-    paperSourceHashRef.current = paperState?.paper?.sourceHash;
-  }, [paperState?.paper?.sourceHash]);
+    const hash = paperState?.paper?.sourceHash;
+    if (!hash || hash === paperSourceHashRef.current) return;
+    // A refresh can arrive after a newer local mutation. Confirm the displayed
+    // hash against the current source before adopting it, including undo and
+    // pull operations that legitimately restore an earlier hash.
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const verify = async () => {
+      await localSaveQueue.idle();
+      if (cancelled) return;
+      const generation = paperMutationGenerationRef.current;
+      try {
+        const paper = await getBrowserEditablePaper(project);
+        if (cancelled) return;
+        if (generation !== paperMutationGenerationRef.current || localSaveQueue.pending) {
+          void verify();
+          return;
+        }
+        if (paper?.bundle.bundleHash === hash) paperSourceHashRef.current = hash;
+      } catch {
+        // Keep the compare-and-swap guard and retry a transient read failure.
+        if (!cancelled) retryTimer = setTimeout(() => { void verify(); }, 2_000);
+      }
+    };
+    void verify();
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [localSaveQueue, paperState?.paper?.sourceHash, project]);
   const [activityMode, setActivityMode] = useState<"off" | "week" | "custom">("off");
   const [activitySince, setActivitySince] = useState<string | null>(null);
   const [customActivityDate, setCustomActivityDate] = useState(() => daysAgoDate(LAST_WEEK_DAYS));
@@ -379,6 +321,9 @@ export function MindmapEditor({
   });
   const [checkingRemote, setCheckingRemote] = useState(false);
   const [remoteSaveError, setRemoteSaveError] = useState<string | null>(null);
+  const [reviewingRemote, setReviewingRemote] = useState(false);
+  const reviewingRemoteRef = useRef(false);
+  useEffect(() => () => { if (reviewingRemoteRef.current) remoteQueue.resume(); }, [remoteQueue]);
   const [assetError, setAssetError] = useState<string | null>(null);
   const [imageUploads, setImageUploads] = useState<Record<string, number>>({});
   const imageUploadQueue = useRef(Promise.resolve());
@@ -392,6 +337,7 @@ export function MindmapEditor({
       const initialSettled = initial && (event.phase === "synced" || event.phase === "failed");
       initial = false;
       if (event.sequence === 0 || initialSettled) return;
+      if (hydrationPendingRef.current) return;
       setCheckingRemote(false);
       if (event.phase === "pending") {
         setRemoteSaveState("pending");
@@ -446,8 +392,27 @@ export function MindmapEditor({
     return remoteQueue.subscribe(applyQueueEvent);
   }, [remoteQueue]);
 
+  const runPaperMutation = useCallback(<T,>(write: () => Promise<T>): Promise<T> => {
+    // Mark activity before queueing so a running Git operation cannot publish
+    // a stale status while this local mutation is waiting to run.
+    remoteQueue.noteEdit();
+    paperMutationGenerationRef.current += 1;
+    return localSaveQueue.enqueue(async () => {
+      try {
+        // A queued edit can reach the front after a pull began. Keep its draft
+        // available until the pulled source has been loaded into the editor.
+        if (applyingRemoteRef.current || hydrationPendingRef.current) {
+          throw Object.assign(new Error("Git updates are being applied. Retry this edit after the project reloads."), { code: "remote_conflict" });
+        }
+        return await write();
+      } finally {
+        paperMutationGenerationRef.current += 1;
+      }
+    });
+  }, [localSaveQueue, remoteQueue]);
   const nextRemoteCheckpointRef = useRef(`initial:${project}`);
-  const enqueueRemote = useCallback((message: string, checkpoint = nextRemoteCheckpointRef.current) => {
+  const enqueueRemote = useCallback((message: string, checkpoint = nextRemoteCheckpointRef.current, deferred = false) => {
+    if (reviewingRemoteRef.current) return Promise.resolve({ ok: false as const, code: "review_in_progress", message: "Local changes saved for pull review." });
     // Any status request that predates this checkpoint cannot clear its queue
     // state when its response arrives.
     ++remoteStatusRequestRef.current;
@@ -461,30 +426,38 @@ export function MindmapEditor({
           message: error instanceof Error ? error.message : "Could not save to the remote.",
         };
       }
-    });
-  }, [project, remoteQueue]);
+    }, deferred, () => !inlineEditorSessionRef.current && !localSaveQueue.pending
+      && mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current);
+  }, [project, remoteQueue, localSaveQueue]);
 
   const pushRemote = useCallback((message: string) => enqueueRemote(message), [enqueueRemote]);
+  const scheduleRemote = useCallback((message: string) => {
+    void enqueueRemote(message, nextRemoteCheckpointRef.current, true);
+  }, [enqueueRemote]);
 
   const refreshRemoteStatus = useCallback(async (refreshRemote = true, announce = true) => {
     const requestId = ++remoteStatusRequestRef.current;
     const queueSequence = remoteQueue.getSnapshot().sequence;
+    const activityGeneration = remoteQueue.activityGeneration;
     const queueWasBusy = remoteQueue.isBusy;
     setCheckingRemote(true);
     if (announce && !queueWasBusy) setRemoteSaveState(current => current === "changed" || current === "blocked" || current === "failed" || current === "unavailable" ? current : "checking");
-    let timeoutId: number | undefined;
     try {
-      const timeout = announce ? new Promise<never>((_, reject) => {
-        timeoutId = window.setTimeout(() => reject(new Error("Remote status check timed out. Retry to refresh synchronization status.")), 5_000);
-      }) : null;
-      const request = getBrowserGitStatus(project, refreshRemote);
-      const status = timeout ? await Promise.race([request, timeout]) : await request;
-      if (requestId !== remoteStatusRequestRef.current) return;
+      const status = await getBrowserGitStatus(project, refreshRemote);
+      if (requestId !== remoteStatusRequestRef.current || activityGeneration !== remoteQueue.activityGeneration) return;
       const queueSnapshot = remoteQueue.getSnapshot();
       if (queueWasBusy || remoteQueue.isBusy || queueSnapshot.sequence !== queueSequence) return status;
+      if (hydrationPendingRef.current) return status;
       if (!status.isGitRepo) {
         setRemoteSaveState("unconfigured");
         setRemoteSaveError(null);
+        return status;
+      }
+      if (status.error && status.isOverleafRemote !== false) {
+        if (announce) {
+          setRemoteSaveState("unavailable");
+          setRemoteSaveError(`Git status unavailable: ${status.error}`);
+        }
         return status;
       }
       if (!status.isOverleafRemote) {
@@ -492,45 +465,41 @@ export function MindmapEditor({
         setRemoteSaveError(null);
         return status;
       }
-      if (status.error) {
-        setRemoteSaveState("unavailable");
-        setRemoteSaveError(`Git status unavailable: ${status.error}`);
-        return status;
+      if (!Number.isSafeInteger(status.ahead) || !Number.isSafeInteger(status.behind)
+        || status.ahead! < 0 || status.behind! < 0 || typeof status.isClean !== "boolean") {
+        const message = "Git synchronization status could not be verified. Check the remote connection and try again.";
+        if (announce) { setRemoteSaveState("unavailable"); setRemoteSaveError(message); }
+        return { ...status, error: message };
       }
+      setQuickPullAvailable(status.behind! > 0 && status.ahead === 0);
       if ((status.behind || 0) > 0) {
         remoteOutOfSyncRef.current = true;
         setRemoteOutOfSync(true);
         setRemoteSaveState("changed");
-        setRemoteSaveError("Git has newer commits. Pull before saving to Git.");
+        setRemoteSaveError(quickPullErrorRef.current || "Git has newer commits. Pull before saving to Git.");
         return status;
       }
+      quickPullErrorRef.current = null;
       remoteOutOfSyncRef.current = applyingRemoteRef.current;
       setRemoteOutOfSync(false);
       setRemoteSaveError(null);
-      if (!Number.isSafeInteger(status.ahead) || !Number.isSafeInteger(status.behind)
-        || status.ahead! < 0 || status.behind! < 0 || typeof status.isClean !== "boolean") {
-        setRemoteSaveState("unavailable");
-        setRemoteSaveError("Git synchronization status could not be verified. Check the remote connection and try again.");
-        return status;
-      }
       setRemoteSaveState((status.ahead || 0) > 0 || !status.isClean ? "pending" : refreshRemote ? "synced" : "checking");
       return status;
     } catch (error) {
-      if (requestId !== remoteStatusRequestRef.current) return;
+      if (requestId !== remoteStatusRequestRef.current || activityGeneration !== remoteQueue.activityGeneration) return;
       if (queueWasBusy || remoteQueue.isBusy || remoteQueue.getSnapshot().sequence !== queueSequence) return;
-      setRemoteSaveState("unavailable");
-      setRemoteSaveError(`Git status unavailable: ${error instanceof Error ? error.message : "Could not check Git."}`);
+      const message = `Git status unavailable: ${error instanceof Error ? error.message : "Could not check Git."}`;
+      if (announce) { setRemoteSaveState("unavailable"); setRemoteSaveError(message); }
+      return { isGitRepo: true, error: message };
     } finally {
-      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
       if (requestId === remoteStatusRequestRef.current) setCheckingRemote(false);
     }
   }, [project, remoteQueue]);
 
   useEffect(() => {
-    void refreshRemoteStatus(true, false);
-  }, [refreshRemoteStatus]);
+    void refreshRemoteStatus(sessionWritable, false);
+  }, [refreshRemoteStatus, sessionWritable]);
 
-  const localSaveQueue = useMemo(() => createMindmapSaveQueue(), []);
   const webMcpSaveCountRef = useRef(0);
   const captureRecoveryDraft = useCallback((): MindmapRecoveryDraft => ({
     version: 1,
@@ -569,17 +538,15 @@ export function MindmapEditor({
       savedSignatureRef.current = savedMapSignature;
       setSavedSignature(savedMapSignature);
       const latest = sessionRef.current;
-      const unchanged = mapSignature(latest.mindmap) === signature;
-      const acknowledgement = unchanged
-        ? { type: "ack-save" as const, diskHash: saved.diskHash, persistedRevision: saved.revision, updatedAt: saved.updatedAt }
-        : { type: "rebase-disk-hash" as const, diskHash: persistedDiskHashRef.current };
+      const acknowledgement = { type: "ack-save" as const, base: snapshot, saved };
       sessionRef.current = mindmapReducer(latest, acknowledgement);
       dispatch(acknowledgement);
-      setLocalSaveState(unchanged ? "saved" : "dirty");
-      if (unchanged) clearBrowserDraft();
+      const clean = mapSignature(sessionRef.current.mindmap) === savedMapSignature;
+      setLocalSaveState(clean ? "saved" : "dirty");
+      if (clean) clearBrowserDraft();
       else preserveBrowserDraft();
       nextRemoteCheckpointRef.current = mindmapRemoteCheckpoint(saved);
-      void enqueueRemote("OpenBar: save mindmap", nextRemoteCheckpointRef.current);
+      void enqueueRemote("OpenBar: save mindmap", nextRemoteCheckpointRef.current, true);
       return saved;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not save the mindmap.";
@@ -599,6 +566,7 @@ export function MindmapEditor({
     webMcpSaveCountRef.current += 1;
     try {
       return await localSaveQueue.enqueue(async () => {
+        if (!sessionWritableRef.current) throw Object.assign(new Error("This tab is viewing. Start editing here to change this map."), { code: "write_session_required" });
         if (recoveryDraftRef.current) throw new Error("Review the recovered draft before editing this map.");
         if (remoteOutOfSyncRef.current) throw Object.assign(new Error("Editing is paused. Review and synchronize Git updates to resume."), { code: "remote_conflict" });
         // Flush pending human edits before attributing an agent operation.
@@ -789,28 +757,28 @@ export function MindmapEditor({
         setConvertingCardId((current) => current === id && pending?.cardId !== id ? null : current);
       });
     },
-    completeTodo: async (todoId) => {
+    completeTodo: async (todoId) => runPaperMutation(async () => {
       const result = await persistPaperTodoAction(
         project,
         { type: "complete_todo", id: todoId },
         paperSourceHashRef.current ?? paperState?.paper?.sourceHash,
       );
       if (!result.ok) throw new Error(result.message);
-      if (result.diskHash) paperSourceHashRef.current = result.diskHash;
+      recordPaperSourceHash(result.diskHash);
       router.refresh();
-      await pushRemote("OpenBar: complete paper TODO");
-    },
-    reopenTodo: async (todoId) => {
+      scheduleRemote("OpenBar: complete paper TODO");
+    }),
+    reopenTodo: async (todoId) => runPaperMutation(async () => {
       const result = await persistPaperTodoAction(
         project,
         { type: "reopen_todo", id: todoId },
         paperSourceHashRef.current ?? paperState?.paper?.sourceHash,
       );
       if (!result.ok) throw new Error(result.message);
-      if (result.diskHash) paperSourceHashRef.current = result.diskHash;
+      recordPaperSourceHash(result.diskHash);
       router.refresh();
-      await pushRemote("OpenBar: reopen paper TODO");
-    },
+      scheduleRemote("OpenBar: reopen paper TODO");
+    }),
     focusTodoInPaper: (todoId) => router.push(`/p/${project}/paper#${encodeURIComponent(todoId)}`),
     setFontSize: async (fontSize, expectedRevision) => {
       await persistWebMcpMutation({ type: "set-font-size", fontSize }, expectedRevision);
@@ -920,7 +888,17 @@ export function MindmapEditor({
   const [manualReadOnly, setReadOnly] = useState(false);
   const saveConflict = Boolean(saveError && /conflict|changed.*reload|stale/i.test(saveError));
   const outdatedSave = Boolean(saveError && isOutdatedMindmapPage(saveError));
-  const readOnly = manualReadOnly || remoteOutOfSync || applyingRemote || saveConflict || Boolean(recoveryDraft);
+  const readOnly = !sessionWritable || manualReadOnly || remoteOutOfSync || applyingRemote || saveConflict || Boolean(recoveryDraft);
+  const titleContext = useMindmapTitle();
+  const setTitleEditor = titleContext?.setEditor;
+  const renameFromSwitcher = useCallback(async (title: string) => {
+    if (readOnly) throw new Error("Enable editing to rename this map.");
+    await persistWebMcpMutation({ type: "rename-map", title }, undefined, "human");
+  }, [persistWebMcpMutation, readOnly]);
+  useEffect(() => {
+    setTitleEditor?.({ id: mindmap.id || "draft", title: mindmap.title || "", readOnly, rename: renameFromSwitcher });
+    return () => setTitleEditor?.(null);
+  }, [mindmap.id, mindmap.title, readOnly, renameFromSwitcher, setTitleEditor]);
   useEffect(() => {
     try { setReadOnly(window.localStorage.getItem(readOnlyStorageKey) === "true"); }
     catch { setReadOnly(false); }
@@ -1025,6 +1003,10 @@ export function MindmapEditor({
   const currentSignature = useMemo(() => mapSignature(mindmap), [mindmap]);
   const dirty = currentSignature !== savedSignature;
   useEffect(() => {
+    setPendingWork("mindmap", dirty || isPending || localSaveState === "saving" || Boolean(editingId));
+    return () => setPendingWork("mindmap", false);
+  }, [dirty, editingId, isPending, localSaveState, setPendingWork]);
+  useEffect(() => {
     if (recoveryLoadedRef.current) return;
     recoveryLoadedRef.current = true;
     try {
@@ -1095,7 +1077,7 @@ export function MindmapEditor({
     expectedRevision?: number,
     requestId?: string,
   ): Promise<MindmapTodoConversionResult> {
-    return localSaveQueue.enqueue(async () => {
+    return runPaperMutation(async () => {
       const current = sessionRef.current;
       const node = indexMindmap(current.mindmap).nodeById.get(id);
       const requestMindmap = cloneMindmap(current.mindmap);
@@ -1147,7 +1129,7 @@ export function MindmapEditor({
       }
       const saved = result.value.mindmap;
       persistedDiskHashRef.current = saved.diskHash ?? mindmapDiskHash(saved);
-      if (result.value.sourceHash) paperSourceHashRef.current = result.value.sourceHash;
+      recordPaperSourceHash(result.value.sourceHash);
       pendingConversionRefreshRef.current = { cardId: id, todoId: result.value.todoId };
       const latest = sessionRef.current;
       if (mapSignature(latest.mindmap) === mapSignature(requestMindmap)) {
@@ -1155,7 +1137,7 @@ export function MindmapEditor({
         sessionRef.current = hydrated;
         dispatch({ type: "hydrate", mindmap: saved });
       } else {
-        const merged = mergeMindmapAfterConversion(requestMindmap, saved, latest.mindmap);
+        const merged = mergeSavedMindmap(requestMindmap, saved, latest.mindmap);
         const rebased = mindmapReducer(latest, { type: "revert", mindmap: merged });
         sessionRef.current = rebased;
         dispatch({ type: "revert", mindmap: merged });
@@ -1175,6 +1157,7 @@ export function MindmapEditor({
         setRemoteSaveError(result.value.remote.status === "unconfigured" ? null : result.value.remote.message);
       }
       router.refresh();
+      scheduleRemote("OpenBar: convert mindmap card to paper TODO");
       return result;
     });
   }
@@ -1213,24 +1196,26 @@ export function MindmapEditor({
 
   const setTodoCompleted = useCallback(async (todoId: string, completed: boolean): Promise<boolean> => {
     if (readOnly || todoProgressBusy || !paperState?.paper?.todos.some(todo => todo.id === todoId)) return false;
-    const expectedPaperSourceHash = paperSourceHashRef.current ?? paperState?.paper?.sourceHash;
     setTodoProgressBusy(true);
     setSaveError(null);
     try {
-      const result = await persistPaperTodoAction(
-        project,
-        { type: completed ? "complete_todo" : "reopen_todo", id: todoId },
-        expectedPaperSourceHash,
-      );
+      const result = await runPaperMutation(async () => {
+        const result = await persistPaperTodoAction(
+          project,
+          { type: completed ? "complete_todo" : "reopen_todo", id: todoId },
+          paperSourceHashRef.current ?? paperState?.paper?.sourceHash,
+        );
+        if (result.ok) recordPaperSourceHash(result.diskHash);
+        return result;
+      });
       if (!result.ok) {
         setSaveError(result.message);
         return false;
       }
-      if (result.diskHash) paperSourceHashRef.current = result.diskHash;
       // The local TeX mutation is durable even when Git sync fails. The
       // refresh projects local paper state into the card and paper views.
       router.refresh();
-      await pushRemote(`OpenBar: ${completed ? "complete" : "reopen"} paper TODO`);
+      scheduleRemote(`OpenBar: ${completed ? "complete" : "reopen"} paper TODO`);
       return true;
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not update the paper TODO.");
@@ -1238,7 +1223,7 @@ export function MindmapEditor({
     } finally {
       setTodoProgressBusy(false);
     }
-  }, [paperState, project, pushRemote, readOnly, router, todoProgressBusy]);
+  }, [paperState, project, readOnly, recordPaperSourceHash, router, runPaperMutation, scheduleRemote, todoProgressBusy]);
 
   const [progressNotice, setProgressNotice] = useState<{ id: string; text: string } | null>(null);
   useEffect(() => {
@@ -1482,10 +1467,10 @@ export function MindmapEditor({
 
   // Persist edits shortly after the user pauses.
   useEffect(() => {
-    if (!dirty || isPending || saveError || recoveryDraft) return;
+    if (!sessionWritable || !dirty || isPending || saveError || recoveryDraft) return;
     const timer = window.setTimeout(() => save(), AUTOSAVE_DELAY);
     return () => window.clearTimeout(timer);
-  }, [dirty, isPending, mindmap, recoveryDraft, save, saveError]);
+  }, [dirty, isPending, mindmap, recoveryDraft, save, saveError, sessionWritable]);
 
   useEffect(() => {
     const hasPendingChanges = () => pendingImageUploads.current || inlineEditorSessionRef.current || localSaveQueue.pending
@@ -1544,37 +1529,125 @@ export function MindmapEditor({
     setSaveError(null);
   }, []);
 
-  const canAutoPull = () => !isPending && !localSaveQueue.pending && !saveErrorRef.current && !recoveryDraftRef.current
+  const canHydrateMindmap = () => !isPending && !localSaveQueue.pending && !saveErrorRef.current && !recoveryDraftRef.current
     && !inlineEditorSessionRef.current && !editingId && !pendingImageUploads.current
-    && webMcpSaveCountRef.current === 0 && !convertingCardIdRef.current && !remoteQueue.isBusy
-    && mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current
+    && webMcpSaveCountRef.current === 0 && !convertingCardIdRef.current
+    && (!remoteQueue.isBusy || (reviewingRemoteRef.current && !remoteQueue.isRunning))
+    && mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current;
+  const canAutoPull = () => sessionWritableRef.current && canHydrateMindmap() && !reviewingRemoteRef.current && !hydrationPendingRef.current
     && !document.activeElement?.closest("input, textarea, [contenteditable=true]");
-  const canAutoPush = () => !isPending && !localSaveQueue.pending && !saveErrorRef.current && !recoveryDraftRef.current
+  const canAutoPush = () => sessionWritableRef.current && !isPending && !localSaveQueue.pending && !saveErrorRef.current && !recoveryDraftRef.current
+    && !reviewingRemoteRef.current
     && !saveConflict && !applyingRemoteRef.current && !remoteOutOfSyncRef.current
     && !inlineEditorSessionRef.current && !editingId && !pendingImageUploads.current
     && webMcpSaveCountRef.current === 0 && !convertingCardIdRef.current && !remoteQueue.isBusy
     && mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current;
+  const setRemoteApplying = (applying: boolean) => {
+    applyingRemoteRef.current = applying;
+    if (applying) remoteOutOfSyncRef.current = true;
+    setApplyingRemote(applying);
+  };
+  const requireMindmapHydration = (message: string) => {
+    hydrationPendingRef.current = true;
+    setHydrationPending(true);
+    remoteOutOfSyncRef.current = true;
+    setRemoteOutOfSync(true);
+    setRemoteSaveError(message);
+  };
+  const withPullStorageWarning = (message: string) => (directPullBarrierRef.current && !directPullPersistedRef.current) || (forcePullRef.current && !forcePullRef.current.persisted)
+    ? `${message} Keep this tab open. Browser recovery storage is unavailable.` : message;
+  const markPullUncertain = (pending: PendingBrowserPull) => {
+    directPullBarrierRef.current = pending.operationId;
+    directPullPersistedRef.current = pending.persisted;
+    setReconciliationPending(true);
+    requireMindmapHydration(withPullStorageWarning("Git may have updated the project. Check the Git update before continuing."));
+  };
+  useEffect(() => {
+    const operationId = readPendingBrowserPull(project);
+    if (operationId) markPullUncertain({ operationId, persisted: true });
+  }, [project]);
+  const markForcePullUncertain = (reconcile: ForcePullReconciliation, pending: PendingForcePull) => {
+    forceReconciliationRef.current = reconcile;
+    forcePullRef.current = pending;
+    setReconciliationPending(true);
+    requireMindmapHydration(withPullStorageWarning("Git may have updated the project. Check the Git update before continuing."));
+  };
+  useEffect(() => {
+    const token = readPendingForcePull(project);
+    if (token) markForcePullUncertain(() => finishForceRequest("pull", () => finishForceProjectSyncAction(project, token, "", "", true)), { token, persisted: true });
+  }, [project]);
+  const applyPulledMindmap = async (pending?: PendingBrowserPull) => {
+    if (pending) { directPullBarrierRef.current = pending.operationId; directPullPersistedRef.current = pending.persisted; }
+    requireMindmapHydration(withPullStorageWarning("Git updates were applied. Reload the editor to continue."));
+    const [saved, paper] = await Promise.all([
+      loadBrowserMindmap(project, sessionRef.current.mindmap.id || "draft"),
+      getBrowserEditablePaper(project),
+    ]);
+    if (!canHydrateMindmap()) throw new Error("Git updates arrived while this editor changed. Save your draft and reload the latest map.");
+    if (!saved) { router.push(`/p/${project}/mindmap`); return; }
+    if (!paper) throw new Error("The updated paper could not be loaded. Try reloading the editor.");
+    paperMutationGenerationRef.current += 1;
+    recordPaperSourceHash(paper.bundle.bundleHash);
+    hydrateSavedMap(saved);
+    if (directPullBarrierRef.current) {
+      clearPendingBrowserPull(project, directPullBarrierRef.current);
+      directPullBarrierRef.current = null;
+      setReconciliationPending(false);
+    }
+    if (forcePullRef.current) { clearPendingForcePull(project, forcePullRef.current.token); forcePullRef.current = null; }
+    hydrationPendingRef.current = false;
+    setHydrationPending(false);
+    await refreshRemoteStatus(false, false);
+    router.refresh();
+  };
+  const retryHydration = async () => {
+    if (applyingRemoteRef.current) return;
+    setRemoteApplying(true);
+    try {
+      if (forceReconciliationRef.current) {
+        await requireResolvedForcePull(forceReconciliationRef.current);
+        forceReconciliationRef.current = null;
+        setReconciliationPending(Boolean(directPullBarrierRef.current));
+      }
+      if (directPullBarrierRef.current) {
+        await requireGitPullBarrier(project, directPullBarrierRef.current);
+        setReconciliationPending(false);
+      }
+      await applyPulledMindmap();
+    }
+    catch (error) { setRemoteSaveError(withPullStorageWarning(error instanceof Error ? error.message : "Could not reload the map. Try again.")); }
+    finally { setRemoteApplying(false); }
+  };
+  const quickPull = async () => {
+    if (applyingRemoteRef.current) return;
+    if (!canAutoPull()) { quickPullErrorRef.current = "Save the current draft or use Git review before pulling updates."; setRemoteSaveError(quickPullErrorRef.current); return; }
+    quickPullErrorRef.current = null;
+    setRemoteApplying(true);
+    let pulled = false;
+    try {
+      const result = await pullBrowserProject(project, markPullUncertain);
+      if (!result.ok) throw new Error(result.message);
+      pulled = true;
+      await applyPulledMindmap(result);
+    } catch (error) {
+      setRemoteSaveState("failed");
+      const message = error instanceof Error ? error.message : "Could not pull Git updates.";
+      quickPullErrorRef.current = pulled ? `Git updates were pulled, but the editor could not reload. ${message}`
+        : hydrationPendingRef.current ? `Git may have updated the project. Reload the editor to check. ${message}` : message;
+      setRemoteSaveError(withPullStorageWarning(quickPullErrorRef.current));
+    } finally { setRemoteApplying(false); }
+  };
   useGitAutoSync({
     project,
-    isBusy: () => checkingRemote || remoteQueue.isBusy || isPending,
+    isBusy: () => !sessionWritable || checkingRemote || remoteQueue.isBusy || remoteQueue.editingRecently || Boolean(inlineEditorSessionRef.current) || isPending || reviewingRemoteRef.current || applyingRemoteRef.current,
     canPull: canAutoPull,
     canPush: canAutoPush,
     push: () => pushRemote("OpenBar: resume saved project sync"),
     check: () => refreshRemoteStatus(true, false),
-    onApplying: (applying) => {
-      applyingRemoteRef.current = applying;
-      if (applying) remoteOutOfSyncRef.current = true;
-      setApplyingRemote(applying);
-    },
-    onApplied: async () => {
-      const saved = await loadBrowserMindmap(project, sessionRef.current.mindmap.id || "draft");
-      if (!canAutoPull()) throw new Error("Git updates arrived while this editor changed. Save your draft and reload the latest map.");
-      if (saved) hydrateSavedMap(saved);
-      else router.push(`/p/${project}/mindmap`);
-      await refreshRemoteStatus(false, false);
-      router.refresh();
-    },
-    onError: (message) => { setRemoteSaveState("failed"); setRemoteSaveError(message); },
+    onApplying: setRemoteApplying,
+    onApplied: applyPulledMindmap,
+    onPullUncertain: markPullUncertain,
+    onError: (message) => { setRemoteSaveState("failed"); setRemoteSaveError(withPullStorageWarning(hydrationPendingRef.current ? `Reload the editor to confirm the saved project state. ${message}` : message)); },
   });
 
   const reloadSavedMap = useCallback(() => {
@@ -1859,6 +1932,7 @@ export function MindmapEditor({
         dropPreviewLabel={dropPreview?.targetId === node.id ? dropPreviewLabel(dropPreview, layout.nodeById) : undefined}
         onToggleCollapse={() => toggleCollapse(node.id)}
         onDropTodo={(todoId) => placeUnplacedTodo(todoId, node.id)}
+        onDraftActivity={() => remoteQueue.noteEdit()}
         onTextChange={(text, contentFormat) => updateNodeText(node.id, text, contentFormat)}
         onSaveDraft={() => saveAgentDraft(node.id)}
         onDeleteDraft={() => dispatch({ type: "delete-node-keep-children", id: node.id })}
@@ -1869,28 +1943,32 @@ export function MindmapEditor({
           if (convertingCardIdRef.current === node.id) return false;
           if (!node.todoId) return true;
           try {
-            const result = await persistPaperTodoAction(
-              project,
-              {
-                type: "update_todo",
-                id: node.todoId,
-                title: todoTitle,
-                text: todoText,
-                textFormat: "tex",
-                expectedSourceHash: paperSourceHashRef.current ?? paperState?.paper?.sourceHash,
-              },
-              paperSourceHashRef.current ?? paperState?.paper?.sourceHash,
-            );
+            const result = await runPaperMutation(async () => {
+              const expectedSourceHash = paperSourceHashRef.current ?? paperState?.paper?.sourceHash;
+              const result = await persistPaperTodoAction(
+                project,
+                {
+                  type: "update_todo",
+                  id: node.todoId!,
+                  title: todoTitle,
+                  text: todoText,
+                  textFormat: "tex",
+                  expectedSourceHash,
+                },
+                expectedSourceHash,
+              );
+              if (result.ok) recordPaperSourceHash(result.diskHash);
+              return result;
+            });
             if (!result.ok) {
               setSaveError(result.message);
               return false;
             }
-            if (result.diskHash) paperSourceHashRef.current = result.diskHash;
             // The local TeX write is the commit point for the card. A remote
             // failure is surfaced by the sync status but must not discard the
             // successfully saved editor draft.
             router.refresh();
-            void pushRemote("OpenBar: edit paper TODO");
+            scheduleRemote("OpenBar: edit paper TODO");
             return true;
           } catch (error) {
             setSaveError(error instanceof Error ? error.message : "Could not save the paper TODO.");
@@ -1913,8 +1991,11 @@ export function MindmapEditor({
     paperState,
     project,
     reconciliation,
-    pushRemote,
+    recordPaperSourceHash,
+    remoteQueue,
     router,
+    runPaperMutation,
+    scheduleRemote,
     selected?.id,
     selectedIdSet,
     readOnly,
@@ -2139,7 +2220,7 @@ export function MindmapEditor({
           >
             <SaveSyncStatus saved={!dirty && localSaveState === "saved"} saving={localSaveState === "saving"}
               conflict={saveConflict || localSaveState === "conflict"} remote={remoteSaveState}
-              error={saveError || remoteSaveError} onRetry={() => { void pushRemote("OpenBar: retry saved project sync"); }} />
+              error={saveError || remoteSaveError} onRetry={sessionWritable ? () => { void pushRemote("OpenBar: retry saved project sync"); } : undefined} />
           </div>
 
         </footer>
@@ -2156,6 +2237,9 @@ export function MindmapEditor({
           <button type="button" className="p-button p-button-borderless btn-ghost" onClick={keepSavedMap}>Keep saved map</button>
         </div>
       </div>}
+      {!sessionWritable && (dirty || editingId) && <EditorNotice project={project} title="Editing access changed" label="Editing paused, draft preserved" message="Your open card text remains available to select and copy. Download the map draft before refreshing." paused>
+        <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download map draft</button>
+      </EditorNotice>}
       {saveError && <EditorNotice project={project} title={outdatedSave ? "Refresh OpenBar to continue" : saveConflict ? "Saved file conflict" : "Saving needs attention"} label={outdatedSave ? "OpenBar updated, draft preserved" : saveConflict ? "Editing paused, saved file changed" : "Saving needs attention"}
         message={outdatedSave
           ? recoveryStored ? "OpenBar was updated while this page was open. Your draft is preserved in this tab. Refresh, then restore the draft to finish saving."
@@ -2165,18 +2249,15 @@ export function MindmapEditor({
         <button type="button" className="p-button p-button-default btn-outline" onClick={outdatedSave ? () => void refreshWithDraft() : saveConflict ? reloadSavedMap : save}>{outdatedSave ? "Refresh and retry" : saveConflict ? "Load saved map" : "Retry save"}</button>
         <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download draft</button>
       </EditorNotice>}
-      {!saveError && remoteSaveError && <OverleafSyncNotice
-        project={project} message={remoteSaveError} editingPaused={remoteOutOfSync}
-        disabled={isPending || applyingRemote} checking={checkingRemote || remoteSaveState === "syncing"}
-        beforeReview={async () => { await flushPendingSaves(); return true; }}
-        onApplied={async () => {
-          const saved = await loadBrowserMindmap(project, sessionRef.current.mindmap.id || "draft");
-          if (saved) hydrateSavedMap(saved);
-          else router.push(`/p/${project}/mindmap`);
-          router.refresh();
-          await refreshRemoteStatus(false);
-        }}
-        onClosed={() => { void refreshRemoteStatus(false); }}
+      {(hydrationPending || (!saveError && remoteSaveError) || reviewingRemote) && <OverleafSyncNotice
+        project={project} message={remoteSaveError || "Git review is in progress."} editingPaused={remoteOutOfSync || hydrationPending} activeReview={reviewingRemote}
+        quickPullAvailable={quickPullAvailable} onQuickPull={() => void quickPull()} pulling={applyingRemote}
+        hydrationPending={hydrationPending} onReload={() => void retryHydration()}
+        reconciliationPending={reconciliationPending} onPullUncertain={markForcePullUncertain}
+        disabled={!sessionWritable || isPending || applyingRemote} checking={checkingRemote || remoteSaveState === "syncing"}
+        beforeReview={async () => { reviewingRemoteRef.current = true; remoteQueue.pause(); setReviewingRemote(true); await flushPendingSaves(); return true; }}
+        onApplied={async (pending) => { if (pending) forcePullRef.current = pending; forceReconciliationRef.current = null; setReconciliationPending(false); try { await applyPulledMindmap(); } catch (error) { setRemoteSaveError(withPullStorageWarning(error instanceof Error ? error.message : "Could not reload the map. Try again.")); } }}
+        onClosed={() => { reviewingRemoteRef.current = false; remoteQueue.resume(); setReviewingRemote(false); void refreshRemoteStatus(false); }}
         onCheck={async () => { await refreshRemoteStatus(); }}
         onPush={() => { void pushRemote("OpenBar: save mindmap"); }}
       />}
@@ -2557,15 +2638,17 @@ export function MindmapEditor({
                 onClick={() => {
                   if (!window.confirm("Delete this TODO from the paper? Its mindmap card and child topics will stay in place so you can repair or convert the card.")) return;
                   setCardMenuOpen(false);
-                  void removePaperTodoAction(project, selected.todoId!, paperSourceHashRef.current ?? paperSourceHash)
-                    .then(async (result) => {
+                  void runPaperMutation(async () => {
+                    const result = await removePaperTodoAction(project, selected.todoId!, paperSourceHashRef.current ?? paperSourceHash);
+                    if (result.ok) recordPaperSourceHash(result.diskHash);
+                    return result;
+                  }).then((result) => {
                       if (!result.ok) {
                         setSaveError(result.message);
                         return;
                       }
-                      if (result.diskHash) paperSourceHashRef.current = result.diskHash;
                       router.refresh();
-                      await pushRemote("OpenBar: remove paper TODO");
+                      scheduleRemote("OpenBar: remove paper TODO");
                     })
                     .catch((error) => setSaveError(error instanceof Error ? error.message : "Could not delete the paper TODO."));
                 }}
@@ -2854,6 +2937,7 @@ function CanvasNode({
   dropPreviewLabel,
   onToggleCollapse,
   onDropTodo,
+  onDraftActivity,
   onTextChange,
   onTextFocus,
   onSaveDraft,
@@ -2888,6 +2972,7 @@ function CanvasNode({
   dropPreviewLabel?: string;
   onToggleCollapse: () => void;
   onDropTodo: (todoId: string) => void;
+  onDraftActivity: () => void;
   onTextChange: (text: string, contentFormat?: MindmapNode["contentFormat"]) => void;
   onTextFocus: () => void;
   onSaveDraft: () => Promise<void>;
@@ -3034,7 +3119,7 @@ function CanvasNode({
       position={Position.Top}
       align="start"
       offset={8}
-      className={cn(styles.editToolbar, "nodrag nopan")}
+      className={cn(styles.editToolbar, "p-glass-sm nodrag nopan")}
       data-mind-editor={node.id}
       role="toolbar"
       aria-label="Card formatting"
@@ -3044,7 +3129,7 @@ function CanvasNode({
       <FastTooltip label="Bold (⌘B / Ctrl+B)"><button type="button" className={styles.editToolbarButton} aria-label="Bold selection" onPointerDown={(event) => event.preventDefault()} onClick={() => formatSelection("bold")}><Bold size={15} /></button></FastTooltip>
       <FastTooltip label="Italic (⌘I / Ctrl+I)"><button type="button" className={styles.editToolbarButton} aria-label="Italic selection" onPointerDown={(event) => event.preventDefault()} onClick={() => formatSelection("italic")}><Italic size={15} /></button></FastTooltip>
       {node.todoId ? <span className="mindmap-inline-editor-hint" title="Paper TODO formatting is saved in TeX">TeX</span> : (
-        <ChoiceButtons label="Editing card content format" value={draftFormat || "plain"} options={[{value:"plain",label:"Plain"},{value:"markdown",label:"Markdown"},{value:"tex",label:"TeX"}]} onChange={(value) => setDraftFormat(value as MindmapNode["contentFormat"])} />
+        <ChoiceButtons label="Editing card content format" value={draftFormat || "plain"} options={[{value:"plain",label:"Plain"},{value:"markdown",label:"Markdown"},{value:"tex",label:"TeX"}]} onChange={(value) => { onDraftActivity(); setDraftFormat(value as MindmapNode["contentFormat"]); }} />
       )}
       <span className="mindmap-inline-editor-divider" />
       <FastTooltip label="Done (⌘Enter / Ctrl+Enter)"><button type="button" className={styles.editToolbarButton} aria-label="Finish editing card" onClick={() => void commit()}><Check size={15} /><span>{node.agentDraft ? "Keep draft" : "Done"}</span></button></FastTooltip>
@@ -3120,10 +3205,9 @@ function CanvasNode({
               onChange={event => void onToggleTodo?.(event.target.checked)} />
             Paper TODO
           </label>
-          <span className={cn(styles.todoStatus, completed && styles.todoComplete, missing && styles.todoMissing)}>
-            {missing ? <AlertCircle size={12} aria-hidden="true" /> : <span className={styles.progressCompact}><ProgressGlyph value={node.progress === "ditched" ? "ditched" : completed ? 6 : node.progress ?? 0} size={18} /></span>}
-            {missing ? "Missing in paper" : node.progress === "ditched" ? "Ditched" : completed ? "Complete" : node.progress ? `${Math.round(node.progress / 6 * 100)}%` : "Open"}
-          </span>
+          {missing
+            ? <span className={cn(styles.todoStatus, styles.todoMissing)}><AlertCircle size={12} aria-hidden="true" />Missing in paper</span>
+            : <ProgressCircles value={node.progress === "ditched" ? "ditched" : completed ? 6 : node.progress ?? 0} compact label="TODO status" />}
         </div>
       )}
       {!node.todoId && node.progress !== undefined && <div className={styles.cardProgress}><ProgressCircles value={node.progress} compact label="Topic progress" /></div>}
@@ -3143,6 +3227,7 @@ function CanvasNode({
             texHighlighting={draftFormat === "tex"}
             value={draft}
             onChange={(value) => {
+              onDraftActivity();
               setDraft(value);
               setFormatHint("");
               if (commitError) setCommitError(null);
@@ -3406,7 +3491,7 @@ function ProgressCircles({ value, onChange, disabled = false, compact = false, l
   compact?: boolean;
   label?: string;
 }) {
-  if (compact) return <span className={styles.progressCompact} aria-label={`${label}: ${progressLabel(value)}`} title={`${label}: ${progressLabel(value)}`}><ProgressGlyph value={value ?? 0} size={16} /></span>;
+  if (compact) return <span role="img" className={styles.progressCompact} aria-label={`${label}: ${progressLabel(value)}`} title={`${label}: ${progressLabel(value)}`}><ProgressGlyph value={value ?? 0} size={16} /></span>;
   return <div className={styles.progressChoices} role="group" aria-label={label}>
     <button type="button" className={styles.progressClear} aria-label={`Clear ${label.toLowerCase()}`} aria-pressed={value === undefined} disabled={disabled} onClick={() => onChange?.(undefined)}>Clear</button>
     {MINDMAP_PROGRESS_STATES.map((state) => <FastTooltip key={state} label={state === "ditched" ? "Ditched" : state === 6 ? "Finished" : state === 0 ? "Ready to start" : `${Math.round(state / 6 * 100)}%`}><button type="button" aria-label={state === "ditched" ? `Mark ${label.toLowerCase()} ditched` : state === 6 ? `Finish ${label.toLowerCase()}` : `${label}: ${state} of 6`} aria-pressed={state === value} disabled={disabled} onClick={() => onChange?.(state)}><ProgressGlyph value={state} /></button></FastTooltip>)}

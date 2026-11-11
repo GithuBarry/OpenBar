@@ -3,6 +3,7 @@
 import {
   forwardRef,
   useEffect,
+  useLayoutEffect,
   useImperativeHandle,
   useRef,
 } from "react";
@@ -13,7 +14,7 @@ import {
   isolateHistory,
   indentWithTab,
 } from "@codemirror/commands";
-import { codeFolding, foldEffect, foldGutter, foldKeymap, foldService, HighlightStyle, indentUnit, syntaxHighlighting } from "@codemirror/language";
+import { codeFolding, foldEffect, foldedRanges, foldGutter, foldKeymap, foldService, HighlightStyle, indentUnit, LanguageSupport, syntaxHighlighting, unfoldEffect } from "@codemirror/language";
 import { search, searchKeymap } from "@codemirror/search";
 import {
   Annotation,
@@ -36,13 +37,13 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from "@codemirror/view";
-import { tags } from "@lezer/highlight";
+import { styleTags, tags } from "@lezer/highlight";
 
 import { boundaryLineNumbers } from "./boundary-line-numbers";
 import { autocompletion, completionKeymap, acceptCompletion } from "@codemirror/autocomplete";
-import { latex, latexCompletionSource } from "codemirror-lang-latex";
+import { latex, latexCompletionSource, latexLanguage } from "codemirror-lang-latex";
 import { projectCompletions, type PaperCompletionContext } from "./latex-completion";
-import { metadataMarkers } from "./metadata-markers";
+import { commentKindsSource, metadataMarkers } from "./metadata-markers";
 import { obMarkerDecorations, headingCountSeed } from "./ob-cm-decorations";
 import { bannerRanges } from "@/lib/tex-project/source-bundle-format";
 import { cn } from "@/lib/utils";
@@ -51,7 +52,15 @@ import { AGENT_MENTION_PATTERN } from "@/lib/research/agent-mentions";
 
 export type { EditorView } from "@codemirror/view";
 
-const latexSyntax = () => latex({ enableLinting: false, enableTooltips: false, enableAutocomplete: false, autoCloseTags: false, autoCloseBrackets: false });
+// The LaTeX grammar assigns separate node types to known commands, and some
+// of those nodes have no color tag. Give each control sequence the same tag
+// while letting the parser keep comments and literal text distinct.
+const commandTags = Object.fromEntries(latexLanguage.parser.nodeSet.types
+  .filter((type) => type.name.endsWith("CtrlSeq"))
+  .map((type) => [type.name, tags.keyword]));
+const paperLatexLanguage = latexLanguage.configure({ props: [styleTags(commandTags)] });
+const latexSyntax = () => new LanguageSupport(paperLatexLanguage,
+  latex({ enableLinting: false, enableTooltips: false, enableAutocomplete: false, autoCloseTags: false, autoCloseBrackets: false }).support);
 
 const mentionMatcher = new MatchDecorator({
   regexp: new RegExp(AGENT_MENTION_PATTERN.source, "gi"),
@@ -116,6 +125,23 @@ export type TexFocusContext = {
 };
 
 const focusContextEffect = StateEffect.define<TexFocusContext | null>();
+const sourceHighlightEffect = StateEffect.define<{ from: number; to: number } | null>();
+const sourceHighlight = Decoration.mark({ class: "ob-cm-source-highlight" });
+const sourceHighlightField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update: (decorations, transaction) => {
+    if (transaction.docChanged) decorations = decorations.map(transaction.changes);
+    for (const effect of transaction.effects) {
+      if (!effect.is(sourceHighlightEffect)) continue;
+      const range = effect.value;
+      decorations = range && range.to > range.from
+        ? Decoration.set([sourceHighlight.range(range.from, range.to)])
+        : Decoration.none;
+    }
+    return decorations;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
 
 const FOCUS_LINE = Decoration.line({ class: "ob-cm-context-focus" });
 const CONTEXT_LINE = Decoration.line({ class: "ob-cm-context-faded" });
@@ -158,9 +184,9 @@ function focusContextField(initialContext: TexFocusContext | null) {
 
 const obHighlightStyle = HighlightStyle.define([
   { tag: tags.comment, color: "rgb(var(--faint))", fontStyle: "italic" },
-  { tag: [tags.keyword, tags.heading], color: "rgb(var(--accent) / 0.9)" },
-  { tag: tags.atom, color: "rgb(var(--accent) / 0.9)" },
-  { tag: tags.tagName, color: "rgb(var(--accent) / 0.9)" },
+  { tag: [tags.keyword, tags.heading], color: "rgb(var(--accent-text))" },
+  { tag: tags.atom, color: "rgb(var(--accent-text))" },
+  { tag: tags.tagName, color: "rgb(var(--accent-text))" },
   { tag: tags.meta, color: "rgb(var(--muted))" },
   { tag: tags.bracket, color: "rgb(var(--muted))" },
   { tag: tags.string, color: "rgb(var(--ink))" },
@@ -204,8 +230,12 @@ const obEditorTheme = EditorView.theme({
   ".cm-cursor, .cm-dropCursor": {
     borderLeftColor: "rgb(var(--ink))",
   },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
     backgroundColor: "rgb(var(--accent) / 0.25) !important",
+  },
+  ".ob-cm-source-highlight": {
+    backgroundColor: "rgb(var(--accent) / 0.22)",
+    borderRadius: "2px",
   },
   ".cm-placeholder": {
     color: "rgb(var(--faint))",
@@ -220,23 +250,23 @@ const obEditorTheme = EditorView.theme({
     color: "rgb(var(--ink))",
     border: "1px solid rgb(var(--faint) / 0.4)",
   },
-  ".ob-cm-claim, .ob-cm-claim *": { color: "rgb(var(--accent))" },
+  ".ob-cm-claim, .ob-cm-claim *": { color: "rgb(var(--accent-text))" },
   ".cm-line .ob-cm-claim-body, .cm-line .ob-cm-claim-body *": { color: "rgb(var(--ink))" },
-  ".ob-cm-todo, .ob-cm-todo *": { color: "rgb(var(--warn))" },
+  ".ob-cm-todo, .ob-cm-todo *": { color: "rgb(var(--warn-text))" },
   ".cm-line .ob-cm-todo-body, .cm-line .ob-cm-todo-body *": { color: "rgb(var(--ink))" },
   ".ob-cm-comment, .ob-cm-comment *": { color: "rgb(var(--comment-color, var(--muted)))" },
   ".ob-cm-annotation-brace": {
-    color: "rgb(var(--warn)) !important",
+    color: "rgb(var(--warn-text)) !important",
   },
-  ".ob-cm-marker, .ob-cm-marker *": { color: "rgb(var(--accent))" },
-  ".ob-cm-cite, .ob-cm-cite *, .ob-cm-ref, .ob-cm-ref *": { color: "rgb(var(--accent) / 0.9)" },
+  ".ob-cm-marker, .ob-cm-marker *": { color: "rgb(var(--accent-text))" },
+  ".ob-cm-cite, .ob-cm-cite *, .ob-cm-ref, .ob-cm-ref *": { color: "rgb(var(--accent-text))" },
   ".ob-cm-brace-marker": {
-    color: "rgb(var(--accent))",
+    color: "rgb(var(--ink))",
     backgroundColor: "rgb(var(--accent) / 0.2)",
   },
   ".ob-ed-heading, .ob-ed-heading *": {
     fontWeight: "700",
-    color: "rgb(var(--accent))",
+    color: "rgb(var(--accent-text))",
   },
   ".ob-cm-file-banner": {
     color: "rgb(var(--faint))",
@@ -255,7 +285,7 @@ const obEditorTheme = EditorView.theme({
 
 const obCompactTheme = EditorView.theme({
   ".ob-cm-agent-mention": {
-    color: "rgb(var(--accent))",
+    color: "rgb(var(--ink))",
     backgroundColor: "rgb(var(--accent) / .12)",
     borderRadius: "3px",
     boxShadow: "0 0 0 1px rgb(var(--accent) / .2)",
@@ -304,26 +334,26 @@ const obCompactTheme = EditorView.theme({
   ".cm-cursor, .cm-dropCursor": {
     borderLeftColor: "rgb(var(--ink))",
   },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
     backgroundColor: "rgb(var(--accent) / 0.25) !important",
   },
-  ".ob-cm-claim, .ob-cm-claim *": { color: "rgb(var(--accent))" },
+  ".ob-cm-claim, .ob-cm-claim *": { color: "rgb(var(--accent-text))" },
   ".cm-line .ob-cm-claim-body, .cm-line .ob-cm-claim-body *": { color: "rgb(var(--ink))" },
-  ".ob-cm-todo, .ob-cm-todo *": { color: "rgb(var(--warn))" },
+  ".ob-cm-todo, .ob-cm-todo *": { color: "rgb(var(--warn-text))" },
   ".cm-line .ob-cm-todo-body, .cm-line .ob-cm-todo-body *": { color: "rgb(var(--ink))" },
   ".ob-cm-comment, .ob-cm-comment *": { color: "rgb(var(--comment-color, var(--muted)))" },
   ".ob-cm-annotation-brace": {
-    color: "rgb(var(--warn)) !important",
+    color: "rgb(var(--warn-text)) !important",
   },
-  ".ob-cm-marker, .ob-cm-marker *": { color: "rgb(var(--accent))" },
-  ".ob-cm-cite, .ob-cm-cite *, .ob-cm-ref, .ob-cm-ref *": { color: "rgb(var(--accent) / 0.9)" },
+  ".ob-cm-marker, .ob-cm-marker *": { color: "rgb(var(--accent-text))" },
+  ".ob-cm-cite, .ob-cm-cite *, .ob-cm-ref, .ob-cm-ref *": { color: "rgb(var(--accent-text))" },
   ".ob-cm-brace-marker": {
-    color: "rgb(var(--accent))",
+    color: "rgb(var(--ink))",
     backgroundColor: "rgb(var(--accent) / 0.2)",
   },
   ".ob-ed-heading, .ob-ed-heading *": {
     fontWeight: "700",
-    color: "rgb(var(--accent))",
+    color: "rgb(var(--accent-text))",
   },
   ".ob-cm-context-faded": {
     opacity: "0.42",
@@ -426,6 +456,7 @@ export type TexCodeMirrorHandle = {
   getView: () => EditorView | null;
   getSelection: () => { from: number; to: number } | null;
   setSelection: (from: number, to: number) => void;
+  revealRange: (from: number, to: number, options?: { isCurrent?: () => boolean; onDone?: () => void; scrollContainer?: HTMLElement }) => void;
   surround: (open: string, close: string, placeholder?: string) => void;
   format: (syntax: InlineSyntax, kind: InlineFormat) => boolean;
   insertAtCursor: (text: string, asBlock?: boolean) => void;
@@ -438,16 +469,19 @@ export type TexDocChange = { from: number; to: number; insert: string };
 
 export type TexCodeMirrorProps = {
   value: string;
+  isValueCurrent?: () => boolean;
   readOnly?: boolean;
   onChange?: (value: string) => void;
   onDocChanges?: (changes: TexDocChange[], length: number) => void;
   onScroll?: () => void;
   onFocus?: () => void;
+  onReady?: () => void;
   onCommit?: () => void;
   onCancel?: () => void;
   placeholder?: string;
   className?: string;
   variant?: "pane" | "compact" | "nested";
+  nativeSearch?: boolean;
   texHighlighting?: boolean;
   lineOffset?: number;
   getCompletionContext?: () => PaperCompletionContext;
@@ -479,16 +513,19 @@ function seedKeyOf(counts?: Map<string, number>): string {
 export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>(
   function TexCodeMirror({
     value,
+    isValueCurrent,
     readOnly = false,
     onChange,
     onDocChanges,
     onScroll,
     onFocus,
+    onReady,
     onCommit,
     onCancel,
     placeholder,
     className,
     variant = "pane",
+    nativeSearch = true,
     texHighlighting = true,
     lineOffset = 0,
     getCompletionContext,
@@ -499,6 +536,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
     completionContextRef.current = getCompletionContext;
     const hostRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
+    const highlightTimerRef = useRef<number | null>(null);
     const placeholderCompRef = useRef(new Compartment());
     const seedCompRef = useRef(new Compartment());
     const lineCompRef = useRef(new Compartment());
@@ -508,6 +546,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
     const onDocChangesRef = useRef(onDocChanges);
     const onScrollRef = useRef(onScroll);
     const onFocusRef = useRef(onFocus);
+    const onReadyRef = useRef(onReady);
     const onCommitRef = useRef(onCommit);
     const onCancelRef = useRef(onCancel);
     const valueRef = useRef(value);
@@ -519,6 +558,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
     onDocChangesRef.current = onDocChanges;
     onScrollRef.current = onScroll;
     onFocusRef.current = onFocus;
+    onReadyRef.current = onReady;
     onCommitRef.current = onCommit;
     onCancelRef.current = onCancel;
     valueRef.current = value;
@@ -566,6 +606,35 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
           scrollIntoView: true,
         });
         view.focus();
+      },
+      revealRange: (from, to, options) => {
+        const view = viewRef.current;
+        if (!view) { options?.onDone?.(); return; }
+        const start = clampPos(from, view.state.doc.length);
+        const end = Math.max(start, clampPos(to, view.state.doc.length));
+        if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current);
+        const effects: StateEffect<unknown>[] = [sourceHighlightEffect.of({ from: start, to: end })];
+        foldedRanges(view.state).between(start, end, (from, to) => { effects.push(unfoldEffect.of({ from, to })); });
+        view.dispatch({ effects });
+        const scroller = options?.scrollContainer ?? view.scrollDOM;
+        view.requestMeasure({
+          read: (editor) => {
+            const line = editor.lineBlockAt(start);
+            return { top: editor.documentTop + line.top, bottom: editor.documentTop + line.bottom, pane: scroller.getBoundingClientRect() };
+          },
+          write: ({ top, bottom, pane }) => {
+            if (!options?.isCurrent || options.isCurrent()) {
+              const margin = 12;
+              if (top < pane.top + margin) scroller.scrollTop += top - pane.top - margin;
+              else if (bottom > pane.bottom - margin) scroller.scrollTop += Math.min(top - pane.top - margin, bottom - pane.bottom + margin);
+            }
+            options?.onDone?.();
+          },
+        });
+        highlightTimerRef.current = window.setTimeout(() => {
+          if (viewRef.current === view) view.dispatch({ effects: sourceHighlightEffect.of(null) });
+          highlightTimerRef.current = null;
+        }, 3000);
       },
       surround: (open, close, ph) => {
         const view = viewRef.current;
@@ -653,15 +722,17 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
                   return true;
                 },
               },
-              ...(compact ? [] : [indentWithTab, ...foldKeymap, ...searchKeymap]),
+              ...(compact ? [] : [indentWithTab, ...foldKeymap]),
+              ...(!compact && nativeSearch ? searchKeymap : []),
               ...historyKeymap,
               ...defaultKeymap,
             ]),
-            ...(compact ? [] : [search()]),
+            ...(!compact && nativeSearch ? [search()] : []),
             seedComp.of(headingCountSeed.of(new Map(headingCountsRef.current))),
             obMarkerDecorations,
-            ...(variantRef.current === "nested" ? [metadataMarkers, boundaryLineNumbers] : []),
+            ...(variantRef.current === "nested" ? [metadataMarkers, commentKindsSource.of(() => completionContextRef.current?.().source ?? ""), boundaryLineNumbers] : []),
             focusField,
+            sourceHighlightField,
             bannerField,
             EditorState.transactionFilter.of((tr) => {
               if (compact || !tr.docChanged) return tr;
@@ -678,7 +749,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
             EditorView.editorAttributes.of({
               class: compact ? "ob-cm-editor ob-cm-compact" : "ob-cm-editor",
             }),
-            EditorView.contentAttributes.of({ spellcheck: "true" }),
+            EditorView.contentAttributes.of({ spellcheck: "true", ...(!nativeSearch ? { tabindex: "0" } : {}) }),
             placeholderComp.of(placeholderRef.current ? cmPlaceholder(placeholderRef.current) : []),
             EditorView.updateListener.of((update) => {
               if (update.focusChanged && update.view.hasFocus) onFocusRef.current?.();
@@ -699,6 +770,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
         }),
       });
       viewRef.current = view;
+      onReadyRef.current?.();
       const initialFoldFrame = requestAnimationFrame(() => {
         if (viewRef.current === view) collapseInitialPackageGroups(view);
       });
@@ -710,6 +782,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
 
       return () => {
         cancelAnimationFrame(initialFoldFrame);
+        if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current);
         view.scrollDOM.removeEventListener("scroll", onScrollDom);
         view.destroy();
         viewRef.current = null;
@@ -729,9 +802,9 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
       view.dispatch({ effects: focusContextEffect.of(focusContextRef.current) });
     }, [focusContextKey]);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
       const view = viewRef.current;
-      if (!view) return;
+      if (!view || (isValueCurrent && !isValueCurrent())) return;
       const current = view.state.doc.toString();
       if (current === value) return;
       const sel = view.state.selection.main;
@@ -744,7 +817,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
       requestAnimationFrame(() => {
         if (viewRef.current === view && view.state.doc.toString() === value) collapseInitialPackageGroups(view);
       });
-    }, [value]);
+    }, [value, isValueCurrent]);
 
     useEffect(() => {
       const view = viewRef.current;

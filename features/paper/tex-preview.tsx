@@ -12,20 +12,27 @@ import type { EditorTodo } from "./tex-source";
 
 const PdfJsViewer = dynamic(() => import("./pdf-viewer").then((module) => module.PdfJsViewer), { ssr: false });
 
-type AnnotationDetail = { label: string; text: string; section: string; source: string; from?: number; to?: number };
-type InlineDetail = { pinned: boolean } & ({ kind: "citation"; key: string } | ({ kind: "annotation" } & AnnotationDetail));
+type InlineDetail = { pinned: boolean; kind: "citation"; key: string };
 
 function PdfFigure({ project, src, page }: { project: string; src: string; page?: number }) {
   const host = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   useEffect(() => {
-    if (!host.current) return;
-    if (typeof IntersectionObserver === "undefined") { setVisible(true); return; }
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) { setVisible(true); observer.disconnect(); }
+    // Begin loading off-screen figures after the document is painted. A
+    // nearby figure still starts immediately when the user scrolls to it.
+    const observer = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) { setVisible(true); observer?.disconnect(); }
     }, { rootMargin: "400px" });
-    observer.observe(host.current);
-    return () => observer.disconnect();
+    if (host.current) observer?.observe(host.current);
+    const idle = typeof window.requestIdleCallback === "function"
+      ? window.requestIdleCallback(() => setVisible(true), { timeout: 1000 })
+      : null;
+    const timer = idle === null ? window.setTimeout(() => setVisible(true), 0) : null;
+    return () => {
+      observer?.disconnect();
+      if (idle !== null) window.cancelIdleCallback(idle);
+      if (timer !== null) window.clearTimeout(timer);
+    };
   }, []);
   return <div ref={host} style={{ minHeight: 240 }}>{visible ? <PdfJsViewer project={project} src={src} page={page} compact /> : <div className="flex min-h-60 items-center justify-center text-xs text-muted">PDF figure</div>}</div>;
 }
@@ -67,12 +74,9 @@ export const TexPreview = memo(function TexPreview({
   }, [blocks, todos, todoDisabled, todoPending, onToggleTodo]);
   const [detail, setDetail] = useState<InlineDetail | null>(null);
   const citation = detail?.kind === "citation" ? detail : null;
-  const annotation = detail?.kind === "annotation" ? detail : null;
   const [copyStatus, setCopyStatus] = useState("");
   const anchor = useRef<HTMLElement | null>(null);
   const referenceTarget = useRef<HTMLElement | null>(null);
-  const annotationTarget = useRef<AnnotationDetail | null>(null);
-  const detailPanel = useRef<HTMLDivElement | null>(null);
   const restoringFocus = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelClose = () => { if (timer.current) clearTimeout(timer.current); };
@@ -80,22 +84,27 @@ export const TexPreview = memo(function TexPreview({
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
   const show = (target: EventTarget, pinned = false) => {
     if (target instanceof Element && target.closest("input[data-ob-todo-id]")) return false;
-    const link = target instanceof Element ? target.closest<HTMLElement>(".ob-cite[data-cite-key], [data-ob-annotation]") : null;
-    if (!link) return false;
+    const link = target instanceof Element ? target.closest<HTMLElement>(".ob-cite[data-cite-key]") : null;
+    if (!link?.dataset.citeKey) return false;
     cancelClose();
     const sameAnchor = anchor.current === link;
     anchor.current = link;
     setCopyStatus("");
     setDetail(current => {
       if (sameAnchor && current) return pinned && !current.pinned ? { ...current, pinned: true } : current;
-      if (link.dataset.citeKey) return { kind: "citation", key: link.dataset.citeKey, pinned };
-      const block = link.closest<HTMLElement>("[data-preview-from]");
-      const from = Number(block?.dataset.previewFrom), to = Number(block?.dataset.previewTo);
-      return { kind: "annotation", pinned, label: link.dataset.obAnnotation!, text: link.textContent?.trim() || "", source: link.dataset.annotationSource || "",
-        section: block?.querySelector(".ob-pv-heading")?.textContent?.trim() || "",
-        ...(Number.isFinite(from) ? { from } : {}), ...(Number.isFinite(to) ? { to } : {}),
-      };
+      return { kind: "citation", key: link.dataset.citeKey!, pinned };
     });
+    return true;
+  };
+  const showAnnotationSource = (target: EventTarget) => {
+    const annotation = target instanceof Element ? target.closest<HTMLElement>("[data-ob-annotation]") : null;
+    if (!annotation || !onShowSource) return false;
+    const nestedControl = target instanceof Element ? target.closest<HTMLElement>("a, button, input, textarea, select, .ob-cite, [role='button']") : null;
+    if (nestedControl && nestedControl !== annotation && annotation.contains(nestedControl)) return false;
+    const block = annotation.closest<HTMLElement>("[data-preview-from]");
+    const from = Number(block?.dataset.previewFrom), to = Number(block?.dataset.previewTo);
+    setDetail(null);
+    onShowSource(annotation.dataset.annotationSource || "", Number.isFinite(from) ? from : undefined, Number.isFinite(to) ? to : undefined);
     return true;
   };
   const entry = bibliography.find(entry => entry.key.toLowerCase() === citation?.key.toLowerCase());
@@ -116,13 +125,12 @@ export const TexPreview = memo(function TexPreview({
         });
       }}
       onPointerMove={event => { if (event.pointerType === "mouse") show(event.target); }}
-      onMouseOut={event => { const link = event.target instanceof Element ? event.target.closest(".ob-cite, [data-ob-annotation]") : null; if (link && !(event.relatedTarget instanceof Node && link.contains(event.relatedTarget))) closeSoon(); }}
+      onMouseOut={event => { const link = event.target instanceof Element ? event.target.closest(".ob-cite") : null; if (link && !(event.relatedTarget instanceof Node && link.contains(event.relatedTarget))) closeSoon(); }}
       onFocus={event => { if (!restoringFocus.current) show(event.target); }}
       onKeyDown={event => {
         if (event.target instanceof Element && event.target.closest("input[data-ob-todo-id]")) return;
         if ((event.key === "Enter" || event.key === " ") && event.target instanceof Element && event.target.closest("[data-ob-annotation]")) {
-          event.preventDefault(); show(event.target, true);
-          requestAnimationFrame(() => detailPanel.current?.querySelector("button")?.focus());
+          if (showAnnotationSource(event.target)) event.preventDefault();
         }
       }}
       onClick={event => {
@@ -138,7 +146,7 @@ export const TexPreview = memo(function TexPreview({
             target.scrollIntoView({ block: "center", behavior: "instant" });
           }
         }
-        if (!(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) && show(event.target, true)) event.preventDefault();
+        if (!(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) && ((!window.getSelection()?.toString() && showAnnotationSource(event.target)) || show(event.target, true))) event.preventDefault();
       }}
       className={`${styles.preview} ob-tex-hast tex-document prose max-w-none`}>
       <AnchoredPop open={!!detail} anchorRef={anchor} onDismiss={() => setDetail(null)} className={styles.popover}
@@ -147,11 +155,8 @@ export const TexPreview = memo(function TexPreview({
           event.preventDefault();
           const target = referenceTarget.current;
           referenceTarget.current = null;
-          const source = annotationTarget.current;
-          annotationTarget.current = null;
           restoringFocus.current = true;
-          if (source) onShowSource?.(source.source, source.from, source.to);
-          else if (target) {
+          if (target) {
             onNavigate?.();
             target.tabIndex = -1;
             target.focus({ preventScroll: true });
@@ -169,12 +174,6 @@ export const TexPreview = memo(function TexPreview({
             <button type="button" onClick={() => { referenceTarget.current = document.getElementById(refId(citation.key.toLowerCase())) || document.getElementById(refId(citation.key)); cancelClose(); setDetail(null); }}>Go to reference</button>
             <button type="button" onClick={() => { void (async () => { try { await navigator.clipboard.writeText(citation.key); setCopyStatus("Copied"); } catch { setCopyStatus("Copy unavailable"); } })(); }}>{copyStatus || "Copy key"}</button>
           </div>
-        </div>}
-        {annotation && <div ref={detailPanel} role="dialog" aria-label={`${annotation.label} details`} onMouseEnter={cancelClose} onMouseLeave={closeSoon}>
-          <div className={styles.heading}><strong>{annotation.label}</strong><button type="button" aria-label="Close annotation" onClick={() => setDetail(null)}>×</button></div>
-          {annotation.section && <p className={styles.venue}>{annotation.section}</p>}
-          <p>{annotation.text}</p>
-          {onShowSource && <div className={styles.actions}><button type="button" onClick={() => { annotationTarget.current = annotation; cancelClose(); setDetail(null); }}>Show in source</button></div>}
         </div>}
       </AnchoredPop>
       {blocks.map((block) => (

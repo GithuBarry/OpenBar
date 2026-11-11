@@ -1,10 +1,14 @@
-.scratchpad { margin-top: 8px; font-size: 11px; color: rgb(var(--muted)); }
+.scratchpad { margin-top: 8px; font-size: var(--card-body-size, 12px); color: rgb(var(--muted)); }
 .scratchpad summary { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; list-style: none; cursor: pointer; }
 .scratchpad summary::-webkit-details-marker { display: none; }
 .scratchpad summary.labeled { justify-content: flex-start; width: auto; gap: 4px; }
 .scratchpad[open] summary svg { transform: rotate(90deg); }
 .scratchpad summary:hover { color: rgb(var(--ink)); }
 .scratchpad summary:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 3px; border-radius: 2px; }
-.edge { margin-top: 8px; margin-left: 3px; padding-left: 9px; border-left: 2px solid rgb(var(--line)); }
-.edge summary.labeled { max-width: 100%; padding: 0; background: transparent; font-size: 10px; white-space: nowrap; }
+.edge { align-self: stretch; margin: 12px 0 -6px; }
+.edge summary.labeled { width: 100%; max-width: 100%; gap: 6px; font-size: var(--card-body-size, 12px); white-space: nowrap; }
+.edge summary.labeled::before, .edge summary.labeled::after { content: ""; height: 1px; background: rgb(var(--line)); }
+.edge summary.labeled::before { flex: 0 0 8px; }
+.edge summary.labeled::after { flex: 1; }
+.edge[open] { margin-bottom: 0; }
 .body { margin-top: 8px; max-height: min(400px, 50dvh); overflow: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font-size: var(--card-body-size, 12px); line-height: var(--card-body-line, 17px); color: rgb(var(--ink)); }

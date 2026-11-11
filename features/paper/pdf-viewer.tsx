@@ -11,6 +11,7 @@ import {
 
 import { synctexEditAction } from "@/app/actions";
 import { FastTooltip } from "@/components/fast-tooltip";
+import { scrollFollowSmoothingMs, smoothScrollStep, type PdfScrollSync } from "./scroll-follow";
 
 import type { PDFViewer } from "pdfjs-dist/types/web/pdf_viewer";
 
@@ -27,6 +28,9 @@ export function PdfJsViewer({
   observationMessage,
   artifactId,
   sourceTarget,
+  scrollSync,
+  onScrollProgress,
+  onScrollStart,
   onJumpToSource,
   page,
   compact = false,
@@ -37,6 +41,9 @@ export function PdfJsViewer({
   observationMessage?: string;
   artifactId?: string;
   sourceTarget?: PdfSourceTarget | null;
+  scrollSync?: PdfScrollSync;
+  onScrollProgress?: (progress: number) => void;
+  onScrollStart?: () => void;
   onJumpToSource?: (file: string, line: number) => void;
   page?: number;
   compact?: boolean;
@@ -44,9 +51,17 @@ export function PdfJsViewer({
   const hostRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const followScrollFrameRef = useRef<number | null>(null);
+  const userScrollingRef = useRef(false);
+  const userScrollTimerRef = useRef<number | null>(null);
   const viewerRef = useRef<PDFViewer | null>(null);
   const [pages, setPages] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadStage, setLoadStage] = useState<"opening" | "rendering" | "ready">("opening");
+  const [loadProgress, setLoadProgress] = useState<number | null>(null);
+  const [loadSlow, setLoadSlow] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [ready, setReady] = useState(0);
   const [zoom, setZoom] = useState<number | null>(null);
   const [renderedZoom, setRenderedZoom] = useState(1);
@@ -66,10 +81,16 @@ export function PdfJsViewer({
     let loadingTask: ReturnType<typeof getDocument> | undefined;
     let observer: ResizeObserver | undefined;
     let initialized = false;
+    let hasRenderedPage = false;
     let previousWidth = container.clientWidth;
     const savedLocation = locationRef.current;
     setPages(0);
     setError(null);
+    setLoadError(null);
+    setLoadStage("opening");
+    setLoadProgress(null);
+    setLoadSlow(false);
+    const slowTimer = window.setTimeout(() => setLoadSlow(true), 8000);
 
     // The viewer bundle reads the core's global export. Load it after the core,
     // inside the browser effect, so server rendering never evaluates DOM APIs.
@@ -85,6 +106,7 @@ export function PdfJsViewer({
         eventBus,
         linkService,
         annotationMode: AnnotationMode.ENABLE,
+        removePageBorders: true,
         // PDFViewer accepts this lifecycle signal in the installed 6.3.289
         // implementation. Its generated declarations omit the option.
         ...{ abortSignal: controller.signal },
@@ -94,11 +116,20 @@ export function PdfJsViewer({
       const resizeCompact = () => {
         if (!compact || !viewer || !initialized) return;
         const current = viewer.getPageView(viewer.currentPageNumber - 1);
-        if (current) stage.style.height = `${Math.ceil(current.div.getBoundingClientRect().height + 2)}px`;
+        if (current) stage.style.height = `${Math.ceil(current.div.getBoundingClientRect().height) + 2}px`;
       };
       const reportRender = ({ error: reason }: { error?: unknown }) => {
         if (controller.signal.aborted) return;
-        if (reason) setError(reason instanceof Error ? reason.message : "Could not render the PDF.");
+        if (reason) {
+          const message = reason instanceof Error ? reason.message : "Could not render the PDF.";
+          if (hasRenderedPage) setError(`A PDF page could not be displayed: ${message}`);
+          else setLoadError(message);
+        } else {
+          hasRenderedPage = true;
+          window.clearTimeout(slowTimer);
+          setLoadError(null);
+          setLoadStage("ready");
+        }
         resizeCompact();
       };
       eventBus.on("pagerendered", reportRender);
@@ -165,16 +196,21 @@ export function PdfJsViewer({
       }, { signal: controller.signal });
 
       loadingTask = getDocument({ url: src, withCredentials: true });
+      loadingTask.onProgress = ({ loaded, total }: { loaded: number; total: number }) => {
+        if (!controller.signal.aborted && total > 0) setLoadProgress(Math.min(100, Math.round(loaded / total * 100)));
+      };
       const pdf = await loadingTask.promise;
       if (controller.signal.aborted) return;
       setPages(pdf.numPages);
+      setLoadStage("rendering");
       linkService.setDocument(pdf);
       viewer.setDocument(pdf);
     };
     void start().catch(reason => {
-      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Could not open the PDF.");
+      if (!controller.signal.aborted) setLoadError(reason instanceof Error ? reason.message : "Could not open the PDF.");
     });
     return () => {
+      window.clearTimeout(slowTimer);
       // Capture a scroll that happened just before React replaced the artifact,
       // including moves whose animation-frame scroll observer is still queued.
       if (initialized && viewer?.pdfDocument) viewer.update();
@@ -185,7 +221,7 @@ export function PdfJsViewer({
       if (viewerRef.current === viewer) viewerRef.current = null;
       void loadingTask?.destroy();
     };
-  }, [src, Boolean(page), compact]);
+  }, [src, Boolean(page), compact, loadAttempt]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -208,6 +244,9 @@ export function PdfJsViewer({
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!sourceTarget || !viewer?.pdfDocument || !ready) return;
+    if (followScrollFrameRef.current != null) window.cancelAnimationFrame(followScrollFrameRef.current);
+    followScrollFrameRef.current = null;
+    if (scrollSync) scrollSync.progress = null;
     const pdfDocument = viewer.pdfDocument;
     let cancelled = false;
     const navigate = async () => {
@@ -227,39 +266,118 @@ export function PdfJsViewer({
       if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not locate the PDF position.");
     });
     return () => { cancelled = true; };
-  }, [sourceTarget, ready]);
+  }, [sourceTarget, ready, scrollSync]);
 
-  const changeZoom = (factor: number) => setZoom(current => Math.min(4, Math.max(0.1, (current ?? renderedZoom) * factor)));
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scrollSync || !scroller || !ready || compact) return;
+    let lastFrame: number | null = null;
+    let followingPosition = scroller.scrollTop;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let smoothingMs = scrollFollowSmoothingMs();
+    const animate = (time: number) => {
+      followScrollFrameRef.current = null;
+      if (userScrollingRef.current || scrollSync.progress == null) return;
+      const range = scroller.scrollHeight - scroller.clientHeight;
+      if (range <= 0) return;
+      const target = Math.max(0, Math.min(1, scrollSync.progress)) * range;
+      const elapsed = lastFrame === null ? 1000 / 60 : time - lastFrame;
+      lastFrame = time;
+      followingPosition = smoothScrollStep(followingPosition, target, elapsed, reducedMotion, smoothingMs);
+      scroller.scrollTop = followingPosition;
+      if (Math.abs(target - followingPosition) >= 0.75) followScrollFrameRef.current = window.requestAnimationFrame(animate);
+    };
+    const follow = () => {
+      userScrollingRef.current = false;
+      if (userScrollTimerRef.current) window.clearTimeout(userScrollTimerRef.current);
+      if (followScrollFrameRef.current != null) return;
+      followingPosition = scroller.scrollTop;
+      lastFrame = null;
+      smoothingMs = scrollFollowSmoothingMs();
+      followScrollFrameRef.current = window.requestAnimationFrame(animate);
+    };
+    scrollSync.follow = follow;
+    if (scrollSync.progress != null) follow();
+    return () => {
+      if (scrollSync.follow === follow) scrollSync.follow = null;
+      if (followScrollFrameRef.current != null) window.cancelAnimationFrame(followScrollFrameRef.current);
+      followScrollFrameRef.current = null;
+    };
+  }, [scrollSync, ready, compact]);
+  useEffect(() => () => {
+    if (userScrollTimerRef.current) window.clearTimeout(userScrollTimerRef.current);
+  }, []);
+
+  const beginUserScroll = () => {
+    if (followScrollFrameRef.current != null) window.cancelAnimationFrame(followScrollFrameRef.current);
+    followScrollFrameRef.current = null;
+    if (scrollSync) scrollSync.progress = null;
+    userScrollingRef.current = true;
+    if (userScrollTimerRef.current) window.clearTimeout(userScrollTimerRef.current);
+    userScrollTimerRef.current = window.setTimeout(() => { userScrollingRef.current = false; }, 180);
+    onScrollStart?.();
+  };
+
+  const changeZoom = (direction: -1 | 1) => setZoom(current => {
+    const scale = current ?? renderedZoom;
+    const steps = [0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
+    return direction > 0
+      ? steps.find(step => step > scale + 0.001) ?? 4
+      : steps.reverse().find(step => step < scale - 0.001) ?? 0.1;
+  });
 
   return (
     <div className={`${styles.viewer}${compact ? ` ${styles.compact}` : ""}`}>
       {observationMessage && (
         <p className={styles.notice} role="status">{observationMessage}</p>
       )}
-      {stale && (
-        <p className={styles.notice}>Showing the last successful PDF. Source has changed.</p>
-      )}
       {error && <p className={styles.error} role="alert">{error}</p>}
-      <div className={styles.toolbar} role="toolbar" aria-label="PDF viewing">
-        {pages > 0 && <span>{compact ? "PDF figure" : `${pages} page${pages === 1 ? "" : "s"}`}</span>}
+      <div ref={stageRef} className={styles.stage}>
+      {stale && <span className={styles.staleNotice} title="The source has changed since this PDF was compiled.">Previous PDF</span>}
+      {(loadStage !== "ready" || loadError) && (
+        <div className={styles.loadingOverlay}>
+          <div className={styles.loadingCard} role={loadError ? "alert" : "status"}>
+            {!loadError && <span className={styles.loadingSpinner} aria-hidden="true" />}
+            <span>{loadError ? "Could not display the PDF." : loadSlow ? "PDF is taking longer than expected." : loadStage === "opening" ? `Opening PDF${loadProgress !== null && loadProgress < 100 ? ` ${loadProgress}%` : "…"}` : "Rendering PDF pages…"}</span>
+            {(loadError || loadSlow) && (
+              <div className={styles.loadingActions}>
+                <button type="button" onClick={() => setLoadAttempt(attempt => attempt + 1)}>Retry</button>
+                <a href={src} target="_blank" rel="noreferrer">Open PDF</a>
+              </div>
+            )}
+            {loadError && <span className={styles.loadingDetail}>{loadError}</span>}
+          </div>
+        </div>
+      )}
+      <div ref={scrollerRef} className={styles.scrollport} aria-label="PDF pages" tabIndex={0}
+        onWheelCapture={beginUserScroll} onTouchStartCapture={beginUserScroll} onPointerDownCapture={beginUserScroll} onKeyDownCapture={beginUserScroll}
+        onScroll={event => {
+          const scroller = event.currentTarget;
+          const range = scroller.scrollHeight - scroller.clientHeight;
+          if (!compact && range > 0 && userScrollingRef.current) {
+            if (userScrollTimerRef.current) window.clearTimeout(userScrollTimerRef.current);
+            userScrollTimerRef.current = window.setTimeout(() => { userScrollingRef.current = false; }, 180);
+            onScrollProgress?.(Math.max(0, Math.min(1, scroller.scrollTop / range)));
+          }
+        }}>
+        <div ref={hostRef} className={`pdfViewer ${styles.pages}`} />
+      </div>
+      </div>
+      <div className={`p-glass-sm ${styles.toolbar}`} role="toolbar" aria-label="PDF viewing">
+        {compact && pages > 0 && <span>PDF figure</span>}
         <div className={styles.zoomControls}>
           <FastTooltip label="Zoom out">
-            <button type="button" aria-label="Zoom out" disabled={pages === 0 || renderedZoom <= 0.1} onClick={() => changeZoom(1 / 1.2)}><Minus size={13} /></button>
+            <button type="button" aria-label="Zoom out" disabled={pages === 0 || renderedZoom <= 0.1} onClick={() => changeZoom(-1)}><Minus size={13} /></button>
           </FastTooltip>
           <output aria-label="PDF zoom" className={styles.zoomReadout}>{Math.round(renderedZoom * 100)}%</output>
           <FastTooltip label="Zoom in">
-            <button type="button" aria-label="Zoom in" disabled={pages === 0 || renderedZoom >= 4} onClick={() => changeZoom(1.2)}><Plus size={13} /></button>
+            <button type="button" aria-label="Zoom in" disabled={pages === 0 || renderedZoom >= 4} onClick={() => changeZoom(1)}><Plus size={13} /></button>
           </FastTooltip>
           <FastTooltip label="Fit to width">
             <button type="button" aria-label="Fit to width" aria-pressed={zoom === null} disabled={pages === 0} className={styles.fitButton} onClick={() => { setZoom(null); if (scrollerRef.current) scrollerRef.current.scrollLeft = 0; }}><Maximize2 size={12} /><span>Fit</span></button>
           </FastTooltip>
         </div>
         <a href={src} target="_blank" rel="noreferrer">Open PDF</a>
-      </div>
-      <div ref={stageRef} className={styles.stage}>
-      <div ref={scrollerRef} className={styles.scrollport} aria-label="PDF pages" tabIndex={0}>
-        <div ref={hostRef} className={`pdfViewer ${styles.pages}`} />
-      </div>
       </div>
     </div>
   );
