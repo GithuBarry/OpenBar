@@ -2,9 +2,11 @@
 
 OpenBar exposes native MCP and WebMCP tools for research projects. Start with `get_project_state`. Tool descriptions and schemas define each operation. Project state lists instructions and skills for reading when relevant. `/agents` covers connection setup, `/llms-deployment.txt` covers deployment and transports, and `/llms.txt` is an optional index.
 
+After changing application code or styles, rebuild and restart the running local OpenBar service, then verify the live app before reporting completion.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
-# This is NOT the Next.js you know
+## This is NOT the Next.js you know
 
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
 
@@ -18,6 +20,9 @@ OpenBar edits an Overleaf-style research-paper repository.
 
 - Paper sections are derived from current LaTeX headings and include order. Section addresses are revision-local. Keep manuscripts free of OB-SECTION and section OB-EDIT comments and use current hashes or revisions for edits.
 - Paper owns the scientific argument, every TODO, comments, and intentionally incomplete structures (tables, figures, plots, `\obmarker` cells).
+- Work-in-progress papers visibly carry their unfinished reasoning throughout the manuscript: TODOs, questions, notes, planned comparisons, partial tables, and local result holes. Preserve this working-paper state until evidence or an explicit research decision resolves each open point.
+- Begin with the intended full paper skeleton and retain its eventual scope while evidence fills it in. Planned sections, argument steps, comparison axes, tables, and figures can remain partly empty. Completion can decrease when the research changes or expands, and the manuscript should expose the newly opened work.
+- Place each TODO beside the passage, claim, theorem, comparison, or result where its outcome will most strengthen the argument. Keep local notes and missing-result markers at the corresponding point of use as the manuscript develops.
 - The Primary mindmap covers every stable paper TODO: placed in its tree, or visible in Primary Unplaced. Unplaced counts as coverage.
 - Secondary mindmaps may reuse any subset of paper TODOs. The same `todoId` may appear once per map, including on Primary and several secondary maps. Two cards for one `todoId` inside a single map are invalid.
 - TeX owns TODO id, text, created/updated/completed. Each map independently owns placement, labels, refs, optional progress, and appearance. Do not persist duplicate TODO text or completion on the map.
@@ -35,9 +40,8 @@ OpenBar edits an Overleaf-style research-paper repository.
 - Card priority uses optional map-local values P0 through P3 and carries no scientific meaning.
 - Labels, colors, progress, table layout, refs, and metadata are map-owned presentation fields. TeX remains the source of truth for TODO text and completion.
 - Delete stale architecture instead of preserving compatibility branches.
+- Keep verification checks temporary and outside the repository. Remove them after use. Keep the repository free of permanent tests.
 - Research meaning has no built-in maturity, claim/evidence, or priority workflow.
 
-- Write every card as self-contained material for an external reader, including cards prompted by @agent or @agents. State the question or topic, essential context, answer or current uncertainty, and relevant evidence or file references. Keep conversational replies and personal acknowledgments in the task. Preserve the project-specific meaning and available evidence.
-- Keep visible card titles and bodies focused on their subject through direct positive statements, including material factual uncertainty. Put supporting explanation in Extended notes and defensive caveats, exclusions, and precautionary commentary in the map-owned `caution` buckets: `critical`, `important`, `minor`, and `background`. Assign the lowest level justified by a concrete consequence. Critical and important notes use red and amber hover icons. Minor and background notes stay in closed card settings under More actions → Caution notes. Human editing and agent tools support these buckets on ordinary and TODO-backed cards.
-- Express yourself directly, clearly, and with judgment. Reserve disclaimers, vague qualifiers, and defensive wording for genuine factual uncertainty. This applies especially to prominent Mindmap text.
+- Card presentation uses three levels: `title` and `text` are visible, `caption` opens in the collapsed notes, and `caution.background` opens in its own collapsed Background notes section. `caution.critical` and `caution.important` are visible red- and amber-accented paragraphs. These note fields belong to each map, including on TODO-backed cards.
 - Agent-created cards remain marked Agent draft until a human explicitly saves or deletes them. The retired Note shape migrates to Agent draft.

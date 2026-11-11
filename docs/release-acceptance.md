@@ -92,7 +92,7 @@ acceptance run:
 Set `OPENBARRY_ACCESS_TOKEN` for the running server and call `/api/mcp` with
 the matching bearer token.
 
-1. Connect with the current official SDK client. Repeat with a session-based 2025 client, retaining `Mcp-Session-Id` from `initialize`.
+1. Connect with the current official SDK client. Repeat with a 2025 client and the stdio bridge, using the SDK's stateless HTTP support.
 2. Call `tools/list` and confirm project reads, bounded paper and mindmap reads, batch preview and apply, activity, compile, and Git tools appear.
 3. Call `get_project_state`, `get_mindmap`, and `get_source_bundle` with bounded limits.
 4. Call one revision-checked map patch with a request id. Retry the same request id and confirm one durable receipt.

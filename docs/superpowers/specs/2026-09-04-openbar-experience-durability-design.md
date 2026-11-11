@@ -109,10 +109,11 @@ the parent’s sibling position. Branch deletion is a separate explicit action
 with a preview of the affected subtree. Reorder previews show the exact
 before/after insertion location and remain keyboard accessible.
 
-Progress is a seven-state presentation field: empty plus six durable states.
-It is displayed as seven compact circles, does not automatically derive from
-children, and does not auto-complete a TODO. Legacy numeric values are read
-through a deterministic migration and saved in the new representation.
+Progress is a map-owned presentation field with values 0 through 6 and a
+`ditched` status. The card shows a start icon, a partial circle, a completed
+checkmark, or a muted yellow circle-slash in its upper-right corner. Each card
+keeps its explicitly chosen state. TeX owns TODO completion independently.
+Legacy numeric values are read through a deterministic migration.
 
 ### 5. Paper-first UI
 
@@ -193,13 +194,8 @@ cleanup. The final integration target is the repository’s `main` branch, with
 the current branch merged and pushed only after fresh verification.
 # Card notes and visible-content guidance
 
-Each mindmap card may carry an optional Extended note of up to 500
-words. The note is map-owned, model-readable context that opens in a floating window from the
-bottom of the card with one click and is edited independently from the visible
-title and body.
-TODO cards keep their TeX-owned title and body rules. Their Extended notes remain
-map-owned context.
-
-The editor warns when a card's visible title plus body exceeds 100 words. The
-warning recommends splitting the material into more cards. This is advisory so
-existing research content remains intact.
+Each mindmap card may carry map-owned supporting notes that open through a small,
+initially closed disclosure. Background notes open in their own initially closed disclosure. Critical
+and important notes appear as visible paragraphs with red and amber accents.
+TODO cards retain their TeX-owned title and body, with all three note surfaces
+owned by each map. Text length follows the existing request-size protection.

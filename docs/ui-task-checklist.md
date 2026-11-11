@@ -6,7 +6,7 @@ Active task, 2026-09-08. Items are completed sequentially and verified in the ru
 - [x] Persist agent-created cards as drafts until explicit human Save or Delete. Use compact, muted upper-right controls.
 - [x] Make New card an empty-state placeholder.
 - [x] Align Node.js requirements and container runtime with 26.8.1.
-- [x] Instruct agents to write self-contained cards for external readers, including responses to @agent questions.
+- [x] Describe visible, collapsed notes, and hover fields directly in native tool schemas.
 - [x] Finish the universal floating conflict design in Paper and Mindmap, using #ffb000, hover menus, change details, Copy error for agent, stable status checks, and edit locks.
 - [x] Verify inspector opening/collapse animations, reopening after blank-canvas deselection, and the slightly wider rendered-document right margin.
 - [x] Fix PDF rendering's readableStream compatibility error.
