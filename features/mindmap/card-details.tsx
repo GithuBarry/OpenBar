@@ -19,7 +19,12 @@ export function hasCardLinks(refs: ArtifactRef[] = []): boolean {
 export function CardLinkIndicator({ project, refs }: { project: string; refs: ArtifactRef[] }) {
   const links = refs.filter(ref => ref.kind !== "figure").map(ref => ({ ...ref, href: artifactHref(project, ref) }));
   if (!links.length) return null;
-  const external = links.some(ref => ref.kind === "web" || ref.kind === "external");
+  const external = links.find(ref => ref.kind === "web" || ref.kind === "external");
+  const first = external || links[0]!;
+  let destination = first.label || first.kind.replaceAll("-", " ");
+  if (external) {
+    try { destination = new URL(first.href).hostname.replace(/^www\./, ""); } catch { /* The safe link fallback keeps its label. */ }
+  }
   return <span className={`${styles.linkIndicator} nodrag nopan`}
     onPointerDown={event => event.stopPropagation()}
     onClick={event => event.stopPropagation()}
@@ -27,8 +32,10 @@ export function CardLinkIndicator({ project, refs }: { project: string; refs: Ar
     onKeyDown={event => event.stopPropagation()}>
     <Popover.Root>
       <FastTooltip label={links.map(ref => `${ref.label ? `${ref.label}: ` : ""}${ref.href}`).join("\n")}><Popover.Trigger asChild>
-        <button type="button" className={styles.linkTrigger} aria-label={`${links.length} saved ${links.length === 1 ? "link" : "links"}`}>
+        <button type="button" className={styles.linkTrigger} aria-label={`${links.length} saved ${links.length === 1 ? "link" : "links"}: ${destination}`}>
           {external ? <Globe size={14} aria-hidden="true" /> : <Link2 size={14} aria-hidden="true" />}
+          <span className={styles.linkDestination}>{destination}</span>
+          {links.length > 1 && <span className={styles.linkCount}>+{links.length - 1}</span>}
         </button>
       </Popover.Trigger></FastTooltip>
       <PopoverSurface className={styles.linkPopover} side="top" align="end" sideOffset={6} aria-label="Saved links">
