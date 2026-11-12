@@ -8,7 +8,7 @@ export function buildProjectFilesWebMcpTools(host: {
   edit: (input: ProjectFilesEditInput) => Promise<OperationResult<ProjectFilesEditReceipt>>;
 }): PaperWebMcpTool[] {
   return [
-    { name: "read_project_files", title: "Read project files", description: "List project directories or read file bytes and SHA256 hashes. Paths stay inside the project. OpenBar state and Git metadata are protected. The open editor saves its draft before reading.", schema: READ_PROJECT_FILES_INPUT, readOnly: true, run: host.read },
+    { name: "read_project_files", title: "Read project files", description: "List project directories or read file bytes and SHA256 hashes. Paths stay inside the project. OpenBar state and Git metadata are protected. Reading may save the open editor's existing draft first.", schema: READ_PROJECT_FILES_INPUT, readOnly: false, run: host.read },
     { name: "apply_project_edits", title: "Edit project files", description: "Create, replace, or delete project files in a hash-checked batch. Arbitrary file types are supported. OpenBar state and Git metadata are protected. The open editor saves first and reconciles the result.", schema: APPLY_PROJECT_EDITS_INPUT, readOnly: false, run: host.edit },
   ].map(tool => ({
     name: tool.name,
