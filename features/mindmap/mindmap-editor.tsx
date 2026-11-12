@@ -274,6 +274,23 @@ export function MindmapEditor({
     () => mindmap.nodes.map((node) => `${node.id}:${node.parentId || ""}`).sort().join("|"),
     [mindmap.nodes],
   );
+  const hierarchyDepths = useMemo(() => {
+    const { childrenByParent } = indexMindmap(mindmap);
+    const depths = new Map<string, number>([[mindmap.rootId, 0]]);
+    const queue = [mindmap.rootId];
+    for (let index = 0; index < queue.length; index += 1) {
+      const id = queue[index];
+      for (const child of childrenByParent.get(id) || []) {
+        if (depths.has(child.id)) continue;
+        depths.set(child.id, (depths.get(id) || 0) + 1);
+        queue.push(child.id);
+      }
+    }
+    return depths;
+  }, [collapseNodeSignature, mindmap.rootId]);
+  const maxCollapseDepth = Math.max(2, ...hierarchyDepths.values());
+  const [chosenCollapseDepth, setCollapseDepth] = useState(2);
+  const collapseDepth = Math.min(chosenCollapseDepth, maxCollapseDepth);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
   const collapsedIdsRef = useRef<Set<string>>(new Set());
   collapsedIdsRef.current = collapsedIds;
@@ -1054,13 +1071,13 @@ export function MindmapEditor({
     if (dirty && remoteSaveState === "synced") setRemoteSaveState("pending");
   }, [dirty, localSaveState, remoteSaveState, saveConflict]);
   const descendantCounts = useMemo(() => countMindmapDescendants(mindmap), [mindmap]);
-  const firstLevelBranchIds = useMemo(() => mindmap.nodes
-    .filter(node => node.parentId === mindmap.rootId && (descendantCounts.get(node.id) || 0) > 0)
-    .map(node => node.id), [mindmap.nodes, mindmap.rootId, descendantCounts]);
-  const depthCollapsed = firstLevelBranchIds.length > 0
-    && !collapsedIds.has(mindmap.rootId)
-    && firstLevelBranchIds.every(id => collapsedIds.has(id));
-  const expandAllFromToolbar = depthCollapsed || (firstLevelBranchIds.length === 0 && collapsedIds.size > 0);
+  const collapseTargetIds = useMemo(() => mindmap.nodes
+    .filter(node => hierarchyDepths.get(node.id) === collapseDepth - 1 && (descendantCounts.get(node.id) || 0) > 0)
+    .map(node => node.id), [mindmap.nodes, hierarchyDepths, collapseDepth, descendantCounts]);
+  const depthCollapsed = collapseTargetIds.length > 0
+    && [...hierarchyDepths].every(([id, depth]) => depth >= collapseDepth - 1 || !collapsedIds.has(id))
+    && collapseTargetIds.every(id => collapsedIds.has(id));
+  const expandAllFromToolbar = depthCollapsed || (collapseTargetIds.length === 0 && collapsedIds.size > 0);
   const activityNodeIds = useMemo(() => {
     if (!activitySince) return new Set<string>();
     const sinceMs = Date.parse(`${activitySince}T00:00:00`);
@@ -1439,7 +1456,7 @@ export function MindmapEditor({
 
   async function toggleDepthCollapse() {
     if (inlineEditorSessionRef.current && !await inlineEditorSessionRef.current.commit()) return;
-    setLocalCollapsedIds(new Set(expandAllFromToolbar ? [] : firstLevelBranchIds));
+    setLocalCollapsedIds(new Set(expandAllFromToolbar ? [] : collapseTargetIds));
     setViewMode("map");
     if (!expandAllFromToolbar) {
       setFocusRequest(current => ({ id: mindmap.rootId, sequence: (current?.sequence || 0) + 1 }));
@@ -2068,12 +2085,24 @@ export function MindmapEditor({
     return needle ? all.filter((item) => item.label.toLowerCase().includes(needle)) : all;
   }, [mindmap, moveQuery, selected]);
 
-  const searchResults = moveOpen ? moveTargets : mindmap.nodes
+  const searchResults = (moveOpen ? moveTargets : mindmap.nodes
     .filter((node) => {
       const content = cardContentForNodeWithPaperState(node, paperState);
       return `${content.title} ${content.body} ${(node.tags || []).join(" ")}`.toLocaleLowerCase().includes(moveQuery.trim().toLocaleLowerCase());
     })
-    .map((node) => ({ id: node.id, label: cardContentForNodeWithPaperState(node, paperState).title || "Untitled card", depth: 0 }));
+    .map((node) => ({ id: node.id, label: cardContentForNodeWithPaperState(node, paperState).title || "Untitled card" })))
+    .map((result) => {
+      const node = layout.nodeById.get(result.id);
+      const parent = node?.parentId ? layout.nodeById.get(node.parentId) : undefined;
+      const depth = hierarchyDepths.get(result.id);
+      const below = descendantCounts.get(result.id) || 0;
+      const context = [
+        depth === 0 ? "Root" : depth === undefined ? "Outside root" : `Depth ${depth}`,
+        below ? `${below} ${below === 1 ? "card" : "cards"} below` : layout.children.get(result.id)?.length ? "Branch" : "Leaf",
+        parent ? `under ${cardContentForNodeWithPaperState(parent, paperState).title || "Untitled card"}` : undefined,
+      ].filter(Boolean).join(" · ");
+      return { ...result, context };
+    });
   const visibleSearchResults = searchResults.slice(0, 60);
   const chooseSearchResult = (id: string) => {
     if (moveOpen) moveSelectedTo(id);
@@ -2101,19 +2130,23 @@ export function MindmapEditor({
         <div className={cn("p-glass-sm", paperStyles.toolbar, styles.canvasTools)} role="group" aria-label="Map view controls">
           {viewMode === "changes" && <button type="button" className="p-button p-button-glass ob-glass-button" onClick={() => setViewMode("map")}>Back to map</button>}
           <button type="button" className="p-button p-button-glass ob-glass-button" aria-label="Unplaced paper TODOs" aria-expanded={unplacedOpen} onClick={() => { setUnplacedOpen((open) => !open); setViewMode("map"); }}><ListTodo size={15} aria-hidden="true" /><span className={styles.unplacedLabel}>Unplaced</span><span className="ob-paper-metric-value">{unplacedCount}</span></button>
-          <FastTooltip label={expandAllFromToolbar ? "Expand all cards" : "Collapse depth 2+ (keep the root and its first-level branches visible)"}>
-            <button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.depthCollapse)} aria-label={expandAllFromToolbar ? "Expand all cards" : "Collapse all cards at depth 2 and deeper"}
-              data-collapsed={depthCollapsed} aria-pressed={depthCollapsed} disabled={firstLevelBranchIds.length === 0 && collapsedIds.size === 0}
+          <div className={styles.depthControls}>
+          <FastTooltip label={expandAllFromToolbar ? "Expand all cards" : `Collapse cards at depth ${collapseDepth} and deeper`}>
+            <button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.depthCollapse)} aria-label={expandAllFromToolbar ? "Expand all cards" : `Collapse all cards at depth ${collapseDepth} and deeper`}
+              data-collapsed={depthCollapsed} aria-pressed={depthCollapsed} disabled={collapseTargetIds.length === 0 && collapsedIds.size === 0}
               onClick={() => void toggleDepthCollapse()}>
               {expandAllFromToolbar ? <ChevronsUpDown size={15} aria-hidden="true" /> : <ChevronsDownUp size={15} aria-hidden="true" />}
-              <span className={styles.depthCollapseLabel}>{expandAllFromToolbar ? "Expand all" : "Collapse 2+"}</span>
-              <span className={styles.depthCollapseCompact} aria-hidden="true">{expandAllFromToolbar ? "All" : "2+"}</span>
+              <span className={styles.depthCollapseLabel}>{expandAllFromToolbar ? "Expand all" : "Collapse"}</span>
             </button>
           </FastTooltip>
+          <Select label="Collapse depth" value={String(collapseDepth)} onValueChange={value => setCollapseDepth(Number(value))}
+            className={cn("p-button p-button-glass ob-glass-button", styles.depthSelect)}
+            options={Array.from({ length: maxCollapseDepth - 1 }, (_, index) => ({ value: String(index + 2), label: `${index + 2}+` }))} />
+          </div>
           <Popover.Root open={searchOpen || moveOpen} onOpenChange={(open) => { setSearchOpen(open); if (!open) setMoveOpen(false); }}>
             <Popover.Trigger asChild>
               <button ref={searchTriggerRef} type="button" className={cn("p-button p-button-glass ob-glass-button", styles.searchTrigger)} aria-label="Find a card" onClick={() => { setMoveQuery(""); setSearchIndex(0); }}>
-                <Search size={15} /><span>Find a card</span><kbd>/</kbd>
+                <Search size={15} /><span>Find a card</span>
               </button>
             </Popover.Trigger>
             <Popover.Portal>
@@ -2132,10 +2165,16 @@ export function MindmapEditor({
                     }} />
                 </div>
                 <div id="mindmap-search-results" role="listbox" aria-label="Cards" className={styles.searchResults}>
-                  {visibleSearchResults.map((result, index) => <button key={result.id} id={`mindmap-search-result-${index}`} type="button" role="option" aria-selected={index === searchIndex} onMouseEnter={() => setSearchIndex(index)} onClick={() => chooseSearchResult(result.id)}><span>{result.label}</span><span>↵</span></button>)}
+                  {visibleSearchResults.map((result, index) => <button key={result.id} id={`mindmap-search-result-${index}`} type="button" role="option" aria-selected={index === searchIndex} onMouseEnter={() => setSearchIndex(index)} onClick={() => chooseSearchResult(result.id)}>
+                    <span className={styles.searchResultContent}>
+                      <span className={styles.searchResultTitle} title={result.label}>{result.label}</span>
+                      <small className={styles.searchResultContext} title={result.context}>{result.context}</small>
+                    </span>
+                    <span aria-hidden="true">↵</span>
+                  </button>)}
                   {visibleSearchResults.length === 0 && <p>No matching cards.</p>}
                 </div>
-                <div className={styles.searchFooter}>{searchResults.length} cards. Use ↑ ↓ to choose and Enter to {moveOpen ? "move" : "jump"}</div>
+                <div className={styles.searchFooter}>{searchResults.length} cards · ↑ ↓ to choose · Enter to {moveOpen ? "move" : "jump"} · / to search</div>
               </Popover.Content>
             </Popover.Portal>
           </Popover.Root>
@@ -3300,7 +3339,6 @@ function CanvasNode({
             <CardImages project={project} refs={node.refs || []} readOnly={readOnly} uploading={uploading}
               onChange={onImageChange} />
           )}
-          <CardScratchpad text={node.caption} />
           {node.agentDraft && !readOnly && <div className={cn(styles.draftActions, "nodrag nopan")} data-mind-editor={node.id} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
             <FastTooltip label="Save card"><button type="button" aria-label="Save card" onClick={() => void onSaveDraft()}><Check size={13} /></button></FastTooltip>
             <FastTooltip label="Delete draft"><button type="button" aria-label="Delete draft" onClick={onDeleteDraft}><X size={13} /></button></FastTooltip>
@@ -3318,7 +3356,7 @@ function CanvasNode({
             {tags.slice(0, 2).map((tag) => <span className="mindmap-node-tag" key={tag}>{tag}</span>)}
             {tags.length > 2 && <span className="mindmap-node-tag">+{tags.length - 2}</span>}
           </div>
-          <CardScratchpad text={node.caution?.background} label="Background notes" atCardEdge />
+          <CardScratchpad text={node.caption} background={node.caution?.background} />
       {!editing && <ChildNavigation parentTitle={title || "Untitled card"} items={childNavigation} onJump={onJumpToChild} />}
       {collapsedDescendantCount > 0 && (
         <FastTooltip label={collapsed ? "Expand child cards" : "Collapse all child cards"}><button
