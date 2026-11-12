@@ -387,7 +387,7 @@ async function writeMap(
   const expected = map.diskHash || mindmapDiskHash(map);
   try {
     assertAdministrativeWriteAllowed("MCP mindmap changes");
-    const saved = saveMindmap(project, normalized, expected);
+    const saved = saveMindmap(project, normalized, expected, "webmcp");
     recordWebMcpActivity(project, { actor: "webmcp", requestId }, {
       operation,
       resources,
@@ -915,7 +915,7 @@ async function executeProjectFileEdits(raw: unknown, context: McpCommandContext)
     if (!claim.credential) return failResult("write_session_unavailable", "File edits need a writing session. Try again.", { retryable: true });
     try {
       if (context.signal?.aborted) return failResult("cancelled", "File edit cancelled.", { retryable: false });
-      const result = withProjectWriteSessionContext(projectDir, claim.credential, () => applyProjectEdits(projectDir, input));
+      const result = withProjectWriteSessionContext(projectDir, claim.credential, () => applyProjectEdits(projectDir, input, "webmcp", project));
       if (result.ok) recordWebMcpActivity(project, { ...context, requestId }, {
         operation: "apply_project_edits",
         resources: result.value.files.map(file => ({ kind: "project-file", id: file.path })),

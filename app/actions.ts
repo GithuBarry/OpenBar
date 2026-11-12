@@ -421,7 +421,7 @@ export async function saveMindmapAction(
       ...saved,
       revision: (current?.revision ?? 0) + 1,
     });
-    const next = saveMindmap(slug, normalized, expectedDiskHash);
+    const next = saveMindmap(slug, normalized, expectedDiskHash, actor);
     const beforeNodes = new Map((current?.nodes || []).map((node) => [node.id, node]));
     const afterNodes = new Map(next.nodes.map((node) => [node.id, node]));
     const changedNodeIds = [...new Set([
@@ -598,13 +598,13 @@ export async function readProjectFilesAction(slug: string, input: ProjectFilesRe
   return readProjectFiles(projectContentDir(slug), input);
 }
 
-export async function applyProjectEditsAction(slug: string, input: ProjectFilesEditInput) {
+export async function applyProjectEditsAction(slug: string, input: ProjectFilesEditInput, actor: "human" | "webmcp" = "human") {
   await requireProjectAccess(slug);
   try { return await withBrowserProjectWriteSession(projectContentDir(slug), () => {
     assertAdministrativeWriteAllowed("Project file edits");
-    const result = applyProjectEdits(projectContentDir(slug), input);
+    const result = applyProjectEdits(projectContentDir(slug), input, actor, slug);
     if (result.ok && !result.value.dryRun) {
-      recordActivity(slug, { operation: "apply_project_edits", resources: result.value.files.map(file => ({ kind: "paper", id: file.path })) });
+      recordActivity(slug, { operation: "apply_project_edits", resources: result.value.files.map(file => ({ kind: "paper", id: file.path })) }, actor);
       bust(slug);
     }
     return result;

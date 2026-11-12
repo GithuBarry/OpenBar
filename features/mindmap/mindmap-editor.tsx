@@ -15,6 +15,8 @@ import paperStyles from "@/features/paper/paper-outline-rail.module.css";
 import styles from "./mindmap-editor.module.css";
 import { RichText as NodeRichText } from "@/components/rich-text";
 import { ChildNavigation, type ChildNavigationItem } from "./child-navigation";
+import { useAgentReplies } from "./use-agent-replies";
+import { agentReplyContentHash } from "@/lib/research/agent-reply-state";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useTransition, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
@@ -190,7 +192,7 @@ export function MindmapEditor({
   paperState?: ProjectState | null;
 }) {
   const router = useRouter();
-  const { writable: sessionWritable, setPendingWork, connectionState, isBackendUnavailable, accessMessage, accessError } = useProjectWriteSession();
+  const { writable: sessionWritable, setPendingWork, connectionState, isBackendUnavailable, accessMessage, accessError, inboxRevision } = useProjectWriteSession();
   const [connectionDetailsOpenRequest, setConnectionDetailsOpenRequest] = useState(0);
   const sessionWritableRef = useRef(sessionWritable);
   sessionWritableRef.current = sessionWritable;
@@ -281,6 +283,14 @@ export function MindmapEditor({
   const [activitySince, setActivitySince] = useState<string | null>(null);
   const [customActivityDate, setCustomActivityDate] = useState(() => daysAgoDate(LAST_WEEK_DAYS));
   const collapseMapId = mindmap.id || initialMindmap.id || "draft";
+  const { replies: agentReplies, unreadNodeIds, markRead: markReplyRead } = useAgentReplies(project, collapseMapId, inboxRevision, persistedDiskHashRef.current);
+  const [replyReadRequest, setReplyReadRequest] = useState(0);
+  const readAgentReply = useCallback((id: string, visibleNode?: MindmapNode) => {
+    if (inlineEditorSessionRef.current?.nodeId === id || editingId === id) return;
+    const current = visibleNode ?? mindmap.nodes.find(node => node.id === id);
+    if (current) markReplyRead(id, agentReplyContentHash(current, paperTodoFor(current, paperState)));
+    if (unreadNodeIds.has(id)) setReplyReadRequest(value => value + 1);
+  }, [editingId, markReplyRead, paperState, unreadNodeIds, mindmap]);
   const collapseStorageKey = mindmapCollapseStorageKey(project, collapseMapId);
   const centerOnEditStorageKey = `openbar:mindmap-center-on-edit:v1:${encodeURIComponent(project)}:${encodeURIComponent(collapseMapId)}`;
   const [centerOnEdit, setCenterOnEdit] = useState(true);
@@ -1400,6 +1410,7 @@ export function MindmapEditor({
     if (inlineEditorSessionRef.current && !await inlineEditorSessionRef.current.commit()) return;
     const node = indexMindmap(sessionRef.current.mindmap).nodeById.get(id);
     if (!node) return;
+    readAgentReply(id);
     if (editBaselineRef.current && editBaselineRef.current.nodeId !== id) finishTextTransaction(true);
     dispatch({ type: "select", id });
     beginTextTransaction(id);
@@ -1415,6 +1426,7 @@ export function MindmapEditor({
   }, [selectMultiple]);
 
   const focusCard = useCallback((id: string) => {
+    readAgentReply(id);
     let parent = layout.nodeById.get(id)?.parentId;
     const visited = new Set<string>();
     while (parent && !visited.has(parent)) {
@@ -1425,7 +1437,7 @@ export function MindmapEditor({
     selectCard(id);
     setViewMode("map");
     setFocusRequest(current => ({ id, sequence: (current?.sequence || 0) + 1 }));
-  }, [layout.nodeById, selectCard, setLocalCollapsed]);
+  }, [layout.nodeById, selectCard, setLocalCollapsed, readAgentReply]);
 
   function indentSelected() {
     const id = sessionRef.current.selectedId;
@@ -1715,6 +1727,43 @@ export function MindmapEditor({
     && !inlineEditorSessionRef.current && !editingId && !pendingImageUploads.current
     && webMcpSaveCountRef.current === 0 && !convertingCardIdRef.current && !remoteQueue.isBusy
     && mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current;
+  const loadSavedProjectView = useCallback(() => Promise.all([
+    loadBrowserMindmap(project, sessionRef.current.mindmap.id || "draft"),
+    getBrowserEditablePaper(project),
+  ]), [project]);
+  const replyHydrationAllowed = useRef<() => boolean>(() => false);
+  replyHydrationAllowed.current = () => canHydrateMindmap() && !isBackendUnavailable()
+    && !editBaselineRef.current && !reviewingRemoteRef.current && !hydrationPendingRef.current
+    && !applyingRemoteRef.current && !remoteOutOfSyncRef.current
+    && !document.activeElement?.closest("input, textarea, [contenteditable=true]")
+    && !document.querySelector(".react-flow__node.dragging");
+  useEffect(() => {
+    const changedReply = agentReplies.some(reply => {
+      const node = mindmap.nodes.find(item => item.id === reply.nodeId);
+      return unreadNodeIds.has(reply.nodeId) && node
+        && agentReplyContentHash(node, paperTodoFor(node, paperState)) !== reply.contentHash;
+    });
+    if (!changedReply || !replyHydrationAllowed.current()) return;
+    let cancelled = false;
+    const baseHash = persistedDiskHashRef.current;
+    const basePaperHash = paperSourceHashRef.current;
+    const activityGeneration = remoteQueue.activityGeneration;
+    void loadSavedProjectView().then(([saved, paper]) => {
+      if (cancelled || !saved || !paper || !replyHydrationAllowed.current() || persistedDiskHashRef.current !== baseHash
+        || paperSourceHashRef.current !== basePaperHash || remoteQueue.activityGeneration !== activityGeneration) return;
+      if ((saved.diskHash || mindmapDiskHash(saved)) !== baseHash || paper.bundle.bundleHash !== paperSourceHashRef.current) {
+        paperMutationGenerationRef.current += 1;
+        recordPaperSourceHash(paper.bundle.bundleHash);
+        hydrateSavedMap(saved);
+      }
+      router.refresh();
+    }).catch(error => {
+      if (!cancelled && !isBackendTransportError(error) && !isBackendUnavailable()) console.warn("OpenBar could not refresh the agent reply", error);
+    });
+    return () => { cancelled = true; };
+  }, [agentReplies, unreadNodeIds, replyReadRequest, mindmap, paperState, connectionState, dirty, editingId, isPending, recoveryDraft,
+    applyingRemote, reviewingRemote, hydrationPending, remoteOutOfSync, localSaveState, remoteSaveState, imageUploads,
+    hydrateSavedMap, loadSavedProjectView, recordPaperSourceHash, isBackendUnavailable, remoteQueue, router]);
   const setRemoteApplying = (applying: boolean) => {
     applyingRemoteRef.current = applying;
     if (applying) remoteOutOfSyncRef.current = true;
@@ -1752,10 +1801,7 @@ export function MindmapEditor({
   const applyPulledMindmap = async (pending?: PendingBrowserPull) => {
     if (pending) { directPullBarrierRef.current = pending.operationId; directPullPersistedRef.current = pending.persisted; }
     requireMindmapHydration(withPullStorageWarning("Git updates were applied. Reload the editor to continue."));
-    const [saved, paper] = await Promise.all([
-      loadBrowserMindmap(project, sessionRef.current.mindmap.id || "draft"),
-      getBrowserEditablePaper(project),
-    ]);
+    const [saved, paper] = await loadSavedProjectView();
     if (!canHydrateMindmap()) throw new Error("Git updates arrived while this editor changed. Save your draft and reload the latest map.");
     if (!saved) { router.push(`/p/${project}/mindmap`); return; }
     if (!paper) throw new Error("The updated paper could not be loaded. Try reloading the editor.");
@@ -2139,6 +2185,8 @@ export function MindmapEditor({
         collapsedDescendantCount={descendantCounts.get(node.id) || 0}
         coverage={coverageById.get(node.id)}
         activityLabel={activityNodeIds.has(node.id) ? Date.parse(activityAt) >= Date.parse(activitySince || "") ? relativeActivityLabel(activityAt) : "recent activity in this branch" : null}
+        unreadReply={unreadNodeIds.has(node.id)}
+        onRead={() => readAgentReply(node.id, node)}
         dimensions={dimensions}
         onMeasure={measureCard}
         orphan={!layout.reachable.has(node.id)}
@@ -2203,6 +2251,8 @@ export function MindmapEditor({
     focusCard,
     activityNodeIds,
     activitySince,
+    unreadNodeIds,
+    readAgentReply,
     imageUploads,
     collapsedIds,
     coverageById,
@@ -3208,6 +3258,8 @@ function CanvasNode({
   collapsedDescendantCount,
   coverage,
   activityLabel,
+  unreadReply,
+  onRead,
   dimensions,
   onMeasure,
   orphan,
@@ -3246,6 +3298,8 @@ function CanvasNode({
   collapsedDescendantCount: number;
   coverage?: { complete: number; total: number };
   activityLabel?: string | null;
+  unreadReply: boolean;
+  onRead: () => void;
   dimensions: Dimensions;
   fontSize: number;
   onMeasure: (id: string, size: Dimensions) => void;
@@ -3458,6 +3512,7 @@ function CanvasNode({
       aria-selected={selected}
       aria-label={title || mindmapNodeLabel(node)}
       aria-description={activityDescription}
+      onClickCapture={onRead}
       className={cn(
         "mindmap-node-card",
         node.todoId && "mindmap-node-todo",
@@ -3510,6 +3565,7 @@ function CanvasNode({
       }}
     >
       {node.agentDraft && <div className={styles.draftHeading}>Agent draft</div>}
+      {unreadReply && <span className={styles.unreadReply} role="img" aria-label="Unread agent reply" title="Unread agent reply" />}
       {activityDescription && <FastTooltip label={activityDescription}><span className={styles.activityBadge} role="img" tabIndex={0} aria-label={activityDescription} /></FastTooltip>}
       {node.todoId && (
         <div className={styles.todoHeading}>

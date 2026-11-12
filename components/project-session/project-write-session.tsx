@@ -26,12 +26,13 @@ type SessionContext = {
   lastSuccessfulConnection: number | null;
   isBackendUnavailable: () => boolean;
   hostResources: HostResources | null;
+  inboxRevision?: string;
 };
 
 const WriteSessionContext = createContext<SessionContext>({ writable: true, setPendingWork: () => {}, release: async () => {}, canRelease: false, restore: () => {}, canRestore: false, check: async () => {}, checking: false, accessMessage: "", accessError: null, inspect: async () => { throw new Error("Open a project to check editing access."); }, resumeEdit: async () => { throw new Error("Open a project to resume editing."); }, pendingLocalWork: false, getDiagnostics: () => ({ state: "unavailable" }), connectionState: "connected", connectionError: null, lastSuccessfulConnection: null, isBackendUnavailable: () => false, hostResources: null });
 export function useProjectWriteSession() { return useContext(WriteSessionContext); }
 
-type SessionResponse = { ok: boolean; status?: Status; credential?: Credential; code?: string; message?: string; hostResources?: HostResources | null };
+type SessionResponse = { ok: boolean; status?: Status; credential?: Credential; code?: string; message?: string; hostResources?: HostResources | null; inboxRevision?: string };
 type AccessOperation = { action: string; startedAt: number; finishedAt: number | null; httpStatus: number | null; code: string | null; outcome: "pending" | "ok" | "denied" | "error"; message?: string };
 const REQUEST_TIMEOUT_MS = 8_000;
 const RETRY_MS = 2_000;
@@ -79,6 +80,8 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [lastSuccessfulConnection, setLastSuccessfulConnection] = useState<number | null>(null);
   const [hostResources, setHostResources] = useState<HostResources | null>(null);
+  const [inboxRevision, setInboxRevision] = useState<string>();
+  const lastInboxRevisionOrder = useRef(0);
   const backendUnavailable = useRef(false);
   const connectionSequence = useRef(0);
   const lastConnectionResult = useRef(0);
@@ -214,6 +217,10 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
       operation.outcome = result.ok || (action === "status" && response.ok && result.status) ? "ok" : "denied";
       if (result.message) operation.message = result.message;
       const next = result.status;
+      if (response.ok && next && typeof result.inboxRevision === "string" && connectionOrder >= lastInboxRevisionOrder.current) {
+        lastInboxRevisionOrder.current = connectionOrder;
+        setInboxRevision(result.inboxRevision);
+      }
       if (response.ok && next && Number.isFinite(next.serverTime) && result.hostResources !== undefined && started >= lastHostSampleRequest.current && mounted.current && !backendUnavailable.current) {
         lastHostSampleRequest.current = started;
         const sample = result.hostResources;
@@ -514,8 +521,9 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
     heartbeatMs: PROJECT_WRITE_SESSION_HEARTBEAT_MS, idleTimeoutMs: PROJECT_WRITE_SESSION_IDLE_MS, requestTimeoutMs: REQUEST_TIMEOUT_MS,
     connection: { state: backendUnavailable.current ? "reconnecting" : "connected", error: connectionError, lastSuccessfulConnection }, hostResources,
     hostResourcesAgeMs: hostResources ? Math.max(0, Date.now() - hostResources.sampledAt) : null,
-  }), [endpoint, status, publicDemo, writable, accessMessage, accessError, working, idleYielded, connectionError, lastSuccessfulConnection, hostResources]);
-  const context = useMemo(() => ({ writable: publicDemo ? true : writable, setPendingWork, release, canRelease: writable && !working && !pendingWork && pendingRequestCount === 0, restore, canRestore: !publicDemo && !working && !writable && Boolean(status) && pendingRequestCount === 0, check, checking: working, accessMessage, accessError, inspect, resumeEdit, pendingLocalWork: pendingWork, getDiagnostics, connectionState, connectionError, lastSuccessfulConnection, isBackendUnavailable, hostResources }), [publicDemo, writable, setPendingWork, release, working, pendingWork, pendingRequestCount, restore, status, check, accessMessage, accessError, inspect, resumeEdit, getDiagnostics, connectionState, connectionError, lastSuccessfulConnection, isBackendUnavailable, hostResources]);
+    inboxRevision,
+  }), [endpoint, status, publicDemo, writable, accessMessage, accessError, working, idleYielded, connectionError, lastSuccessfulConnection, hostResources, inboxRevision]);
+  const context = useMemo(() => ({ writable: publicDemo ? true : writable, setPendingWork, release, canRelease: writable && !working && !pendingWork && pendingRequestCount === 0, restore, canRestore: !publicDemo && !working && !writable && Boolean(status) && pendingRequestCount === 0, check, checking: working, accessMessage, accessError, inspect, resumeEdit, pendingLocalWork: pendingWork, getDiagnostics, connectionState, connectionError, lastSuccessfulConnection, isBackendUnavailable, hostResources, inboxRevision }), [publicDemo, writable, setPendingWork, release, working, pendingWork, pendingRequestCount, restore, status, check, accessMessage, accessError, inspect, resumeEdit, getDiagnostics, connectionState, connectionError, lastSuccessfulConnection, isBackendUnavailable, hostResources, inboxRevision]);
   return <WriteSessionContext.Provider value={context}>
     {children}
   </WriteSessionContext.Provider>;

@@ -14,7 +14,20 @@ export type AgentInbox = {
   count: number
   notifications: InboxNotification[]
   hasMore: boolean
+  revision: string
+  replies: AgentReply[]
 }
+
+export type AgentReply = {
+  project: string
+  mapId: string
+  nodeId: string
+  responseRevision: string
+  contentHash: string
+  repliedAt: string
+}
+
+export const AGENT_INBOX_ACTOR_HEADER = 'X-OpenBar-Actor'
 
 export const INBOX_GUIDANCE = 'At the start of each OpenBar agent session, including one without earlier chat context, call check_inbox after get_project_state. Treat "tick", "check updates", "check inbox", and "sync" as requests to call check_inbox. When sync also names a Git or Overleaf action, check the inbox first, then perform the requested synchronization. Tool responses can prefix pending OpenBar requests. Read each linked card and its current context, respond there within the user’s instructions, then acknowledge the exact notification IDs. Repeated IDs refer to the same request. Changed request text receives a new ID. Acknowledgement records delivery handling. Paper TODO completion remains a separate research decision.'
 

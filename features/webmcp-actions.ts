@@ -25,7 +25,7 @@ import type { ProjectFilesReadInput, ProjectFilesEditInput } from "@/lib/researc
 
 export const sharedWebMcpActions = {
   readProjectFiles: (project: string, input: ProjectFilesReadInput) => runProjectFileOperation(project, false, () => readProjectFilesAction(project, input)),
-  applyProjectEdits: (project: string, input: ProjectFilesEditInput) => runProjectFileOperation(project, !input.dryRun, () => applyProjectEditsAction(project, input)),
+  applyProjectEdits: (project: string, input: ProjectFilesEditInput, actor: "human" | "webmcp" = "webmcp") => runProjectFileOperation(project, !input.dryRun, () => applyProjectEditsAction(project, input, actor)),
   syncProject: syncProjectReviewAction,
   getProjectState: getProjectStateAction,
   resolveNavigation: resolveProjectNavigationAction,

@@ -3183,7 +3183,7 @@ export function PaperEditor({
       <BibliographyEditor open={bibliographyOpen} onClose={() => setBibliographyOpen(false)} paths={bibliographyFiles} readOnly={!sessionWritable}
         readFile={file => runProjectFileOperation(project, false, () => readBibliographyFileAction(project, file))}
         saveFile={async (file, content, expectedHash) => {
-          const result = await sharedWebMcpActions.applyProjectEdits(project, { edits: [{ path: file, content, expectedHash }] });
+          const result = await sharedWebMcpActions.applyProjectEdits(project, { edits: [{ path: file, content, expectedHash }] }, "human");
           return result.ok ? readBibliographyFileAction(project, file) : result;
         }} />
       {bibtexOpen && <BibtexImport project={project} onClose={() => setBibtexOpen(false)} onImport={async (bibtex, hash, cite) => {

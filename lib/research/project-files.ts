@@ -9,6 +9,7 @@ import { bibliographyInputWrites, bibliographySourceFiles, bibliographyWrites, r
 import { traverseInputGraph } from "@/lib/tex-project/source-graph";
 import { withProjectWriteLock } from "./project-lock";
 import { failResult, okResult, type OperationResult } from "./operation-result";
+import { beginAgentReplyCapture, completeAgentReplyCapture } from "./agent-reply-receipts";
 import { APPLY_PROJECT_EDITS_INPUT, READ_PROJECT_FILES_INPUT, isProtectedProjectPath, type ProjectFileEntry, type ProjectFilesEditInput, type ProjectFilesEditReceipt, type ProjectFilesRead, type ProjectFilesReadInput } from "./project-files-contract";
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -96,7 +97,7 @@ export function readProjectFiles(projectDir: string, input: ProjectFilesReadInpu
 }
 
 /** Each admitted writer preflights every hash, then uses the existing recovery journal. */
-export function applyProjectEdits(projectDir: string, input: ProjectFilesEditInput): OperationResult<ProjectFilesEditReceipt> {
+export function applyProjectEdits(projectDir: string, input: ProjectFilesEditInput, actor: "human" | "webmcp" = "human", projectId = path.basename(projectDir)): OperationResult<ProjectFilesEditReceipt> {
   const parsed = APPLY_PROJECT_EDITS_INPUT.safeParse(input);
   if (!parsed.success) return failResult("invalid_arguments", parsed.error.issues.map(issue => issue.message).join(" "));
   return withProjectWriteLock(projectDir, () => {
@@ -145,6 +146,7 @@ export function applyProjectEdits(projectDir: string, input: ProjectFilesEditInp
         catch (error) { throw new ProjectFileError(error instanceof Error ? error.message : "Prepare the generated bibliography before editing.", "conflict"); }
       }
       if (parsed.data.dryRun) return okResult({ files, dryRun: true });
+      const replyCapture = beginAgentReplyCapture(projectDir, projectId, actor);
       const requestId = randomUUID();
       writeSourceTransactionJournal(root, { requestId, writes, scope: "project" });
       const derivedFiles: string[] = [];
@@ -186,7 +188,8 @@ export function applyProjectEdits(projectDir: string, input: ProjectFilesEditInp
         throw error;
       }
       clearSourceTransactionJournal(root, true);
-      return okResult({ files, dryRun: false, ...(derivedFiles.length ? { derivedFiles } : {}) });
+      const warnings = completeAgentReplyCapture(projectDir, projectId, replyCapture);
+      return okResult({ files, dryRun: false, ...(derivedFiles.length ? { derivedFiles } : {}) }, warnings.length ? { warnings } : {});
     } catch (error) { return failure(error); }
   });
 }

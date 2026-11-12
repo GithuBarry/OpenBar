@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 
 import { INBOX_INPUTS } from "@/lib/research/command-inputs";
 import { commandJsonSchemas, parseCommandInput } from "@/lib/research/command-schema";
-import { INBOX_TOOL_DESCRIPTIONS } from "@/lib/research/agent-inbox-contract";
+import { AGENT_INBOX_ACTOR_HEADER, INBOX_TOOL_DESCRIPTIONS } from "@/lib/research/agent-inbox-contract";
 import { failResult, isOperationResult, type OperationResult } from "@/lib/research/operation-result";
 import { registerWebMcpToolsIndependent, waitForModelContext, type WebMcpTool } from "@/lib/research/webmcp-register";
 
@@ -17,6 +17,7 @@ export async function requestInbox<T>(
   project: string | undefined,
   input: Record<string, unknown> = {},
   signal?: AbortSignal,
+  actor: "human" | "webmcp" = "human",
 ): Promise<OperationResult<T>> {
   const query = new URLSearchParams();
   if (project) query.set("project", project);
@@ -29,7 +30,7 @@ export async function requestInbox<T>(
       cache: "no-store",
       signal,
       ...(method === "POST" ? {
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", [AGENT_INBOX_ACTOR_HEADER]: actor },
         body: JSON.stringify({ ...input, ...(project ? { project } : {}) }),
       } : {}),
     });
@@ -69,7 +70,7 @@ export function useInboxWebMcp(project?: string): void {
           if (!parsed.ok) return parsed;
           const signal = options?.signal
             ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
-          const result = await requestInbox(name === "check_inbox" ? "GET" : "POST", project, parsed.value, signal);
+          const result = await requestInbox(name === "check_inbox" ? "GET" : "POST", project, parsed.value, signal, "webmcp");
           if (result.ok && name === "acknowledge_inbox") window.dispatchEvent(new Event("openbar-inbox-updated"));
           return result;
         },

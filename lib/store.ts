@@ -45,6 +45,7 @@ import { attachOverleafCheckout, cloneOverleafProject, getProjectGitDestination,
 import { overleafProjectId } from "./server/git-url";
 import { mindmapDiskHash } from "./mindmap/mindmap";
 import { readPaper } from "./research/paper-service";
+import { beginAgentReplyCapture, completeAgentReplyCapture } from "./research/agent-reply-receipts";
 import { buildSourceBundle } from "./tex-project/source-bundle";
 import { buildSourceContextIndex } from "./research/source-context";
 import { existingConfiguredTexRoot } from "./tex-project/source-graph";
@@ -466,7 +467,7 @@ export function listMindmaps(slug: string): Mindmap[] {
   return maps.map(map => migrateMindmapArtifactRefs(map, sections));
 }
 
-export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: string): Mindmap {
+export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: string, actor: "human" | "webmcp" = "human"): Mindmap {
   const dir = projectDir(slug);
   const requestedId = mindmap.id || DRAFT_MINDMAP_ID;
   const requested = resolveMindmapStorageIdentity(dir, requestedId);
@@ -496,10 +497,12 @@ export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: s
       })),
     };
     assertUniqueMindmapTodoIds(canonicalized);
+    const replyCapture = beginAgentReplyCapture(dir, slug, actor);
     writeMindmapRecord(dir, persistableMindmap(canonicalized));
     const persisted = readMindmapRecord(dir, identity.id);
     if (!persisted) throw new Error(`Mindmap "${identity.id}" could not be read after saving.`);
     const normalizedPersisted = normalizeMindmap(persisted);
+    completeAgentReplyCapture(dir, slug, replyCapture);
     return {
       ...migrateMindmapArtifactRefs(normalizedPersisted, sections),
       diskHash: mindmapDiskHash(normalizedPersisted),
