@@ -122,7 +122,9 @@
 .card .rootTitle { display: flex; align-items: flex-start; gap: 9px; letter-spacing: -.025em; }
 .rootAccent { width: 3px; height: calc(20px * var(--map-font-scale, 1)); flex-shrink: 0; margin-top: 1px; border-radius: 2px; background: var(--mind-node-accent); }
 .rootSubject { min-width: 0; flex: 1; }
-.editor :global(.mindmap-collapse-toggle) { width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 0; border-radius: 50%; aspect-ratio: 1; right: -32px; }
+.editor :global(.mindmap-collapse-toggle) { display: inline-flex; align-items: center; justify-content: center; gap: 0; width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 0; border-radius: 50%; aspect-ratio: 1; right: -27px; line-height: 1; }
+.editor :global(.mindmap-collapse-toggle) > svg { display: block; flex-shrink: 0; }
+.collapseCount { display: block; line-height: 1; transform: translateY(1px); }
 .card:global(.mindmap-node-todo) { padding: 12px 14px; }
 .card :global(.mindmap-node-title), .card :global(.mindmap-node-todo-title),
 .card :global(.mindmap-inline-editor .cm-line:first-child) { font-size: var(--card-title-size); line-height: var(--card-title-line); font-weight: var(--card-title-weight); }
@@ -253,7 +255,7 @@
   .editor { --mindmap-dock-height: 56px; --mindmap-zoom-size: 44px; }
   .toolbar :global(.ob-glass-button.p-button) { min-width: 44px; }
   .workspaceFooter { padding-left: 72px; }
-  .editor :global(.mindmap-collapse-toggle) { width: 44px; min-width: 44px; height: 44px; min-height: 44px; right: -52px; }
+  .editor :global(.mindmap-collapse-toggle) { width: 44px; min-width: 44px; height: 44px; min-height: 44px; right: -47px; }
   .canvasTools > button, .toolbarActions > button, .primaryButton:global(.p-button), .searchTrigger, .iconButton,
   .editToolbarButton, .inspector button, .inspector summary,
   .searchResults > button, .optionRow, .outlineToggle, .outlineOpen, .progressChoices > button,

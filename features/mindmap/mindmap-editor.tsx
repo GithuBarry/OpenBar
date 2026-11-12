@@ -3587,7 +3587,7 @@ function CanvasNode({
           {collapsed ? (
             <>
               <Plus size={11} strokeWidth={2.75} aria-hidden="true" />
-              <span className="ml-0.5 tabular-nums">{collapsedDescendantCount}</span>
+              <span className={cn(styles.collapseCount, "tabular-nums")}>{collapsedDescendantCount}</span>
             </>
           ) : (
             <Minus size={12} strokeWidth={2.75} aria-hidden="true" />
