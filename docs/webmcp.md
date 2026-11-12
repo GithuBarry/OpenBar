@@ -255,7 +255,7 @@ Card presentation uses three levels: visible, collapsed, and hover. `title`
 and `text` form the main card. `caution.critical` and `caution.important` are
 visible paragraphs with red and amber accents. `caption` opens through the
 card’s collapsed notes disclosure. `caution.background` appears in the
-collapsed Background notes section. All note fields are map-owned, including on TODO cards.
+collapsed AI note section. All note fields are map-owned, including on TODO cards.
 
 `apply_mindmap_edits` operations `add` and `patch` accept `caption` and `caution`.
 Supplying `caution` replaces all its fields, and `{}` clears them. An empty

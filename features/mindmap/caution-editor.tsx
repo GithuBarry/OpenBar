@@ -2,7 +2,7 @@
 
 import { useId } from "react";
 
-import { CAUTION_LEVEL_LABELS, type MindmapCaution } from "@/lib/mindmap/caution";
+import { CAUTION_LEVEL_LABELS, hasNoteText, type MindmapCaution } from "@/lib/mindmap/caution";
 import { InspectorSummary } from "./inspector-summary";
 
 export function CautionEditor({ value, caption, onChange, onCaptionChange }: {
@@ -12,7 +12,7 @@ export function CautionEditor({ value, caption, onChange, onCaptionChange }: {
   onCaptionChange: (value: string) => void;
 }) {
   const descriptionId = useId();
-  const hasNotes = Boolean(caption?.trim() || value?.background?.trim() || value?.critical?.trim() || value?.important?.trim());
+  const hasNotes = [caption, ...Object.values(value || {})].some(hasNoteText);
   return <details data-caution-editor>
     <InspectorSummary label="Notes" hasContent={hasNotes} />
     <div className="mt-3 space-y-3">
@@ -23,8 +23,8 @@ export function CautionEditor({ value, caption, onChange, onCaptionChange }: {
         <small id={`${descriptionId}-caption`}>Opens through the card’s collapsed disclosure.</small>
       </label>
       <label className="mindmap-field">
-        <span>Background notes</span>
-        <textarea value={value?.background || ""} aria-label="Background notes" aria-describedby={`${descriptionId}-background`}
+        <span>{CAUTION_LEVEL_LABELS.background}</span>
+        <textarea value={value?.background || ""} aria-label={CAUTION_LEVEL_LABELS.background} aria-describedby={`${descriptionId}-background`}
           onChange={event => onChange({ ...value, background: event.target.value })} />
         <small id={`${descriptionId}-background`}>Defensive explanations and scope notes. Collapsed in their own card section.</small>
       </label>

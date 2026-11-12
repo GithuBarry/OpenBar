@@ -47,5 +47,5 @@ OpenBar edits an Overleaf-style research-paper repository.
 - Keep verification checks temporary and outside the repository. Remove them after use. Keep the repository free of permanent tests.
 - Research meaning has no built-in maturity, claim/evidence, or priority workflow.
 
-- Card presentation uses three levels: `title` and `text` are visible, `caption` opens in the collapsed notes, and `caution.background` opens in its own collapsed Background notes section. `caution.critical` and `caution.important` are visible red- and amber-accented paragraphs. These note fields belong to each map, including on TODO-backed cards.
+- Card presentation uses three levels: `title` and `text` are visible, `caption` opens in the collapsed notes, and `caution.background` opens in its own collapsed AI note section. `caution.critical` and `caution.important` are visible red- and amber-accented paragraphs. These note fields belong to each map, including on TODO-backed cards.
 - Agent-created cards remain marked Agent draft until a human explicitly saves or deletes them. The retired Note shape migrates to Agent draft.

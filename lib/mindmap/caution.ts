@@ -6,8 +6,12 @@ export type MindmapCaution = Partial<Record<CautionLevel, string>>;
 export const CAUTION_LEVEL_LABELS: Record<CautionLevel, string> = {
   critical: "Critical",
   important: "Important",
-  background: "Background",
+  background: "AI note",
 };
+
+export function hasNoteText(value?: string): boolean {
+  return Boolean(value?.replace(/[\s\p{Default_Ignorable_Code_Point}]/gu, ""));
+}
 
 export function cautionValidationError(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "caution must be an object.";

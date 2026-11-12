@@ -2,9 +2,16 @@
 
 import styles from "./card-scratchpad.module.css";
 import { ChevronRight } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { CAUTION_LEVEL_LABELS, hasNoteText } from "@/lib/mindmap/caution";
 
 export type CardNoteField = "caption" | "background";
+
+function fitEditor(editor: HTMLTextAreaElement | null) {
+  if (!editor) return;
+  editor.style.height = "auto";
+  editor.style.height = `${editor.scrollHeight}px`;
+}
 
 export function CardScratchpad({ text, background, editing = false, readOnly = false, onChange, onCommit, onCancel, footer }: {
   text?: string;
@@ -16,10 +23,11 @@ export function CardScratchpad({ text, background, editing = false, readOnly = f
   onCancel?: () => void;
   footer?: ReactNode;
 }) {
+  const [focusedNote, setFocusedNote] = useState<CardNoteField | null>(null);
   const notes = [
     { field: "caption" as const, label: "Notes", text },
-    { field: "background" as const, label: "Background notes", text: background },
-  ].filter(note => editing || note.text?.trim());
+    { field: "background" as const, label: CAUTION_LEVEL_LABELS.background, text: background },
+  ].filter(note => note.field === focusedNote || hasNoteText(note.text));
   if (!notes.length && !footer) return null;
   return <div className={`${styles.scratchpads} ${notes.length ? styles.withNotes : ""} nodrag nopan`}
     onPointerDown={event => event.stopPropagation()}
@@ -32,12 +40,15 @@ export function CardScratchpad({ text, background, editing = false, readOnly = f
       if (!readOnly && event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); onCommit?.(); }
     }}
     onWheel={event => event.stopPropagation()}>
-    {notes.map(note => <details className={styles.scratchpad} key={note.label}>
+    {notes.map(note => <details className={styles.scratchpad} key={note.label}
+      onToggle={event => { if (event.currentTarget.open) fitEditor(event.currentTarget.querySelector("textarea")); }}>
       <summary aria-label={note.label}><span className={styles.tab}><ChevronRight size={12} aria-hidden="true" />{note.label}</span></summary>
       <div className={styles.body}>
         <strong className={styles.heading}>{note.label}</strong>
-        {editing ? <textarea className={styles.editor} aria-label={note.label} value={note.text || ""} readOnly={readOnly} rows={3}
-          onChange={event => onChange?.(note.field, event.target.value)} /> : <div>{note.text}</div>}
+        <textarea ref={editor => fitEditor(editor)} className={styles.editor} aria-label={note.label} value={note.text || ""} readOnly={readOnly || !onChange} rows={2}
+          onFocus={() => setFocusedNote(note.field)} onBlur={() => setFocusedNote(null)}
+          onInput={event => fitEditor(event.currentTarget)}
+          onChange={event => onChange?.(note.field, event.target.value)} />
       </div>
     </details>)}
     {footer && <div className={styles.footer}>{footer}</div>}

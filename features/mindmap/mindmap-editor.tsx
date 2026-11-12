@@ -1406,11 +1406,13 @@ export function MindmapEditor({
   }
 
   function updateNodeNote(id: string, field: CardNoteField, value: string) {
+    if (readOnly) return;
     const before = editBaselineRef.current;
     const node = indexMindmap(sessionRef.current.mindmap).nodeById.get(id);
-    if (!before || before.nodeId !== id || !node) return;
-    before.noteFields.add(field);
-    const action: MindmapTreeAction = { type: "patch-node", id, transient: true, patch: field === "caption"
+    if (!node) return;
+    const transient = before?.nodeId === id;
+    if (transient) before.noteFields.add(field);
+    const action: MindmapTreeAction = { type: "patch-node", id, transient, patch: field === "caption"
       ? { caption: value }
       : { caution: { ...node.caution, background: value } } };
     sessionRef.current = mindmapReducer(sessionRef.current, action);
