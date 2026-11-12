@@ -31,6 +31,10 @@ function captureDiagnostics(read?: () => unknown) {
   catch (error) { return { diagnosticCaptureError: error instanceof Error ? error.message : String(error) } }
 }
 
+function redactDiagnosticText(value: string) {
+  return value.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, "$1[redacted]").replace(/((?:access[_-]?token|api[_-]?key|password)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, "$1[redacted]")
+}
+
 /** One floating, accessible design for editor errors and synchronization conflicts. */
 export function EditorNotice({ project, title, label, message, report, diagnosticContext, paused, inline, floating, attention, triggerLabel = "Editor conflict details", onOpen, openRequest, primaryAction, children }: Props) {
   const { getDiagnostics } = useProjectWriteSession()
@@ -68,9 +72,9 @@ export function EditorNotice({ project, title, label, message, report, diagnosti
     let context: string
     try {
       context = JSON.stringify({ writeSession: captureDiagnostics(getDiagnostics), editor: captureDiagnostics(diagnosticContext) }, (key, value) =>
-        /^(?:credential|credentials|authorization|cookie|token|access[_-]?token|refresh[_-]?token|api[_-]?key|password)$/i.test(key) ? "[redacted]" : value, 2)
+        /^(?:credential|credentials|authorization|cookie|token|access[_-]?token|refresh[_-]?token|api[_-]?key|password)$/i.test(key) ? "[redacted]" : typeof value === "string" ? redactDiagnosticText(value) : value, 2)
     } catch (error) {
-      context = JSON.stringify({ diagnosticCaptureError: error instanceof Error ? error.message : String(error) })
+      context = JSON.stringify({ diagnosticCaptureError: redactDiagnosticText(error instanceof Error ? error.message : String(error)) })
     }
     const assets = Array.from(document.scripts, script => {
       try {
@@ -78,9 +82,10 @@ export function EditorNotice({ project, title, label, message, report, diagnosti
         return url.origin === window.location.origin && url.pathname.includes("/_next/") ? url.pathname : ""
       } catch { return "" }
     }).filter(Boolean).slice(0, 8)
-    return [
+    const lines = [
       "OpenBar diagnostic report",
       "Format: 2",
+      "Redaction: [redacted] marks credential patterns. Download draft contains original editor content.",
       `Title: ${title}`,
       `Project: ${project}`,
       `Page: ${window.location.origin}${window.location.pathname}`,
@@ -93,10 +98,11 @@ export function EditorNotice({ project, title, label, message, report, diagnosti
       `Editing paused: ${Boolean(paused)}`,
       `\nMessage:\n${message}`,
       report ? `\nOperation diagnostics:\n${report}` : "",
-      `\nStructured context:\n${context}`,
-      assets.length ? `\nLoaded application assets:\n${assets.join("\n")}` : "",
-      copyError ? `\nClipboard failure:\n${copyError}` : "",
-    ].filter(Boolean).join("\n").replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, "$1[redacted]").replace(/((?:access[_-]?token|api[_-]?key|password)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, "$1[redacted]")
+    ].filter(Boolean).map(redactDiagnosticText)
+    lines.push(`\nStructured context:\n${context}`)
+    if (assets.length) lines.push(redactDiagnosticText(`\nLoaded application assets:\n${assets.join("\n")}`))
+    if (copyError) lines.push(redactDiagnosticText(`\nClipboard failure:\n${copyError}`))
+    return lines.join("\n")
   }
   const diagnosticReport = open && typeof window !== "undefined" ? buildDiagnosticReport(capturedAt || new Date().toISOString()) : ""
   const copy = async () => {
