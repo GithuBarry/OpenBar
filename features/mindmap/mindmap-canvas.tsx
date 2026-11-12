@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   Background,
   Controls,
@@ -107,6 +108,8 @@ function FlowCanvas({
   const { setCenter, getZoom, setViewport, viewportInitialized } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const [controlsHost, setControlsHost] = useState<HTMLElement | null>(null);
+  useEffect(() => { setControlsHost(canvasRef.current?.closest<HTMLElement>("[data-mindmap-editor]") ?? null); }, []);
   const lastFocusRef = useRef<number | null>(null);
   const draggingIdRef = useRef<string | null>(null);
   const initialViewRef = useRef(false);
@@ -212,6 +215,7 @@ function FlowCanvas({
     ));
   }, [mindmap, onDropPreview]);
 
+  const controls = <Controls showInteractive={false} />;
   return (
     <ReactFlow
       key="fixed-card-geometry"
@@ -296,7 +300,7 @@ function FlowCanvas({
       }}
     >
       <Background gap={32} size={1} color="rgb(var(--accent) / 0.12)" />
-      <Controls showInteractive={false} />
+      {controlsHost ? createPortal(controls, controlsHost) : controls}
     </ReactFlow>
   );
 }
