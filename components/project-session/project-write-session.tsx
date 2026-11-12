@@ -18,10 +18,16 @@ type SessionContext = {
   inspect: () => Promise<Status>;
   resumeEdit: (expectedOwnerGeneration: string | null) => Promise<Status>;
   pendingLocalWork: boolean;
+  getDiagnostics: () => Record<string, unknown>;
 };
 
-const WriteSessionContext = createContext<SessionContext>({ writable: true, setPendingWork: () => {}, release: async () => {}, canRelease: false, restore: () => {}, canRestore: false, check: async () => {}, checking: false, accessMessage: "", accessError: null, inspect: async () => { throw new Error("Open a project to check editing access."); }, resumeEdit: async () => { throw new Error("Open a project to resume editing."); }, pendingLocalWork: false });
+const WriteSessionContext = createContext<SessionContext>({ writable: true, setPendingWork: () => {}, release: async () => {}, canRelease: false, restore: () => {}, canRestore: false, check: async () => {}, checking: false, accessMessage: "", accessError: null, inspect: async () => { throw new Error("Open a project to check editing access."); }, resumeEdit: async () => { throw new Error("Open a project to resume editing."); }, pendingLocalWork: false, getDiagnostics: () => ({ state: "unavailable" }) });
 export function useProjectWriteSession() { return useContext(WriteSessionContext); }
+
+type SessionResponse = { ok: boolean; status?: Status; credential?: Credential; code?: string; message?: string };
+type AccessOperation = { action: string; startedAt: number; finishedAt: number | null; httpStatus: number | null; code: string | null; outcome: "pending" | "ok" | "denied" | "error"; message?: string };
+const REQUEST_TIMEOUT_MS = 8_000;
+const RETRY_MS = 2_000;
 
 // This module is scoped to one browser document. It carries an idle lease
 // across client-side navigation without sharing ownership with duplicated tabs.
@@ -61,11 +67,17 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
   const firstCheck = useRef(true);
   const lastActivity = useRef(Date.now());
   const reloadTimer = useRef<number | null>(null);
+  const expiryTimer = useRef<number | null>(null);
+  const leaseDeadline = useRef(0);
+  const lastConfirmation = useRef<{ expiresAt: number; serverTime: number; receivedAt: number; clockDeltaMs: number } | null>(null);
+  const lastSuccessfulHeartbeat = useRef<number | null>(null);
+  const lastOperation = useRef<AccessOperation | null>(null);
+  const operationTrace = useRef<AccessOperation[]>([]);
   const storageKey = `openbar:write-session:${project}`;
   const endpoint = `/api/p/${encodeURIComponent(project)}/write-session`;
 
   const setPendingWork = useCallback((key: string, pending: boolean) => {
-    if (pending) pendingKeys.current.add(key);
+    if (pending) { pendingKeys.current.add(key); lastActivity.current = Date.now(); }
     else pendingKeys.current.delete(key);
     setPendingWorkState(pendingKeys.current.size > 0);
   }, []);
@@ -102,27 +114,66 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
     return () => { if (window.fetch === wrapped) window.fetch = original; };
   }, [project, endpoint, publicDemo]);
 
-  const request = useCallback(async (action: "acquire" | "resume" | "heartbeat" | "release" | "takeover", existing?: Credential, expectedOwnerGeneration?: string | null) => {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, sessionId: existing?.sessionId || newSessionId(), credential: existing, expectedOwnerGeneration }),
-      cache: "no-store",
-    });
-    const result = await response.json().catch(() => null) as { ok: boolean; status?: Status; credential?: Credential; message?: string } | null;
-    if (!result) throw new Error(`Editing access returned HTTP ${response.status} ${response.statusText}.`);
-    return result;
+  const fetchSession = useCallback(async (action: string, init?: RequestInit): Promise<SessionResponse> => {
+    const started = performance.now();
+    const operation: AccessOperation = { action, startedAt: Date.now(), finishedAt: null, httpStatus: null, code: null, outcome: "pending" };
+    lastOperation.current = operation;
+    try {
+      const response = await fetch(endpoint, { ...init, cache: "no-store", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      operation.httpStatus = response.status;
+      const result = await response.json().catch(() => null) as SessionResponse | null;
+      operation.code = result?.code || null;
+      if (!result || response.status >= 500 || response.status === 408 || response.status === 429 || (action === "status" && !response.ok)) {
+        throw new Error(result?.message || `Editing access returned HTTP ${response.status} ${response.statusText}.`);
+      }
+      operation.outcome = result.ok || (action === "status" && response.ok && result.status) ? "ok" : "denied";
+      if (result.message) operation.message = result.message;
+      const next = result.status;
+      const generation = result.credential?.generation || credential.current?.generation;
+      if (response.ok && next?.writable && next.expiresAt !== null && next.ownerGeneration === generation) {
+        const receivedAt = Date.now();
+        const deadline = started + Math.max(0, next.expiresAt - next.serverTime);
+        leaseDeadline.current = deadline;
+        lastConfirmation.current = { expiresAt: next.expiresAt, serverTime: next.serverTime, receivedAt, clockDeltaMs: next.serverTime - receivedAt };
+        if (action === "heartbeat") lastSuccessfulHeartbeat.current = receivedAt;
+        if (expiryTimer.current !== null) window.clearTimeout(expiryTimer.current);
+        expiryTimer.current = window.setTimeout(() => {
+          if (mounted.current && credential.current?.generation === generation && leaseDeadline.current === deadline) {
+            setWritable(false);
+            setAccessError("Editing access expired. Your open draft stays in this tab.");
+          }
+        }, Math.max(0, deadline - performance.now()));
+      }
+      return result;
+    } catch (error) {
+      operation.outcome = "error";
+      operation.message = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      operation.finishedAt = Date.now();
+      if (lastOperation.current === operation) lastOperation.current = { ...operation };
+      operationTrace.current = [...operationTrace.current.slice(-11), { ...operation }];
+    }
   }, [endpoint]);
 
+  const request = useCallback((action: "acquire" | "resume" | "heartbeat" | "release" | "takeover", existing?: Credential, expectedOwnerGeneration?: string | null) => fetchSession(action, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, sessionId: existing?.sessionId || newSessionId(), credential: existing, expectedOwnerGeneration }),
+  }), [fetchSession]);
+
   const readStatus = useCallback(async () => {
-    const response = await fetch(endpoint, { cache: "no-store", ...(credential.current ? { headers: { [PROJECT_WRITE_SESSION_HEADER]: JSON.stringify(credential.current) } } : {}) });
-    const result = await response.json().catch(() => null) as { status?: Status; message?: string } | null;
-    if (!response.ok || !result?.status) throw new Error(result?.message || `Editing access returned HTTP ${response.status} ${response.statusText}.`);
+    const result = await fetchSession("status", credential.current ? { headers: { [PROJECT_WRITE_SESSION_HEADER]: JSON.stringify(credential.current) } } : undefined);
+    if (!result.status) throw new Error(result.message || "Editing access returned an incomplete status.");
     return result.status;
-  }, [endpoint]);
+  }, [fetchSession]);
 
   const record = useCallback((value: Credential | null) => {
     credential.current = value;
+    if (!value) {
+      leaseDeadline.current = 0;
+      if (expiryTimer.current !== null) window.clearTimeout(expiryTimer.current);
+    }
     try {
       if (value) sessionStorage.setItem(storageKey, JSON.stringify({ credential: value, continuationReady: false }));
       else sessionStorage.removeItem(storageKey);
@@ -186,7 +237,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
 
   const release = useCallback(async (idle = false) => {
     const current = credential.current;
-    if (!current || (!idle && pendingKeys.current.size) || pendingRequests.current || releasing.current) return;
+    if (!current || pendingKeys.current.size || pendingRequests.current || releasing.current) return;
     releasing.current = true;
     setWorking(true);
     setAccessError(null);
@@ -224,14 +275,18 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
     // Deferring startup lets development-mode effect replay cancel the first
     // setup before it sends a lease request.
     const startTimer = window.setTimeout(() => void start(), 0);
-    const timer = window.setInterval(async () => {
-      if (releasing.current) return;
+    let polling = false;
+    let retryTimer: number | null = null;
+    const poll = async () => {
+      if (stopped || polling || releasing.current) return;
+      if (retryTimer !== null) { window.clearTimeout(retryTimer); retryTimer = null; }
+      polling = true;
       const current = credential.current;
-      if (current && pendingRequests.current === 0 && Date.now() - lastActivity.current >= PROJECT_WRITE_SESSION_IDLE_MS) {
-        await release(true);
-        return;
-      }
       try {
+        if (current && pendingKeys.current.size === 0 && pendingRequests.current === 0 && Date.now() - lastActivity.current >= PROJECT_WRITE_SESSION_IDLE_MS) {
+          await release(true);
+          return;
+        }
         if (current) {
           const result = await request("heartbeat", current);
           if (stopped || credential.current !== current) return;
@@ -242,12 +297,21 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
           const next = await readStatus();
           if (!stopped && credential.current === current) { setStatus(next); setAccessError(null); }
         }
-      } catch (error) { if (!stopped && credential.current === current) { setWritable(false); setAccessError(`Access check failed. ${error instanceof Error ? error.message : String(error)}`); } }
-    }, PROJECT_WRITE_SESSION_HEARTBEAT_MS);
+      } catch (error) {
+        if (!stopped && credential.current === current) {
+          const remaining = current ? leaseDeadline.current - performance.now() : 0;
+          if (remaining <= 0) setWritable(false);
+          setAccessError(`Access check failed. ${error instanceof Error ? error.message : String(error)}`);
+          if (remaining > 0) retryTimer = window.setTimeout(() => { retryTimer = null; void poll(); }, Math.min(RETRY_MS, remaining));
+        }
+      } finally { polling = false; }
+    };
+    const timer = window.setInterval(() => void poll(), PROJECT_WRITE_SESSION_HEARTBEAT_MS);
     const activity = () => { lastActivity.current = Date.now(); };
-    const focus = () => { void check(); };
-    const activityEvents = ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"] as const;
-    for (const event of activityEvents) window.addEventListener(event, activity, { passive: true });
+    const focus = () => { activity(); void poll(); };
+    const visibility = () => { if (document.visibilityState === "visible") focus(); };
+    const activityEvents = ["pointerdown", "pointermove", "keydown", "input", "beforeinput", "compositionstart", "compositionend", "wheel", "touchstart"] as const;
+    for (const event of activityEvents) window.addEventListener(event, activity, { passive: true, capture: true });
     const pagehide = () => {
       const current = credential.current;
       if (!current) return;
@@ -267,16 +331,20 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
     window.addEventListener("pagehide", pagehide);
     window.addEventListener("pageshow", pageshow);
     window.addEventListener("focus", focus);
+    document.addEventListener("visibilitychange", visibility);
     return () => {
       stopped = true;
       mounted.current = false;
       clearTimeout(startTimer);
       clearInterval(timer);
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
       if (reloadTimer.current !== null) window.clearTimeout(reloadTimer.current);
+      if (expiryTimer.current !== null) window.clearTimeout(expiryTimer.current);
       window.removeEventListener("pagehide", pagehide);
       window.removeEventListener("pageshow", pageshow);
       window.removeEventListener("focus", focus);
-      for (const event of activityEvents) window.removeEventListener(event, activity);
+      document.removeEventListener("visibilitychange", visibility);
+      for (const event of activityEvents) window.removeEventListener(event, activity, true);
       if (credential.current && pendingKeys.current.size === 0 && pendingRequests.current === 0) {
         navigationContinuations.set(storageKey, credential.current);
       }
@@ -321,7 +389,21 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
     void resumeEdit(status.ownerGeneration, true).catch(() => {});
   }, [resumeEdit, status, working]);
   const accessMessage = accessError || message || (working || !status ? "Checking access…" : idleYielded ? "Session idle. Editing paused." : status.state === "occupied" ? "Another session is editing." : pendingWork && heldWriterLease.current ? "Save your draft first." : "View only");
-  const context = useMemo(() => ({ writable: publicDemo ? true : writable, setPendingWork, release, canRelease: writable && !working && !pendingWork && pendingRequestCount === 0, restore, canRestore: !publicDemo && !working && !writable && Boolean(status) && pendingRequestCount === 0, check, checking: working, accessMessage, accessError, inspect, resumeEdit, pendingLocalWork: pendingWork }), [publicDemo, writable, setPendingWork, release, working, pendingWork, pendingRequestCount, restore, status, check, accessMessage, accessError, inspect, resumeEdit]);
+  const getDiagnostics = useCallback(() => ({
+    endpoint, state: status?.state || "checking", writable: publicDemo || writable,
+    reason: accessMessage, accessError, checking: working, idleYielded,
+    hasSession: Boolean(credential.current), sessionIdPrefix: credential.current?.sessionId.slice(0, 8) || null,
+    generation: credential.current?.generation || null, ownerGeneration: status?.ownerGeneration || null,
+    expiresAt: status?.expiresAt || null, serverTime: status?.serverTime || null,
+    confirmation: lastConfirmation.current, leaseRemainingMs: Math.max(0, Math.round(leaseDeadline.current - performance.now())),
+    lastSuccessfulHeartbeat: lastSuccessfulHeartbeat.current,
+    lastOperation: lastOperation.current, operations: operationTrace.current,
+    pendingKeys: [...pendingKeys.current], pendingRequests: pendingRequests.current,
+    visibility: document.visibilityState, lastActivityAt: lastActivity.current,
+    idleForMs: Math.max(0, Date.now() - lastActivity.current),
+    heartbeatMs: PROJECT_WRITE_SESSION_HEARTBEAT_MS, idleTimeoutMs: PROJECT_WRITE_SESSION_IDLE_MS, requestTimeoutMs: REQUEST_TIMEOUT_MS,
+  }), [endpoint, status, publicDemo, writable, accessMessage, accessError, working, idleYielded]);
+  const context = useMemo(() => ({ writable: publicDemo ? true : writable, setPendingWork, release, canRelease: writable && !working && !pendingWork && pendingRequestCount === 0, restore, canRestore: !publicDemo && !working && !writable && Boolean(status) && pendingRequestCount === 0, check, checking: working, accessMessage, accessError, inspect, resumeEdit, pendingLocalWork: pendingWork, getDiagnostics }), [publicDemo, writable, setPendingWork, release, working, pendingWork, pendingRequestCount, restore, status, check, accessMessage, accessError, inspect, resumeEdit, getDiagnostics]);
   return <WriteSessionContext.Provider value={context}>
     {children}
   </WriteSessionContext.Provider>;

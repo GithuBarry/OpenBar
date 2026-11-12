@@ -85,7 +85,7 @@ import { DEFAULT_MINDMAP_FONT_SIZE, mindmapDiskHash } from "@/lib/mindmap/mindma
 import { createMindmapSaveQueue } from "@/lib/mindmap/save-queue";
 import { mergeSavedMindmap } from "@/lib/mindmap/merge-saved";
 import { isOutdatedMindmapPage, loadBrowserMindmap, saveBrowserMindmap } from "@/lib/mindmap/browser-save";
-import { mindmapRecoveryKey, readMindmapRecovery, writeMindmapRecovery, type MindmapRecoveryDraft } from "@/lib/mindmap/browser-recovery";
+import { hasMindmapCardRecoveryChanges, mindmapRecoveryKey, readMindmapRecovery, writeMindmapRecovery, type MindmapCardRecoveryDraft, type MindmapRecoveryDraft } from "@/lib/mindmap/browser-recovery";
 import {
   mindmapCollapseStorageKey,
   parseMindmapCollapsePreference,
@@ -148,7 +148,8 @@ type Point = { x: number; y: number };
 type Dimensions = { width: number; height: number };
 type MindmapViewMode = "map" | "changes";
 type InspectorSectionId = "more";
-type InlineCardSession = { nodeId: string; commit: () => Promise<boolean> };
+type InlineCardDraft = Pick<MindmapCardRecoveryDraft, "text" | "contentFormat" | "selection">;
+type InlineCardSession = { nodeId: string; commit: () => Promise<boolean>; getDraft: () => InlineCardDraft | null };
 
 const INSPECTOR_SECTION_LABELS: Record<InspectorSectionId, string> = {
   more: "Notes & actions",
@@ -219,11 +220,18 @@ export function MindmapEditor({
   sessionRef.current = session;
   const { mindmap, selectedId, selectedIds, past: history, future, revision } = session;
   const persistedDiskHashRef = useRef(initialMindmap.diskHash || mindmapDiskHash(initialMindmap));
+  const lastAcknowledgedMapRef = useRef(initialMindmap);
   const [recoveryDraft, setRecoveryDraft] = useState<MindmapRecoveryDraft | null>(null);
   const recoveryDraftRef = useRef<MindmapRecoveryDraft | null>(null);
   recoveryDraftRef.current = recoveryDraft;
   const recoveryLoadedRef = useRef(false);
   const [recoveryStored, setRecoveryStored] = useState<boolean | null>(null);
+  const recoverySavedAtRef = useRef<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const inlineEditorSessionRef = useRef<InlineCardSession | null>(null);
+  const activeCardDraftRef = useRef<MindmapCardRecoveryDraft | null>(null);
+  const [restoredCardDraft, setRestoredCardDraft] = useState<MindmapCardRecoveryDraft | null>(null);
+  const editBaselineRef = useRef<{ mindmap: Mindmap; nodeId: string; noteFields: Set<CardNoteField>; text: string; paperSourceHash?: string } | null>(null);
   const refreshingWithRecoveryRef = useRef(false);
   const localSaveQueue = useMemo(() => createMindmapSaveQueue(), []);
   const paperSourceHashRef = useRef<string | undefined>(paperState?.paper?.sourceHash);
@@ -547,27 +555,45 @@ export function MindmapEditor({
   }, [refreshRemoteStatus, sessionWritable]);
 
   const webMcpSaveCountRef = useRef(0);
-  const captureRecoveryDraft = useCallback((): MindmapRecoveryDraft => ({
-    version: 1,
-    project,
-    mapId: sessionRef.current.mindmap.id || "draft",
-    baseHash: persistedDiskHashRef.current,
-    savedAt: new Date().toISOString(),
-    mindmap: cloneMindmap(sessionRef.current.mindmap),
-  }), [project]);
+  const captureRecoveryDraft = useCallback((): MindmapRecoveryDraft => {
+    const baseline = editBaselineRef.current;
+    const live = inlineEditorSessionRef.current?.getDraft();
+    const baseNode = baseline?.mindmap.nodes.find(node => node.id === baseline.nodeId);
+    const activeCard = baseline && baseNode && live ? {
+      nodeId: baseline.nodeId,
+      ...live,
+      baseNode: cloneMindmap(baseNode),
+      baseText: baseline.text,
+      paperSourceHash: baseline.paperSourceHash,
+      noteFields: [...baseline.noteFields],
+    } : baseline && !inlineEditorSessionRef.current ? activeCardDraftRef.current || undefined : undefined;
+    activeCardDraftRef.current = activeCard || null;
+    return {
+      version: 1,
+      project,
+      mapId: sessionRef.current.mindmap.id || "draft",
+      baseHash: persistedDiskHashRef.current,
+      savedAt: new Date().toISOString(),
+      mindmap: cloneMindmap(sessionRef.current.mindmap),
+      ...(activeCard ? { activeCard } : {}),
+    };
+  }, [project]);
   const preserveBrowserDraft = useCallback(() => {
     const draft = recoveryDraftRef.current || captureRecoveryDraft();
     let stored = false;
     try { stored = writeMindmapRecovery(window.sessionStorage, draft); }
     catch { /* Browser storage can be disabled. Keep the live editor open. */ }
+    if (stored) recoverySavedAtRef.current = draft.savedAt;
     setRecoveryStored(stored);
     return stored;
   }, [captureRecoveryDraft]);
   const clearBrowserDraft = useCallback(() => {
+    if (captureRecoveryDraft().activeCard) { preserveBrowserDraft(); return; }
     try { window.sessionStorage.removeItem(mindmapRecoveryKey(project, sessionRef.current.mindmap.id || "draft")); }
     catch { /* A saved map remains durable when browser storage is unavailable. */ }
     setRecoveryStored(null);
-  }, [project]);
+    recoverySavedAtRef.current = null;
+  }, [captureRecoveryDraft, preserveBrowserDraft, project]);
   const persistCurrentSnapshot = useCallback(async (actor: "human" | "webmcp" = "human"): Promise<Mindmap> => {
     if (recoveryDraftRef.current) throw new Error("Review the recovered draft before saving this map.");
     const snapshot = cloneMindmap(sessionRef.current.mindmap);
@@ -579,6 +605,7 @@ export function MindmapEditor({
     preserveBrowserDraft();
     try {
       const saved = await saveBrowserMindmap(project, snapshot, persistedDiskHashRef.current, actor);
+      lastAcknowledgedMapRef.current = saved;
       persistedDiskHashRef.current = saved.diskHash ?? mindmapDiskHash(saved);
       const savedMapSignature = mapSignature(saved);
       savedSignatureRef.current = savedMapSignature;
@@ -854,8 +881,6 @@ export function MindmapEditor({
       nodeId: sessionRef.current.selectedId,
     }),
   });
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const inlineEditorSessionRef = useRef<InlineCardSession | null>(null);
   const [cardMenuOpen, setCardMenuOpen] = useState(true);
   const [unplacedOpen, setUnplacedOpen] = useState(true);
   const [selectMultiple, setSelectMultiple] = useState(false);
@@ -988,8 +1013,6 @@ export function MindmapEditor({
     setLabelDraft("");
   }, [selectedId]);
 
-  const editBaselineRef = useRef<{ mindmap: Mindmap; nodeId: string; noteFields: Set<CardNoteField> } | null>(null);
-
   const [dropPreview, setDropPreview] = useState<MindmapDrop | null>(null);
   const dropPreviewRef = useRef<MindmapDrop | null>(null);
 
@@ -1075,16 +1098,20 @@ export function MindmapEditor({
     recoveryLoadedRef.current = true;
     try {
       const draft = readMindmapRecovery(window.sessionStorage, project, collapseMapId);
-      if (draft && mapSignature(draft.mindmap) !== savedSignatureRef.current) {
+      if (draft && (mapSignature(draft.mindmap) !== savedSignatureRef.current || hasMindmapCardRecoveryChanges(draft))) {
         recoveryDraftRef.current = draft;
         setRecoveryDraft(draft);
         setRecoveryStored(true);
+        recoverySavedAtRef.current = draft.savedAt;
       } else if (draft) clearBrowserDraft();
     } catch { /* Keep malformed or unavailable recovery data untouched. */ }
   }, [clearBrowserDraft, collapseMapId, project]);
   useEffect(() => {
     if (recoveryLoadedRef.current && !recoveryDraftRef.current && dirty) preserveBrowserDraft();
   }, [dirty, mindmap, preserveBrowserDraft]);
+  useEffect(() => {
+    if (recoveryLoadedRef.current && !sessionWritable && (dirty || editingId)) preserveBrowserDraft();
+  }, [dirty, editingId, preserveBrowserDraft, sessionWritable]);
   useEffect(() => {
     if (saveConflict) {
       if (localSaveState !== "conflict") setLocalSaveState("conflict");
@@ -1305,12 +1332,22 @@ export function MindmapEditor({
   }
 
   function beginTextTransaction(nodeId = sessionRef.current.selectedId) {
-    if (!editBaselineRef.current) editBaselineRef.current = { mindmap: cloneMindmap(sessionRef.current.mindmap), nodeId, noteFields: new Set() };
+    if (editBaselineRef.current) return;
+    const node = sessionRef.current.mindmap.nodes.find(node => node.id === nodeId);
+    if (!node) return;
+    const content = cardContentForNodeWithPaperState(node, paperState);
+    editBaselineRef.current = {
+      mindmap: cloneMindmap(sessionRef.current.mindmap), nodeId, noteFields: new Set(),
+      text: node.todoId ? `${content.title}${content.body ? `\n${content.body}` : ""}`.trim() : editableCardText(node),
+      paperSourceHash: paperSourceHashRef.current,
+    };
   }
 
   function finishTextTransaction(commitChanges = true) {
     const before = editBaselineRef.current;
     editBaselineRef.current = null;
+    activeCardDraftRef.current = null;
+    setRestoredCardDraft(null);
     setEditingId(null);
     if (!before) return;
     if (!commitChanges) {
@@ -1319,17 +1356,25 @@ export function MindmapEditor({
       // Cancel only this card's active fields. Other cards may have changed
       // while the editor was open and must remain in the live map.
       if (baselineNode && currentNode && !currentNode.todoId) {
-        dispatch({ type: "edit-card", id: before.nodeId, title: baselineNode.title || "", text: baselineNode.text });
+        const action = { type: "edit-card" as const, id: before.nodeId, title: baselineNode.title || "", text: baselineNode.text, contentFormat: baselineNode.contentFormat };
+        sessionRef.current = mindmapReducer(sessionRef.current, action);
+        dispatch(action);
       }
       if (baselineNode && currentNode && before.noteFields.size) {
-        dispatch({ type: "patch-node", id: before.nodeId, transient: true, patch: {
+        const action = { type: "patch-node" as const, id: before.nodeId, transient: true, patch: {
           ...(before.noteFields.has("caption") ? { caption: baselineNode.caption } : {}),
           ...(before.noteFields.has("background") ? { caution: { ...currentNode.caution, background: baselineNode.caution?.background } } : {}),
-        } });
+        } };
+        sessionRef.current = mindmapReducer(sessionRef.current, action);
+        dispatch(action);
       }
+      if (mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current) clearBrowserDraft();
+      else preserveBrowserDraft();
       return;
     }
     dispatch({ type: "record-history", before: before.mindmap });
+    if (mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current) clearBrowserDraft();
+    else preserveBrowserDraft();
     setFocusRequest((current) => ({ id: before.nodeId, sequence: (current?.sequence || 0) + 1, center: centerOnEditRef.current }));
   }
 
@@ -1403,6 +1448,7 @@ export function MindmapEditor({
     const action: MindmapTreeAction = { type: "edit-card", id, title: parts.title, text: parts.body, contentFormat };
     sessionRef.current = mindmapReducer(sessionRef.current, action);
     dispatch(action);
+    preserveBrowserDraft();
   }
 
   function updateNodeNote(id: string, field: CardNoteField, value: string) {
@@ -1417,6 +1463,7 @@ export function MindmapEditor({
       : { caution: { ...node.caution, background: value } } };
     sessionRef.current = mindmapReducer(sessionRef.current, action);
     dispatch(action);
+    preserveBrowserDraft();
   }
 
   async function saveAgentDraft(id: string) {
@@ -1554,6 +1601,13 @@ export function MindmapEditor({
     }
   }, [localSaveQueue, save]);
 
+  const retrySave = useCallback(() => {
+    preserveBrowserDraft();
+    saveErrorRef.current = null;
+    setSaveError(null);
+    void flushPendingSaves().catch(error => setSaveError(error instanceof Error ? error.message : "Could not save the open card."));
+  }, [flushPendingSaves, preserveBrowserDraft]);
+
   useEffect(() => {
     const browserWindow = window as Window & { __openbarFlushMindmap?: () => Promise<void> };
     browserWindow.__openbarFlushMindmap = flushPendingSaves;
@@ -1581,9 +1635,8 @@ export function MindmapEditor({
       || mapSignature(sessionRef.current.mindmap) !== savedSignatureRef.current;
     const flush = () => {
       if (!hasPendingChanges() || recoveryDraftRef.current) return;
-      void flushPendingSaves().catch(() => undefined);
-      // Ordinary inline card commits update sessionRef synchronously.
       preserveBrowserDraft();
+      if (!inlineEditorSessionRef.current && sessionWritableRef.current) void flushPendingSaves().catch(() => undefined);
     };
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       if (refreshingWithRecoveryRef.current) return;
@@ -1623,6 +1676,7 @@ export function MindmapEditor({
   }, [flushPendingSaves, router]);
 
   const hydrateSavedMap = useCallback((saved: Mindmap) => {
+    lastAcknowledgedMapRef.current = saved;
     persistedDiskHashRef.current = saved.diskHash ?? mindmapDiskHash(saved);
     nextRemoteCheckpointRef.current = mindmapRemoteCheckpoint(saved);
     sessionRef.current = mindmapReducer(sessionRef.current, { type: "hydrate", mindmap: saved });
@@ -1765,6 +1819,11 @@ export function MindmapEditor({
         if (!saved) throw new Error("The saved mindmap is unavailable.");
         recoveryDraftRef.current = draft;
         setRecoveryDraft(draft);
+        editBaselineRef.current = null;
+        activeCardDraftRef.current = null;
+        inlineEditorSessionRef.current = null;
+        setRestoredCardDraft(null);
+        setEditingId(null);
         hydrateSavedMap(saved);
       } catch (error) {
         setSaveError(error instanceof Error ? error.message : "Could not reload the saved mindmap.");
@@ -1777,7 +1836,20 @@ export function MindmapEditor({
     if (!draft) return;
     const sameBase = draft.baseHash === persistedDiskHashRef.current;
     persistedDiskHashRef.current = draft.baseHash;
-    const action = { type: "replace" as const, mindmap: draft.mindmap };
+    const active = draft.activeCard;
+    if (active) {
+      const baseline = cloneMindmap(draft.mindmap);
+      baseline.nodes = baseline.nodes.map(node => node.id === active.nodeId ? cloneMindmap(active.baseNode) : node);
+      editBaselineRef.current = {
+        mindmap: baseline, nodeId: active.nodeId, text: active.baseText,
+        paperSourceHash: active.paperSourceHash, noteFields: new Set(active.noteFields),
+      };
+      activeCardDraftRef.current = active;
+      setRestoredCardDraft(active);
+      setEditingId(active.nodeId);
+      setFocusRequest(current => ({ id: active.nodeId, sequence: (current?.sequence || 0) + 1, center: false }));
+    }
+    const action = { type: "replace" as const, mindmap: draft.mindmap, selectedId: active?.nodeId };
     sessionRef.current = mindmapReducer(sessionRef.current, action);
     dispatch(action);
     recoveryDraftRef.current = null;
@@ -1790,6 +1862,11 @@ export function MindmapEditor({
 
   const keepSavedMap = useCallback(() => {
     recoveryDraftRef.current = null;
+    editBaselineRef.current = null;
+    activeCardDraftRef.current = null;
+    inlineEditorSessionRef.current = null;
+    setRestoredCardDraft(null);
+    setEditingId(null);
     setRecoveryDraft(null);
     clearBrowserDraft();
   }, [clearBrowserDraft]);
@@ -1805,7 +1882,6 @@ export function MindmapEditor({
   }, [captureRecoveryDraft, project]);
 
   const refreshWithDraft = useCallback(async () => {
-    if (inlineEditorSessionRef.current && !await inlineEditorSessionRef.current.commit()) return;
     await localSaveQueue.idle();
     if (!preserveBrowserDraft()) return;
     refreshingWithRecoveryRef.current = true;
@@ -2044,12 +2120,13 @@ export function MindmapEditor({
         orphan={!layout.reachable.has(node.id)}
         selected={selectedIdSet.has(node.id)}
         editing={node.id === editingId}
+        restoredDraft={restoredCardDraft?.nodeId === node.id ? restoredCardDraft : undefined}
         editSessionRef={inlineEditorSessionRef}
         dropPreviewKind={dropPreview?.targetId === node.id ? dropPreview.kind : null}
         dropPreviewLabel={dropPreview?.targetId === node.id ? dropPreviewLabel(dropPreview, layout.nodeById) : undefined}
         onToggleCollapse={() => toggleCollapse(node.id)}
         onDropTodo={(todoId) => placeUnplacedTodo(todoId, node.id)}
-        onDraftActivity={() => remoteQueue.noteEdit()}
+        onDraftActivity={() => { remoteQueue.noteEdit(); preserveBrowserDraft(); }}
         onTextChange={(text, contentFormat) => updateNodeText(node.id, text, contentFormat)}
         onNoteChange={(field, value) => updateNodeNote(node.id, field, value)}
         onSaveDraft={() => saveAgentDraft(node.id)}
@@ -2062,7 +2139,9 @@ export function MindmapEditor({
           if (!node.todoId) return true;
           try {
             const result = await runPaperMutation(async () => {
-              const expectedSourceHash = paperSourceHashRef.current ?? paperState?.paper?.sourceHash;
+              const baseline = editBaselineRef.current;
+              const expectedSourceHash = (baseline?.nodeId === node.id ? baseline.paperSourceHash : undefined)
+                ?? paperSourceHashRef.current ?? paperState?.paper?.sourceHash;
               const result = await persistPaperTodoAction(
                 project,
                 {
@@ -2156,6 +2235,52 @@ export function MindmapEditor({
     setSearchOpen(false);
     setMoveOpen(false);
     setMoveQuery("");
+  };
+
+  const getMindmapDiagnostics = () => {
+    const current = sessionRef.current;
+    const draft = recoveryDraftRef.current || captureRecoveryDraft();
+    const active = draft.activeCard;
+    const lastAcknowledged = lastAcknowledgedMapRef.current;
+    const fields = (node?: MindmapNode) => node ? {
+      id: node.id, todoId: node.todoId, title: node.title, text: node.text,
+      caption: node.caption, caution: node.caution, contentFormat: node.contentFormat,
+      parentId: node.parentId, updatedAt: node.updatedAt,
+    } : null;
+    const changedIds = current.mindmap.nodes.filter(node => {
+      const saved = lastAcknowledged.nodes.find(saved => saved.id === node.id);
+      return JSON.stringify(fields(node)) !== JSON.stringify(fields(saved));
+    }).map(node => node.id);
+    const ids = [...new Set([active?.nodeId, current.selectedId, ...changedIds].filter((id): id is string => Boolean(id)))].slice(0, 20);
+    return {
+      kind: "mindmap", project, mapId: current.mindmap.id || "draft",
+      selectedCardId: current.selectedId, editedCardId: editBaselineRef.current?.nodeId || null,
+      revision: current.revision, mapRevision: current.mindmap.revision,
+      expectedDiskHash: persistedDiskHashRef.current,
+      lastLoadedDiskHash: initialMindmap.diskHash, lastAcknowledgedDiskHash: lastAcknowledged.diskHash,
+      currentMapDiskHash: current.mindmap.diskHash, paperSourceHash: paperSourceHashRef.current,
+      savedSnapshotMeaning: "Last loaded or acknowledged state. Read get_mindmap and current paper files before merging with current hashes.",
+      source: {
+        mapFile: isPrimaryMindmap(current.mindmap) ? ".OpenBar/mindmap.tex" : `.OpenBar/mindmaps/${current.mindmap.id}.tex`,
+        recoveryStorage: "sessionStorage", recoveryKey: mindmapRecoveryKey(project, draft.mapId),
+      },
+      saving: {
+        writable: sessionWritableRef.current, readOnly, manualReadOnly,
+        dirty: mapSignature(current.mindmap) !== savedSignatureRef.current,
+        localState: localSaveState, queuePending: localSaveQueue.pending,
+        saveError: saveErrorRef.current, remoteState: remoteSaveState, remoteError: remoteSaveError,
+        remoteOutOfSync: remoteOutOfSyncRef.current, applyingRemote: applyingRemoteRef.current,
+      },
+      recovery: { stored: recoveryStored, savedAt: recoverySavedAtRef.current, capturedAt: draft.savedAt, awaitingReview: Boolean(recoveryDraftRef.current) },
+      activeCard: active ? {
+        ...active, baseNode: fields(active.baseNode),
+        localNode: fields(draft.mindmap.nodes.find(node => node.id === active.nodeId)),
+        lastAcknowledgedNode: fields(lastAcknowledged.nodes.find(node => node.id === active.nodeId)),
+        lastLoadedPaperTodo: active.baseNode.todoId ? paperState?.paper?.todos.find(todo => todo.id === active.baseNode.todoId) : undefined,
+      } : null,
+      changedCards: ids.map(id => ({ id, local: fields(current.mindmap.nodes.find(node => node.id === id)), lastAcknowledged: fields(lastAcknowledged.nodes.find(node => node.id === id)) })),
+      changedCardCount: changedIds.length,
+    };
   };
 
   return (
@@ -2371,7 +2496,7 @@ export function MindmapEditor({
           <button type="button" className="p-button p-button-borderless btn-ghost" onClick={keepSavedMap}>Keep saved map</button>
         </div>
       </div>}
-      {!sessionWritable && (dirty || editingId) && <EditorNotice project={project} title="Editing access changed" label="Editing paused, draft preserved" message="Your open card text remains available to select and copy. Download the map draft before refreshing." paused>
+      {!sessionWritable && (dirty || editingId) && <EditorNotice project={project} title="Editing access changed" label="Editing paused, draft preserved" message="Your open card text remains available to select and copy. Download the map draft before refreshing." diagnosticContext={getMindmapDiagnostics} paused>
         <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download map draft</button>
       </EditorNotice>}
       {saveError && <EditorNotice project={project} title={outdatedSave ? "Refresh OpenBar to continue" : saveConflict ? "Saved file conflict" : "Saving needs attention"} label={outdatedSave ? "OpenBar updated, draft preserved" : saveConflict ? "Editing paused, saved file changed" : "Saving needs attention"}
@@ -2379,8 +2504,8 @@ export function MindmapEditor({
           ? recoveryStored ? "OpenBar was updated while this page was open. Your draft is preserved in this tab. Refresh, then restore the draft to finish saving."
             : "OpenBar was updated while this page was open. Keep this tab open or download your draft. Browser recovery storage is currently unavailable."
           : recoveryStored === false ? `${saveError} Keep this tab open or download the draft before refreshing.` : saveError}
-        report={outdatedSave ? saveError : undefined} paused={saveConflict}>
-        <button type="button" className="p-button p-button-default btn-outline" onClick={outdatedSave ? () => void refreshWithDraft() : saveConflict ? reloadSavedMap : save}>{outdatedSave ? "Refresh and retry" : saveConflict ? "Load saved map" : "Retry save"}</button>
+        report={outdatedSave ? saveError : undefined} diagnosticContext={getMindmapDiagnostics} paused={saveConflict}>
+        <button type="button" className="p-button p-button-default btn-outline" onClick={outdatedSave ? () => void refreshWithDraft() : saveConflict ? reloadSavedMap : retrySave}>{outdatedSave ? "Refresh and retry" : saveConflict ? "Load saved map" : "Retry save"}</button>
         <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download draft</button>
       </EditorNotice>}
       {(hydrationPending || (!saveError && remoteSaveError) || reviewingRemote) && <OverleafSyncNotice
@@ -3050,6 +3175,7 @@ function CanvasNode({
   orphan,
   selected,
   editing,
+  restoredDraft,
   editSessionRef,
   dropPreviewKind,
   dropPreviewLabel,
@@ -3088,6 +3214,7 @@ function CanvasNode({
   orphan: boolean;
   selected: boolean;
   editing: boolean;
+  restoredDraft?: MindmapCardRecoveryDraft;
   editSessionRef: RefObject<InlineCardSession | null>;
   dropPreviewKind: MindmapDrop["kind"] | null;
   dropPreviewLabel?: string;
@@ -3151,12 +3278,15 @@ function CanvasNode({
   const commitInFlightRef = useRef<Promise<boolean> | null>(null);
   const finishedRef = useRef(false);
   const [draftFormat, setDraftFormat] = useState<MindmapNode["contentFormat"]>(node.contentFormat || "plain");
+  const draftFormatRef = useRef(draftFormat);
+  draftFormatRef.current = draftFormat;
   const [formatHint, setFormatHint] = useState("");
   const editingNodeRef = useRef<string | null>(null);
   const editorRef = useRef<TexCodeMirrorHandle>(null);
   const commit = useCallback((): Promise<boolean> => {
     if (finishedRef.current) return Promise.resolve(true);
     if (commitInFlightRef.current) return commitInFlightRef.current;
+    if (readOnly) return Promise.resolve(false);
     const text = editorRef.current?.getLiveSource() ?? draft;
     if (!node.todoId) {
       onTextChange(text, draftFormat);
@@ -3186,7 +3316,16 @@ function CanvasNode({
       .finally(() => { commitInFlightRef.current = null; });
     commitInFlightRef.current = pending;
     return pending;
-  }, [draft, draftFormat, initial, node.todoId, onTextChange, onCommit, onTodoCommit]);
+  }, [draft, draftFormat, initial, node.todoId, onTextChange, onCommit, onTodoCommit, readOnly]);
+
+  const getDraft = useCallback((): InlineCardDraft | null => {
+    if (finishedRef.current) return null;
+    return {
+      text: editorRef.current?.getLiveSource() ?? draft,
+      contentFormat: draftFormatRef.current || "plain",
+      selection: editorRef.current?.getSelection() ?? undefined,
+    };
+  }, [draft]);
 
   const cancel = () => {
     if (commitInFlightRef.current) return;
@@ -3196,12 +3335,13 @@ function CanvasNode({
 
   useEffect(() => {
     if (!editing) return;
-    const session = { nodeId: node.id, commit };
+    const session = { nodeId: node.id, commit, getDraft };
     editSessionRef.current = session;
     const finishOutside = (event: Event) => {
       const belongsToEditor = event.composedPath().some((target) => target instanceof Element && (
         target.getAttribute("data-mind-editor") === node.id
         || target.matches('[role="toolbar"][aria-label="Card formatting"]')
+        || target.matches("[data-editor-notice]")
       ));
       if (belongsToEditor) return;
       void commit();
@@ -3211,35 +3351,43 @@ function CanvasNode({
       if (editSessionRef.current === session) editSessionRef.current = null;
       document.removeEventListener("pointerdown", finishOutside, true);
     };
-  }, [editing, node.id, commit, editSessionRef]);
+  }, [editing, node.id, commit, getDraft, editSessionRef]);
 
   function formatSelection(kind: "bold" | "italic") {
     const syntax = node.todoId || draftFormat === "tex" ? "tex" : "markdown";
     const applied = editorRef.current?.format(syntax, kind);
-    if (applied && !node.todoId && draftFormat === "plain") setDraftFormat("markdown");
+    if (applied && !node.todoId && draftFormat === "plain") {
+      draftFormatRef.current = "markdown";
+      setDraftFormat("markdown");
+      onDraftActivity();
+    }
     setFormatHint(applied ? "" : "Select a word or phrase to format.");
   }
   useEffect(() => {
     if (editing && editingNodeRef.current !== node.id) {
       finishedRef.current = false;
-      setDraftFormat(node.contentFormat || "plain");
+      draftFormatRef.current = restoredDraft?.contentFormat || node.contentFormat || "plain";
+      setDraftFormat(draftFormatRef.current);
       setFormatHint("");
-      setDraft(node.todoId ? `${title}${body ? `\n${body}` : ""}`.trim() : editableCardText(node));
+      setDraft(restoredDraft?.text ?? (node.todoId ? `${title}${body ? `\n${body}` : ""}`.trim() : editableCardText(node)));
       setCommitError(null);
       editingNodeRef.current = node.id;
     } else if (!editing) {
       editingNodeRef.current = null;
       setCommitError(null);
     }
-  }, [editing, node.id, title, body]);
+  }, [editing, node.id, title, body, restoredDraft]);
   useEffect(() => {
     if (!editing) return;
     const frame = requestAnimationFrame(() => {
       editorRef.current?.focus();
-      requestAnimationFrame(() => editorRef.current?.focus());
+      requestAnimationFrame(() => {
+        if (restoredDraft?.selection) editorRef.current?.setSelection(restoredDraft.selection.from, restoredDraft.selection.to);
+        else editorRef.current?.focus();
+      });
     });
     return () => cancelAnimationFrame(frame);
-  }, [editing]);
+  }, [editing, restoredDraft]);
   return (
     <>
     <NodeToolbar
@@ -3257,7 +3405,7 @@ function CanvasNode({
       <FastTooltip label="Bold (⌘B / Ctrl+B)"><button type="button" className={styles.editToolbarButton} aria-label="Bold selection" onPointerDown={(event) => event.preventDefault()} onClick={() => formatSelection("bold")}><Bold size={15} /></button></FastTooltip>
       <FastTooltip label="Italic (⌘I / Ctrl+I)"><button type="button" className={styles.editToolbarButton} aria-label="Italic selection" onPointerDown={(event) => event.preventDefault()} onClick={() => formatSelection("italic")}><Italic size={15} /></button></FastTooltip>
       {node.todoId ? <span className="mindmap-inline-editor-hint" title="Paper TODO formatting is saved in TeX">TeX</span> : (
-        <ChoiceButtons label="Editing card content format" value={draftFormat || "plain"} options={[{value:"plain",label:"Plain"},{value:"markdown",label:"Markdown"},{value:"tex",label:"TeX"}]} onChange={(value) => { onDraftActivity(); setDraftFormat(value as MindmapNode["contentFormat"]); }} />
+        <ChoiceButtons label="Editing card content format" value={draftFormat || "plain"} options={[{value:"plain",label:"Plain"},{value:"markdown",label:"Markdown"},{value:"tex",label:"TeX"}]} onChange={(value) => { draftFormatRef.current = value as MindmapNode["contentFormat"]; setDraftFormat(draftFormatRef.current); onDraftActivity(); }} />
       )}
       <span className="mindmap-inline-editor-divider" />
       <FastTooltip label="Done (⌘Enter / Ctrl+Enter)"><button type="button" className={styles.editToolbarButton} aria-label="Finish editing card" onClick={() => void commit()}><Check size={15} /><span>{node.agentDraft ? "Keep draft" : "Done"}</span></button></FastTooltip>
@@ -3353,7 +3501,7 @@ function CanvasNode({
             variant="compact"
             readOnly={readOnly}
             texHighlighting={draftFormat === "tex"}
-            value={draft}
+            value={editingNodeRef.current !== node.id ? restoredDraft?.text ?? draft : draft}
             onChange={(value) => {
               onDraftActivity();
               setDraft(value);

@@ -1,4 +1,15 @@
-import type { Mindmap } from "@/lib/types"
+import type { Mindmap, MindmapNode } from "@/lib/types"
+
+export type MindmapCardRecoveryDraft = {
+  nodeId: string
+  text: string
+  contentFormat?: MindmapNode["contentFormat"]
+  selection?: { from: number; to: number }
+  baseText: string
+  baseNode: MindmapNode
+  paperSourceHash?: string
+  noteFields: Array<"caption" | "background">
+}
 
 export type MindmapRecoveryDraft = {
   version: 1
@@ -7,6 +18,8 @@ export type MindmapRecoveryDraft = {
   baseHash: string
   savedAt: string
   mindmap: Mindmap
+  /** Uncommitted editor text stays separate from the durable map and TeX. */
+  activeCard?: MindmapCardRecoveryDraft
 }
 
 export function mindmapRecoveryKey(project: string, mapId: string): string {
@@ -24,10 +37,30 @@ export function readMindmapRecovery(storage: Pick<Storage, "getItem">, project: 
       || value.mindmap.nodes.length > 2_000 || typeof value.mindmap.rootId !== "string"
       || !value.mindmap.nodes.every(node => node && typeof node.id === "string" && typeof node.text === "string"
         && (node.parentId === null || typeof node.parentId === "string"))) return null
+    const active = value.activeCard
+    if (active && (typeof active.nodeId !== "string" || typeof active.text !== "string"
+      || typeof active.baseText !== "string" || active.baseNode?.id !== active.nodeId
+      || typeof active.baseNode.text !== "string"
+      || !value.mindmap.nodes.some(node => node.id === active.nodeId)
+      || !Array.isArray(active.noteFields) || active.noteFields.some(field => field !== "caption" && field !== "background")
+      || (active.contentFormat !== undefined && !["plain", "markdown", "tex"].includes(active.contentFormat))
+      || (active.paperSourceHash !== undefined && !/^[a-f0-9]{64}$/i.test(active.paperSourceHash))
+      || (active.selection && (!Number.isInteger(active.selection.from) || !Number.isInteger(active.selection.to)
+        || active.selection.from < 0 || active.selection.to < active.selection.from || active.selection.to > active.text.length)))) return null
     return value
   } catch {
     return null
   }
+}
+
+export function hasMindmapCardRecoveryChanges(draft: MindmapRecoveryDraft): boolean {
+  const active = draft.activeCard
+  if (!active) return false
+  if (active.text !== active.baseText || active.contentFormat !== (active.baseNode.contentFormat || "plain")) return true
+  const node = draft.mindmap.nodes.find(node => node.id === active.nodeId)
+  return active.noteFields.some(field => field === "caption"
+    ? node?.caption !== active.baseNode.caption
+    : node?.caution?.background !== active.baseNode.caution?.background)
 }
 
 export function writeMindmapRecovery(storage: Pick<Storage, "setItem" | "getItem">, draft: MindmapRecoveryDraft): boolean {

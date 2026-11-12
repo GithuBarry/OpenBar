@@ -5,6 +5,7 @@ import * as Popover from "@radix-ui/react-popover"
 import { PopoverSurface } from "./pop"
 import { AlertCircle, Check, ChevronDown, Copy, Download, LockKeyhole, X } from "lucide-react"
 import { copyText } from "@/lib/copy-text"
+import { useProjectWriteSession } from "./project-session/project-write-session"
 import styles from "./overleaf-sync-notice.module.css"
 
 type Props = {
@@ -13,6 +14,7 @@ type Props = {
   label: string
   message: string
   report?: string
+  diagnosticContext?: () => unknown
   paused?: boolean
   inline?: boolean
   floating?: boolean
@@ -24,12 +26,19 @@ type Props = {
   children?: ReactNode
 }
 
+function captureDiagnostics(read?: () => unknown) {
+  try { return read?.() }
+  catch (error) { return { diagnosticCaptureError: error instanceof Error ? error.message : String(error) } }
+}
+
 /** One floating, accessible design for editor errors and synchronization conflicts. */
-export function EditorNotice({ project, title, label, message, report, paused, inline, floating, attention, triggerLabel = "Editor conflict details", onOpen, openRequest, primaryAction, children }: Props) {
+export function EditorNotice({ project, title, label, message, report, diagnosticContext, paused, inline, floating, attention, triggerLabel = "Editor conflict details", onOpen, openRequest, primaryAction, children }: Props) {
+  const { getDiagnostics } = useProjectWriteSession()
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const [copyError, setCopyError] = useState("")
   const [copying, setCopying] = useState(false)
+  const copyingRef = useRef(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [capturedAt, setCapturedAt] = useState("")
   const panelRef = useRef<HTMLDivElement>(null)
@@ -55,34 +64,61 @@ export function EditorNotice({ project, title, label, message, report, paused, i
   }, [openRequest])
   useEffect(() => { if (open) { setCopied(false); setCopyError(""); setCapturedAt(new Date().toISOString()); onOpenRef.current?.() } }, [open])
   useEffect(() => { setCopied(false) }, [message, report])
-  const diagnosticReport = open && typeof window !== "undefined" ? [
-    "OpenBar diagnostic report",
-    `Title: ${title}`,
-    `Project: ${project}`,
-    `Page: ${window.location.origin}${window.location.pathname}`,
-    `Captured: ${capturedAt || new Date().toISOString()}`,
-    `Browser: ${navigator.userAgent}`,
-    `Secure context: ${window.isSecureContext}`,
-    `Online: ${navigator.onLine}`,
-    `Editing paused: ${Boolean(paused)}`,
-    `\nMessage:\n${message}`,
-    report ? `\nOperation diagnostics:\n${report}` : "",
-    copyError ? `\nClipboard failure:\n${copyError}` : "",
-  ].filter(Boolean).join("\n").replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, "$1[redacted]").replace(/((?:access[_-]?token|api[_-]?key|password)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, "$1[redacted]") : ""
+  const buildDiagnosticReport = (at: string) => {
+    let context: string
+    try {
+      context = JSON.stringify({ writeSession: captureDiagnostics(getDiagnostics), editor: captureDiagnostics(diagnosticContext) }, (key, value) =>
+        /^(?:credential|credentials|authorization|cookie|token|access[_-]?token|refresh[_-]?token|api[_-]?key|password)$/i.test(key) ? "[redacted]" : value, 2)
+    } catch (error) {
+      context = JSON.stringify({ diagnosticCaptureError: error instanceof Error ? error.message : String(error) })
+    }
+    const assets = Array.from(document.scripts, script => {
+      try {
+        const url = new URL(script.src)
+        return url.origin === window.location.origin && url.pathname.includes("/_next/") ? url.pathname : ""
+      } catch { return "" }
+    }).filter(Boolean).slice(0, 8)
+    return [
+      "OpenBar diagnostic report",
+      "Format: 2",
+      `Title: ${title}`,
+      `Project: ${project}`,
+      `Page: ${window.location.origin}${window.location.pathname}`,
+      `Captured: ${at}`,
+      `Browser: ${navigator.userAgent}`,
+      `Secure context: ${window.isSecureContext}`,
+      `Online: ${navigator.onLine}`,
+      `Visibility: ${document.visibilityState}`,
+      `Viewport: ${window.innerWidth}x${window.innerHeight}, scale ${window.visualViewport?.scale ?? 1}`,
+      `Editing paused: ${Boolean(paused)}`,
+      `\nMessage:\n${message}`,
+      report ? `\nOperation diagnostics:\n${report}` : "",
+      `\nStructured context:\n${context}`,
+      assets.length ? `\nLoaded application assets:\n${assets.join("\n")}` : "",
+      copyError ? `\nClipboard failure:\n${copyError}` : "",
+    ].filter(Boolean).join("\n").replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, "$1[redacted]").replace(/((?:access[_-]?token|api[_-]?key|password)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, "$1[redacted]")
+  }
+  const diagnosticReport = open && typeof window !== "undefined" ? buildDiagnosticReport(capturedAt || new Date().toISOString()) : ""
   const copy = async () => {
+    if (copyingRef.current) return
+    copyingRef.current = true
     setCopying(true)
     try {
-      await copyText(diagnosticReport)
+      const at = new Date().toISOString()
+      setCapturedAt(at)
+      await copyText(buildDiagnosticReport(at))
       setCopied(true)
       setCopyError("")
     } catch (error) {
       setCopied(false)
       setCopyError(error instanceof Error ? error.message : "The browser declined clipboard access.")
       setDiagnosticsOpen(true)
-    } finally { setCopying(false) }
+    } finally { copyingRef.current = false; setCopying(false) }
   }
   const download = () => {
-    const url = URL.createObjectURL(new Blob([diagnosticReport], { type: "text/plain;charset=utf-8" }))
+    const at = new Date().toISOString()
+    setCapturedAt(at)
+    const url = URL.createObjectURL(new Blob([buildDiagnosticReport(at)], { type: "text/plain;charset=utf-8" }))
     const link = document.createElement("a")
     link.href = url
     link.download = `openbar-${project.replace(/[^a-z0-9_-]/gi, "-").slice(0, 64)}-diagnostics.txt`
@@ -96,8 +132,8 @@ export function EditorNotice({ project, title, label, message, report, paused, i
           {paused && !inline && !floating ? <LockKeyhole size={13} /> : <AlertCircle size={13} />}<span>{label}</span><ChevronDown size={12} />
         </button>
       </Popover.Trigger>
-      <PopoverSurface ref={panelRef} onMouseEnter={keepOpen} onMouseLeave={closeSoon} onOpenAutoFocus={event => event.preventDefault()} onFocusOutside={event => {
-        if (event.target instanceof HTMLElement && event.target.getAttribute("aria-label") === "Diagnostic report clipboard transfer") event.preventDefault()
+      <PopoverSurface ref={panelRef} data-editor-notice onMouseEnter={keepOpen} onMouseLeave={closeSoon} onOpenAutoFocus={event => event.preventDefault()} onFocusOutside={event => {
+        if (copyingRef.current || (event.target instanceof HTMLElement && event.target.getAttribute("aria-label") === "Diagnostic report clipboard transfer")) event.preventDefault()
       }} className={styles.panel} side="bottom" align="center" sideOffset={8} collisionPadding={12} aria-label={title}>
         <header><strong>{title}</strong><Popover.Close aria-label="Close error details"><X size={15} /></Popover.Close></header>
         <p className={styles.message} role="status">{message}</p>
