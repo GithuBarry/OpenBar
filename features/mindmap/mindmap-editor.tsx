@@ -2496,7 +2496,7 @@ export function MindmapEditor({
 
       </div>
 
-      {recoveryDraft && <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-xs" role="status">
+      {recoveryDraft && <div className="relative z-30 flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-xs" role="status">
         <p>A browser draft from {new Date(recoveryDraft.savedAt).toLocaleString()} is preserved.
           {recoveryDraft.baseHash !== persistedDiskHashRef.current && " The saved map has a newer revision."}</p>
         <div className="flex flex-wrap gap-2">
