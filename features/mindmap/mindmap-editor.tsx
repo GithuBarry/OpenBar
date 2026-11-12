@@ -1847,7 +1847,15 @@ export function MindmapEditor({
       activeCardDraftRef.current = active;
       setRestoredCardDraft(active);
       setEditingId(active.nodeId);
-      setFocusRequest(current => ({ id: active.nodeId, sequence: (current?.sequence || 0) + 1, center: false }));
+      setViewMode("map");
+      let parent = draft.mindmap.nodes.find(node => node.id === active.nodeId)?.parentId;
+      const visited = new Set<string>();
+      while (parent && !visited.has(parent)) {
+        visited.add(parent);
+        setLocalCollapsed(parent, false);
+        parent = draft.mindmap.nodes.find(node => node.id === parent)?.parentId;
+      }
+      setFocusRequest(current => ({ id: active.nodeId, sequence: (current?.sequence || 0) + 1, center: true }));
     }
     const action = { type: "replace" as const, mindmap: draft.mindmap, selectedId: active?.nodeId };
     sessionRef.current = mindmapReducer(sessionRef.current, action);
@@ -1858,7 +1866,7 @@ export function MindmapEditor({
     saveErrorRef.current = message;
     setSaveError(message);
     setLocalSaveState(sameBase ? "dirty" : "conflict");
-  }, [dispatch]);
+  }, [dispatch, setLocalCollapsed]);
 
   const keepSavedMap = useCallback(() => {
     recoveryDraftRef.current = null;
@@ -2185,6 +2193,7 @@ export function MindmapEditor({
     descendantCounts,
     dropPreview,
     editingId,
+    restoredCardDraft,
     layout,
     paperState,
     project,
