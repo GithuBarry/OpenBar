@@ -221,7 +221,7 @@ function FlowCanvas({
         if (event.button !== 0) return;
         initialViewRef.current = true;
         const target = event.target as Element;
-        if (target.closest('button, a, input, textarea, select, .cm-editor')) return;
+        if (target.closest('button, a, input, textarea, select, summary, .cm-editor')) return;
         const card = target.closest<HTMLElement>('[data-mind-node]');
         if (card?.dataset.mindNode) onSelect(card.dataset.mindNode, event.shiftKey);
       }}
