@@ -182,7 +182,10 @@
 .cardProgress { position: absolute; top: 13px; right: 14px; display: inline-flex; }
 .card:has(> .cardProgress) :global(.mindmap-node-title), .card:has(> .cardProgress) :global(.mindmap-inline-editor .cm-line:first-child) { padding-right: 24px; }
 .canvasTools { display: flex; align-items: center; gap: 4px; }
-.depthControls { display: flex; align-items: center; flex-shrink: 0; }
+.depthControls { display: flex; align-items: center; flex-shrink: 0; border-radius: 12px; }
+.depthControls:is(:hover, :focus-within), .depthControls:has([data-state="open"]) { background: rgb(var(--surface-2)); }
+.depthControls:has([aria-pressed="true"]) { background: var(--surface-selected); box-shadow: inset 0 0 0 1px var(--border-selected); }
+.toolbar .canvasTools .depthControls > :global(button.ob-glass-button.p-button) { --p-button-overlay-hover: 0; --p-button-overlay-pressed: 0; background: transparent; box-shadow: none; }
 .depthControls > .depthCollapse { gap: 5px; cursor: pointer; }
 .depthControls > .depthCollapse:disabled { opacity: .45; cursor: default; }
 .toolbar .depthSelect:global(.ob-select) { width: 48px; min-width: 48px; gap: 4px; padding-inline: 6px; border: 0; border-radius: var(--p-button-radius); font-size: 12px; }
