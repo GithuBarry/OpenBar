@@ -6,7 +6,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn } from "@/lib/utils";
 
 export function PopoverSurface({ className, sideOffset = 8, collisionPadding = 12, ...props }: ComponentProps<typeof Popover.Content>) {
-  return <Popover.Portal><Popover.Content className={cn("p-popover p-popover--no-arrow ob-pop", className)} sideOffset={sideOffset} collisionPadding={collisionPadding} {...props} /></Popover.Portal>
+  return <Popover.Portal forceMount={props.forceMount}><Popover.Content className={cn("p-popover p-popover--no-arrow ob-pop", className)} sideOffset={sideOffset} collisionPadding={collisionPadding} {...props} /></Popover.Portal>
 }
 
 export function MenuSurface({ className, sideOffset = 8, collisionPadding = 12, ...props }: ComponentProps<typeof DropdownMenu.Content>) {

@@ -26,7 +26,8 @@ export function OverleafForce({ project, beforeReview, onApplied, onPullUncertai
   const [direction, setDirection] = useState<ForceSyncDirection>("pull");
   const finishAttempted = useRef(false);
   const pendingPull = useRef<PendingForcePull | null>(null);
-  const { setPendingWork } = useProjectWriteSession();
+  const { setPendingWork, connectionState } = useProjectWriteSession();
+  const reconnecting = connectionState === "reconnecting";
   useEffect(() => {
     setPendingWork("git-force-review", open || busy);
     return () => setPendingWork("git-force-review", false);
@@ -98,16 +99,17 @@ export function OverleafForce({ project, beforeReview, onApplied, onPullUncertai
   }
   const expectedPhrase = `FORCE ${direction.toUpperCase()}`;
   return <>
-    <button type="button" className={styles.trigger} disabled={disabled || busy} onClick={() => void prepare("pull")}>Force pull</button>
-    <button type="button" className={styles.trigger} disabled={disabled || busy} onClick={() => void prepare("push")}>Force push</button>
+    <button type="button" className={styles.trigger} disabled={disabled || busy || reconnecting} onClick={() => void prepare("pull")}>Force pull</button>
+    <button type="button" className={styles.trigger} disabled={disabled || busy || reconnecting} onClick={() => void prepare("push")}>Force push</button>
     {notice && <span className={styles.notice} role="status">{notice}</span>}
     <Modal open={open} onClose={() => void close()} title="Force Git synchronization" busy={busy} className={styles.dialog}>
       <div className={styles.header}><h2 id="force-sync-title">Force {direction} (confirmation {confirmation ? "2" : "1"} of 2)</h2></div>
       <div className={styles.body}>
         <p>{direction === "pull" ? "Replace the local project with the reviewed Git version. Local-only commits will move out of the active branch." : "Replace the Git branch with the reviewed local version. Remote-only commits will move out of the active branch."}</p>
         <p>Both versions receive local Git recovery points before replacement.</p>
-        {busy && <p role="status">Working…</p>}
-        {error && <p role="alert" className={styles.error}>{error}</p>}
+        {!reconnecting && busy && <p role="status">Working…</p>}
+        {reconnecting && <p role="status">Reconnecting…</p>}
+        {!reconnecting && error && <p role="alert" className={styles.error}>{error}</p>}
         {review && <>
           <p><strong>{review.branch}</strong>: {review.ahead} local-only commits, {review.behind} Git-only commits</p>
           <p>Local <code>{review.localCommit.slice(0,12)}</code>, Git <code>{review.remoteCommit.slice(0,12)}</code></p>
@@ -115,7 +117,7 @@ export function OverleafForce({ project, beforeReview, onApplied, onPullUncertai
         </>}
         {confirmation && <label className={styles.confirmPhrase}>Type <strong>{expectedPhrase}</strong> to confirm replacement.<input aria-label="Force synchronization confirmation" value={phrase} autoComplete="off" spellCheck={false} onChange={(event) => setPhrase(event.target.value)} /></label>}
       </div>
-      <div className={styles.footer}><button type="button" disabled={busy} onClick={() => void close()}>Cancel</button>{confirmation ? <button type="button" disabled={busy || phrase !== expectedPhrase} onClick={() => void finish()}>Confirm force {direction}</button> : <button type="button" disabled={busy || !review} onClick={() => void confirm()}>I understand, continue</button>}</div>
+      <div className={styles.footer}><button type="button" disabled={busy} onClick={() => void close()}>Cancel</button>{confirmation ? <button type="button" disabled={reconnecting || busy || phrase !== expectedPhrase} onClick={() => void finish()}>Confirm force {direction}</button> : <button type="button" disabled={reconnecting || busy || !review} onClick={() => void confirm()}>I understand, continue</button>}</div>
     </Modal>
   </>;
 }

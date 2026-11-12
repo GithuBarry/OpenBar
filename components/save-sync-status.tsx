@@ -1,8 +1,10 @@
 "use client";
 
-import { CircleAlert, LoaderCircle } from "lucide-react";
+import { CircleAlert, CloudOff, Gauge, LoaderCircle } from "lucide-react";
 import { FastTooltip } from "./fast-tooltip";
 import { cn } from "@/lib/utils";
+import { useProjectWriteSession } from "./project-session/project-write-session";
+import { hostBusyDetail } from "@/lib/editor-issue-priority";
 
 export type SaveRemoteState = "checking" | "local" | "pending" | "syncing" | "synced" | "changed" | "blocked" | "unconfigured" | "unavailable" | "failed";
 
@@ -13,18 +15,22 @@ export function SaveChecks({ stage, size = 14 }: { stage: "local" | "queued" | "
   </svg>;
 }
 
-export function SaveStatusIcon({ saved, saving, conflict = false, attention = false, remote, size = 14 }: {
+export function SaveStatusIcon({ saved, saving, conflict = false, attention = false, remote, size = 14, connectionUnavailable = false, hostBusy = false }: {
   saved: boolean;
   saving: boolean;
   conflict?: boolean;
   attention?: boolean;
   remote: SaveRemoteState;
   size?: number;
+  connectionUnavailable?: boolean;
+  hostBusy?: boolean;
 }) {
+  if (connectionUnavailable) return <CloudOff size={size} className="shrink-0 text-[rgb(var(--warn))]" />;
   const remoteError = remote === "unavailable" || remote === "failed";
   if (conflict || attention || remoteError || remote === "changed" || remote === "blocked") {
     return <CircleAlert size={size} className={cn("shrink-0", conflict || remoteError ? "text-[rgb(var(--danger))]" : "text-[rgb(var(--warn))]")} />;
   }
+  if (hostBusy) return <Gauge size={size} className="shrink-0 text-[rgb(var(--warn))]" />;
   if (saving || (saved && (remote === "checking" || remote === "syncing"))) {
     return <LoaderCircle size={size} className="shrink-0 animate-spin text-accent" />;
   }
@@ -32,7 +38,7 @@ export function SaveStatusIcon({ saved, saving, conflict = false, attention = fa
   return <SaveChecks stage={remote === "synced" ? "remote" : remote === "pending" ? "queued" : "local"} size={size} />;
 }
 
-export function SaveSyncStatus({ saved, saving, conflict = false, error, remote, onRetry, compact = false, iconOnly = false, className }: {
+export function SaveSyncStatus({ saved, saving, conflict = false, error, remote, onRetry, compact = false, iconOnly = false, className, onConnectionIssue }: {
   saved: boolean;
   saving: boolean;
   conflict?: boolean;
@@ -42,11 +48,16 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
   compact?: boolean;
   iconOnly?: boolean;
   className?: string;
+  onConnectionIssue?: () => void;
 }) {
+  const session = useProjectWriteSession();
+  const reconnecting = session.connectionState === "reconnecting";
+  const host = !reconnecting && !conflict && !error && !["changed", "blocked", "unavailable", "failed"].includes(remote)
+    ? hostBusyDetail(session.hostResources) : null;
   const synced = saved && !saving && !conflict && remote === "synced";
   const review = remote === "changed" || remote === "blocked";
   const remoteError = remote === "unavailable" || remote === "failed";
-  const label = conflict ? "Save conflict"
+  const label = reconnecting ? "Reconnecting…" : host ? "Host busy" : conflict ? "Save conflict"
     : review ? "Git needs review"
       : remoteError ? remote === "unavailable" ? "Git unavailable" : "Git sync failed"
         : error ? "Saving needs attention"
@@ -58,6 +69,7 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
                     : remote === "pending" ? "Waiting for Git sync"
                       : "Saved locally";
   const detail = [
+    reconnecting ? "Reconnecting to OpenBar. Your edits remain in this tab." : host,
     saved ? "Saved to project files." : saving ? "Saving your latest edits to project files." : "Your latest edits are waiting to be saved.",
     synced ? "The saved changes are confirmed on the Git remote."
       : remote === "unconfigured" ? "Connect an Overleaf repository to enable Git synchronization."
@@ -69,12 +81,13 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
               : "The saved changes are waiting for Git synchronization.",
     error,
   ].filter(Boolean).join("\n");
-  const canRetry = saved && !saving && !conflict && ["pending", "blocked", "unavailable", "failed"].includes(remote) && !!onRetry;
+  const canRetry = !reconnecting && !host && saved && !saving && !conflict && ["pending", "blocked", "unavailable", "failed"].includes(remote) && !!onRetry;
+  const canOpenConnection = reconnecting && Boolean(onConnectionIssue);
   return <FastTooltip label={`${detail}${canRetry ? "\nClick to retry Git sync." : ""}`}>
-    <button type="button" onClick={canRetry ? onRetry : undefined}
-      aria-label={label} aria-disabled={!canRetry} data-save-stage={synced ? "remote" : saved ? remote === "pending" || remote === "syncing" ? "queued" : "local" : "unsaved"}
+    <button type="button" onClick={canOpenConnection ? onConnectionIssue : canRetry ? onRetry : undefined}
+      aria-label={label} aria-disabled={!canRetry && !canOpenConnection} data-editor-notice={reconnecting || undefined} data-save-stage={synced ? "remote" : saved ? remote === "pending" || remote === "syncing" ? "queued" : "local" : "unsaved"}
       className={cn("inline-flex min-w-0 items-center gap-1 rounded text-[11px] text-muted", canRetry ? "cursor-pointer hover:text-ink" : "cursor-default", className)}>
-      <SaveStatusIcon saved={saved} saving={saving} conflict={conflict} attention={Boolean(error)} remote={remote} />
+      <SaveStatusIcon saved={saved} saving={saving} conflict={conflict} attention={Boolean(error)} remote={remote} connectionUnavailable={reconnecting} hostBusy={Boolean(host)} />
       <span className={cn("min-w-0 truncate font-medium tabular-nums", iconOnly ? "sr-only" : compact && "hidden xl:inline")}>{label}</span>
     </button>
   </FastTooltip>;

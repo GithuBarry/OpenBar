@@ -6,6 +6,9 @@ import "katex/dist/katex.min.css";
 import { useGitAutoSync } from "@/components/use-git-auto-sync";
 import { useProjectWriteSession } from "@/components/project-session/project-write-session";
 import { ResumeEditControl } from "@/components/project-session/resume-edit-control";
+import { BackendStatusNotice } from "@/components/backend-status-notice";
+import { isBackendTransportError } from "@/lib/backend-connection";
+import { selectEditorIssue, type EditorIssue } from "@/lib/editor-issue-priority";
 import { OverleafSyncNotice } from "@/components/overleaf-sync-notice";
 import { EditorNotice } from "@/components/editor-notice";
 import { PaperStatusControl } from "./paper-status-control";
@@ -347,7 +350,8 @@ export function PaperEditor({
   boundTodoIds?: string[];
 }) {
   const router = useRouter();
-  const { writable: sessionWritable, setPendingWork } = useProjectWriteSession();
+  const { writable: sessionWritable, setPendingWork, connectionState, isBackendUnavailable, accessMessage, accessError } = useProjectWriteSession();
+  const [connectionDetailsOpenRequest, setConnectionDetailsOpenRequest] = useState(0);
   const sessionWritableRef = useRef(sessionWritable);
   sessionWritableRef.current = sessionWritable;
   const [restoreEditingAttention, setRestoreEditingAttention] = useState(false);
@@ -654,6 +658,7 @@ export function PaperEditor({
       initial = false;
       if (event.sequence === 0 || initialSettled) return;
       if (hydrationPendingRef.current) return;
+      if (isBackendTransportError(event.error) || isBackendUnavailable()) return;
       setCheckingRemote(false);
       if (event.phase === "pending" || event.phase === "syncing") {
         remoteSavePendingRef.current = true;
@@ -695,7 +700,7 @@ export function PaperEditor({
       setRemoteSaveError(remoteSyncRef.current.status === "unconfigured" ? null : failure.message);
     };
     return remoteQueue.subscribe(applyQueueEvent);
-  }, [remoteQueue]);
+  }, [isBackendUnavailable, remoteQueue]);
 
   const pushRemote = useCallback(async (message: string, deferred = false): Promise<PaperRemotePushResult> => {
     if (reviewingRemoteRef.current) return { ok: false, code: "review_in_progress", message: "Local changes saved for pull review." };
@@ -704,11 +709,12 @@ export function PaperEditor({
       try {
         return await pushBrowserProject(project, message);
       } catch (error) {
+        if (isBackendTransportError(error) || isBackendUnavailable()) throw error;
         return { ok: false, code: "remote_save_failed", message: error instanceof Error ? error.message : "Could not save to the remote." };
       }
     }, deferred, () => !saveBusyRef.current && !todoRemovalBusyRef.current && !pendingSaveRef.current
       && (editorRef.current?.getLiveSource() ?? sourceRef.current) === savedSourceRef.current);
-  }, [project, remoteQueue]);
+  }, [isBackendUnavailable, project, remoteQueue]);
 
   const refreshRemoteStatus = useCallback(async (refreshRemote = true, announce = true) => {
     const requestId = ++remoteStatusRequestRef.current;
@@ -770,6 +776,7 @@ export function PaperEditor({
     } catch (error) {
       if (requestId !== remoteStatusRequestRef.current || activityGeneration !== remoteQueue.activityGeneration) return;
       if (queueWasBusy || remoteQueue.isBusy || remoteQueue.getSnapshot().sequence !== queueSequence) return;
+      if (isBackendTransportError(error) || isBackendUnavailable()) return;
       const message = `Git status unavailable: ${error instanceof Error ? error.message : "Could not check Git."}`;
       setRemoteSaveState("unavailable");
       setRemoteSaveError(message);
@@ -783,7 +790,7 @@ export function PaperEditor({
           : current);
       }
     }
-  }, [project, remoteQueue]);
+  }, [isBackendUnavailable, project, remoteQueue]);
 
   useEffect(() => {
     // Start with cached Git state. Background checks fetch after first paint.
@@ -1242,6 +1249,8 @@ export function PaperEditor({
 
   const doSave = useCallback(async (text: string, signal?: AbortSignal) => {
     if (!sessionWritableRef.current) return false;
+    if (isBackendUnavailable()) { writeRecoveryDraft(); return false; }
+    const previousFailure = saveFailureRef.current;
     const requestId = ++saveRequestIdRef.current;
     pendingSaveRef.current = { text, requestId };
     const job = saveQueueRef.current.then(async () => {
@@ -1260,6 +1269,13 @@ export function PaperEditor({
       if (signal?.aborted) return false;
       return true;
     } catch (error) {
+      if (isBackendTransportError(error) || isBackendUnavailable()) {
+        saveFailureRef.current = previousFailure;
+        saveBusyRef.current = false;
+        setSaving(false);
+        writeRecoveryDraft();
+        return false;
+      }
       const errorCode = error && typeof error === "object" && "code" in error
         ? String((error as { code?: unknown }).code || "")
         : "";
@@ -1282,7 +1298,7 @@ export function PaperEditor({
       if (failureCode !== "cancelled") setSaveError(failureMessage);
       return false;
     }
-  }, [persistOne]);
+  }, [isBackendUnavailable, persistOne, writeRecoveryDraft]);
 
   const reloadLatest = useCallback(async () => {
     const paper = await getBrowserEditablePaper(project);
@@ -1372,7 +1388,7 @@ export function PaperEditor({
       }
       await applyPulledPaper();
     }
-    catch (error) { setRemoteSaveError(withPullStorageWarning(error instanceof Error ? error.message : "Could not reload the paper. Try again.")); }
+    catch (error) { if (!isBackendTransportError(error) && !isBackendUnavailable()) setRemoteSaveError(withPullStorageWarning(error instanceof Error ? error.message : "Could not reload the paper. Try again.")); }
     finally { setRemoteApplying(false); }
   };
   const quickPull = async () => {
@@ -1387,6 +1403,7 @@ export function PaperEditor({
       pulled = true;
       await applyPulledPaper(result);
     } catch (error) {
+      if (isBackendTransportError(error) || isBackendUnavailable()) return;
       setRemoteSaveState("error");
       const message = error instanceof Error ? error.message : "Could not pull Git updates.";
       quickPullErrorRef.current = pulled ? `Git updates were pulled, but the editor could not reload. ${message}`
@@ -1396,7 +1413,7 @@ export function PaperEditor({
   };
   useGitAutoSync({
     project,
-    isBusy: () => !sessionWritable || checkingRemote || remoteQueue.isBusy || remoteQueue.editingRecently || saving || Boolean(todoRemovalBusyRef.current) || uploading || reviewingRemoteRef.current || applyingRemoteRef.current,
+    isBusy: () => isBackendUnavailable() || !sessionWritable || checkingRemote || remoteQueue.isBusy || remoteQueue.editingRecently || saving || Boolean(todoRemovalBusyRef.current) || uploading || reviewingRemoteRef.current || applyingRemoteRef.current,
     canPull: canAutoPull,
     canPush: canAutoPush,
     push: () => pushRemote("OpenBar: resume paper synchronization"),
@@ -1404,7 +1421,7 @@ export function PaperEditor({
     onApplying: setRemoteApplying,
     onApplied: applyPulledPaper,
     onPullUncertain: markPullUncertain,
-    onError: (message) => { setRemoteSaveState("error"); setRemoteSaveError(withPullStorageWarning(hydrationPendingRef.current ? `Reload the editor to confirm the saved project state. ${message}` : message)); },
+    onError: (message) => { if (isBackendUnavailable()) return; setRemoteSaveState("error"); setRemoteSaveError(withPullStorageWarning(hydrationPendingRef.current ? `Reload the editor to confirm the saved project state. ${message}` : message)); },
   });
 
   const scheduleSave = useCallback((immediate = false) => {
@@ -1451,8 +1468,8 @@ export function PaperEditor({
   }, [applyPreviewChanges, remoteQueue, scheduleSave]);
 
   useEffect(() => {
-    if (sessionWritable && localDirty) scheduleSave();
-  }, [sessionWritable, localDirty, scheduleSave]);
+    if (sessionWritable && connectionState === "connected" && localDirty) scheduleSave();
+  }, [connectionState, sessionWritable, localDirty, scheduleSave]);
 
   useEffect(() => {
     resetPreview(initialSource);
@@ -1461,6 +1478,7 @@ export function PaperEditor({
   useEffect(() => {
     let active = true;
     const refreshCompileStatus = async () => {
+      if (isBackendUnavailable()) return;
       if (compileStartingRef.current || (compileRef.current.state === "running" && !compileRef.current.observationDelayed)) return;
       const observation = captureCompileObservation();
       try {
@@ -1476,7 +1494,7 @@ export function PaperEditor({
       active = false;
       window.clearInterval(timer);
     };
-  }, [applyObservedCompileStatus, captureCompileObservation, project]);
+  }, [applyObservedCompileStatus, captureCompileObservation, isBackendUnavailable, project]);
 
   useEffect(() => {
     return () => {
@@ -1677,13 +1695,14 @@ export function PaperEditor({
     } catch (error) {
       const cancelled = signal?.aborted || (error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "cancelled");
       if (cancelled) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
+      if (isBackendTransportError(error) || isBackendUnavailable()) return null;
       const status: PaperCompileStatus = { state: "error", message: error instanceof Error ? error.message : "Could not compile PDF." };
       return applyObservedCompileStatus(observation || captureCompileObservation(requestId), status) || status;
     } finally {
       compileStartingRef.current = false;
       setCompileStarting(false);
     }
-  }, [applyObservedCompileStatus, captureCompileObservation, doSave, project, showCompileFinished]);
+  }, [applyObservedCompileStatus, captureCompileObservation, doSave, isBackendUnavailable, project, showCompileFinished]);
 
   useEffect(() => {
     if (compile.state !== "running" || compile.observationDelayed) return;
@@ -1693,6 +1712,7 @@ export function PaperEditor({
     const started = Date.now();
     const tick = async () => {
       if (cancelled) return;
+      if (isBackendUnavailable()) { timer = window.setTimeout(tick, 4_000); return; }
       if (compileStartingRef.current) {
         timer = window.setTimeout(tick, delay);
         return;
@@ -1733,10 +1753,10 @@ export function PaperEditor({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [applyObservedCompileStatus, captureCompileObservation, compile.observationDelayed, compile.state, project, showCompileFinished]);
+  }, [applyObservedCompileStatus, captureCompileObservation, compile.observationDelayed, compile.state, isBackendUnavailable, project, showCompileFinished]);
 
   useEffect(() => {
-    if (compileStarting || compile.state === "running" || saving || localDirty || source !== savedSource
+    if (connectionState === "reconnecting" || compileStarting || compile.state === "running" || saving || localDirty || source !== savedSource
       || saveError || saveConflict || recoveryDraft || hydrationPending || reconciliationPending || uploading
       || applyingRemote || reviewingRemote) return;
     if (compile.state === "success" && !compile.stale && compile.pdfAvailable !== false) return;
@@ -1748,7 +1768,7 @@ export function PaperEditor({
       : AUTO_COMPILE_IDLE_MS;
     let timer: number;
     const attempt = () => {
-      if (compileStartingRef.current || compileRef.current.state === "running"
+      if (isBackendUnavailable() || compileStartingRef.current || compileRef.current.state === "running"
         || saveBusyRef.current || pendingSaveRef.current || todoRemovalBusyRef.current
         || saveConflictRef.current || recoveryDraftRef.current || hydrationPendingRef.current
         || applyingRemoteRef.current || reviewingRemoteRef.current
@@ -1760,7 +1780,7 @@ export function PaperEditor({
     };
     timer = window.setTimeout(attempt, delay);
     return () => window.clearTimeout(timer);
-  }, [applyingRemote, compile.state, compile.stale, compile.pdfAvailable, compileStarting, hydrationPending, localDirty,
+  }, [applyingRemote, compile.state, compile.stale, compile.pdfAvailable, compileStarting, connectionState, hydrationPending, isBackendUnavailable, localDirty,
     reconciliationPending, recoveryDraft, requestCompile, reviewingRemote, saveConflict, saveError, savedSource, saving, source, uploading]);
 
   const surround = useCallback((open: string, close: string, placeholder = "") => {
@@ -2552,6 +2572,28 @@ export function PaperEditor({
     "--p-glass-surface": `rgb(var(--surface) / ${0.92 - glass * 0.0037})`,
   } as CSSProperties;
 
+  const compileIssue = compile.state === "error" || compile.state === "unavailable"
+    ? compile.diagnostics?.[0] || compile.message || "PDF compilation is unavailable." : null;
+  const editorIssues: EditorIssue[] = [
+    ...(saveConflict || saveError || todoRemovalError ? [{ id: "save", severity: saveConflict ? "conflict" as const : "error" as const, title: saveConflict ? "Saved file conflict" : "Saving needs attention", message: todoRemovalError?.message || saveError || "The saved file changed." }] : []),
+    ...(remoteSaveError || hydrationPending || reviewingRemote || remoteOutOfSync ? [{ id: "git", severity: remoteOutOfSync || hydrationPending || remoteSaveState === "blocked" ? "conflict" as const : "error" as const, title: "Git synchronization", message: remoteSaveError || "Git review is in progress." }] : []),
+    ...(compileIssue ? [{ id: "compile", severity: "compile" as const, title: "PDF compilation", message: compileIssue }] : []),
+    ...(accessError || (!sessionWritable && localDirty) ? [{ id: "access", severity: "error" as const, title: "Editing access", message: accessMessage }] : []),
+    ...(uploadError ? [{ id: "upload", severity: "error" as const, title: "Figure upload", message: uploadError }] : []),
+    ...(connectionState === "reconnecting" ? [{ id: "connection", severity: "connection" as const, title: "Connection to OpenBar", message: "Reconnecting…" }] : []),
+  ];
+  const primaryIssue = selectEditorIssue(editorIssues);
+  const relatedIssues = editorIssues.filter(issue => issue.id !== primaryIssue?.id);
+  const showCompileStatus = !primaryIssue || primaryIssue.id === "compile";
+  const getPaperDiagnostics = () => ({
+    kind: "paper", project, issues: editorIssues, bundleHash: bundleHashRef.current,
+    revision: revisionRef.current, sourceLength: liveSource().length, savedSourceLength: savedSourceRef.current.length,
+    manuscript: { localSource: liveSource(), lastAcknowledgedSource: savedSourceRef.current, files: sourceSegmentsRef.current, sectionHashes: Object.fromEntries(sectionHashesRef.current) },
+    dirty: liveSource() !== savedSourceRef.current, saving, saveConflict,
+    saveFailure: saveFailureRef.current, remoteOutOfSync, remoteSaveState, remoteSaveError,
+    compile: compileRef.current,
+  });
+
   return (
     <div className={cn("relative flex h-full w-full flex-col gap-2", paperStyles.workspace, widthClass)} data-toolbar-position={toolbarPosition}>
       <div className={paperStyles.notices}>
@@ -2679,24 +2721,26 @@ export function PaperEditor({
                 </div>
 
                 <PaperStatusControl
+                  primaryIssue={primaryIssue}
                   saved={isSaved} saving={saving || uploading}
                   conflict={saveConflict}
                   remote={remoteSaveState === "saved" ? "synced" : remoteSaveState === "saving" ? "syncing" : remoteSaveState === "local" ? "pending" : remoteSaveState === "unverified" ? "local" : remoteSaveState === "error" ? "failed" : remoteSaveState}
                   gitDescription={remoteSaveState === "saved" ? "Pushed to Git" : remoteSaveState === "unconfigured" ? "Git is not connected" : remoteSaveState === "saving" ? "Syncing to Git" : remoteSaveState === "checking" ? "Checking Git status" : remoteSaveState === "unverified" ? "Check Git to confirm remote synchronization" : "Git sync pending"}
-                  gitIssue={(hydrationPending || reviewingRemote || (!saveError && !todoRemovalError && remoteSaveError)) ? remoteSaveError || "Git review is in progress" : null}
-                  localIssue={saveConflict ? "Saved file conflict" : todoRemovalError?.message || saveError || null}
-                  pdfCurrent={pdfCurrent} compiling={compileStarting || compile.state === "running"}
-                  compileError={compile.state === "error" ? compile.diagnostics?.[0] || compile.message || "Compile failed" : null}
-                  compileDelayed={compile.state === "running" && Boolean(compile.observationDelayed)}
+                  gitIssue={primaryIssue?.id === "git" ? primaryIssue.message : null}
+                  localIssue={primaryIssue?.id === "save" ? primaryIssue.message : null}
+                  pdfCurrent={pdfCurrent} compiling={showCompileStatus && (compileStarting || compile.state === "running")}
+                  compileError={primaryIssue?.id === "compile" ? compileIssue : null}
+                  compileDelayed={showCompileStatus && compile.state === "running" && Boolean(compile.observationDelayed)}
                   onResumeCompile={() => setCompile((current) => resumeCompilePolling(current))}
                   onCompile={() => { void requestCompile(); }}
                   onGitIssue={() => setGitDetailsOpenRequest((current) => current + 1)}
                   onLocalIssue={() => setSaveDetailsOpenRequest((current) => current + 1)}
+                  onConnectionIssue={() => setConnectionDetailsOpenRequest(value => value + 1)}
                 />
-                <span className="sr-only" role="status">{compileStarting || compile.state === "running" ? "Compiling PDF" : compileFinished ? "PDF compiled" : ""}</span>
+                <span className="sr-only" role="status">{showCompileStatus ? compileStarting || compile.state === "running" ? "Compiling PDF" : compileFinished ? "PDF compiled" : "" : ""}</span>
                 <div className={paperStyles.metricsGroup}>
                   <div className={paperStyles.pageCountSlot}>
-                    <PaperMetrics wordCount={wordCount} pageBudget={compile.pageBudget} pdfSrc={pageCountPdfSrc} compiling={compileStarting || compile.state === "running"} stale={compile.stale || !isSaved || (pdfVisible && !pdfCurrent)} compileError={compile.state === "error" ? compile.message : undefined} onMeasure={() => { void requestCompile(); }} />
+                    <PaperMetrics wordCount={wordCount} pageBudget={compile.pageBudget} pdfSrc={pageCountPdfSrc} compiling={showCompileStatus && (compileStarting || compile.state === "running")} stale={compile.stale || !isSaved || (pdfVisible && !pdfCurrent)} compileError={primaryIssue?.id === "compile" ? compile.message : undefined} onMeasure={connectionState === "connected" ? () => { void requestCompile(); } : undefined} />
                   </div>
                 </div>
 
@@ -2917,6 +2961,7 @@ export function PaperEditor({
                 <PdfPreview
                   project={project}
                   compile={{ ...compile, stale: compile.stale || !isSaved }}
+                  suppressStatus={!showCompileStatus}
                   sourceTarget={layout === "pdf" ? pdfSourceTarget : null}
                   scrollSync={layout === "pdf" ? pdfScrollSyncRef.current : undefined}
                   onScrollProgress={handlePdfScroll}
@@ -2938,12 +2983,12 @@ export function PaperEditor({
 
           <Panel id="source" minSize={`${SPLIT_MIN}%`} maxSize={`${SPLIT_MAX}%`} className="relative flex min-h-0 min-w-0 flex-col overflow-hidden">
             <div className={cn("relative min-h-0 flex-1", paperStyles.sourcePane)}>
-            {!sessionWritable && localDirty && <EditorNotice project={project} title="Editing access changed" label="Editing paused, draft preserved" message="Your unsaved manuscript remains in this tab. Copy it before refreshing." paused>
+            {!sessionWritable && localDirty && <EditorNotice suppressed={primaryIssue?.id !== "access"} relatedIssues={relatedIssues} diagnosticContext={getPaperDiagnostics} project={project} title="Editing access changed" label="Editing paused, draft preserved" message="Your unsaved manuscript remains in this tab. Copy it before refreshing." paused>
               <button type="button" className="p-button p-button-default btn-outline" onClick={() => { void copyText(liveSource()).then(() => setConflictCopyStatus("copied"), () => setConflictCopyStatus("failed")); }}>Copy local edits</button>
               <span role="status">{conflictCopyStatus === "copied" ? "Local manuscript copied." : conflictCopyStatus === "failed" ? "Select and copy the manuscript below." : ""}</span>
               {conflictCopyStatus === "failed" && <textarea aria-label="Local manuscript for copying" className="w-full font-mono" readOnly value={liveSource()} rows={5} onFocus={event => event.currentTarget.select()} />}
             </EditorNotice>}
-            {(saveConflict || saveError || todoRemovalError) && <EditorNotice project={project} title={saveConflict ? "Saved file conflict" : todoRemovalError ? todoRemovalError.retry === "save" ? "Saving TODO removal needs attention" : "TODO removal needs attention" : "Saving needs attention"} label={saveConflict ? "Editing paused, saved file changed" : todoRemovalError?.retry === "remove" ? "TODO removal needs attention" : "Save needs attention"} message={saveConflict ? "Your edits remain in the editor. Copy them for safekeeping. Retry save checks the saved file again. Reload replaces the editor text with the saved file." : todoRemovalError?.message || saveError || "Saving needs attention."} paused={saveConflict} openRequest={saveDetailsOpenRequest}
+            {(saveConflict || saveError || todoRemovalError) && <EditorNotice suppressed={primaryIssue?.id !== "save"} relatedIssues={relatedIssues} diagnosticContext={getPaperDiagnostics} project={project} title={saveConflict ? "Saved file conflict" : todoRemovalError ? todoRemovalError.retry === "save" ? "Saving TODO removal needs attention" : "TODO removal needs attention" : "Saving needs attention"} label={saveConflict ? "Editing paused, saved file changed" : todoRemovalError?.retry === "remove" ? "TODO removal needs attention" : "Save needs attention"} message={saveConflict ? "Your edits remain in the editor. Copy them for safekeeping. Retry save checks the saved file again. Reload replaces the editor text with the saved file." : todoRemovalError?.message || saveError || "Saving needs attention."} paused={saveConflict} openRequest={saveDetailsOpenRequest}
               report={JSON.stringify({
                 operation: todoRemovalError ? "remove_paper_todo" : "save_paper_source",
                 bundleHash,
@@ -2973,6 +3018,9 @@ export function PaperEditor({
                 else void doSave(liveSource()).then(saved => { if (saved) setTodoRemovalError(null); });
               }}>{saveConflict ? "Reload saved file" : todoRemovalError?.retry === "remove" ? "Retry removal" : "Retry save"}</button>
               {todoRemovalError && <button type="button" className="p-button p-button-borderless btn-ghost" onClick={() => setTodoRemovalError(null)}>Dismiss</button>}
+            </EditorNotice>}
+            {uploadError && <EditorNotice project={project} title="Figure upload" label="Figure upload needs attention" message={uploadError} suppressed={primaryIssue?.id !== "upload"} relatedIssues={relatedIssues} diagnosticContext={getPaperDiagnostics}>
+              <button type="button" onClick={() => setUploadError(null)}>Dismiss</button>
             </EditorNotice>}
             <div
               className={cn("ob-editor-container overflow-hidden", paperStyles.sourceStack)}
@@ -3021,7 +3069,8 @@ export function PaperEditor({
             <div ref={formatPanelRef} className={cn("p-glass-sm", paperStyles.formatPanel)}>
             {restoreEditingAttention && <span aria-hidden="true" className={paperStyles.editingGlassTint} onAnimationEnd={() => setRestoreEditingAttention(false)} />}
             <div role="toolbar" aria-label="Paper editing" className={cn("ob-format-bar", paperStyles.editingToolbar, !sessionWritable && paperStyles.editingToolbarCompact)}>
-              {!sessionWritable && <ResumeEditControl embedded className={paperStyles.editingAccess} />}
+              <BackendStatusNotice project={project} issues={editorIssues} diagnosticContext={getPaperDiagnostics} embedded openRequest={connectionDetailsOpenRequest} />
+              {!sessionWritable && <ResumeEditControl embedded className={paperStyles.editingAccess} suppressError={primaryIssue?.id !== "access"} />}
               <Tool title="Open bibliography files" onClick={() => { void openBibliography(); }}><BookOpen size={15} /></Tool>
               <fieldset key={sessionWritable ? "editing" : "viewing"} className={paperStyles.editingTools} disabled={!sessionWritable} inert={!sessionWritable} aria-label="Formatting tools">
               {layout === "pdf" && <Tool title="Show source position in PDF" onClick={() => { void jumpToPdf(); }}><FileText size={15} /></Tool>}
@@ -3143,7 +3192,7 @@ export function PaperEditor({
         if (result.ok) restoreCitationCursor(selection, cite ? result.value.addedKeys : undefined);
         return result;
       }} />}
-      {(hydrationPending || reviewingRemote || (!saveError && !todoRemovalError && remoteSaveError)) && <OverleafSyncNotice project={project} message={remoteSaveError || "Git review is in progress."} editingPaused={remoteOutOfSync || hydrationPending} floating attention={gitAttention} openRequest={gitDetailsOpenRequest}
+      {(hydrationPending || reviewingRemote || remoteSaveError || remoteOutOfSync) && <OverleafSyncNotice suppressed={primaryIssue?.id !== "git"} relatedIssues={relatedIssues} project={project} message={remoteSaveError || "Git review is in progress."} editingPaused={remoteOutOfSync || hydrationPending} floating attention={gitAttention} openRequest={gitDetailsOpenRequest}
         activeReview={reviewingRemote} quickPullAvailable={quickPullAvailable} onQuickPull={() => void quickPull()} pulling={applyingRemote}
         hydrationPending={hydrationPending} onReload={() => void retryHydration()}
         reconciliationPending={reconciliationPending} onPullUncertain={markForcePullUncertain}
@@ -3155,7 +3204,7 @@ export function PaperEditor({
           await saveQueueRef.current;
           return doSave(liveSource());
         }}
-        onApplied={async (pending) => { if (pending) forcePullRef.current = pending; forceReconciliationRef.current = null; setReconciliationPending(false); try { await applyPulledPaper(); } catch (error) { setRemoteSaveError(withPullStorageWarning(error instanceof Error ? error.message : "Could not reload the paper. Try again.")); } }}
+        onApplied={async (pending) => { if (pending) forcePullRef.current = pending; forceReconciliationRef.current = null; setReconciliationPending(false); try { await applyPulledPaper(); } catch (error) { if (!isBackendTransportError(error) && !isBackendUnavailable()) setRemoteSaveError(withPullStorageWarning(error instanceof Error ? error.message : "Could not reload the paper. Try again.")); } }}
         onClosed={() => { reviewingRemoteRef.current = false; remoteQueue.resume(); setReviewingRemote(false); void refreshRemoteStatus(false); }}
         onCheck={async () => { await refreshRemoteStatus(); }}
         onPush={() => { void (async () => { if (await doSave(liveSource())) await pushRemote("OpenBar: save paper"); })(); }}
@@ -3293,6 +3342,7 @@ function PdfPreview({
   onScrollProgress,
   onScrollStart,
   onJumpToSource,
+  suppressStatus = false,
 }: {
   project: string;
   compile: PaperCompileViewState;
@@ -3301,6 +3351,7 @@ function PdfPreview({
   onScrollProgress?: (progress: number) => void;
   onScrollStart?: () => void;
   onJumpToSource?: (file: string, line: number) => void;
+  suppressStatus?: boolean;
 }) {
   const artifactId = compile.lastSuccessfulArtifact?.artifactId || compile.artifactId;
   const pdfAvailable = compile.lastSuccessfulArtifact ? compile.pdfAvailable !== false : compile.pdfAvailable;
@@ -3309,6 +3360,7 @@ function PdfPreview({
     : null;
   const stale = Boolean(compile.stale || (pdfAvailable && compile.state !== "success"));
 
+  if (suppressStatus && !pdfSrc) return <div className="h-full" />;
   if (compile.state === "unavailable" && !pdfSrc) {
     return <div className="p-12 text-center text-sm text-muted">LaTeX compilation is not available on this server.</div>;
   }
@@ -3316,8 +3368,8 @@ function PdfPreview({
     const fileHits = parseTexFileLines(compile.diagnostics || []);
     const first = fileHits[0];
     return (
-      <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-6 text-xs text-danger">
-        <div>
+      <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-6 text-xs text-danger" style={suppressStatus ? { padding: 0, gap: 0 } : undefined}>
+        <div hidden={suppressStatus}>
           <p className="font-semibold mb-2">Compile failed</p>
           {first && (
             <button
@@ -3354,6 +3406,7 @@ function PdfPreview({
               src={pdfSrc}
               artifactId={artifactId}
               stale
+              suppressStatus={suppressStatus}
               observationMessage={compile.observationDelayed ? compile.message : undefined}
               sourceTarget={sourceTarget}
               scrollSync={scrollSync}
@@ -3366,7 +3419,7 @@ function PdfPreview({
       </div>
     );
   }
-  if (compile.state === "running" && !pdfSrc) {
+  if (!suppressStatus && compile.state === "running" && !pdfSrc) {
     return (
       <div className="p-8 flex flex-col items-center justify-center gap-3 text-sm text-muted">
         {compile.observationDelayed ? (
@@ -3408,6 +3461,7 @@ function PdfPreview({
       src={pdfSrc}
       artifactId={artifactId}
       stale={stale}
+      suppressStatus={suppressStatus}
       observationMessage={compile.observationDelayed ? compile.message : undefined}
       sourceTarget={sourceTarget}
       scrollSync={scrollSync}

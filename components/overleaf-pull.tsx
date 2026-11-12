@@ -31,7 +31,8 @@ export function OverleafPull({ project, beforeReview, onApplied, onPullUncertain
   const [notice, setNotice] = useState("");
   const [logLines, setLogLines] = useState<{ id: number; text: string }[]>([]);
   const nextLogId = useRef(0);
-  const { setPendingWork } = useProjectWriteSession();
+  const { setPendingWork, connectionState } = useProjectWriteSession();
+  const reconnecting = connectionState === "reconnecting";
 
   useEffect(() => {
     setPendingWork("git-review", open || busy);
@@ -102,16 +103,17 @@ export function OverleafPull({ project, beforeReview, onApplied, onPullUncertain
   }
 
   return <>
-    <button type="button" className={styles.trigger} disabled={disabled || busy} onClick={() => void prepare()}><Download size={14} />Pull from Git</button>
-    <OverleafForce project={project} beforeReview={beforeReview} onApplied={onApplied} onPullUncertain={onPullUncertain} onClosed={onClosed} disabled={disabled || busy} />
+    <button type="button" className={styles.trigger} disabled={disabled || busy || reconnecting} onClick={() => void prepare()}><Download size={14} />Pull from Git</button>
+    <OverleafForce project={project} beforeReview={beforeReview} onApplied={onApplied} onPullUncertain={onPullUncertain} onClosed={onClosed} disabled={disabled || busy || reconnecting} />
     {notice && <span className={styles.notice} role="status">{notice}</span>}
     <Modal open={open} onClose={() => void close()} title="Review Git updates" busy={busy} className={styles.dialog}>
       <div className={styles.header}><h2 id="overleaf-pull-title">Review Git updates</h2><button type="button" aria-label="Close Git review" disabled={busy} onClick={() => void close()}><X size={18} /></button></div>
       <div className={styles.body}>
         <p>{review ? "Local changes are checkpointed in Git. Review the combined version, then apply it to this project." : "Prepare the incoming Git updates for review."}</p>
-        {busy && <p role="status"><LoaderCircle size={15} className={styles.spinner} /> {phase === "saving" ? "Saving current editor changes…" : phase === "preparing" ? "Preparing Git review, including fetching incoming updates…" : phase === "applying" ? "Applying reviewed updates and refreshing the editor…" : "Closing Git review…"}</p>}
+        {reconnecting && <p role="status">Reconnecting…</p>}
+        {!reconnecting && busy && <p role="status"><LoaderCircle size={15} className={styles.spinner} /> {phase === "saving" ? "Saving current editor changes…" : phase === "preparing" ? "Preparing Git review, including fetching incoming updates…" : phase === "applying" ? "Applying reviewed updates and refreshing the editor…" : "Closing Git review…"}</p>}
         {(busy || error) && logLines.length > 0 && <ol className={styles.progressLog} role="log" aria-label="Git review progress" aria-live="polite" aria-relevant="additions">{logLines.map(line => <li key={line.id}>{line.text}</li>)}</ol>}
-        {error && <>
+        {!reconnecting && error && <>
           <p className={`${styles.error} ${styles.errorDetails}`} role="alert">{error}</p>
           <div className={styles.errorActions}>
             <button type="button" onClick={() => void copyDiagnostics()}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? "Copied details" : "Copy error details"}</button>
@@ -145,8 +147,8 @@ export function OverleafPull({ project, beforeReview, onApplied, onPullUncertain
       </div>
       <div className={styles.footer}>
         <button type="button" disabled={busy} onClick={() => void close()}>{review ? "Cancel review" : "Close"}</button>
-        {review ? <button type="button" disabled={busy || review.conflicts.some((conflict) => !choices[conflict.path] || (choices[conflict.path].choice === "merged" && /^(<<<<<<< |=======\s*$|>>>>>>> )/m.test(choices[conflict.path].text || "")))} onClick={() => void apply()}>Apply updates</button>
-          : error && <button type="button" disabled={busy || disabled} onClick={() => void prepare()}>Retry review</button>}
+        {review ? <button type="button" disabled={reconnecting || busy || review.conflicts.some((conflict) => !choices[conflict.path] || (choices[conflict.path].choice === "merged" && /^(<<<<<<< |=======\s*$|>>>>>>> )/m.test(choices[conflict.path].text || "")))} onClick={() => void apply()}>Apply updates</button>
+          : error && <button type="button" disabled={reconnecting || busy || disabled} onClick={() => void prepare()}>Retry review</button>}
       </div>
     </Modal>
   </>;

@@ -2,6 +2,9 @@
 
 import { useProjectWriteSession } from "@/components/project-session/project-write-session";
 import { ResumeEditControl } from "@/components/project-session/resume-edit-control";
+import { BackendStatusNotice } from "@/components/backend-status-notice";
+import { isBackendTransportError } from "@/lib/backend-connection";
+import { selectEditorIssue, type EditorIssue } from "@/lib/editor-issue-priority";
 import { registerProjectFileEditor } from "@/features/project-files-bridge";
 
 import "katex/dist/katex.min.css";
@@ -187,7 +190,8 @@ export function MindmapEditor({
   paperState?: ProjectState | null;
 }) {
   const router = useRouter();
-  const { writable: sessionWritable, setPendingWork } = useProjectWriteSession();
+  const { writable: sessionWritable, setPendingWork, connectionState, isBackendUnavailable, accessMessage, accessError } = useProjectWriteSession();
+  const [connectionDetailsOpenRequest, setConnectionDetailsOpenRequest] = useState(0);
   const sessionWritableRef = useRef(sessionWritable);
   sessionWritableRef.current = sessionWritable;
   const remoteQueue = useMemo(
@@ -385,6 +389,7 @@ export function MindmapEditor({
       initial = false;
       if (event.sequence === 0 || initialSettled) return;
       if (hydrationPendingRef.current) return;
+      if (isBackendTransportError(event.error) || isBackendUnavailable()) return;
       setCheckingRemote(false);
       if (event.phase === "pending") {
         setRemoteSaveState("pending");
@@ -437,7 +442,7 @@ export function MindmapEditor({
       setRemoteSaveError(remoteSyncRef.current.status === "unconfigured" ? null : message);
     };
     return remoteQueue.subscribe(applyQueueEvent);
-  }, [remoteQueue]);
+  }, [isBackendUnavailable, remoteQueue]);
 
   const runPaperMutation = useCallback(<T,>(write: () => Promise<T>): Promise<T> => {
     // Mark activity before queueing so a running Git operation cannot publish
@@ -467,6 +472,7 @@ export function MindmapEditor({
       try {
         return await pushBrowserProject(project, message);
       } catch (error) {
+        if (isBackendTransportError(error) || isBackendUnavailable()) throw error;
         return {
           ok: false as const,
           code: "remote_save_failed",
@@ -475,7 +481,7 @@ export function MindmapEditor({
       }
     }, deferred, () => !inlineEditorSessionRef.current && !localSaveQueue.pending
       && mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current);
-  }, [project, remoteQueue, localSaveQueue]);
+  }, [isBackendUnavailable, project, remoteQueue, localSaveQueue]);
 
   const pushRemote = useCallback((message: string) => enqueueRemote(message), [enqueueRemote]);
   const scheduleRemote = useCallback((message: string) => {
@@ -535,6 +541,7 @@ export function MindmapEditor({
     } catch (error) {
       if (requestId !== remoteStatusRequestRef.current || activityGeneration !== remoteQueue.activityGeneration) return;
       if (queueWasBusy || remoteQueue.isBusy || remoteQueue.getSnapshot().sequence !== queueSequence) return;
+      if (isBackendTransportError(error) || isBackendUnavailable()) return;
       const message = `Git status unavailable: ${error instanceof Error ? error.message : "Could not check Git."}`;
       setRemoteSaveState("unavailable");
       setRemoteSaveError(message);
@@ -548,7 +555,7 @@ export function MindmapEditor({
           : current);
       }
     }
-  }, [project, remoteQueue]);
+  }, [isBackendUnavailable, project, remoteQueue]);
 
   useEffect(() => {
     void refreshRemoteStatus(sessionWritable, false);
@@ -599,6 +606,7 @@ export function MindmapEditor({
     const snapshot = cloneMindmap(sessionRef.current.mindmap);
     const signature = mapSignature(snapshot);
     if (signature === savedSignatureRef.current) return snapshot;
+    const previousSaveError = saveErrorRef.current;
     saveErrorRef.current = null;
     setSaveError(null);
     setLocalSaveState("saving");
@@ -622,6 +630,13 @@ export function MindmapEditor({
       void enqueueRemote("OpenBar: save mindmap", nextRemoteCheckpointRef.current, true);
       return saved;
     } catch (error) {
+      if (isBackendTransportError(error) || isBackendUnavailable()) {
+        saveErrorRef.current = previousSaveError;
+        setSaveError(previousSaveError);
+        preserveBrowserDraft();
+        setLocalSaveState(previousSaveError && /conflict|changed.*reload|stale/i.test(previousSaveError) ? "conflict" : "dirty");
+        throw error;
+      }
       const message = error instanceof Error ? error.message : "Could not save the mindmap.";
       saveErrorRef.current = message;
       setSaveError(message);
@@ -629,7 +644,7 @@ export function MindmapEditor({
       setLocalSaveState(/conflict|changed.*reload|stale/i.test(message) ? "conflict" : "dirty");
       throw error;
     }
-  }, [clearBrowserDraft, enqueueRemote, preserveBrowserDraft, project]);
+  }, [clearBrowserDraft, enqueueRemote, isBackendUnavailable, preserveBrowserDraft, project]);
 
   const persistWebMcpMutation = useCallback(async (
     action: MindmapTreeAction | ((current: MindmapSession) => MindmapTreeAction | null),
@@ -1625,10 +1640,10 @@ export function MindmapEditor({
 
   // Persist edits shortly after the user pauses.
   useEffect(() => {
-    if (!sessionWritable || !dirty || isPending || saveError || recoveryDraft) return;
+    if (connectionState === "reconnecting" || !sessionWritable || !dirty || isPending || saveError || recoveryDraft) return;
     const timer = window.setTimeout(() => save(), AUTOSAVE_DELAY);
     return () => window.clearTimeout(timer);
-  }, [dirty, isPending, mindmap, recoveryDraft, save, saveError, sessionWritable]);
+  }, [connectionState, dirty, isPending, mindmap, recoveryDraft, save, saveError, sessionWritable]);
 
   useEffect(() => {
     const hasPendingChanges = () => pendingImageUploads.current || inlineEditorSessionRef.current || localSaveQueue.pending
@@ -1773,7 +1788,7 @@ export function MindmapEditor({
       }
       await applyPulledMindmap();
     }
-    catch (error) { setRemoteSaveError(withPullStorageWarning(error instanceof Error ? error.message : "Could not reload the map. Try again.")); }
+    catch (error) { if (!isBackendTransportError(error) && !isBackendUnavailable()) setRemoteSaveError(withPullStorageWarning(error instanceof Error ? error.message : "Could not reload the map. Try again.")); }
     finally { setRemoteApplying(false); }
   };
   const quickPull = async () => {
@@ -1788,6 +1803,7 @@ export function MindmapEditor({
       pulled = true;
       await applyPulledMindmap(result);
     } catch (error) {
+      if (isBackendTransportError(error) || isBackendUnavailable()) return;
       setRemoteSaveState("failed");
       const message = error instanceof Error ? error.message : "Could not pull Git updates.";
       quickPullErrorRef.current = pulled ? `Git updates were pulled, but the editor could not reload. ${message}`
@@ -1797,7 +1813,7 @@ export function MindmapEditor({
   };
   useGitAutoSync({
     project,
-    isBusy: () => !sessionWritable || checkingRemote || remoteQueue.isBusy || remoteQueue.editingRecently || Boolean(inlineEditorSessionRef.current) || isPending || reviewingRemoteRef.current || applyingRemoteRef.current,
+    isBusy: () => isBackendUnavailable() || !sessionWritable || checkingRemote || remoteQueue.isBusy || remoteQueue.editingRecently || Boolean(inlineEditorSessionRef.current) || isPending || reviewingRemoteRef.current || applyingRemoteRef.current,
     canPull: canAutoPull,
     canPush: canAutoPush,
     push: () => pushRemote("OpenBar: resume saved project sync"),
@@ -1805,7 +1821,7 @@ export function MindmapEditor({
     onApplying: setRemoteApplying,
     onApplied: applyPulledMindmap,
     onPullUncertain: markPullUncertain,
-    onError: (message) => { setRemoteSaveState("failed"); setRemoteSaveError(withPullStorageWarning(hydrationPendingRef.current ? `Reload the editor to confirm the saved project state. ${message}` : message)); },
+    onError: (message) => { if (isBackendUnavailable()) return; setRemoteSaveState("failed"); setRemoteSaveError(withPullStorageWarning(hydrationPendingRef.current ? `Reload the editor to confirm the saved project state. ${message}` : message)); },
   });
 
   const reloadSavedMap = useCallback(() => {
@@ -2176,7 +2192,7 @@ export function MindmapEditor({
             scheduleRemote("OpenBar: edit paper TODO");
             return true;
           } catch (error) {
-            setSaveError(error instanceof Error ? error.message : "Could not save the paper TODO.");
+            if (!isBackendTransportError(error) && !isBackendUnavailable()) setSaveError(error instanceof Error ? error.message : "Could not save the paper TODO.");
             return false;
           }
         }}
@@ -2246,6 +2262,16 @@ export function MindmapEditor({
     setMoveQuery("");
   };
 
+  const editorIssues: EditorIssue[] = [
+    ...(saveError ? [{ id: "save", severity: saveConflict ? "conflict" as const : "error" as const, title: saveConflict ? "Saved file conflict" : "Saving needs attention", message: saveError }] : []),
+    ...(remoteSaveError || remoteOutOfSync || hydrationPending || reviewingRemote ? [{ id: "git", severity: remoteOutOfSync || hydrationPending || remoteSaveState === "blocked" ? "conflict" as const : "error" as const, title: "Git synchronization", message: remoteSaveError || "Git needs review." }] : []),
+    ...(accessError || (!sessionWritable && (dirty || editingId)) ? [{ id: "access", severity: "error" as const, title: "Editing access", message: accessMessage }] : []),
+    ...(assetError ? [{ id: "asset", severity: "error" as const, title: "Image upload", message: assetError }] : []),
+    ...(connectionState === "reconnecting" ? [{ id: "connection", severity: "connection" as const, title: "Connection to OpenBar", message: "Reconnecting…" }] : []),
+  ];
+  const primaryIssue = selectEditorIssue(editorIssues);
+  const relatedIssues = editorIssues.filter(issue => issue.id !== primaryIssue?.id);
+
   const getMindmapDiagnostics = () => {
     const current = sessionRef.current;
     const draft = recoveryDraftRef.current || captureRecoveryDraft();
@@ -2262,7 +2288,7 @@ export function MindmapEditor({
     }).map(node => node.id);
     const ids = [...new Set([active?.nodeId, current.selectedId, ...changedIds].filter((id): id is string => Boolean(id)))].slice(0, 20);
     return {
-      kind: "mindmap", project, mapId: current.mindmap.id || "draft",
+      kind: "mindmap", project, mapId: current.mindmap.id || "draft", issues: editorIssues,
       selectedCardId: current.selectedId, editedCardId: editBaselineRef.current?.nodeId || null,
       revision: current.revision, mapRevision: current.mindmap.revision,
       expectedDiskHash: persistedDiskHashRef.current,
@@ -2368,7 +2394,7 @@ export function MindmapEditor({
           >
             <SaveSyncStatus iconOnly className={cn("p-button p-button-glass ob-glass-button", paperStyles.unifiedStatus)} saved={!dirty && localSaveState === "saved"} saving={localSaveState === "saving"}
               conflict={saveConflict || localSaveState === "conflict"} remote={remoteSaveState}
-              error={saveError || remoteSaveError} onRetry={sessionWritable ? () => { void pushRemote("OpenBar: retry saved project sync"); } : undefined} />
+              error={primaryIssue?.message} onConnectionIssue={() => setConnectionDetailsOpenRequest(value => value + 1)} onRetry={sessionWritable ? () => { void pushRemote("OpenBar: retry saved project sync"); } : undefined} />
           </div>
         </div>
         <div className={cn("p-glass-sm", paperStyles.toolbar, styles.projectBar)} role="group" aria-label="Map settings">
@@ -2439,7 +2465,10 @@ export function MindmapEditor({
           </div>
         </div>
       </div>
-      <div className={styles.resumeDock}><ResumeEditControl /></div>
+      <div className={styles.resumeDock}>
+        <BackendStatusNotice project={project} issues={editorIssues} diagnosticContext={getMindmapDiagnostics} openRequest={connectionDetailsOpenRequest} />
+        <ResumeEditControl suppressError={primaryIssue?.id !== "access"} />
+      </div>
       <div className="mindmap-workspace">
 
         <div
@@ -2482,7 +2511,7 @@ export function MindmapEditor({
           )}
         </div>
 
-        {assetError && <p className="mindmap-save-error" role="alert">{assetError} <button type="button" onClick={() => setAssetError(null)}>Dismiss</button></p>}
+        {assetError && primaryIssue?.id === "asset" && <p className="mindmap-save-error" role="alert">{assetError} <button type="button" onClick={() => setAssetError(null)}>Dismiss</button></p>}
 
 
         <footer className={styles.workspaceFooter}>
@@ -2505,10 +2534,10 @@ export function MindmapEditor({
           <button type="button" className="p-button p-button-borderless btn-ghost" onClick={keepSavedMap}>Keep saved map</button>
         </div>
       </div>}
-      {!sessionWritable && (dirty || editingId) && <EditorNotice project={project} title="Editing access changed" label="Editing paused, draft preserved" message="Your open card text remains available to select and copy. Download the map draft before refreshing." diagnosticContext={getMindmapDiagnostics} paused>
+      {!sessionWritable && (dirty || editingId) && <EditorNotice suppressed={primaryIssue?.id !== "access"} relatedIssues={relatedIssues} project={project} title="Editing access changed" label="Editing paused, draft preserved" message="Your open card text remains available to select and copy. Download the map draft before refreshing." diagnosticContext={getMindmapDiagnostics} paused>
         <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download map draft</button>
       </EditorNotice>}
-      {saveError && <EditorNotice project={project} title={outdatedSave ? "Refresh OpenBar to continue" : saveConflict ? "Saved file conflict" : "Saving needs attention"} label={outdatedSave ? "OpenBar updated, draft preserved" : saveConflict ? "Editing paused, saved file changed" : "Saving needs attention"}
+      {saveError && <EditorNotice suppressed={primaryIssue?.id !== "save"} relatedIssues={relatedIssues} project={project} title={outdatedSave ? "Refresh OpenBar to continue" : saveConflict ? "Saved file conflict" : "Saving needs attention"} label={outdatedSave ? "OpenBar updated, draft preserved" : saveConflict ? "Editing paused, saved file changed" : "Saving needs attention"}
         message={outdatedSave
           ? recoveryStored ? "OpenBar was updated while this page was open. Your draft is preserved in this tab. Refresh, then restore the draft to finish saving."
             : "OpenBar was updated while this page was open. Keep this tab open or download your draft. Browser recovery storage is currently unavailable."
@@ -2517,14 +2546,14 @@ export function MindmapEditor({
         <button type="button" className="p-button p-button-default btn-outline" onClick={outdatedSave ? () => void refreshWithDraft() : saveConflict ? reloadSavedMap : retrySave}>{outdatedSave ? "Refresh and retry" : saveConflict ? "Load saved map" : "Retry save"}</button>
         <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download draft</button>
       </EditorNotice>}
-      {(hydrationPending || (!saveError && remoteSaveError) || reviewingRemote) && <OverleafSyncNotice
+      {(hydrationPending || remoteSaveError || remoteOutOfSync || reviewingRemote) && <OverleafSyncNotice suppressed={primaryIssue?.id !== "git"} relatedIssues={relatedIssues} floating
         project={project} message={remoteSaveError || "Git review is in progress."} editingPaused={remoteOutOfSync || hydrationPending} activeReview={reviewingRemote}
         quickPullAvailable={quickPullAvailable} onQuickPull={() => void quickPull()} pulling={applyingRemote}
         hydrationPending={hydrationPending} onReload={() => void retryHydration()}
         reconciliationPending={reconciliationPending} onPullUncertain={markForcePullUncertain}
         disabled={!sessionWritable || isPending || applyingRemote} checking={checkingRemote || remoteSaveState === "syncing"}
         beforeReview={async () => { reviewingRemoteRef.current = true; remoteQueue.pause(); setReviewingRemote(true); await flushPendingSaves(); return true; }}
-        onApplied={async (pending) => { if (pending) forcePullRef.current = pending; forceReconciliationRef.current = null; setReconciliationPending(false); try { await applyPulledMindmap(); } catch (error) { setRemoteSaveError(withPullStorageWarning(error instanceof Error ? error.message : "Could not reload the map. Try again.")); } }}
+        onApplied={async (pending) => { if (pending) forcePullRef.current = pending; forceReconciliationRef.current = null; setReconciliationPending(false); try { await applyPulledMindmap(); } catch (error) { if (!isBackendTransportError(error) && !isBackendUnavailable()) setRemoteSaveError(withPullStorageWarning(error instanceof Error ? error.message : "Could not reload the map. Try again.")); } }}
         onClosed={() => { reviewingRemoteRef.current = false; remoteQueue.resume(); setReviewingRemote(false); void refreshRemoteStatus(false); }}
         onCheck={async () => { await refreshRemoteStatus(); }}
         onPush={() => { void pushRemote("OpenBar: save mindmap"); }}

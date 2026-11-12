@@ -6,6 +6,7 @@ import { PopoverSurface } from "./pop"
 import { AlertCircle, Check, ChevronDown, Copy, Download, LockKeyhole, X } from "lucide-react"
 import { copyText } from "@/lib/copy-text"
 import { useProjectWriteSession } from "./project-session/project-write-session"
+import type { EditorIssue } from "@/lib/editor-issue-priority"
 import styles from "./overleaf-sync-notice.module.css"
 
 type Props = {
@@ -15,6 +16,11 @@ type Props = {
   message: string
   report?: string
   diagnosticContext?: () => unknown
+  relatedIssues?: readonly EditorIssue[]
+  icon?: ReactNode
+  suppressed?: boolean
+  preserveContent?: boolean
+  triggerClassName?: string
   paused?: boolean
   inline?: boolean
   floating?: boolean
@@ -36,7 +42,7 @@ function redactDiagnosticText(value: string) {
 }
 
 /** One floating, accessible design for editor errors and synchronization conflicts. */
-export function EditorNotice({ project, title, label, message, report, diagnosticContext, paused, inline, floating, attention, triggerLabel = "Editor conflict details", onOpen, openRequest, primaryAction, children }: Props) {
+export function EditorNotice({ project, title, label, message, report, diagnosticContext, relatedIssues = [], icon, suppressed = false, preserveContent = false, triggerClassName = "", paused, inline, floating, attention, triggerLabel = "Editor conflict details", onOpen, openRequest, primaryAction, children }: Props) {
   const { getDiagnostics } = useProjectWriteSession()
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -71,7 +77,7 @@ export function EditorNotice({ project, title, label, message, report, diagnosti
   const buildDiagnosticReport = (at: string) => {
     let context: string
     try {
-      context = JSON.stringify({ writeSession: captureDiagnostics(getDiagnostics), editor: captureDiagnostics(diagnosticContext) }, (key, value) =>
+      context = JSON.stringify({ writeSession: captureDiagnostics(getDiagnostics), editor: captureDiagnostics(diagnosticContext), relatedIssues }, (key, value) =>
         /^(?:credential|credentials|authorization|cookie|token|access[_-]?token|refresh[_-]?token|api[_-]?key|password)$/i.test(key) ? "[redacted]" : typeof value === "string" ? redactDiagnosticText(value) : value, 2)
     } catch (error) {
       context = JSON.stringify({ diagnosticCaptureError: redactDiagnosticText(error instanceof Error ? error.message : String(error)) })
@@ -131,18 +137,22 @@ export function EditorNotice({ project, title, label, message, report, diagnosti
     link.click()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
-  return <div className={floating ? styles.floatingAnchor : inline ? styles.inlineAnchor : styles.anchor} data-editor-notice>
+  return <div className={floating ? styles.floatingAnchor : inline ? styles.inlineAnchor : styles.anchor} style={suppressed ? { display: "none" } : undefined} data-editor-notice>
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
-        <button type="button" className={floating ? `${styles.inlineTrigger} ${styles.floatingTrigger}` : inline ? styles.inlineTrigger : styles.trigger} data-paused={paused || undefined} data-attention={attention || undefined} aria-label={triggerLabel} title={message} onMouseEnter={keepOpen} onMouseLeave={closeSoon} onClick={event => { event.preventDefault(); keepOpen() }}>
-          {paused && !inline && !floating ? <LockKeyhole size={13} /> : <AlertCircle size={13} />}<span>{label}</span><ChevronDown size={12} />
+        <button type="button" className={`${floating ? `${styles.inlineTrigger} ${styles.floatingTrigger}` : inline ? styles.inlineTrigger : styles.trigger} ${triggerClassName}`} data-paused={paused || undefined} data-attention={attention || undefined} aria-label={triggerLabel} title={message} onMouseEnter={keepOpen} onMouseLeave={closeSoon} onClick={event => { event.preventDefault(); keepOpen() }}>
+          {icon || (paused && !inline && !floating ? <LockKeyhole size={13} /> : <AlertCircle size={13} />)}<span>{label}</span><ChevronDown size={12} />
         </button>
       </Popover.Trigger>
-      <PopoverSurface ref={panelRef} data-editor-notice onMouseEnter={keepOpen} onMouseLeave={closeSoon} onOpenAutoFocus={event => event.preventDefault()} onFocusOutside={event => {
+      <PopoverSurface ref={panelRef} data-editor-notice forceMount={preserveContent || undefined} style={suppressed || (preserveContent && !open) ? { display: "none" } : undefined} aria-hidden={suppressed || (preserveContent && !open) || undefined} onMouseEnter={keepOpen} onMouseLeave={closeSoon} onOpenAutoFocus={event => event.preventDefault()} onFocusOutside={event => {
         if (copyingRef.current || (event.target instanceof HTMLElement && event.target.getAttribute("aria-label") === "Diagnostic report clipboard transfer")) event.preventDefault()
       }} className={styles.panel} side="bottom" align="center" sideOffset={8} collisionPadding={12} aria-label={title}>
         <header><strong>{title}</strong><Popover.Close aria-label="Close error details"><X size={15} /></Popover.Close></header>
         <p className={styles.message} role="status">{message}</p>
+        {relatedIssues.length > 0 && <details className={styles.changeSummary}>
+          <summary>Other issues ({relatedIssues.length})</summary>
+          {relatedIssues.map(issue => <div key={issue.id}><strong>{issue.title}</strong><p>{issue.message}</p></div>)}
+        </details>}
         <div className={styles.footer}>
           {children && <div className={styles.recoveryActions}>{children}</div>}
           <button type="button" className={styles.copy} disabled={copying} onMouseDown={event => event.preventDefault()} onClick={() => void copy()}>{copied ? <Check size={13} /> : <Copy size={13} />}{copied ? "Copied report" : copying ? "Copying…" : "Copy error for agent"}</button>

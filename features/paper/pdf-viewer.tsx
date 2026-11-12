@@ -11,6 +11,8 @@ import {
 
 import { synctexEditAction } from "@/app/actions";
 import { FastTooltip } from "@/components/fast-tooltip";
+import { useProjectWriteSession } from "@/components/project-session/project-write-session";
+import { isBackendTransportError } from "@/lib/backend-connection";
 import { scrollFollowSmoothingMs, smoothScrollStep, type PdfScrollSync } from "./scroll-follow";
 
 import type { PDFViewer } from "pdfjs-dist/types/web/pdf_viewer";
@@ -34,6 +36,7 @@ export function PdfJsViewer({
   onJumpToSource,
   page,
   compact = false,
+  suppressStatus = false,
 }: {
   project: string;
   src: string;
@@ -47,7 +50,12 @@ export function PdfJsViewer({
   onJumpToSource?: (file: string, line: number) => void;
   page?: number;
   compact?: boolean;
+  suppressStatus?: boolean;
 }) {
+  const { connectionState, isBackendUnavailable } = useProjectWriteSession();
+  const retryOnReconnectRef = useRef(false);
+  const [transportLoadFailure, setTransportLoadFailure] = useState(false);
+  const hideStatus = suppressStatus || connectionState === "reconnecting";
   const hostRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -70,6 +78,15 @@ export function PdfJsViewer({
   const latest = useRef({ project, artifactId, onJumpToSource, page });
   latest.current = { project, artifactId, onJumpToSource, page };
   const locationRef = useRef<{ pageNumber: number; left: number; top: number } | null>(null);
+
+  useEffect(() => {
+    if (connectionState === "reconnecting" && !viewerRef.current?.pdfDocument) retryOnReconnectRef.current = true;
+    if (connectionState === "connected" && transportLoadFailure && retryOnReconnectRef.current && !viewerRef.current?.pdfDocument) {
+      retryOnReconnectRef.current = false;
+      setTransportLoadFailure(false);
+      setLoadAttempt(attempt => attempt + 1);
+    }
+  }, [connectionState, transportLoadFailure]);
 
   useEffect(() => {
     const container = scrollerRef.current;
@@ -121,6 +138,7 @@ export function PdfJsViewer({
       const reportRender = ({ error: reason }: { error?: unknown }) => {
         if (controller.signal.aborted) return;
         if (reason) {
+          if (isBackendTransportError(reason) || isBackendUnavailable()) return;
           const message = reason instanceof Error ? reason.message : "Could not render the PDF.";
           if (hasRenderedPage) setError(`A PDF page could not be displayed: ${message}`);
           else setLoadError(message);
@@ -191,7 +209,7 @@ export function PdfJsViewer({
         void synctexEditAction(currentProject, number, pdfX - left, top - pdfY, currentArtifact).then(result => {
           if (!controller.signal.aborted && viewer === clickedViewer && result.ok) jump?.(result.edit.file, result.edit.line);
         }).catch(reason => {
-          if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Could not locate the PDF source.");
+          if (!controller.signal.aborted && !isBackendTransportError(reason) && !isBackendUnavailable()) setError(reason instanceof Error ? reason.message : "Could not locate the PDF source.");
         });
       }, { signal: controller.signal });
 
@@ -207,7 +225,10 @@ export function PdfJsViewer({
       viewer.setDocument(pdf);
     };
     void start().catch(reason => {
-      if (!controller.signal.aborted) setLoadError(reason instanceof Error ? reason.message : "Could not open the PDF.");
+      if (controller.signal.aborted) return;
+      const transport = isBackendTransportError(reason) || isBackendUnavailable();
+      if (!transport) setLoadError(reason instanceof Error ? reason.message : "Could not open the PDF.");
+      if (transport || retryOnReconnectRef.current) setTransportLoadFailure(true);
     });
     return () => {
       window.clearTimeout(slowTimer);
@@ -221,7 +242,7 @@ export function PdfJsViewer({
       if (viewerRef.current === viewer) viewerRef.current = null;
       void loadingTask?.destroy();
     };
-  }, [src, Boolean(page), compact, loadAttempt]);
+  }, [src, Boolean(page), compact, isBackendUnavailable, loadAttempt]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -263,7 +284,7 @@ export function PdfJsViewer({
       });
     };
     void navigate().catch(reason => {
-      if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not locate the PDF position.");
+      if (!cancelled && !isBackendTransportError(reason) && !isBackendUnavailable()) setError(reason instanceof Error ? reason.message : "Could not locate the PDF position.");
     });
     return () => { cancelled = true; };
   }, [sourceTarget, ready, scrollSync]);
@@ -328,13 +349,13 @@ export function PdfJsViewer({
 
   return (
     <div className={`${styles.viewer}${compact ? ` ${styles.compact}` : ""}`}>
-      {observationMessage && (
+      {!hideStatus && observationMessage && (
         <p className={styles.notice} role="status">{observationMessage}</p>
       )}
-      {error && <p className={styles.error} role="alert">{error}</p>}
+      {!hideStatus && error && <p className={styles.error} role="alert">{error}</p>}
       <div ref={stageRef} className={styles.stage}>
       {stale && <span className={styles.staleNotice} title="The source has changed since this PDF was compiled.">Previous PDF</span>}
-      {(loadStage !== "ready" || loadError) && (
+      {!hideStatus && (loadStage !== "ready" || loadError) && (
         <div className={styles.loadingOverlay}>
           <div className={styles.loadingCard} role={loadError ? "alert" : "status"}>
             {!loadError && <span className={styles.loadingSpinner} aria-hidden="true" />}
