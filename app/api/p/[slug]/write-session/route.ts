@@ -3,6 +3,8 @@ import { ProjectAccessError, requireProjectAccess } from "@/lib/server/project-a
 import { requestIsSameOrigin } from "@/lib/server/request-origin";
 import { projectWriteSessionCredentialFromHeaders } from "@/lib/server/project-write-session-request";
 import { projectContentDir } from "@/lib/store";
+import { getHostResources } from "@/lib/server/host-resources";
+import { isPublicDemoMode } from "@/lib/server/demo-mode";
 import {
   PROJECT_WRITE_SESSION_HEADER,
   ProjectWriteSessionError,
@@ -36,7 +38,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
     await requireProjectAccess(slug);
     const credential = request.headers.has(PROJECT_WRITE_SESSION_HEADER)
       ? projectWriteSessionCredentialFromHeaders(request.headers) : undefined;
-    return json({ ok: true, status: getProjectWriteSessionStatus(projectContentDir(slug), credential) });
+    return json({ ok: true, status: getProjectWriteSessionStatus(projectContentDir(slug), credential),
+      ...(!isPublicDemoMode() ? { hostResources: getHostResources() } : {}),
+    });
   } catch (error) { return failure(error); }
 }
 
@@ -77,7 +81,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
             ? await releaseProjectWriteSession(projectPath, parseProjectWriteSessionCredential(input.credential))
             : null;
     return result
-      ? json(result, result.ok ? 200 : 423)
+      ? json({ ...result, ...(!isPublicDemoMode() ? { hostResources: getHostResources() } : {}) }, result.ok ? 200 : 423)
       : json({ ok: false, code: "invalid_arguments", message: "Choose a supported writing-session operation." }, 400);
   } catch (error) { return failure(error); }
 }
