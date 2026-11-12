@@ -24,7 +24,20 @@
 .addFields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 5px; }
 .addValue { display: grid; grid-template-columns: minmax(0, 1fr) 34px 34px; align-items: start; gap: 5px; }
 .addValue > .structuredValue { grid-column: 1; }
+.linkIndicator { display: inline-flex; flex-shrink: 0; align-items: center; }
+.linkTrigger { display: grid; width: 24px; height: 24px; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: rgb(var(--muted)); cursor: pointer; }
+.linkTrigger:hover, .linkTrigger[data-state="open"] { background: rgb(var(--surface-2)); color: rgb(var(--accent-text)); }
+.linkTrigger:focus-visible, .linkPopover a:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; }
+.linkPopover { z-index: 90; width: min(280px, calc(100vw - 24px)); max-height: min(320px, var(--radix-popover-content-available-height)); overflow-y: auto; padding: 6px; color: rgb(var(--ink)); font-family: var(--font-sans); }
+.linkPopover a { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 6px; font-size: 12px; text-decoration: none; }
+.linkPopover a:hover { background: rgb(var(--surface-2)); }
+.linkPopover a > svg { flex-shrink: 0; margin-top: 2px; color: rgb(var(--muted)); }
+.linkPopover a > span { min-width: 0; overflow-wrap: anywhere; }
+.linkPopover small { display: block; margin-top: 2px; color: rgb(var(--muted)); font-size: 11px; }
+
 @media (pointer: coarse) {
+  .linkTrigger { width: 44px; height: 44px; }
+  .linkPopover a { min-height: 44px; }
   .propertyRow { grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr) 44px; }
   .addValue { grid-template-columns: minmax(0, 1fr) 44px 44px; }
   .iconButton { width: 44px; min-height: 44px; }

@@ -20,7 +20,7 @@ export function clearPendingBrowserPull(project: string, operationId: string): v
 
 /** Stable browser URLs keep open editors synchronized across application updates. */
 export async function getBrowserGitStatus(project: string, refreshRemote = false): Promise<OverleafGitStatus> {
-  const response = await fetch(`/api/p/${encodeURIComponent(project)}/git?refresh=${refreshRemote}`, { cache: "no-store" })
+  const response = await fetch(`/api/p/${encodeURIComponent(project)}/git?refresh=${refreshRemote}`, { cache: "no-store", signal: AbortSignal.timeout(30_000) })
   const body = await response.json().catch(() => null) as { status?: OverleafGitStatus; error?: string } | null
   if (response.ok && body?.status) return body.status
   throw new Error(body?.error || "Git status is unavailable. Try again.")

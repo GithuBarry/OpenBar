@@ -140,7 +140,7 @@ export type { PaperEditorSection };
 const PdfJsViewer = dynamic(() => import("./pdf-viewer").then((module) => module.PdfJsViewer), { ssr: false });
 
 type LayoutMode = "document" | "pdf";
-type RemoteSaveState = "checking" | "local" | "saving" | "saved" | "changed" | "blocked" | "unconfigured" | "unavailable" | "error";
+type RemoteSaveState = "checking" | "unverified" | "local" | "saving" | "saved" | "changed" | "blocked" | "unconfigured" | "unavailable" | "error";
 type PaperRemotePushResult = Awaited<ReturnType<typeof pushBrowserProject>>;
 
 const AUTOSAVE_IDLE_MS = 500;
@@ -591,6 +591,7 @@ export function PaperEditor({
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const remoteSavePendingRef = useRef(false);
   const remoteStatusRequestRef = useRef(0);
+  const activeRemoteStatusRequestRef = useRef<number | null>(null);
   const remoteSyncRef = useRef<RemoteSyncOutcome | undefined>(undefined);
   const navigationPendingRef = useRef(false);
 
@@ -711,6 +712,7 @@ export function PaperEditor({
 
   const refreshRemoteStatus = useCallback(async (refreshRemote = true, announce = true) => {
     const requestId = ++remoteStatusRequestRef.current;
+    activeRemoteStatusRequestRef.current = requestId;
     const queueSequence = remoteQueue.getSnapshot().sequence;
     const activityGeneration = remoteQueue.activityGeneration;
     const queueWasBusy = remoteQueue.isBusy;
@@ -727,10 +729,8 @@ export function PaperEditor({
         return status;
       }
       if (status.error && status.isOverleafRemote !== false) {
-        if (announce) {
-          setRemoteSaveState("unavailable");
-          setRemoteSaveError(`Git status unavailable: ${status.error}`);
-        }
+        setRemoteSaveState("unavailable");
+        setRemoteSaveError(`Git status unavailable: ${status.error}`);
         return status;
       }
       if (!status.isOverleafRemote) {
@@ -741,10 +741,8 @@ export function PaperEditor({
       if (typeof status.isClean !== "boolean" || !Number.isSafeInteger(status.ahead) || !Number.isSafeInteger(status.behind)
         || status.ahead! < 0 || status.behind! < 0) {
         const error = "Git status unavailable: the local and remote comparison is incomplete.";
-        if (announce) {
-          setRemoteSaveState("unavailable");
-          setRemoteSaveError(error);
-        }
+        setRemoteSaveState("unavailable");
+        setRemoteSaveError(error);
         return { ...status, error };
       }
       setQuickPullAvailable(status.behind! > 0 && status.ahead === 0);
@@ -766,20 +764,24 @@ export function PaperEditor({
         remoteSavePendingRef.current = false;
         setRemoteSaveState("saved");
       } else {
-        setRemoteSaveState(current => current === "saved" ? current : "checking");
+        setRemoteSaveState(current => current === "saved" ? current : "unverified");
       }
       return status;
     } catch (error) {
       if (requestId !== remoteStatusRequestRef.current || activityGeneration !== remoteQueue.activityGeneration) return;
       if (queueWasBusy || remoteQueue.isBusy || remoteQueue.getSnapshot().sequence !== queueSequence) return;
       const message = `Git status unavailable: ${error instanceof Error ? error.message : "Could not check Git."}`;
-      if (announce) {
-        setRemoteSaveState("unavailable");
-        setRemoteSaveError(message);
-      }
+      setRemoteSaveState("unavailable");
+      setRemoteSaveError(message);
       return { isGitRepo: true, error: message };
     } finally {
-      if (requestId === remoteStatusRequestRef.current) setCheckingRemote(false);
+      if (activeRemoteStatusRequestRef.current === requestId) {
+        activeRemoteStatusRequestRef.current = null;
+        setCheckingRemote(false);
+        setRemoteSaveState(current => current === "checking"
+          ? remoteQueue.isRunning ? "saving" : remoteQueue.isBusy ? "local" : "unverified"
+          : current);
+      }
     }
   }, [project, remoteQueue]);
 
@@ -2678,8 +2680,9 @@ export function PaperEditor({
 
                 <PaperStatusControl
                   saved={isSaved} saving={saving || uploading}
-                  gitSynced={remoteSaveState === "saved"}
-                  gitDescription={remoteSaveState === "saved" ? "Pushed to Git" : remoteSaveState === "unconfigured" ? "Git is not connected" : remoteSaveState === "saving" ? "Syncing to Git" : remoteSaveState === "checking" ? "Checking Git status" : "Git sync pending"}
+                  conflict={saveConflict}
+                  remote={remoteSaveState === "saved" ? "synced" : remoteSaveState === "saving" ? "syncing" : remoteSaveState === "local" ? "pending" : remoteSaveState === "unverified" ? "local" : remoteSaveState === "error" ? "failed" : remoteSaveState}
+                  gitDescription={remoteSaveState === "saved" ? "Pushed to Git" : remoteSaveState === "unconfigured" ? "Git is not connected" : remoteSaveState === "saving" ? "Syncing to Git" : remoteSaveState === "checking" ? "Checking Git status" : remoteSaveState === "unverified" ? "Check Git to confirm remote synchronization" : "Git sync pending"}
                   gitIssue={(hydrationPending || reviewingRemote || (!saveError && !todoRemovalError && remoteSaveError)) ? remoteSaveError || "Git review is in progress" : null}
                   localIssue={saveConflict ? "Saved file conflict" : todoRemovalError?.message || saveError || null}
                   pdfCurrent={pdfCurrent} compiling={compileStarting || compile.state === "running"}

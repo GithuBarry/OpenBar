@@ -65,7 +65,7 @@ export type MindmapTreeAction =
   | { type: "edit-card"; id: string; title: string; text: string; contentFormat?: MindmapNode["contentFormat"] }
   | { type: "delete-subtree"; id: string }
   | { type: "delete-node-keep-children"; id: string }
-  | { type: "patch-node"; id: string; patch: MindmapNodePatch }
+  | { type: "patch-node"; id: string; patch: MindmapNodePatch; transient?: boolean }
   | { type: "patch-nodes"; ids: string[]; patch: MindmapNodePatch }
   | { type: "update-tags"; ids: string[]; tag: string; operation: "add" | "remove" }
   | { type: "bind-todo"; id: string; todoId: string }
@@ -549,7 +549,7 @@ export function mindmapReducer(state: MindmapSession, action: MindmapSessionActi
     }
     default: {
       const applied = applyMindmapAction(state.mindmap, action);
-      if (TRANSIENT_TYPES.has(action.type)) {
+      if (TRANSIENT_TYPES.has(action.type) || (action.type === "patch-node" && action.transient)) {
         return withoutHistory(state, applied.mindmap, applied.selectedId);
       }
       return withHistory(state, applied.mindmap, applied.selectedId);

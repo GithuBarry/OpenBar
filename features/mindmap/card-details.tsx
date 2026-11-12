@@ -1,14 +1,45 @@
 "use client";
 
 import { useState } from "react";
-import { Check, ChevronRight, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronRight, Globe, Link2, Plus, Trash2, X } from "lucide-react";
+import * as Popover from "@radix-ui/react-popover";
 import { Select } from "@/components/select";
 import { FastTooltip } from "@/components/fast-tooltip";
+import { PopoverSurface } from "@/components/pop";
 import { artifactRefSchema } from "@/lib/schemas";
 import { artifactHref } from "@/lib/research/artifact-link";
 import type { ArtifactRef } from "@/lib/types";
 import { InspectorSummary } from "./inspector-summary";
 import styles from "./card-details.module.css";
+
+export function hasCardLinks(refs: ArtifactRef[] = []): boolean {
+  return refs.some(ref => ref.kind !== "figure");
+}
+
+export function CardLinkIndicator({ project, refs }: { project: string; refs: ArtifactRef[] }) {
+  const links = refs.filter(ref => ref.kind !== "figure").map(ref => ({ ...ref, href: artifactHref(project, ref) }));
+  if (!links.length) return null;
+  const external = links.some(ref => ref.kind === "web" || ref.kind === "external");
+  return <span className={`${styles.linkIndicator} nodrag nopan`}
+    onPointerDown={event => event.stopPropagation()}
+    onClick={event => event.stopPropagation()}
+    onDoubleClick={event => event.stopPropagation()}
+    onKeyDown={event => event.stopPropagation()}>
+    <Popover.Root>
+      <FastTooltip label={links.map(ref => `${ref.label ? `${ref.label}: ` : ""}${ref.href}`).join("\n")}><Popover.Trigger asChild>
+        <button type="button" className={styles.linkTrigger} aria-label={`${links.length} saved ${links.length === 1 ? "link" : "links"}`}>
+          {external ? <Globe size={14} aria-hidden="true" /> : <Link2 size={14} aria-hidden="true" />}
+        </button>
+      </Popover.Trigger></FastTooltip>
+      <PopoverSurface className={styles.linkPopover} side="top" align="end" sideOffset={6} aria-label="Saved links">
+        {links.map((ref, index) => <a key={`${ref.href}:${index}`} href={ref.href} target="_blank" rel="noopener noreferrer">
+          {ref.kind === "web" || ref.kind === "external" ? <Globe size={14} aria-hidden="true" /> : <Link2 size={14} aria-hidden="true" />}
+          <span>{ref.label || ref.href}{ref.label && <small>{ref.href}</small>}</span>
+        </a>)}
+      </PopoverSurface>
+    </Popover.Root>
+  </span>;
+}
 
 export function CardLinks({ project, refs, onChange }: { project: string; refs: ArtifactRef[]; onChange: (refs: ArtifactRef[]) => void }) {
   const [draft, setDraft] = useState<ArtifactRef | null>(null);

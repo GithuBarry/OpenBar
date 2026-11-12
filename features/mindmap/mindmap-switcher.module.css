@@ -1,14 +1,5 @@
 .screen { position: relative; display: flex; height: 100dvh; min-height: 0; flex-direction: column; overflow: hidden; container-type: inline-size; }
-.pageHeader:global(.ob-chrome-header) { position: static; width: max-content; height: auto; min-width: 0; gap: 6px; padding: 0 2px; border: 0; background: transparent; }
-.pageHeader > div:first-child { flex: 0 1 auto; min-width: 0; }
-.pageHeader > div:last-child { min-width: 0; overflow: visible; }
-.pageHeader:has(input) > div:first-child { flex: 1; width: 100%; }
-.pageHeader:has(input) > div:last-child { display: none; }
-.pageHeader input { min-width: 0; width: 100%; max-width: 100%; }
-.pageHeader :global(.ob-project-title) { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
-.pageHeader :global(.ob-project-edit) { display: grid; min-width: 28px; min-height: 34px; place-items: center; border-radius: 12px; opacity: 1; }
-.headerActions { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.trigger, .paperLink { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; color: rgb(var(--muted)); font-size: 12px; cursor: pointer; }
+.trigger { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; color: rgb(var(--muted)); font-size: 12px; cursor: pointer; }
 .trigger { max-width: 240px; border-color: transparent; background: transparent; padding-inline: 8px; color: rgb(var(--ink)); font-size: 12px; font-weight: 500; transition: background .15s ease, color .15s ease; }
 .trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .phoneMapIcon { display: none; }
@@ -16,9 +7,6 @@
 .trigger:hover, .trigger[data-state="open"] { background: rgb(var(--surface-2)); }
 .trigger[data-state="open"] > svg { transform: rotate(180deg); }
 .trigger:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }
-.paperLink:hover { color: rgb(var(--ink)); border-color: rgb(var(--faint)); }
-.paperLink > span { display: none; }
-.paperLink { width: 34px; padding: 0; justify-content: center; border-color: transparent; background: transparent; }
 .menu { z-index: 90; width: min(300px, calc(100vw - 24px)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); padding: 8px; background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); font-family: var(--font-sans); }
 .heading { padding: 7px 8px; font-size: 12px; color: rgb(var(--muted)); }
 .maps { max-height: 280px; overflow-y: auto; padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid rgb(var(--line)); }
@@ -39,10 +27,8 @@
 .create button:disabled { opacity: .4; cursor: default; }
 .delete { display: flex; gap: 8px; padding: 10px 8px; color: rgb(var(--danger-text)); font-size: 12px; cursor: pointer; }
 .error { padding: 8px; font-size: 12px; line-height: 1.5; color: rgb(var(--danger-text)); }
-@container (max-width: 1100px) { .pageHeader :global(.ob-project-title) { max-width: 120px; } }
-@container (max-width: 520px) { .headerActions { gap: 4px; } .pageHeader :global(.ob-project-title) { max-width: 92px; } .trigger { width: 34px; height: 34px; justify-content: center; padding: 0; } .trigger > span, .trigger > svg:last-child { display: none; } .trigger > .phoneMapIcon { display: block; } }
+@container (max-width: 520px) { .trigger { width: 34px; height: 34px; justify-content: center; padding: 0; } .trigger > span, .trigger > svg:last-child { display: none; } .trigger > .phoneMapIcon { display: block; } }
 @media (pointer: coarse) {
-  .trigger, .paperLink, .row, .create button, .delete { min-height: 44px; }
+  .trigger, .row, .create button, .delete { min-height: 44px; }
   .trigger { min-width: 44px; }
-  .paperLink, .pageHeader :global(.ob-project-edit) { min-width: 44px; min-height: 44px; }
 }

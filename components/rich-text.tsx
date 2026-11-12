@@ -3,8 +3,15 @@ import katex from "katex";
 import remarkGfm from "remark-gfm";
 import styles from "./rich-text.module.css";
 import ReactMarkdown from "react-markdown";
+import { ExternalLink } from "lucide-react";
 import { texClosingBrace } from "@/lib/mindmap/text-formatting";
 import { safeUrl } from "@/lib/safe-url";
+
+function RichTextLink({ href, children }: { href: string; children: ReactNode }) {
+  return <a className={styles.link} href={href} target="_blank" rel="noreferrer" title={`${href} — opens in a new tab`} onClick={event => event.stopPropagation()}>
+    {children}<ExternalLink className={styles.linkIcon} size={11} aria-hidden="true" />
+  </a>;
+}
 
 function highlightedMentions(text: string): ReactNode {
   return text.split(/(?<![\w@])(@agents?)(?![\w])/gi).map((part, index) =>
@@ -42,7 +49,7 @@ function linkedPlainText(text: string, keyPrefix: string): ReactNode[] {
     const href = raw.slice(0, raw.length - trailing.length);
     const target = safeUrl(href);
     nodes.push(target
-      ? <a key={`${keyPrefix}-${match.index}`} href={target} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>{href}</a>
+      ? <RichTextLink key={`${keyPrefix}-${match.index}`} href={target}>{href}</RichTextLink>
       : href);
     if (trailing) nodes.push(trailing);
     cursor = match.index + raw.length;
@@ -72,7 +79,7 @@ export function RichText({ text, format = "plain", tableLayout = "wide" }: { tex
         ><table>{children}</table></div>,
         a: ({ href, children }) => {
           const target = href && safeUrl(href);
-          return target ? <a href={target} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>{children}</a> : <span>{children}</span>;
+          return target ? <RichTextLink href={target}>{children}</RichTextLink> : <span>{children}</span>;
         },
       }}>{text}</ReactMarkdown>
     </div>

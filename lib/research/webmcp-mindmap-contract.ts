@@ -91,13 +91,13 @@ export type LiveMindmapSnapshot = {
   rootId: string;
   nodes: LiveMindmapNode[];
   /** Browser-only map view state. It is scoped by the mounted project and map. */
-  viewLocal: { collapsedIds: string[] };
+  viewLocal: { collapsedIds: string[]; centerOnEdit: boolean };
   selectedId?: string;
   activitySince?: string;
   /** Browser-local persistence state for the live map draft. */
   localSaveState?: "dirty" | "saving" | "saved" | "conflict";
   /** Project Git synchronization state for the latest queued checkpoint. */
-  remoteSaveState?: "checking" | "pending" | "syncing" | "synced" | "changed" | "blocked" | "unconfigured" | "unavailable" | "failed";
+  remoteSaveState?: "checking" | "local" | "pending" | "syncing" | "synced" | "changed" | "blocked" | "unconfigured" | "unavailable" | "failed";
   /** Last local-save-to-Git outcome, including an actionable failure. */
   remoteSync?: RemoteSyncOutcome;
   editingBlocked?: boolean;
@@ -106,6 +106,7 @@ export type LiveMindmapSnapshot = {
 export type MindmapWebMcpHost = {
   getSnapshot: () => LiveMindmapSnapshot;
   focusNode: (id: string) => void;
+  setViewPreferences: (preferences: { centerOnEdit: boolean }) => void;
   addNode: (parentId: string, text?: string, expectedRevision?: number, title?: string, caution?: MindmapCaution, caption?: string) => string | Promise<string>;
   moveNode: (id: string, parentId: string, beforeId?: string, afterId?: string, expectedRevision?: number) => void | Promise<void>;
   deleteNode: (id: string, expectedRevision?: number) => void | Promise<void>;
@@ -609,6 +610,16 @@ async function executeManagedMapEdit(host: MindmapWebMcpHost, raw: unknown): Pro
   const parsed = parseCommandInput(MINDMAP_EDIT_INPUT, raw, true);
   if (!parsed.ok) return parsed;
   const args = MINDMAP_EDIT_INPUT.parse(parsed.value);
+  const current = host.getSnapshot();
+  if (args.expectedDiskHash && args.expectedDiskHash !== current.diskHash) return failResult("stale_disk_state", "The saved map hash changed. Read get_mindmap again.", { retryable: true, currentHash: current.diskHash });
+  if (args.edit.operation === "view-preferences") {
+    const rev = assertRevision(args.expectedRevision, current.revision);
+    if (!rev.ok) return rev;
+    const preferences = args.edit.args;
+    if (Object.keys(preferences).length !== 1 || typeof preferences.centerOnEdit !== "boolean") return failResult("invalid_arguments", "view-preferences requires only centerOnEdit as a boolean.", false);
+    host.setViewPreferences({ centerOnEdit: preferences.centerOnEdit });
+    return okResult({ viewLocal: host.getSnapshot().viewLocal }, { revision: current.revision, diskHash: current.diskHash });
+  }
   const operations = {
     add: "add_mindmap_node", patch: "patch_mindmap_node", move: "move_mindmap_node",
     "delete-card": "delete_mindmap_node", "delete-branch": "delete_mindmap_branch",
@@ -617,8 +628,6 @@ async function executeManagedMapEdit(host: MindmapWebMcpHost, raw: unknown): Pro
     "attach-image": "attach_mindmap_image", "detach-image": "detach_mindmap_image", "caption-image": "caption_mindmap_image",
   } as const;
   if (!Object.hasOwn(operations, args.edit.operation)) return failResult("invalid_arguments", `Use a managed map operation: ${Object.keys(operations).join(", ")}.`, false);
-  const current = host.getSnapshot();
-  if (args.expectedDiskHash && args.expectedDiskHash !== current.diskHash) return failResult("stale_disk_state", "The saved map hash changed. Read get_mindmap again.", { retryable: true, currentHash: current.diskHash });
   const name = operations[args.edit.operation as keyof typeof operations];
   const input: Record<string, unknown> = { ...args.edit.args, expectedRevision: args.expectedRevision };
   if ("requestId" in MINDMAP_INPUTS[name].shape) input.requestId = args.requestId;
@@ -637,7 +646,7 @@ export function buildMindmapWebMcpTools(host: MindmapWebMcpHost) {
   return [...tools, {
     name: "apply_mindmap_edits",
     title: "Edit live mindmap state",
-    description: "Apply a live revision-checked operation. edit.operation: add, patch, move, delete-card, delete-branch, place-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image. args: add {parentId,title?,text?,caption?,caution?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?}, move {id,parentId,beforeId?,afterId?}, delete {id}, TODO placement {todoId,parentId}, conversion {id,sectionId?}, rename {title}, font-size {fontSize}, images {id,assetId,label?}. Cards delete promotes children, branch delete includes descendants. New cards remain Agent draft. Edit TODO text/completion through project files.",
+    description: "Apply a live revision-checked operation. edit.operation: add, patch, move, delete-card, delete-branch, place-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, view-preferences. args: add {parentId,title?,text?,caption?,caution?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?}, move {id,parentId,beforeId?,afterId?}, delete {id}, TODO placement {todoId,parentId}, conversion {id,sectionId?}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, view-preferences {centerOnEdit}. View preferences are stored in this browser per project and map. Cards delete promotes children, branch delete includes descendants. New cards remain Agent draft. Edit TODO text/completion through project files.",
     inputSchema: commandJsonSchema(MINDMAP_EDIT_INPUT),
     annotations: { readOnlyHint: false, destructiveHint: true, untrustedContentHint: true },
     execute: (args?: unknown) => executeManagedMapEdit(host, args),

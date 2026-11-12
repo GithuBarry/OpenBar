@@ -23,6 +23,7 @@ import {
   Check,
   Circle,
   CheckSquare,
+  Crosshair,
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
@@ -54,7 +55,7 @@ import { MINDMAP_PROGRESS_STATES, progressLabel } from "@/lib/mindmap/progress";
 import { useGitAutoSync } from "@/components/use-git-auto-sync";
 import { OverleafSyncNotice } from "@/components/overleaf-sync-notice";
 import { EditorNotice } from "@/components/editor-notice";
-import { SaveSyncStatus } from "@/components/save-sync-status";
+import { SaveSyncStatus, type SaveRemoteState } from "@/components/save-sync-status";
 import { convertMindmapCardToTodoAction, finishForceProjectSyncAction, persistPaperTodoAction, removePaperTodoAction, uploadMindmapImageAction } from "@/app/actions";
 import { clearPendingBrowserPull, getBrowserGitStatus, pullBrowserProject, pushBrowserProject, readPendingBrowserPull, requireGitPullBarrier, type PendingBrowserPull } from "@/lib/research/browser-git-sync";
 import { clearPendingForcePull, finishForceRequest, readPendingForcePull, requireResolvedForcePull, type ForcePullReconciliation, type PendingForcePull } from "@/lib/research/force-sync-client";
@@ -121,11 +122,11 @@ import {
 } from "@/lib/research/todo-map";
 import { CardImages, hasImageTransfer, imageFilesFromTransfer } from "./card-images";
 import { CardCaution } from "./card-caution";
-import { CardScratchpad } from "./card-scratchpad";
+import { CardScratchpad, type CardNoteField } from "./card-scratchpad";
 import { CautionEditor } from "./caution-editor";
-import { MindmapCanvas } from "./mindmap-canvas";
+import { MindmapCanvas, type MindmapFocusRequest } from "./mindmap-canvas";
 import { MindmapChangesView } from "./mindmap-changes";
-import { CardLinks, CardProperties } from "./card-details";
+import { CardLinkIndicator, CardLinks, CardProperties, hasCardLinks } from "./card-details";
 import { TexCodeMirror, type TexCodeMirrorHandle } from "@/features/paper/tex-codemirror";
 import { MindmapFontSize, MindmapFontSizeSlider } from "./mindmap-font-size";
 import { useMindmapTitle } from "./mindmap-title-context";
@@ -141,7 +142,6 @@ const CARD_PALETTE = [
 ] as const;
 
 type LocalSaveState = "dirty" | "saving" | "saved" | "conflict";
-type RemoteSaveState = "checking" | "pending" | "syncing" | "synced" | "changed" | "blocked" | "unconfigured" | "unavailable" | "failed";
 type MindmapRemotePushResult = Awaited<ReturnType<typeof pushBrowserProject>>;
 
 type Point = { x: number; y: number };
@@ -211,7 +211,7 @@ export function MindmapEditor({
   const dispatch = useCallback((action: Parameters<typeof mindmapReducer>[1]) => {
     // Preserve navigation, hydration, and text typed before a conflict arrived.
     const allowed = ["select", "select-many", "clear-selection", "replace", "hydrate", "ack-save", "record-history", "edit-card", "edit-text"];
-    if (remoteOutOfSyncRef.current && !allowed.includes(action.type)) return;
+    if (remoteOutOfSyncRef.current && !allowed.includes(action.type) && !(action.type === "patch-node" && action.transient)) return;
     if (!["select", "select-many", "clear-selection", "replace", "hydrate", "ack-save", "record-history"].includes(action.type)) remoteQueue.noteEdit();
     rawDispatch(action);
   }, [remoteQueue]);
@@ -270,6 +270,22 @@ export function MindmapEditor({
   const [customActivityDate, setCustomActivityDate] = useState(() => daysAgoDate(LAST_WEEK_DAYS));
   const collapseMapId = mindmap.id || initialMindmap.id || "draft";
   const collapseStorageKey = mindmapCollapseStorageKey(project, collapseMapId);
+  const centerOnEditStorageKey = `openbar:mindmap-center-on-edit:v1:${encodeURIComponent(project)}:${encodeURIComponent(collapseMapId)}`;
+  const [centerOnEdit, setCenterOnEdit] = useState(true);
+  const centerOnEditRef = useRef(centerOnEdit);
+  const setCenterOnEditPreference = useCallback((enabled: boolean) => {
+    centerOnEditRef.current = enabled;
+    setCenterOnEdit(enabled);
+    try { window.localStorage.setItem(centerOnEditStorageKey, String(enabled)); }
+    catch { /* The preference remains active for this browser session. */ }
+  }, [centerOnEditStorageKey]);
+  useEffect(() => {
+    let enabled = true;
+    try { enabled = window.localStorage.getItem(centerOnEditStorageKey) !== "false"; }
+    catch { /* Keep the default while browser storage is unavailable. */ }
+    centerOnEditRef.current = enabled;
+    setCenterOnEdit(enabled);
+  }, [centerOnEditStorageKey]);
   const collapseNodeSignature = useMemo(
     () => mindmap.nodes.map((node) => `${node.id}:${node.parentId || ""}`).sort().join("|"),
     [mindmap.nodes],
@@ -337,7 +353,7 @@ export function MindmapEditor({
     setCollapsedIds(next);
   }, [collapseNodeSignature, collapseStorageKey]);
 
-  const [remoteSaveState, setRemoteSaveState] = useState<RemoteSaveState>(() => {
+  const [remoteSaveState, setRemoteSaveState] = useState<SaveRemoteState>(() => {
     const snapshot = remoteQueue.getSnapshot();
     return snapshot.phase === "pending" || snapshot.phase === "syncing" ? snapshot.phase : "checking";
   });
@@ -351,6 +367,7 @@ export function MindmapEditor({
   const imageUploadQueue = useRef(Promise.resolve());
   const pendingImageUploads = useRef(0);
   const remoteStatusRequestRef = useRef(0);
+  const activeRemoteStatusRequestRef = useRef<number | null>(null);
   const remoteSyncRef = useRef<RemoteSyncOutcome | undefined>(undefined);
 
   useEffect(() => {
@@ -459,6 +476,7 @@ export function MindmapEditor({
 
   const refreshRemoteStatus = useCallback(async (refreshRemote = true, announce = true) => {
     const requestId = ++remoteStatusRequestRef.current;
+    activeRemoteStatusRequestRef.current = requestId;
     const queueSequence = remoteQueue.getSnapshot().sequence;
     const activityGeneration = remoteQueue.activityGeneration;
     const queueWasBusy = remoteQueue.isBusy;
@@ -476,10 +494,8 @@ export function MindmapEditor({
         return status;
       }
       if (status.error && status.isOverleafRemote !== false) {
-        if (announce) {
-          setRemoteSaveState("unavailable");
-          setRemoteSaveError(`Git status unavailable: ${status.error}`);
-        }
+        setRemoteSaveState("unavailable");
+        setRemoteSaveError(`Git status unavailable: ${status.error}`);
         return status;
       }
       if (!status.isOverleafRemote) {
@@ -490,7 +506,8 @@ export function MindmapEditor({
       if (!Number.isSafeInteger(status.ahead) || !Number.isSafeInteger(status.behind)
         || status.ahead! < 0 || status.behind! < 0 || typeof status.isClean !== "boolean") {
         const message = "Git synchronization status could not be verified. Check the remote connection and try again.";
-        if (announce) { setRemoteSaveState("unavailable"); setRemoteSaveError(message); }
+        setRemoteSaveState("unavailable");
+        setRemoteSaveError(message);
         return { ...status, error: message };
       }
       setQuickPullAvailable(status.behind! > 0 && status.ahead === 0);
@@ -505,16 +522,23 @@ export function MindmapEditor({
       remoteOutOfSyncRef.current = applyingRemoteRef.current;
       setRemoteOutOfSync(false);
       setRemoteSaveError(null);
-      setRemoteSaveState((status.ahead || 0) > 0 || !status.isClean ? "pending" : refreshRemote ? "synced" : "checking");
+      setRemoteSaveState(current => (status.ahead || 0) > 0 || !status.isClean ? "pending" : refreshRemote || current === "synced" ? "synced" : "local");
       return status;
     } catch (error) {
       if (requestId !== remoteStatusRequestRef.current || activityGeneration !== remoteQueue.activityGeneration) return;
       if (queueWasBusy || remoteQueue.isBusy || remoteQueue.getSnapshot().sequence !== queueSequence) return;
       const message = `Git status unavailable: ${error instanceof Error ? error.message : "Could not check Git."}`;
-      if (announce) { setRemoteSaveState("unavailable"); setRemoteSaveError(message); }
+      setRemoteSaveState("unavailable");
+      setRemoteSaveError(message);
       return { isGitRepo: true, error: message };
     } finally {
-      if (requestId === remoteStatusRequestRef.current) setCheckingRemote(false);
+      if (activeRemoteStatusRequestRef.current === requestId) {
+        activeRemoteStatusRequestRef.current = null;
+        setCheckingRemote(false);
+        setRemoteSaveState(current => current === "checking"
+          ? remoteQueue.isRunning ? "syncing" : remoteQueue.isBusy ? "pending" : "local"
+          : current);
+      }
     }
   }, [project, remoteQueue]);
 
@@ -657,12 +681,13 @@ export function MindmapEditor({
         }),
         selectedId: sessionRef.current.selectedId,
         activitySince: activitySince || undefined,
-        viewLocal: { collapsedIds: [...collapsedIdsRef.current].sort() },
+        viewLocal: { collapsedIds: [...collapsedIdsRef.current].sort(), centerOnEdit: centerOnEditRef.current },
         localSaveState,
         remoteSaveState,
       };
     },
     focusNode: (id) => dispatch({ type: "select", id }),
+    setViewPreferences: ({ centerOnEdit }) => setCenterOnEditPreference(centerOnEdit),
     hasTodo: (todoId) => Boolean(paperState?.paper?.todos.some((todo) => todo.id === todoId)),
     addNode: async (parentId, text, expectedRevision, title, caution, caption) => {
       const id = newNodeId();
@@ -895,7 +920,7 @@ export function MindmapEditor({
     if (!searchOpen && !moveOpen) return;
     document.getElementById(`mindmap-search-result-${searchIndex}`)?.scrollIntoView({ block: "nearest" });
   }, [searchIndex, searchOpen, moveOpen]);
-  const [focusRequest, setFocusRequest] = useState<{ id: string; sequence: number } | null>(null);
+  const [focusRequest, setFocusRequest] = useState<MindmapFocusRequest | null>(null);
   const [moveNotice, setMoveNotice] = useState("");
   useEffect(() => {
     if (!moveNotice) return;
@@ -963,7 +988,7 @@ export function MindmapEditor({
     setLabelDraft("");
   }, [selectedId]);
 
-  const editBaselineRef = useRef<{ mindmap: Mindmap; nodeId: string } | null>(null);
+  const editBaselineRef = useRef<{ mindmap: Mindmap; nodeId: string; noteFields: Set<CardNoteField> } | null>(null);
 
   const [dropPreview, setDropPreview] = useState<MindmapDrop | null>(null);
   const dropPreviewRef = useRef<MindmapDrop | null>(null);
@@ -1280,7 +1305,7 @@ export function MindmapEditor({
   }
 
   function beginTextTransaction(nodeId = sessionRef.current.selectedId) {
-    if (!editBaselineRef.current) editBaselineRef.current = { mindmap: cloneMindmap(sessionRef.current.mindmap), nodeId };
+    if (!editBaselineRef.current) editBaselineRef.current = { mindmap: cloneMindmap(sessionRef.current.mindmap), nodeId, noteFields: new Set() };
   }
 
   function finishTextTransaction(commitChanges = true) {
@@ -1296,13 +1321,19 @@ export function MindmapEditor({
       if (baselineNode && currentNode && !currentNode.todoId) {
         dispatch({ type: "edit-card", id: before.nodeId, title: baselineNode.title || "", text: baselineNode.text });
       }
+      if (baselineNode && currentNode && before.noteFields.size) {
+        dispatch({ type: "patch-node", id: before.nodeId, transient: true, patch: {
+          ...(before.noteFields.has("caption") ? { caption: baselineNode.caption } : {}),
+          ...(before.noteFields.has("background") ? { caution: { ...currentNode.caution, background: baselineNode.caution?.background } } : {}),
+        } });
+      }
       return;
     }
     dispatch({ type: "record-history", before: before.mindmap });
-    setFocusRequest((current) => ({ id: before.nodeId, sequence: (current?.sequence || 0) + 1 }));
+    setFocusRequest((current) => ({ id: before.nodeId, sequence: (current?.sequence || 0) + 1, center: centerOnEditRef.current }));
   }
 
-  async function startEditing(id: string) {
+  async function startEditing(id: string, center = centerOnEditRef.current) {
     if (readOnly) return;
     if (convertingCardIdRef.current === id) return;
     if (inlineEditorSessionRef.current?.nodeId === id) return;
@@ -1313,13 +1344,13 @@ export function MindmapEditor({
     dispatch({ type: "select", id });
     beginTextTransaction(id);
     setViewMode("map");
-    setFocusRequest((current) => ({ id, sequence: (current?.sequence || 0) + 1 }));
+    setFocusRequest((current) => ({ id, sequence: (current?.sequence || 0) + 1, center }));
     setEditingId(id);
   }
 
   const selectCard = useCallback((id: string, additive = false) => {
     setMapSettingsOpen(false);
-    if (additive && !selectMultiple) setCardMenuOpen(true);
+    setCardMenuOpen(true);
     dispatch({ type: "select", id, additive: additive || selectMultiple });
   }, [selectMultiple]);
 
@@ -1374,6 +1405,18 @@ export function MindmapEditor({
     dispatch(action);
   }
 
+  function updateNodeNote(id: string, field: CardNoteField, value: string) {
+    const before = editBaselineRef.current;
+    const node = indexMindmap(sessionRef.current.mindmap).nodeById.get(id);
+    if (!before || before.nodeId !== id || !node) return;
+    before.noteFields.add(field);
+    const action: MindmapTreeAction = { type: "patch-node", id, transient: true, patch: field === "caption"
+      ? { caption: value }
+      : { caution: { ...node.caution, background: value } } };
+    sessionRef.current = mindmapReducer(sessionRef.current, action);
+    dispatch(action);
+  }
+
   async function saveAgentDraft(id: string) {
     if (readOnly) return;
     if (inlineEditorSessionRef.current?.nodeId === id && !await inlineEditorSessionRef.current.commit()) return;
@@ -1400,7 +1443,7 @@ export function MindmapEditor({
     setSaveError(null);
     dispatch({ type: "add-node", parentId: nextParentId, id, title: "" });
     setFocusRequest((current) => ({ id, sequence: (current?.sequence || 0) + 1 }));
-    requestAnimationFrame(() => startEditing(id));
+    requestAnimationFrame(() => startEditing(id, true));
   }
 
   function addSibling() {
@@ -2006,6 +2049,7 @@ export function MindmapEditor({
         onDropTodo={(todoId) => placeUnplacedTodo(todoId, node.id)}
         onDraftActivity={() => remoteQueue.noteEdit()}
         onTextChange={(text, contentFormat) => updateNodeText(node.id, text, contentFormat)}
+        onNoteChange={(field, value) => updateNodeNote(node.id, field, value)}
         onSaveDraft={() => saveAgentDraft(node.id)}
         onDeleteDraft={() => dispatch({ type: "delete-node-keep-children", id: node.id })}
         onTextFocus={() => beginTextTransaction(node.id)}
@@ -2191,13 +2235,12 @@ export function MindmapEditor({
               error={saveError || remoteSaveError} onRetry={sessionWritable ? () => { void pushRemote("OpenBar: retry saved project sync"); } : undefined} />
           </div>
         </div>
-        <div className={cn("p-glass-sm", paperStyles.toolbar, styles.projectBar)} role="group" aria-label="Project and map controls">
+        <div className={cn("p-glass-sm", paperStyles.toolbar, styles.projectBar)} role="group" aria-label="Map settings">
           {header}
           <div className={styles.fontTools}><MindmapFontSize value={mindmap.fontSize || DEFAULT_MINDMAP_FONT_SIZE} disabled={readOnly}
             onChange={fontSize => dispatch({ type: "set-font-size", fontSize })} /></div>
           <div className={styles.toolbarActions}>
           {selectMultiple && <button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.iconButton)} aria-label="Finish selecting cards" aria-pressed="true" onClick={() => { setSelectMultiple(false); setCardMenuOpen(true); }}><CheckSquare size={18} /></button>}
-          <FastTooltip label="Card inspector"><button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.iconButton)} disabled={selectedCards.length === 0} aria-label="Open selected card actions" aria-expanded={cardMenuOpen && selectedCards.length > 0} aria-controls="mindmap-card-menu" onClick={() => setCardMenuOpen((open) => !open)}><PanelRight size={17} /></button></FastTooltip>
           <Popover.Root open={mapSettingsOpen} onOpenChange={setMapSettingsOpen}>
             <FastTooltip label="Map options"><Popover.Trigger asChild><button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.iconButton)} aria-label="Open map settings"><MoreHorizontal size={18} /></button></Popover.Trigger></FastTooltip>
             <Popover.Portal><Popover.Content id="mindmap-map-settings" className={styles.optionsPanel} sideOffset={10} align="end" collisionPadding={12} aria-label="Map options">
@@ -2233,6 +2276,7 @@ export function MindmapEditor({
               <button type="button" className={styles.optionRow} aria-pressed={selectMultiple} onClick={() => { setSelectMultiple((value) => !value); setMapSettingsOpen(false); setCardMenuOpen(false); }}><CheckSquare size={15} />Select multiple{selectMultiple && <Check size={14} />}</button>
               <button type="button" className={styles.optionRow} onClick={() => { setViewMode("changes"); setMapSettingsOpen(false); }}><GitBranch size={15} />Change history</button>
               <button type="button" className={styles.optionRow} aria-pressed={readOnly} disabled={remoteOutOfSync} onClick={toggleReadOnly}><LockKeyhole size={15} />Read-only mode{readOnly && <Check size={14} />}</button>
+              <button type="button" className={styles.optionRow} aria-pressed={centerOnEdit} onClick={() => setCenterOnEditPreference(!centerOnEdit)}><Crosshair size={15} />Center card while editing{centerOnEdit && <Check size={14} />}</button>
               <div className={styles.activityFilter}>
                 <label className="mindmap-field">
                   <span>Highlight changes</span>
@@ -3011,6 +3055,7 @@ function CanvasNode({
   onDropTodo,
   onDraftActivity,
   onTextChange,
+  onNoteChange,
   onTextFocus,
   onSaveDraft,
   onDeleteDraft,
@@ -3048,6 +3093,7 @@ function CanvasNode({
   onDropTodo: (todoId: string) => void;
   onDraftActivity: () => void;
   onTextChange: (text: string, contentFormat?: MindmapNode["contentFormat"]) => void;
+  onNoteChange: (field: CardNoteField, value: string) => void;
   onTextFocus: () => void;
   onSaveDraft: () => Promise<void>;
   onDeleteDraft: () => void;
@@ -3139,6 +3185,12 @@ function CanvasNode({
     commitInFlightRef.current = pending;
     return pending;
   }, [draft, draftFormat, initial, node.todoId, onTextChange, onCommit, onTodoCommit]);
+
+  const cancel = () => {
+    if (commitInFlightRef.current) return;
+    finishedRef.current = true;
+    onCancel();
+  };
 
   useEffect(() => {
     if (!editing) return;
@@ -3308,11 +3360,7 @@ function CanvasNode({
             }}
             onFocus={onTextFocus}
             onCommit={() => void commit()}
-            onCancel={() => {
-              if (commitInFlightRef.current) return;
-              finishedRef.current = true;
-              onCancel();
-            }}
+            onCancel={cancel}
             placeholder="Card text"
             className="overflow-hidden"
           />
@@ -3356,7 +3404,9 @@ function CanvasNode({
             {tags.slice(0, 2).map((tag) => <span className="mindmap-node-tag" key={tag}>{tag}</span>)}
             {tags.length > 2 && <span className="mindmap-node-tag">+{tags.length - 2}</span>}
           </div>
-          <CardScratchpad text={node.caption} background={node.caution?.background} />
+          <CardScratchpad text={node.caption} background={node.caution?.background} editing={editing} readOnly={readOnly}
+            onChange={onNoteChange} onCommit={() => void commit()} onCancel={cancel}
+            footer={hasCardLinks(node.refs) ? <CardLinkIndicator project={project} refs={node.refs || []} /> : undefined} />
       {!editing && <ChildNavigation parentTitle={title || "Untitled card"} items={childNavigation} onJump={onJumpToChild} />}
       {collapsedDescendantCount > 0 && (
         <FastTooltip label={collapsed ? "Expand child cards" : "Collapse all child cards"}><button

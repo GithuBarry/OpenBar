@@ -33,6 +33,8 @@ export type MindmapFlowNode = {
   renderVersion?: string;
 };
 
+export type MindmapFocusRequest = { id: string; sequence: number; center?: boolean };
+
 type CardData = { render: (id: string) => ReactNode; renderVersion?: string };
 
 const nodeTypes = {
@@ -100,7 +102,7 @@ function FlowCanvas({
   onReparent: (id: string, parentId: string, beforeId?: string, afterId?: string) => void;
   onDropPreview: (drop: MindmapDrop | null) => void;
   onPaneClick?: () => void;
-  focusRequest?: { id: string; sequence: number } | null;
+  focusRequest?: MindmapFocusRequest | null;
 }) {
   const { setCenter, getZoom, setViewport, viewportInitialized } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
@@ -140,6 +142,7 @@ function FlowCanvas({
     if (!node) return;
     lastFocusRef.current = focusRequest.sequence;
     initialViewRef.current = true;
+    if (focusRequest.center === false) return;
     void setCenter(node.x + node.width / 2, node.y + node.height / 2, { zoom: Math.max(0.75, getZoom()), duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180 });
   }, [viewportInitialized, nodesInitialized, focusRequest, nodes, setCenter, getZoom]);
 
@@ -310,7 +313,7 @@ export function MindmapCanvas(props: {
   onReparent: (id: string, parentId: string, beforeId?: string, afterId?: string) => void;
   onDropPreview: (drop: MindmapDrop | null) => void;
   onPaneClick?: () => void;
-  focusRequest?: { id: string; sequence: number } | null;
+  focusRequest?: MindmapFocusRequest | null;
   className?: string;
 }) {
   return (
