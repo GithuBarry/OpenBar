@@ -2314,7 +2314,7 @@ export function MindmapEditor({
         onTextChange={(text, contentFormat) => updateNodeText(node.id, text, contentFormat)}
         onNoteChange={value => updateNodeNote(node.id, value)}
         onSaveDraft={() => saveAgentDraft(node.id)}
-        onDeleteDraft={() => void deleteCardBranch(node.id)}
+        onDeleteDraft={node.id === mindmap.rootId ? undefined : () => void deleteCardBranch(node.id)}
         onTextFocus={() => beginTextTransaction(node.id)}
         onCommit={() => finishTextTransaction(true)}
         onCancel={() => finishTextTransaction(false)}
@@ -2393,6 +2393,7 @@ export function MindmapEditor({
     previewCardWidth,
     commitCardWidth,
     deleteCardBranch,
+    mindmap.rootId,
   ]);
 
   const moveTargets = useMemo(() => {
@@ -2882,7 +2883,7 @@ export function MindmapEditor({
                 >
                   Convert to ordinary card
                 </button>
-                <button
+                {selected.id !== mindmap.rootId && <button
                   type="button"
                   className="p-button p-button-default btn-outline text-danger"
                   onClick={() => {
@@ -2891,7 +2892,7 @@ export function MindmapEditor({
                   }}
                 >
                   Delete card
-                </button>
+                </button>}
               </div>
               {availableTodoCandidates(paperState?.paper?.todos || [], mindmap.nodes, selected.id).length > 0 && (
                 <label className="mindmap-field">
@@ -3442,7 +3443,7 @@ function CanvasNode({
   onNoteChange: (value: string) => void;
   onTextFocus: () => void;
   onSaveDraft: () => Promise<void>;
-  onDeleteDraft: () => void;
+  onDeleteDraft?: () => void;
   onCommit: () => void;
   onCancel: () => void;
   onTodoCommit?: (title: string, text: string) => Promise<boolean>;
@@ -3764,7 +3765,7 @@ function CanvasNode({
           )}
           {node.agentDraft && !readOnly && <div className={cn(styles.draftActions, "nodrag nopan")} data-mind-editor={node.id} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
             <FastTooltip label="Save card"><button type="button" aria-label="Save card" onClick={() => void onSaveDraft()}><Check size={13} /></button></FastTooltip>
-            <FastTooltip label="Delete draft"><button type="button" aria-label="Delete draft" onClick={onDeleteDraft}><X size={13} /></button></FastTooltip>
+            {onDeleteDraft && <FastTooltip label="Delete draft"><button type="button" aria-label="Delete draft" onClick={onDeleteDraft}><X size={13} /></button></FastTooltip>}
           </div>}
           {coverage && coverage.total > 0 && (
             <div className="mindmap-coverage">
