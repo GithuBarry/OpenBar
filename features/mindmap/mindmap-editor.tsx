@@ -337,6 +337,25 @@ export function MindmapEditor({
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
   const collapsedIdsRef = useRef<Set<string>>(new Set());
   collapsedIdsRef.current = collapsedIds;
+  const [shiftExpandHeld, setShiftExpandHeld] = useState(false);
+  useEffect(() => {
+    let held = false;
+    const update = (next: boolean) => {
+      if (next === held) return;
+      held = next;
+      setShiftExpandHeld(next);
+    };
+    const key = (event: globalThis.KeyboardEvent) => update(event.shiftKey);
+    const blur = () => update(false);
+    window.addEventListener("keydown", key, true);
+    window.addEventListener("keyup", key, true);
+    window.addEventListener("blur", blur);
+    return () => {
+      window.removeEventListener("keydown", key, true);
+      window.removeEventListener("keyup", key, true);
+      window.removeEventListener("blur", blur);
+    };
+  }, []);
 
   const setLocalCollapsedIds = useCallback((next: Set<string>) => {
     collapsedIdsRef.current = next;
@@ -2195,10 +2214,10 @@ export function MindmapEditor({
         width: dimensions.width,
         height: dimensions.height,
         selected: selectedIdSet.has(node.id),
-        renderVersion: `${editingId || ""}:${mindmap.fontSize || DEFAULT_MINDMAP_FONT_SIZE}`,
+        renderVersion: `${editingId || ""}:${mindmap.fontSize || DEFAULT_MINDMAP_FONT_SIZE}:${shiftExpandHeld}`,
       }];
     })
-  ), [editingId, layout, selectedIdSet, mindmap.fontSize]);
+  ), [editingId, layout, selectedIdSet, mindmap.fontSize, shiftExpandHeld]);
 
   const renderCard = useCallback((id: string) => {
     const node = layout.nodeById.get(id);
@@ -2233,6 +2252,7 @@ export function MindmapEditor({
         missing={Boolean(node.todoId && !paperTodoFor(node, paperState))}
         collapsed={collapsedIds.has(node.id)}
         collapsedDescendantCount={descendantCounts.get(node.id) || 0}
+        shiftExpandHeld={shiftExpandHeld}
         coverage={coverageById.get(node.id)}
         activityLabel={activityNodeIds.has(node.id) ? Date.parse(activityAt) >= Date.parse(activitySince || "") ? relativeActivityLabel(activityAt) : "recent activity in this branch" : null}
         unreadReply={unreadNodeIds.has(node.id)}
@@ -2309,6 +2329,7 @@ export function MindmapEditor({
     readAgentReply,
     imageUploads,
     collapsedIds,
+    shiftExpandHeld,
     coverageById,
     descendantCounts,
     dropPreview,
@@ -3318,6 +3339,7 @@ function CanvasNode({
   missing,
   collapsed,
   collapsedDescendantCount,
+  shiftExpandHeld,
   coverage,
   activityLabel,
   unreadReply,
@@ -3362,6 +3384,7 @@ function CanvasNode({
   missing: boolean;
   collapsed: boolean;
   collapsedDescendantCount: number;
+  shiftExpandHeld: boolean;
   coverage?: { complete: number; total: number };
   activityLabel?: string | null;
   unreadReply: boolean;
@@ -3392,6 +3415,8 @@ function CanvasNode({
   onTodoCommit?: (title: string, text: string) => Promise<boolean>;
 }) {
   const cardRef = useRef<HTMLElement | null>(null);
+  const collapsedChildCount = shiftExpandHeld ? childNavigation.length : collapsedDescendantCount;
+  const expandChildLabel = `Expand ${collapsedChildCount} ${shiftExpandHeld ? "immediate " : ""}child card${collapsedChildCount === 1 ? "" : "s"}`;
   const activityDescription = activityLabel
     ? activityLabel === "recent activity in this branch" ? "Recent activity in this branch" : `Recent activity: ${activityLabel}`
     : undefined;
@@ -3729,10 +3754,10 @@ function CanvasNode({
       {!readOnly && <CardResizeGrip width={dimensions.width} onPreview={onResizePreview} onCommit={onResizeCommit} />}
       {collapsedDescendantCount > 0 && (
         <TooltipProvider delayDuration={650} skipDelayDuration={0}>
-        <FastTooltip label={collapsed ? "Expand child cards. Shift-click to expand immediate children." : "Collapse all child cards"}><button
+        <FastTooltip label={collapsed ? shiftExpandHeld ? `${expandChildLabel}. Keep deeper branches collapsed.` : "Expand child cards. Shift-click to expand immediate children." : "Collapse all child cards"}><button
           type="button"
           className={cn("mindmap-collapse-toggle", collapsed && "mindmap-collapse-toggle-visible")}
-          aria-label={collapsed ? `Expand ${collapsedDescendantCount} child cards` : `Collapse ${collapsedDescendantCount} child cards`}
+          aria-label={collapsed ? expandChildLabel : `Collapse ${collapsedDescendantCount} child cards`}
           aria-expanded={!collapsed}
           onPointerDown={(event) => {
             event.preventDefault();
@@ -3753,7 +3778,7 @@ function CanvasNode({
           onDoubleClick={(event) => event.stopPropagation()}
         >
           {collapsed ? (
-            <span className={cn(styles.collapseCount, "tabular-nums")} aria-hidden="true">+{collapsedDescendantCount}</span>
+            <span className={cn(styles.collapseCount, "tabular-nums")} aria-hidden="true">+{collapsedChildCount}</span>
           ) : (
             <Minus size={12} strokeWidth={2.75} aria-hidden="true" />
           )}

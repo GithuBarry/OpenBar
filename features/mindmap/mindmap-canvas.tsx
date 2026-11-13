@@ -136,12 +136,18 @@ function FlowCanvas({
   }, []);
   const lastFocusRef = useRef<number | null>(null);
   const draggingIdRef = useRef<string | null>(null);
-  const collapseAnchorRef = useRef<{ id: string; right: number; middle: number; visibleCount: number; viewport: Viewport } | null>(null);
+  const collapseAnchorRef = useRef<{ id: string; right: number; middle: number; visibleCount: number; viewport: Viewport; active: boolean } | null>(null);
+  const collapseSettleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearCollapseAnchor = useCallback(() => {
+    collapseAnchorRef.current = null;
+    if (collapseSettleTimer.current !== null) clearTimeout(collapseSettleTimer.current);
+    collapseSettleTimer.current = null;
+  }, []);
   const initialViewRef = useRef(Boolean(savedViewport));
   const rasterFrame = useRef<number | null>(null);
   useEffect(() => {
     const editor = canvasRef.current?.closest("[data-mindmap-editor]");
-    const preserveInteraction = () => { initialViewRef.current = true; preserveViewport(); };
+    const preserveInteraction = () => { clearCollapseAnchor(); initialViewRef.current = true; preserveViewport(); };
     editor?.addEventListener("pointerdown", preserveInteraction, true);
     editor?.addEventListener("keydown", preserveInteraction, true);
     window.addEventListener("pagehide", preserveViewport);
@@ -151,7 +157,7 @@ function FlowCanvas({
       editor?.removeEventListener("keydown", preserveInteraction, true);
       window.removeEventListener("pagehide", preserveViewport);
     };
-  }, [preserveViewport]);
+  }, [clearCollapseAnchor, preserveViewport]);
   const beginViewportMove = useCallback((event: MouseEvent | TouchEvent | null) => {
     if (event) initialViewRef.current = true;
     if (rasterFrame.current !== null) cancelAnimationFrame(rasterFrame.current);
@@ -169,7 +175,10 @@ function FlowCanvas({
       if (canvasRef.current) canvasRef.current.dataset.sharpCards = String(getZoom() > 1.25);
     });
   }, [getZoom, preserveViewport]);
-  useEffect(() => () => { if (rasterFrame.current !== null) cancelAnimationFrame(rasterFrame.current); }, []);
+  useEffect(() => () => {
+    if (rasterFrame.current !== null) cancelAnimationFrame(rasterFrame.current);
+    clearCollapseAnchor();
+  }, [clearCollapseAnchor]);
   useEffect(() => {
     if (!viewportInitialized || !nodesInitialized || initialViewRef.current || focusRequest) return;
     const root = nodes.find((node) => node.id === mindmap.rootId);
@@ -185,10 +194,11 @@ function FlowCanvas({
     const node = nodes.find((item) => item.id === focusRequest.id);
     if (!node) return;
     lastFocusRef.current = focusRequest.sequence;
+    clearCollapseAnchor();
     initialViewRef.current = true;
     if (focusRequest.center === false) return;
     void setCenter(node.x + node.width / 2, node.y + node.height / 2, { zoom: Math.max(0.75, getZoom()), duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180 });
-  }, [viewportInitialized, nodesInitialized, focusRequest, nodes, setCenter, getZoom]);
+  }, [viewportInitialized, nodesInitialized, focusRequest, nodes, setCenter, getZoom, clearCollapseAnchor]);
 
   const baseFlowNodes: Node<CardData>[] = useMemo(
     () => nodes.map((node) => ({
@@ -216,10 +226,10 @@ function FlowCanvas({
       });
     });
     const anchor = collapseAnchorRef.current;
-    if (!anchor || nodes.length === anchor.visibleCount) return;
-    collapseAnchorRef.current = null;
+    if (!anchor || (!anchor.active && nodes.length === anchor.visibleCount)) return;
+    anchor.active = true;
     const node = nodes.find(item => item.id === anchor.id);
-    if (!node) return;
+    if (!node) { clearCollapseAnchor(); return; }
     // The branch control sits at the card's right edge and vertical midpoint.
     const nextViewport = {
       ...anchor.viewport,
@@ -229,7 +239,10 @@ function FlowCanvas({
     void setViewport(nextViewport, { duration: 0 });
     try { window.sessionStorage.setItem(storageKey, JSON.stringify(nextViewport)); }
     catch { /* Keep the anchored view active while browser storage is unavailable. */ }
-  }, [baseFlowNodes, nodes, setViewport, storageKey]);
+    // Newly revealed cards receive measurements over the next few frames.
+    if (collapseSettleTimer.current !== null) clearTimeout(collapseSettleTimer.current);
+    collapseSettleTimer.current = setTimeout(clearCollapseAnchor, 150);
+  }, [baseFlowNodes, nodes, setViewport, storageKey, clearCollapseAnchor]);
   const flowNodes = controlledNodes;
   const edges: Edge[] = useMemo(() => {
     const byId = new Map(nodes.map(node => [node.id, node]));
@@ -279,7 +292,7 @@ function FlowCanvas({
       className="mindmap-viewport mindmap-rf"
       onPointerDownCapture={(event) => {
         if (event.button !== 0) return;
-        collapseAnchorRef.current = null;
+        clearCollapseAnchor();
         initialViewRef.current = true;
         const target = event.target as Element;
         if (target.closest('button, a, input, textarea, select, summary, .cm-editor')) return;
@@ -295,11 +308,11 @@ function FlowCanvas({
         initialViewRef.current = true;
         collapseAnchorRef.current = {
           id: node.id, right: node.x + node.width, middle: node.y + node.height / 2,
-          visibleCount: nodes.length, viewport: getViewport(),
+          visibleCount: nodes.length, viewport: getViewport(), active: false,
         };
       }}
-      onWheelCapture={() => { collapseAnchorRef.current = null; initialViewRef.current = true; }}
-      onKeyDownCapture={() => { initialViewRef.current = true; }}
+      onWheelCapture={() => { clearCollapseAnchor(); initialViewRef.current = true; }}
+      onKeyDownCapture={() => { clearCollapseAnchor(); initialViewRef.current = true; }}
       onlyRenderVisibleElements={virtualize}
       onMoveStart={beginViewportMove}
       onMoveEnd={finishViewportMove}
