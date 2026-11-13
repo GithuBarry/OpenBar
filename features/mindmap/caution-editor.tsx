@@ -2,14 +2,14 @@
 
 import { useId } from "react";
 
-import { CAUTION_LEVEL_LABELS, hasNoteText, type MindmapCaution } from "@/lib/mindmap/caution";
+import { CAUTION_LEVEL_LABELS, cardNotesText, hasNoteText, type MindmapCaution } from "@/lib/mindmap/caution";
 import { InspectorSummary } from "./inspector-summary";
 
-export function CautionEditor({ value, caption, onChange, onCaptionChange }: {
+export function CautionEditor({ value, caption, onChange, onNotesChange }: {
   value?: MindmapCaution;
   caption?: string;
   onChange: (value: MindmapCaution) => void;
-  onCaptionChange: (value: string) => void;
+  onNotesChange: (value: string) => void;
 }) {
   const descriptionId = useId();
   const hasNotes = [caption, ...Object.values(value || {})].some(hasNoteText);
@@ -18,15 +18,9 @@ export function CautionEditor({ value, caption, onChange, onCaptionChange }: {
     <div className="mt-3 space-y-3">
       <label className="mindmap-field">
         <span>Collapsed notes</span>
-        <textarea value={caption || ""} aria-label="Collapsed notes" aria-describedby={`${descriptionId}-caption`}
-          onChange={event => onCaptionChange(event.target.value)} />
+        <textarea value={cardNotesText(caption, value?.background)} aria-label="Collapsed notes" aria-describedby={`${descriptionId}-caption`}
+          onChange={event => onNotesChange(event.target.value)} />
         <small id={`${descriptionId}-caption`}>Opens through the card’s collapsed disclosure.</small>
-      </label>
-      <label className="mindmap-field">
-        <span>{CAUTION_LEVEL_LABELS.background}</span>
-        <textarea value={value?.background || ""} aria-label={CAUTION_LEVEL_LABELS.background} aria-describedby={`${descriptionId}-background`}
-          onChange={event => onChange({ ...value, background: event.target.value })} />
-        <small id={`${descriptionId}-background`}>Defensive explanations and scope notes. Collapsed in their own card section.</small>
       </label>
       <details>
         <summary className="cursor-pointer text-xs font-medium text-muted">Visible annotations</summary>

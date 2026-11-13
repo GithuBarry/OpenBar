@@ -13,6 +13,13 @@ export function hasNoteText(value?: string): boolean {
   return Boolean(value?.replace(/[\s\p{Default_Ignorable_Code_Point}]/gu, ""));
 }
 
+/** Present saved note fields together, preserving their original text. */
+export function cardNotesText(caption?: string, background?: string): string {
+  if (!caption) return background || "";
+  if (!background) return caption;
+  return `${caption}\n\n${background}`;
+}
+
 export function cautionValidationError(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "caution must be an object.";
   const record = value as Record<string, unknown>;

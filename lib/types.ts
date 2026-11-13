@@ -58,9 +58,9 @@ export interface MindmapNode {
    * Empty on TODO cards — TeX owns the text.
    */
   text: string;
-  /** Map-owned text in the collapsed notes section, including on TODO cards. */
+  /** Map-owned text in unified collapsed Notes, including on TODO cards. */
   caption?: string;
-  /** Map-owned notes. Critical and important are visible, background opens in a collapsed section. */
+  /** Critical and important notes are visible. Existing background text shares collapsed Notes. */
   caution?: MindmapCaution;
   /** When set, this card is a view of the TeX `\obtodo` with this id. */
   todoId?: string;

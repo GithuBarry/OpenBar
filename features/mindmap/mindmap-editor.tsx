@@ -25,6 +25,7 @@ import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import * as Popover from "@radix-ui/react-popover";
+import { Provider as TooltipProvider } from "@radix-ui/react-tooltip";
 import { NodeToolbar, Position } from "@xyflow/react";
 import {
   AlertCircle,
@@ -95,6 +96,7 @@ import { mergeSavedMindmap } from "@/lib/mindmap/merge-saved";
 import { isOutdatedMindmapPage, loadBrowserMindmap, saveBrowserMindmap } from "@/lib/mindmap/browser-save";
 import { hasMindmapCardRecoveryChanges, mindmapRecoveryKey, readMindmapRecovery, writeMindmapRecovery, type MindmapCardRecoveryDraft, type MindmapRecoveryDraft } from "@/lib/mindmap/browser-recovery";
 import {
+  expandMindmapImmediateChildren,
   mindmapCollapseStorageKey,
   parseMindmapCollapsePreference,
   serializeMindmapCollapsePreference,
@@ -1514,16 +1516,18 @@ export function MindmapEditor({
     preserveBrowserDraft();
   }
 
-  function updateNodeNote(id: string, field: CardNoteField, value: string) {
+  function updateNodeNote(id: string, value: string) {
     if (readOnly) return;
     const before = editBaselineRef.current;
     const node = indexMindmap(sessionRef.current.mindmap).nodeById.get(id);
     if (!node) return;
     const transient = before?.nodeId === id;
-    if (transient) before.noteFields.add(field);
-    const action: MindmapTreeAction = { type: "patch-node", id, transient, patch: field === "caption"
-      ? { caption: value }
-      : { caution: { ...node.caution, background: value } } };
+    if (transient) {
+      before.noteFields.add("caption");
+      before.noteFields.add("background");
+    }
+    const action: MindmapTreeAction = { type: "patch-node", id, transient,
+      patch: { caption: value, caution: { ...node.caution, background: undefined } } };
     sessionRef.current = mindmapReducer(sessionRef.current, action);
     dispatch(action);
     preserveBrowserDraft();
@@ -1602,12 +1606,16 @@ export function MindmapEditor({
     setMoveNotice("Paper TODO added to this map");
   }
 
-  const toggleCollapse = useCallback((id = selected?.id) => {
+  const toggleCollapse = useCallback((id = selected?.id, immediateChildrenOnly = false) => {
     if (!id) return;
     if (!(descendantCounts.get(id) || 0)) return;
     setSaveError(null);
-    setLocalCollapsed(id, !collapsedIdsRef.current.has(id));
-  }, [descendantCounts, selected?.id, setLocalCollapsed]);
+    if (immediateChildrenOnly && collapsedIdsRef.current.has(id)) {
+      setLocalCollapsedIds(expandMindmapImmediateChildren(collapsedIdsRef.current, sessionRef.current.mindmap.nodes, id));
+    } else {
+      setLocalCollapsed(id, !collapsedIdsRef.current.has(id));
+    }
+  }, [descendantCounts, selected?.id, setLocalCollapsed, setLocalCollapsedIds]);
 
   async function toggleDepthCollapse() {
     if (inlineEditorSessionRef.current && !await inlineEditorSessionRef.current.commit()) return;
@@ -2241,11 +2249,11 @@ export function MindmapEditor({
         editSessionRef={inlineEditorSessionRef}
         dropPreviewKind={dropPreview?.targetId === node.id ? dropPreview.kind : null}
         dropPreviewLabel={dropPreview?.targetId === node.id ? dropPreviewLabel(dropPreview, layout.nodeById) : undefined}
-        onToggleCollapse={() => toggleCollapse(node.id)}
+        onToggleCollapse={immediateChildrenOnly => toggleCollapse(node.id, immediateChildrenOnly)}
         onDropTodo={(todoId) => placeUnplacedTodo(todoId, node.id)}
         onDraftActivity={() => { remoteQueue.noteEdit(); preserveBrowserDraft(); }}
         onTextChange={(text, contentFormat) => updateNodeText(node.id, text, contentFormat)}
-        onNoteChange={(field, value) => updateNodeNote(node.id, field, value)}
+        onNoteChange={value => updateNodeNote(node.id, value)}
         onSaveDraft={() => saveAgentDraft(node.id)}
         onDeleteDraft={() => dispatch({ type: "delete-node-keep-children", id: node.id })}
         onTextFocus={() => beginTextTransaction(node.id)}
@@ -2992,7 +3000,7 @@ export function MindmapEditor({
           <InspectorSection id="more" open={Boolean(inspectorSections.more)} onToggle={() => toggleInspectorSection("more")}>
           <fieldset disabled={readOnly || convertingCardId === selected.id} className="mindmap-card-menu-fields">
           <CautionEditor key={selected.id} value={selected.caution} caption={selected.caption}
-            onCaptionChange={caption => dispatch({ type: "patch-node", id: selected.id, patch: { caption } })}
+            onNotesChange={value => updateNodeNote(selected.id, value)}
             onChange={caution => dispatch({ type: "patch-node", id: selected.id, patch: { caution } })} />
           <CardLinks key={`links:${selected.id}`} project={project} refs={selectedRefs} onChange={refs => dispatch({ type: "patch-node", id: selected.id, patch: { refs } })} />
           <CardProperties key={`properties:${selected.id}`} value={selected.metadata} onChange={metadata => dispatch({ type: "patch-node", id: selected.id, patch: { metadata } })} />
@@ -3371,11 +3379,11 @@ function CanvasNode({
   editSessionRef: RefObject<InlineCardSession | null>;
   dropPreviewKind: MindmapDrop["kind"] | null;
   dropPreviewLabel?: string;
-  onToggleCollapse: () => void;
+  onToggleCollapse: (immediateChildrenOnly?: boolean) => void;
   onDropTodo: (todoId: string) => void;
   onDraftActivity: () => void;
   onTextChange: (text: string, contentFormat?: MindmapNode["contentFormat"]) => void;
-  onNoteChange: (field: CardNoteField, value: string) => void;
+  onNoteChange: (value: string) => void;
   onTextFocus: () => void;
   onSaveDraft: () => Promise<void>;
   onDeleteDraft: () => void;
@@ -3720,7 +3728,8 @@ function CanvasNode({
       {!editing && <ChildNavigation parentTitle={title || "Untitled card"} items={childNavigation} onJump={onJumpToCard} />}
       {!readOnly && <CardResizeGrip width={dimensions.width} onPreview={onResizePreview} onCommit={onResizeCommit} />}
       {collapsedDescendantCount > 0 && (
-        <FastTooltip label={collapsed ? "Expand child cards" : "Collapse all child cards"}><button
+        <TooltipProvider delayDuration={650} skipDelayDuration={0}>
+        <FastTooltip label={collapsed ? "Expand child cards. Shift-click to expand immediate children." : "Collapse all child cards"}><button
           type="button"
           className={cn("mindmap-collapse-toggle", collapsed && "mindmap-collapse-toggle-visible")}
           aria-label={collapsed ? `Expand ${collapsedDescendantCount} child cards` : `Collapse ${collapsedDescendantCount} child cards`}
@@ -3732,7 +3741,14 @@ function CanvasNode({
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            onToggleCollapse();
+            onToggleCollapse(event.shiftKey);
+          }}
+          onKeyDown={(event) => {
+            if (event.shiftKey && (event.key === "Enter" || event.key === " ")) {
+              event.preventDefault();
+              event.stopPropagation();
+              onToggleCollapse(true);
+            }
           }}
           onDoubleClick={(event) => event.stopPropagation()}
         >
@@ -3742,6 +3758,7 @@ function CanvasNode({
             <Minus size={12} strokeWidth={2.75} aria-hidden="true" />
           )}
         </button></FastTooltip>
+        </TooltipProvider>
       )}
       {dropPreviewKind && (
         <span className={cn("mindmap-drop-preview", styles.dropPreview)} data-drop-kind={dropPreviewKind} role="status">

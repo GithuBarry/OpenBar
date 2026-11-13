@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   Background,
@@ -136,6 +136,7 @@ function FlowCanvas({
   }, []);
   const lastFocusRef = useRef<number | null>(null);
   const draggingIdRef = useRef<string | null>(null);
+  const collapseAnchorRef = useRef<{ id: string; right: number; middle: number; visibleCount: number; viewport: Viewport } | null>(null);
   const initialViewRef = useRef(Boolean(savedViewport));
   const rasterFrame = useRef<number | null>(null);
   useEffect(() => {
@@ -206,7 +207,7 @@ function FlowCanvas({
     [mindmap.rootId, nodes, readOnly, renderCard, selectMultiple],
   );
   const [controlledNodes, setControlledNodes] = useState<Node<CardData>[]>(baseFlowNodes);
-  useEffect(() => {
+  useLayoutEffect(() => {
     setControlledNodes((previous) => {
       const oldNodes = new Map(previous.map((node) => [node.id, node]));
       return baseFlowNodes.map((node) => {
@@ -214,7 +215,21 @@ function FlowCanvas({
         return { ...node, measured: old?.measured, ...(draggingIdRef.current === node.id && old ? { position: old.position, dragging: true } : {}) };
       });
     });
-  }, [baseFlowNodes]);
+    const anchor = collapseAnchorRef.current;
+    if (!anchor || nodes.length === anchor.visibleCount) return;
+    collapseAnchorRef.current = null;
+    const node = nodes.find(item => item.id === anchor.id);
+    if (!node) return;
+    // The branch control sits at the card's right edge and vertical midpoint.
+    const nextViewport = {
+      ...anchor.viewport,
+      x: anchor.viewport.x + (anchor.right - node.x - node.width) * anchor.viewport.zoom,
+      y: anchor.viewport.y + (anchor.middle - node.y - node.height / 2) * anchor.viewport.zoom,
+    };
+    void setViewport(nextViewport, { duration: 0 });
+    try { window.sessionStorage.setItem(storageKey, JSON.stringify(nextViewport)); }
+    catch { /* Keep the anchored view active while browser storage is unavailable. */ }
+  }, [baseFlowNodes, nodes, setViewport, storageKey]);
   const flowNodes = controlledNodes;
   const edges: Edge[] = useMemo(() => {
     const byId = new Map(nodes.map(node => [node.id, node]));
@@ -264,13 +279,26 @@ function FlowCanvas({
       className="mindmap-viewport mindmap-rf"
       onPointerDownCapture={(event) => {
         if (event.button !== 0) return;
+        collapseAnchorRef.current = null;
         initialViewRef.current = true;
         const target = event.target as Element;
         if (target.closest('button, a, input, textarea, select, summary, .cm-editor')) return;
         const card = target.closest<HTMLElement>('[data-mind-node]');
         if (card?.dataset.mindNode) onSelect(card.dataset.mindNode, event.shiftKey);
       }}
-      onWheelCapture={() => { initialViewRef.current = true; }}
+      onClickCapture={event => {
+        const target = event.target as Element;
+        const button = target.closest("button.mindmap-collapse-toggle");
+        const id = button?.closest<HTMLElement>("[data-mind-node]")?.dataset.mindNode;
+        const node = nodes.find(item => item.id === id);
+        if (!node) return;
+        initialViewRef.current = true;
+        collapseAnchorRef.current = {
+          id: node.id, right: node.x + node.width, middle: node.y + node.height / 2,
+          visibleCount: nodes.length, viewport: getViewport(),
+        };
+      }}
+      onWheelCapture={() => { collapseAnchorRef.current = null; initialViewRef.current = true; }}
       onKeyDownCapture={() => { initialViewRef.current = true; }}
       onlyRenderVisibleElements={virtualize}
       onMoveStart={beginViewportMove}

@@ -1,11 +1,13 @@
 "use client";
 
 import styles from "./card-scratchpad.module.css";
-import { ChevronRight } from "lucide-react";
-import { useState, type ReactNode } from "react";
-import { CAUTION_LEVEL_LABELS, hasNoteText } from "@/lib/mindmap/caution";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { cardNotesText, hasNoteText } from "@/lib/mindmap/caution";
 
 export type CardNoteField = "caption" | "background";
+
+const CONTENT_THRESHOLDS = [128, 512, 2048, 4096];
 
 function fitEditor(editor: HTMLTextAreaElement | null) {
   if (!editor) return;
@@ -18,18 +20,20 @@ export function CardScratchpad({ text, background, editing = false, readOnly = f
   background?: string;
   editing?: boolean;
   readOnly?: boolean;
-  onChange?: (field: CardNoteField, value: string) => void;
+  onChange?: (value: string) => void;
   onCommit?: () => void;
   onCancel?: () => void;
   footer?: ReactNode;
 }) {
-  const [focusedNote, setFocusedNote] = useState<CardNoteField | null>(null);
-  const notes = [
-    { field: "caption" as const, label: "Notes", text },
-    { field: "background" as const, label: CAUTION_LEVEL_LABELS.background, text: background },
-  ].filter(note => note.field === focusedNote || hasNoteText(note.text));
-  if (!notes.length && !footer) return null;
-  return <div className={`${styles.scratchpads} ${notes.length ? styles.withNotes : ""} nodrag nopan`}
+  const [focused, setFocused] = useState(false);
+  const notes = useMemo(() => cardNotesText(text, background), [text, background]);
+  const hasNotes = useMemo(() => hasNoteText(notes), [notes]);
+  const count = notes.length;
+  const bars = CONTENT_THRESHOLDS.reduce((total, threshold) => total + Number(count > threshold), 0);
+  const description = `${count} characters · ${bars} of 4 bars`;
+  const showNotes = focused || hasNotes;
+  if (!showNotes && !footer) return null;
+  return <div className={`${styles.scratchpads} ${showNotes ? styles.withNotes : ""} nodrag nopan`}
     onPointerDown={event => event.stopPropagation()}
     onClick={event => event.stopPropagation()}
     onDoubleClick={event => event.stopPropagation()}
@@ -40,17 +44,27 @@ export function CardScratchpad({ text, background, editing = false, readOnly = f
       if (!readOnly && event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); onCommit?.(); }
     }}
     onWheel={event => event.stopPropagation()}>
-    {notes.map(note => <details className={styles.scratchpad} key={note.label}
+    {showNotes && <details className={styles.scratchpad}
       onToggle={event => { if (event.currentTarget.open) fitEditor(event.currentTarget.querySelector("textarea")); }}>
-      <summary aria-label={note.label}><span className={styles.tab}><ChevronRight size={12} aria-hidden="true" />{note.label}</span></summary>
+      <summary aria-label="Notes" aria-description={description} title={description}>
+        <span className={styles.tab}>
+          <ChevronRight className={styles.chevron} size={12} aria-hidden="true" />Notes
+          <svg className={styles.amount} width={15} height={12} viewBox="0 0 15 12" fill="currentColor" aria-hidden="true">
+            {CONTENT_THRESHOLDS.map((threshold, index) => <rect key={threshold} x={index * 4} y={9 - index * 3} width={2.5} height={3 + index * 3} rx={0.7} opacity={count > threshold ? 1 : 0.2} />)}
+          </svg>
+        </span>
+      </summary>
       <div className={styles.body}>
-        <strong className={styles.heading}>{note.label}</strong>
-        <textarea ref={editor => fitEditor(editor)} className={styles.editor} aria-label={note.label} value={note.text || ""} readOnly={readOnly || !onChange} rows={2}
-          onFocus={() => setFocusedNote(note.field)} onBlur={() => setFocusedNote(null)}
+        <button type="button" className={styles.heading} aria-label="Collapse notes" onClick={event => {
+          const details = event.currentTarget.closest("details");
+          if (details) details.open = false;
+        }}>Notes<ChevronDown className={styles.headingChevron} size={12} aria-hidden="true" /></button>
+        <textarea ref={editor => fitEditor(editor)} className={styles.editor} aria-label="Notes" value={notes} readOnly={readOnly || !onChange} rows={2}
+          onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
           onInput={event => fitEditor(event.currentTarget)}
-          onChange={event => onChange?.(note.field, event.target.value)} />
+          onChange={event => onChange?.(event.target.value)} />
       </div>
-    </details>)}
+    </details>}
     {footer && <div className={styles.footer}>{footer}</div>}
   </div>;
 }

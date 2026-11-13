@@ -79,6 +79,33 @@ export function serializeMindmapCollapsePreference(ids: Iterable<string>): strin
   } satisfies MindmapCollapsePreference);
 }
 
+/** Reveal one child level while collapsing each branch below it. */
+export function expandMindmapImmediateChildren(
+  ids: ReadonlySet<string>,
+  nodes: readonly CollapsePreferenceNode[],
+  id: string,
+): Set<string> {
+  const next = new Set(normalizeMindmapCollapsedIds([...ids], nodes));
+  const children = new Map<string, string[]>();
+  for (const node of nodes) {
+    if (!node.parentId) continue;
+    const siblings = children.get(node.parentId) || [];
+    siblings.push(node.id);
+    children.set(node.parentId, siblings);
+  }
+  next.delete(id);
+  const queue = [id], visited = new Set(queue);
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    for (const child of children.get(queue[cursor]) || []) {
+      if (visited.has(child)) continue;
+      visited.add(child);
+      if (children.has(child)) next.add(child);
+      queue.push(child);
+    }
+  }
+  return next;
+}
+
 /**
  * Remove the old durable field at every read/normalization boundary. The
  * generic shape allows this function to process legacy JSON while the current
