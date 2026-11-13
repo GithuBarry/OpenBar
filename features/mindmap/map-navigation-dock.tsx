@@ -66,7 +66,7 @@ export function MapNavigationDock({ children }: { children: ReactNode }) {
         }}>
         {open ? <ChevronDown size={16} aria-hidden="true" /> : <Move size={16} aria-hidden="true" />}
       </button></Popover.Trigger>
-      <Popover.Content forceMount className={styles.panel} hidden={!expanded} inert={!expanded} role={compact ? "dialog" : "group"} aria-label="Zoom and history actions" side="bottom" align="start" sideOffset={compact ? 6 : 0} collisionPadding={12}
+      <Popover.Content forceMount className={styles.panel} hidden={!expanded} inert={!expanded} role={compact ? "dialog" : "group"} aria-label="Zoom and history actions" side="top" align="start" sideOffset={compact ? 6 : 0} collisionPadding={12}
         onOpenAutoFocus={event => event.preventDefault()}
         onCloseAutoFocus={event => event.preventDefault()}
         onInteractOutside={event => { if (!compact || !open || rootRef.current?.contains(event.target as Node)) event.preventDefault(); }}

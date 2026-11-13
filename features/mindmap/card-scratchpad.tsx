@@ -46,7 +46,6 @@ export function CardScratchpad({ text, caution, editing = false, readOnly = fals
       <summary aria-label={open ? "Hide notes" : "Show notes"} aria-expanded={open} aria-description={description} title={description}>
         <span className={styles.tab}>
           <ChevronDown className={styles.chevron} size={12} aria-hidden="true" />Notes
-          <span className={styles.status}>{hasNotes ? "Has content" : "Empty"}</span>
           <svg className={styles.amount} width={15} height={12} viewBox="0 0 15 12" fill="currentColor" aria-hidden="true">
             {CONTENT_THRESHOLDS.map((threshold, index) => <rect key={threshold} x={index * 4} y={9 - index * 3} width={2.5} height={3 + index * 3} rx={0.7} opacity={count > threshold ? 1 : 0.2} />)}
           </svg>
