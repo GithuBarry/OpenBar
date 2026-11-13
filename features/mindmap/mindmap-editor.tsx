@@ -58,6 +58,7 @@ import {
 } from "lucide-react";
 
 import { markAgentDraft } from "@/lib/mindmap/agent-draft";
+import { focusedMindmapCardId } from "@/lib/mindmap/focused-card";
 import { markdownTableColumns, startsWithMarkdownTable } from "@/lib/mindmap/markdown-table";
 import { ChoiceButtons } from "@/components/choice-buttons";
 import { countMindmapDescendants } from "@/lib/mindmap-index";
@@ -721,10 +722,14 @@ export function MindmapEditor({
         }
         const nextAction = typeof action === "function" ? action(current) : action;
         if (!nextAction) return current.mindmap;
-        const nextSession = mindmapReducer(current, nextAction);
+        let nextSession = mindmapReducer(current, nextAction);
         if (nextSession.mindmap === current.mindmap) return current.mindmap;
+        const keepSelection = actor === "webmcp" && focusedMindmapCardId(current.selectedId) && nextSession.selectedId !== current.selectedId
+          ? { type: "select-many" as const, ids: [...current.selectedIds.filter(id => id !== current.selectedId), current.selectedId] } : undefined;
+        if (keepSelection) nextSession = mindmapReducer(nextSession, keepSelection);
         sessionRef.current = nextSession;
         dispatch(nextAction);
+        if (keepSelection) dispatch(keepSelection);
         return persistCurrentSnapshot(actor);
       });
     } finally {
@@ -736,6 +741,8 @@ export function MindmapEditor({
     sharedActions: sharedWebMcpActions,
     getSnapshot: () => {
       const current = sessionRef.current.mindmap;
+      const activeCardId = focusedMindmapCardId(sessionRef.current.selectedId)
+        || (inlineEditorSessionRef.current?.getDraft() ? inlineEditorSessionRef.current.nodeId : undefined);
       return {
         project,
         mapId: current.id || "draft",
@@ -748,7 +755,7 @@ export function MindmapEditor({
         remoteSync: remoteSyncRef.current,
         writeAccess: {
           ...currentWebMcpWriteAccess(),
-          ...(inlineEditorSessionRef.current?.getDraft() ? { activeCardId: inlineEditorSessionRef.current.nodeId } : {}),
+          ...(activeCardId ? { activeCardId } : {}),
         },
         rootId: current.rootId,
         nodes: current.nodes.map((node) => {
@@ -816,7 +823,7 @@ export function MindmapEditor({
     patchNode: async (id, patch, expectedRevision) => {
       const assertCardAvailable = () => {
         const active = inlineEditorSessionRef.current;
-        if (active?.nodeId === id && active.getDraft()) {
+        if (focusedMindmapCardId(sessionRef.current.selectedId) === id || (active?.nodeId === id && active.getDraft())) {
           throw Object.assign(new Error("The human is editing this card. Add an Agent draft child or contribute to another card while the input stays open."), { code: "active_card_edit" });
         }
       };
