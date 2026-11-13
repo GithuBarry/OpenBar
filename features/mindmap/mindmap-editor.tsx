@@ -19,8 +19,7 @@ import { ParentNavigation } from "./parent-navigation";
 import { MapNavigationDock } from "./map-navigation-dock";
 import { CardResizeGrip } from "./card-resize-grip";
 import { useAgentReplies } from "./use-agent-replies";
-import { agentReplyContentHash, cleanAgentReplyDisplay, type AgentReplyPresentation } from "@/lib/research/agent-reply-state";
-import { CardQuestionAnswer } from "./card-question-answer";
+import { agentReplyContentHash, cleanAgentReplyDisplay } from "@/lib/research/agent-reply-state";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useTransition, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
@@ -287,7 +286,7 @@ export function MindmapEditor({
   const [activitySince, setActivitySince] = useState<string | null>(null);
   const [customActivityDate, setCustomActivityDate] = useState(() => daysAgoDate(LAST_WEEK_DAYS));
   const collapseMapId = mindmap.id || initialMindmap.id || "draft";
-  const { replies: agentReplies, unreadNodeIds, presentationByNodeId, markRead: markReplyRead } = useAgentReplies(project, collapseMapId, inboxRevision, persistedDiskHashRef.current);
+  const { replies: agentReplies, unreadNodeIds, answeredRequestNodeIds, markRead: markReplyRead } = useAgentReplies(project, collapseMapId, inboxRevision, persistedDiskHashRef.current);
   const [replyReadRequest, setReplyReadRequest] = useState(0);
   const readAgentReply = useCallback((id: string, visibleNode?: MindmapNode) => {
     if (inlineEditorSessionRef.current?.nodeId === id || editingId === id) return;
@@ -2229,7 +2228,7 @@ export function MindmapEditor({
         coverage={coverageById.get(node.id)}
         activityLabel={activityNodeIds.has(node.id) ? Date.parse(activityAt) >= Date.parse(activitySince || "") ? relativeActivityLabel(activityAt) : "recent activity in this branch" : null}
         unreadReply={unreadNodeIds.has(node.id)}
-        replyPresentation={presentationByNodeId.get(node.id)}
+        answeredRequest={answeredRequestNodeIds.has(node.id)}
         onRead={() => readAgentReply(node.id, node)}
         dimensions={dimensions}
         onMeasure={measureCard}
@@ -2298,7 +2297,7 @@ export function MindmapEditor({
     activityNodeIds,
     activitySince,
     unreadNodeIds,
-    presentationByNodeId,
+    answeredRequestNodeIds,
     readAgentReply,
     imageUploads,
     collapsedIds,
@@ -3314,7 +3313,7 @@ function CanvasNode({
   coverage,
   activityLabel,
   unreadReply,
-  replyPresentation,
+  answeredRequest,
   onRead,
   dimensions,
   onMeasure,
@@ -3358,7 +3357,7 @@ function CanvasNode({
   coverage?: { complete: number; total: number };
   activityLabel?: string | null;
   unreadReply: boolean;
-  replyPresentation?: AgentReplyPresentation;
+  answeredRequest: boolean;
   onRead: () => void;
   dimensions: Dimensions;
   fontSize: number;
@@ -3425,6 +3424,8 @@ function CanvasNode({
     return () => observer.disconnect();
   }, [node.id, onMeasure]);
   const { title, body } = cardContent;
+  const displayTitle = answeredRequest ? cleanAgentReplyDisplay(title) : title;
+  const displayBody = answeredRequest ? cleanAgentReplyDisplay(body) : body;
   const tags = node.tags || [];
   const initial = node.todoId ? `${title}${body ? `\n${body}` : ""}`.trim() : editableCardText(node);
   const [draft, setDraft] = useState(initial);
@@ -3573,7 +3574,7 @@ function CanvasNode({
       data-mind-editor={editing ? node.id : undefined}
       role="treeitem"
       aria-selected={selected}
-      aria-label={(replyPresentation ? cleanAgentReplyDisplay(title) : title) || mindmapNodeLabel(node)}
+      aria-label={displayTitle || mindmapNodeLabel(node)}
       aria-description={activityDescription}
       onClickCapture={onRead}
       className={cn(
@@ -3676,19 +3677,16 @@ function CanvasNode({
         </div>
       ) : (
         <>
-          {replyPresentation ? (
-            <CardQuestionAnswer presentation={replyPresentation} title={title} body={body}
-              format={node.todoId ? "tex" : node.contentFormat} tableLayout={node.tableLayout} />
-          ) : node.todoId ? (
+          {node.todoId ? (
             <div className="mindmap-node-todo-text">
-              {title.trim() && <div className="mindmap-node-todo-title"><NodeRichText text={title} format="tex" /></div>}
-              {body.trim() && <div className="mindmap-node-detail"><NodeRichText text={body} format="tex" /></div>}
+              {displayTitle.trim() && <div className="mindmap-node-todo-title"><NodeRichText text={displayTitle} format="tex" /></div>}
+              {displayBody.trim() && <div className="mindmap-node-detail"><NodeRichText text={displayBody} format="tex" /></div>}
             </div>
           ) : (
             <>
-              {!title.trim() && !body.trim() && <div className={styles.cardPlaceholder}>New card</div>}
-              {title.trim() && <div className={cn("mindmap-node-title", node.parentId === null && styles.rootTitle)}>{node.parentId === null ? <><span className={styles.rootAccent} aria-hidden="true" /><div className={styles.rootSubject}><NodeRichText text={title} format={node.contentFormat} tableLayout={node.tableLayout} /></div></> : <NodeRichText text={title} format={node.contentFormat} tableLayout={node.tableLayout} />}</div>}
-              {body.trim() && <div className="mindmap-node-detail"><NodeRichText text={body} format={node.contentFormat} tableLayout={node.tableLayout} /></div>}
+              {!displayTitle.trim() && !displayBody.trim() && <div className={styles.cardPlaceholder}>New card</div>}
+              {displayTitle.trim() && <div className={cn("mindmap-node-title", node.parentId === null && styles.rootTitle)}>{node.parentId === null ? <><span className={styles.rootAccent} aria-hidden="true" /><div className={styles.rootSubject}><NodeRichText text={displayTitle} format={node.contentFormat} tableLayout={node.tableLayout} /></div></> : <NodeRichText text={displayTitle} format={node.contentFormat} tableLayout={node.tableLayout} />}</div>}
+              {displayBody.trim() && <div className="mindmap-node-detail"><NodeRichText text={displayBody} format={node.contentFormat} tableLayout={node.tableLayout} /></div>}
             </>
           )}
         </>

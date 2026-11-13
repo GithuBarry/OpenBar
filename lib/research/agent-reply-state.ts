@@ -16,8 +16,6 @@ export type AgentReplyReceipt = {
   published?: ReplyPublication
 }
 export type AgentInboxReceipts = { version: 1, acknowledged: string[], receipts: Record<string, AgentReplyReceipt> }
-export type AgentReplyPresentation = { kind: 'question' | 'answer' | 'question-answer', question: string }
-export type PresentedAgentReply = { nodeId: string, requestNodeId?: string, question?: string, requestCurrent?: boolean }
 
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable)
@@ -35,19 +33,11 @@ export function cleanAgentReplyDisplay(text: string): string {
   return text.replace(leading, '$1').trim()
 }
 
-/** Only the answered generation changes presentation on the request card. */
-export function agentReplyPresentations(replies: readonly PresentedAgentReply[]): Map<string, AgentReplyPresentation> {
-  const result = new Map<string, AgentReplyPresentation>()
+/** Published replies hide the request marker for their current generation. */
+export function answeredAgentRequestNodeIds(replies: readonly { nodeId: string, requestNodeId?: string, requestCurrent?: boolean }[]): Set<string> {
+  const result = new Set<string>()
   for (const reply of replies) {
-    const question = cleanAgentReplyDisplay(reply.question || '')
-    if (!question) continue
-    const requestNodeId = reply.requestNodeId || reply.nodeId
-    if (requestNodeId === reply.nodeId) {
-      if (reply.requestCurrent !== false) result.set(reply.nodeId, { kind: 'question-answer', question })
-    } else {
-      result.set(reply.nodeId, { kind: 'answer', question })
-      if (reply.requestCurrent !== false && !result.has(requestNodeId)) result.set(requestNodeId, { kind: 'question', question })
-    }
+    if (reply.requestCurrent !== false) result.add(reply.requestNodeId || reply.nodeId)
   }
   return result
 }

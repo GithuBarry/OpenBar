@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { requestInbox } from "@/features/use-inbox-webmcp"
 import type { AgentInbox } from "@/lib/research/agent-inbox-contract"
-import { agentReplyPresentations } from "@/lib/research/agent-reply-state"
+import { answeredAgentRequestNodeIds } from "@/lib/research/agent-reply-state"
 
 type Reply = AgentInbox["replies"][number]
 type ReplyState = { scope: string, replies: Reply[], seen: Record<string, string> }
@@ -76,6 +76,6 @@ export function useAgentReplies(project: string, mapId: string, inboxRevision?: 
   const replies = useMemo(() => state.scope === prefix ? state.replies : [], [state.scope, state.replies, prefix])
   const unreadNodeIds = useMemo(() => new Set(replies
     .filter(reply => state.seen[reply.nodeId] !== reply.responseRevision).map(reply => reply.nodeId)), [replies, state.seen])
-  const presentationByNodeId = useMemo(() => agentReplyPresentations(replies), [replies])
-  return { replies, unreadNodeIds, presentationByNodeId, markRead }
+  const answeredRequestNodeIds = useMemo(() => answeredAgentRequestNodeIds(replies), [replies])
+  return { replies, unreadNodeIds, answeredRequestNodeIds, markRead }
 }
