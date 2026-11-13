@@ -10,7 +10,7 @@ import type { OperationDiagnostic } from './operation-result'
 
 export type AgentReplySnapshot = {
   notes: ReturnType<typeof collectAgentMentions>['notes']
-  cards: Record<string, { mapId: string, nodeId: string, contentHash: string }>
+  cards: Record<string, { mapId: string, nodeId: string, parentId: string | null, agentDraft: boolean, contentHash: string, question?: string }>
 }
 export type AgentReplyCapture = { snapshot?: AgentReplySnapshot, warning?: OperationDiagnostic }
 const HASH = /^[a-f0-9]{64}$/
@@ -32,6 +32,8 @@ export function readAgentInboxReceipts(projectDir: string): AgentInboxReceipts {
     const item = value as AgentInboxReceipts['receipts'][string]
     if (!item || typeof item.mapId !== 'string' || typeof item.nodeId !== 'string' || key !== agentReplyCardKey(item.mapId, item.nodeId)
       || !HASH.test(item.requestId) || !(item.currentNotificationId === null || HASH.test(item.currentNotificationId))
+      || (item.requestNodeId !== undefined && (typeof item.requestNodeId !== 'string' || !item.requestNodeId))
+      || (item.question !== undefined && typeof item.question !== 'string')
       || !HASH.test(item.contentHash) || !HASH.test(item.responseRevision)
       || (item.published && (!HASH.test(item.published.responseRevision) || !HASH.test(item.published.contentHash) || !Number.isFinite(Date.parse(item.published.repliedAt))))) throw new Error('OpenBar inbox receipts need recovery.')
   }
@@ -49,12 +51,18 @@ export function readAgentReplySnapshot(projectDir: string, projectId: string): A
   const paper = readTexPaper(projectDir, projectId, projectId)
   const todos = paper ? analyzePaper(paper.source).todos.map(todo => ({ ...todo, completed: !paperTodoIsOpen(todo) })) : []
   const byId = new Map(todos.map(todo => [todo.id, todo]))
+  const notes = collectAgentMentions(projectId, maps, todos, Infinity).notes
+  const requests = new Map(notes.map(note => [agentReplyCardKey(note.mapId, note.nodeId), note]))
   const cards: AgentReplySnapshot['cards'] = {}
   for (const map of maps) for (const node of map.nodes) {
-    const mapId = map.id || 'draft'
-    cards[agentReplyCardKey(mapId, node.id)] = { mapId, nodeId: node.id, contentHash: agentReplyContentHash(node, node.todoId ? byId.get(node.todoId) : undefined) }
+    const mapId = map.id || 'draft', key = agentReplyCardKey(mapId, node.id)
+    const todo = node.todoId ? byId.get(node.todoId) : undefined
+    const fields: Record<string, string | undefined> = { title: todo?.title ?? node.title, text: todo?.text ?? node.text, caption: node.caption, ...node.caution }
+    const question = requests.get(key)?.fields.map(field => fields[field]).filter((value): value is string => Boolean(value?.trim())).join('\n\n')
+    cards[key] = { mapId, nodeId: node.id, parentId: node.parentId, agentDraft: node.agentDraft === true,
+      contentHash: agentReplyContentHash(node, todo), ...(question ? { question } : {}) }
   }
-  return { notes: collectAgentMentions(projectId, maps, todos, Infinity).notes, cards }
+  return { notes, cards }
 }
 
 export function pruneAgentInboxReceipts(state: AgentInboxReceipts, snapshot: AgentReplySnapshot): void {
@@ -91,12 +99,40 @@ export function completeAgentReplyCapture(projectDir: string, projectId: string,
     return withWriteLock(agentInboxReceiptFile(projectDir), () => {
       const state = readAgentInboxReceipts(projectDir), original = JSON.stringify(state)
       const afterNotes = new Map(after.notes.map(note => [agentReplyCardKey(note.mapId, note.nodeId), note]))
-      for (const note of before.notes) {
-        const key = agentReplyCardKey(note.mapId, note.nodeId), saved = after.cards[key]
-        if (!saved || saved.contentHash === before.cards[key]?.contentHash) continue
-        const previous = state.receipts[key], requestId = agentReplyRequestId(state, note)
-        state.receipts[key] = { requestId, currentNotificationId: afterNotes.get(key)?.id || null, mapId: note.mapId, nodeId: note.nodeId,
-          contentHash: saved.contentHash, responseRevision: agentReplyRevision(requestId, saved.contentHash), ...(previous?.published ? { published: previous.published } : {}) }
+      const requests = new Map(before.notes.map(note => [agentReplyCardKey(note.mapId, note.nodeId), note]))
+      const requestIds = new Map([...requests].map(([key, note]) => [key, agentReplyRequestId(state, note)]))
+      const questions = new Map([...requests].map(([key, note]) => {
+        const previous = state.receipts[key]
+        return [key, previous?.requestId === requestIds.get(key) && previous.question ? previous.question : before.cards[key]?.question || note.text]
+      }))
+      for (const [key, saved] of Object.entries(after.cards)) {
+        if (saved.contentHash === before.cards[key]?.contentHash) continue
+        const previous = state.receipts[key]
+        let requestKey = key, note = requests.get(requestKey)
+        if (!note && previous) {
+          requestKey = agentReplyCardKey(previous.mapId, previous.requestNodeId || previous.nodeId)
+          const candidate = requests.get(requestKey)
+          if (candidate && requestIds.get(requestKey) === previous.requestId) note = candidate
+        }
+        if (!note && !before.cards[key] && saved.agentDraft) {
+          let parent = saved.parentId
+          const visited = new Set<string>()
+          while (parent && !visited.has(parent)) {
+            visited.add(parent)
+            requestKey = agentReplyCardKey(saved.mapId, parent)
+            note = requests.get(requestKey)
+            if (note) break
+            parent = after.cards[requestKey]?.parentId || null
+          }
+        }
+        if (!note) continue
+        requestKey = agentReplyCardKey(note.mapId, note.nodeId)
+        const requestId = requestIds.get(requestKey)!
+        const question = questions.get(requestKey)!
+        state.receipts[key] = { requestId, currentNotificationId: afterNotes.get(requestKey)?.id || null,
+          mapId: saved.mapId, nodeId: saved.nodeId, requestNodeId: note.nodeId, question,
+          contentHash: saved.contentHash, responseRevision: agentReplyRevision(requestId, saved.contentHash),
+          ...(previous?.published ? { published: previous.published } : {}) }
       }
       pruneAgentInboxReceipts(state, after)
       if (JSON.stringify(state) !== original) writeAgentInboxReceipts(projectDir, state)

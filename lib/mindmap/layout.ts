@@ -4,6 +4,7 @@
  */
 
 import { markdownTableColumns, markdownTableWidth } from "./markdown-table";
+import { normalizeCardWidth } from "./card-width";
 import { hierarchy, tree } from "d3-hierarchy";
 
 import { indexMindmap } from "@/lib/mindmap-index";
@@ -65,9 +66,10 @@ export function nodeDimensions(node: MindmapNode, displayText?: string): Dimensi
   const baseMaxW = isRoot ? ROOT_WIDTH : NODE_WIDTH;
   const wideTable = tableColumns > 0 && node.tableLayout !== "scroll";
   const imageCard = node.refs?.some((ref) => ref.kind === "figure") ?? false;
-  const maxW = wideTable
+  const cardWidth = normalizeCardWidth(node.cardWidth);
+  const maxW = cardWidth ?? (wideTable
     ? Math.max(baseMaxW, Math.min(900, markdownTableWidth(node.text)))
-    : imageCard ? Math.max(baseMaxW, 320) : baseMaxW;
+    : imageCard ? Math.max(baseMaxW, 320) : baseMaxW);
   const padX = node.todoId ? 28 : PAD_X;
   const padY = node.todoId ? 24 : PAD_Y;
   const headingHeight = node.todoId ? 24 : 0;
@@ -90,9 +92,9 @@ export function nodeDimensions(node: MindmapNode, displayText?: string): Dimensi
     ? wrappedSize(detailText, maxInner, node.todoId ? TODO_BODY_PX : DETAIL_PX, node.todoId ? TODO_BODY_LH : DETAIL_LH)
     : { width: 0, height: 0 };
   const naturalInnerW = Math.max(title.width, naturalDetail.width);
-  const width = wideTable || imageCard
+  const width = cardWidth ?? (wideTable || imageCard
     ? Math.min(maxW, Math.max(baseMaxW, Math.ceil(naturalInnerW + padX)))
-    : baseMaxW;
+    : baseMaxW);
   const actualInner = Math.max(titlePx * CHAR, width - padX);
   const actualTitle = wrappedSize(titleLine || "Untitled topic", actualInner, titlePx, titleLh);
   const detail = detailText

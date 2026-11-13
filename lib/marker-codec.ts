@@ -34,6 +34,11 @@ function skipBalanced(source: string, start: number, open: string, close: string
       continue;
     }
     if (char === "\\") {
+      const literalEnd = texVerbCommandEnd(source, cursor) ?? texLiteralEnvironmentEnd(source, cursor);
+      if (literalEnd !== undefined) {
+        cursor = literalEnd - 1;
+        continue;
+      }
       cursor += 1;
       continue;
     }

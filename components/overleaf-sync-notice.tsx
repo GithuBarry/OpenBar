@@ -7,6 +7,7 @@ import { EditorNotice } from "./editor-notice"
 import { OverleafPull } from "./overleaf-pull"
 import type { ForcePullReconciliation, PendingForcePull } from "@/lib/research/force-sync-client"
 import type { EditorIssue } from "@/lib/editor-issue-priority"
+import { gitSyncNoticeDiagnostics } from "@/lib/git-sync-diagnostics"
 import styles from "./overleaf-sync-notice.module.css"
 
 type Props = {
@@ -49,9 +50,9 @@ export function OverleafSyncNotice({ project, message, editingPaused, activeRevi
     { label: "Changed on both sides", files: details.overlappingFiles || [] },
     { label: "Confirmed conflicts", files: details.conflictedFiles || [] },
   ] : []
-  const report = [message, editingPaused ? "Editing is paused." : "", status ? `${status.behind || 0} incoming commits, ${status.ahead || 0} local commits` : "", ...fileGroups.map(group => `${group.label}:\n${group.files.join("\n") || "None in the last checked state"}`), status?.changedFiles?.length ? `Unsaved repository files:\n${status.changedFiles.join("\n")}` : "", detailsError].filter(Boolean).join("\n\n")
+  const diagnostic = gitSyncNoticeDiagnostics({ message, editingPaused, status, fileGroups, detailsError })
   if (!editingPaused && !inline && !floating && !activeReview) return null
-  return <EditorNotice project={project} title="Git synchronization" label={editingPaused ? inline || floating ? "Git needs review" : "Editing paused, sync Git" : "Git sync needs attention"} message={message} report={report} paused={editingPaused} inline={inline} floating={floating} attention={attention} openRequest={openRequest} suppressed={suppressed} preserveContent={activeReview} relatedIssues={relatedIssues} triggerLabel="Git sync details" onOpen={() => void readDetails()} primaryAction={editingPaused && !activeReview && ((hydrationPending && onReload) || (quickPullAvailable && onQuickPull)) ? <button type="button" className={styles.quickPull} disabled={disabled || (checking && !hydrationPending) || pulling} onClick={hydrationPending ? onReload : onQuickPull} aria-live="polite">{pulling ? <LoaderCircle size={13} className="animate-spin" /> : <Download size={13} />}{reconciliationPending ? pulling ? "Checking Git update…" : "Check Git update" : hydrationPending ? pulling ? "Reloading…" : "Reload editor" : pulling ? "Pulling updates…" : "Pull updates"}</button> : undefined}>
+  return <EditorNotice project={project} title="Git synchronization" label={editingPaused ? inline || floating ? "Git needs review" : "Editing paused, sync Git" : "Git sync needs attention"} message={diagnostic.message} report={diagnostic.report} paused={editingPaused} inline={inline} floating={floating} attention={attention} openRequest={openRequest} suppressed={suppressed} preserveContent={activeReview} relatedIssues={relatedIssues} triggerLabel="Git sync details" onOpen={() => void readDetails()} primaryAction={editingPaused && !activeReview && ((hydrationPending && onReload) || (quickPullAvailable && onQuickPull)) ? <button type="button" className={styles.quickPull} disabled={disabled || (checking && !hydrationPending) || pulling} onClick={hydrationPending ? onReload : onQuickPull} aria-live="polite">{pulling ? <LoaderCircle size={13} className="animate-spin" /> : <Download size={13} />}{reconciliationPending ? pulling ? "Checking Git update…" : "Check Git update" : hydrationPending ? pulling ? "Reloading…" : "Reload editor" : pulling ? "Pulling updates…" : "Pull updates"}</button> : undefined}>
     {status?.isOverleafRemote && <div className={styles.changeSummary}>
       <span>{status.behind || 0} incoming commits, {status.ahead || 0} local commits</span>
       {fileGroups.filter(group => group.files.length > 0).map(group => <details key={group.label} open={group.files.length <= 5}>

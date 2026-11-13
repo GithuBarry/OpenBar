@@ -23,8 +23,15 @@ export function readAgentInbox(query: InboxQuery = {}, scope?: readonly string[]
       const id = agentReplyRequestId(state, note)
       all.push({ ...note, id, project, acknowledged: handled.has(id) })
     }
+    const currentRequests = new Map(snapshot.notes.map(note => [agentReplyCardKey(note.mapId, note.nodeId), note]))
     for (const [key, receipt] of Object.entries(state.receipts)) if (receipt.published && snapshot.cards[key]) {
-      replies.push({ project, mapId: receipt.mapId, nodeId: receipt.nodeId, ...receipt.published, contentHash: snapshot.cards[key].contentHash })
+      const requestNodeId = receipt.requestNodeId || receipt.nodeId
+      const requestKey = agentReplyCardKey(receipt.mapId, requestNodeId)
+      const question = receipt.question || snapshot.cards[requestKey]?.question
+      replies.push({ project, mapId: receipt.mapId, nodeId: receipt.nodeId, requestNodeId,
+        ...(question ? { question } : {}),
+        requestCurrent: (currentRequests.get(requestKey)?.id || null) === receipt.currentNotificationId,
+        ...receipt.published, contentHash: snapshot.cards[key].contentHash })
     }
     revisions.push([project, getAgentInboxRevision(dir) || 'unavailable'])
   }
@@ -43,14 +50,22 @@ export async function acknowledgeAgentInbox(input: { project?: string, ids: stri
       const state = readAgentInboxReceipts(dir), snapshot = readAgentReplySnapshot(dir, project), original = JSON.stringify(state), handled = new Set(state.acknowledged)
       for (const id of input.ids) {
         const note = snapshot.notes.find(item => item.id === id || agentReplyRequestId(state, item) === id)
-        const receipt = Object.values(state.receipts).find(item => item.requestId === id || item.currentNotificationId === id)
-        if (!note && !receipt) continue
-        const requestId = receipt?.requestId || agentReplyRequestId(state, note!)
-        if (actor === 'webmcp' && input.acknowledged !== false && receipt) {
-          const key = agentReplyCardKey(receipt.mapId, receipt.nodeId), saved = snapshot.cards[key]
-          const currentId = snapshot.notes.find(item => agentReplyCardKey(item.mapId, item.nodeId) === key)?.id || null
-          if (!saved || currentId !== receipt.currentNotificationId || agentReplyRevision(requestId, saved.contentHash) !== receipt.responseRevision) { rejected.add(id); continue }
-          if (receipt.published?.responseRevision !== receipt.responseRevision) receipt.published = { responseRevision: receipt.responseRevision, contentHash: receipt.contentHash, repliedAt: new Date().toISOString() }
+        const matching = Object.values(state.receipts).filter(item => item.requestId === id || item.currentNotificationId === id)
+        if (!note && !matching.length) continue
+        const requestId = matching[0]?.requestId || agentReplyRequestId(state, note!)
+        const receipts = Object.values(state.receipts).filter(item => item.requestId === requestId)
+        if (actor === 'webmcp' && input.acknowledged !== false && receipts.length) {
+          const pending = receipts.filter(receipt => receipt.published?.responseRevision !== receipt.responseRevision)
+          const current = pending.every(receipt => {
+            const key = agentReplyCardKey(receipt.mapId, receipt.nodeId), saved = snapshot.cards[key]
+            const requestKey = agentReplyCardKey(receipt.mapId, receipt.requestNodeId || receipt.nodeId)
+            const currentNote = snapshot.notes.find(item => agentReplyCardKey(item.mapId, item.nodeId) === requestKey)
+            const sameRequest = currentNote ? agentReplyRequestId(state, currentNote) === requestId : receipt.currentNotificationId === null
+            return saved && sameRequest && agentReplyRevision(requestId, saved.contentHash) === receipt.responseRevision
+          })
+          if (!current) { rejected.add(id); continue }
+          const repliedAt = new Date().toISOString()
+          for (const receipt of pending) receipt.published = { responseRevision: receipt.responseRevision, contentHash: receipt.contentHash, repliedAt }
         }
         if (input.acknowledged === false) handled.delete(requestId)
         else handled.add(requestId)

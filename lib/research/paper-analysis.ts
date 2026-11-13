@@ -12,7 +12,6 @@ import {
   isMacro,
   mandatoryArgs,
   nodesToPlainText,
-  optionalArg,
   parseTex,
   type TexMacro,
 } from "@/lib/tex-project/tex-ast";
@@ -177,12 +176,6 @@ function macroNameOf(node: TexMacro): string {
   return node.content.replace(/\*$/, "");
 }
 
-function parseOptionalAttrs(source: string, node: unknown): Record<string, string> {
-  const opt = optionalArg(node);
-  const raw = opt?.length ? nodesToSource(source, opt) || nodesToPlainText(opt) : "";
-  return parseAnchorAttrs(raw);
-}
-
 function attachCommentMatches(source: string, comments: PaperNote[]): void {
   const matches = findMacroMatches(source, ["obcomment", "obsource", "obraw", "obquestion"]);
   let index = 0;
@@ -284,8 +277,9 @@ export function analyzePaper(source: string): PaperAnalysis {
     }
     if (name === "obtodo") {
       seen.add(node);
-      const attrs = parseOptionalAttrs(source, node);
-      const text = nodesToSource(source, mandatoryArgs(node)[0] ?? []).trim();
+      const attrs = parseAnchorAttrs(liveAnchors.get(offsetOf(node, "start") ?? -1)!.attrs);
+      // The lexical body includes trailing formatting arguments beyond AST node ends.
+      const text = liveAnchors.get(offsetOf(node, "start") ?? -1)!.body.trim();
       todos.push(asPaperTodo(attrs, text, lineOf(node), name, offsetOf(node, "start") ?? 0, offsetOf(node, "end") ?? 0));
       continue;
     }
@@ -305,8 +299,8 @@ export function analyzePaper(source: string): PaperAnalysis {
     const noteKind = NOTE_MACROS[name];
     if (!noteKind) continue;
     seen.add(node);
-    const attrs = parseOptionalAttrs(source, node);
-    const text = nodesToSource(source, mandatoryArgs(node)[0] ?? []).trim();
+    const attrs = parseAnchorAttrs(liveAnchors.get(offsetOf(node, "start") ?? -1)!.attrs);
+    const text = liveAnchors.get(offsetOf(node, "start") ?? -1)!.body.trim();
     const id = attrs.id?.trim() || undefined;
     comments.push({
       kind: noteKind,

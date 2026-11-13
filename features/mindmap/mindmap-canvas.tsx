@@ -17,6 +17,7 @@ import {
   type NodeMouseHandler,
   type NodeProps,
   type NodeChange,
+  type Viewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -37,6 +38,19 @@ export type MindmapFlowNode = {
 export type MindmapFocusRequest = { id: string; sequence: number; center?: boolean };
 
 type CardData = { render: (id: string) => ReactNode; renderVersion?: string };
+
+function viewportStorageKey(mindmap: Mindmap): string {
+  return `openbar:mindmap-viewport:v1:${encodeURIComponent(mindmap.projectId)}:${encodeURIComponent(mindmap.id || "draft")}`;
+}
+
+function readViewport(key: string): Viewport | undefined {
+  try {
+    const value: unknown = JSON.parse(window.sessionStorage.getItem(key) || "null");
+    if (!value || typeof value !== "object") return;
+    const { x, y, zoom } = value as Viewport;
+    if ([x, y, zoom].every(item => typeof item === "number" && Number.isFinite(item)) && zoom >= 0.25 && zoom <= 2.5) return { x, y, zoom };
+  } catch { /* A fresh view remains available when browser storage is unavailable. */ }
+}
 
 const nodeTypes = {
   card: memo(function CardNode({ id, data }: NodeProps<Node<CardData>>) {
@@ -105,15 +119,38 @@ function FlowCanvas({
   onPaneClick?: () => void;
   focusRequest?: MindmapFocusRequest | null;
 }) {
-  const { setCenter, getZoom, setViewport, viewportInitialized } = useReactFlow();
+  const { setCenter, getZoom, getViewport, setViewport, viewportInitialized } = useReactFlow();
+  const storageKey = viewportStorageKey(mindmap);
+  const [savedViewport] = useState(() => readViewport(storageKey));
+  const preserveViewport = useCallback(() => {
+    if (!viewportInitialized) return;
+    try { window.sessionStorage.setItem(storageKey, JSON.stringify(getViewport())); }
+    catch { /* The current view continues to work with browser storage disabled. */ }
+  }, [getViewport, storageKey, viewportInitialized]);
   const nodesInitialized = useNodesInitialized();
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [controlsHost, setControlsHost] = useState<HTMLElement | null>(null);
-  useEffect(() => { setControlsHost(canvasRef.current?.closest<HTMLElement>("[data-mindmap-editor]") ?? null); }, []);
+  useEffect(() => {
+    const editor = canvasRef.current?.closest<HTMLElement>("[data-mindmap-editor]");
+    setControlsHost(editor?.querySelector<HTMLElement>("[data-mindmap-zoom-controls]") ?? editor ?? null);
+  }, []);
   const lastFocusRef = useRef<number | null>(null);
   const draggingIdRef = useRef<string | null>(null);
-  const initialViewRef = useRef(false);
+  const initialViewRef = useRef(Boolean(savedViewport));
   const rasterFrame = useRef<number | null>(null);
+  useEffect(() => {
+    const editor = canvasRef.current?.closest("[data-mindmap-editor]");
+    const preserveInteraction = () => { initialViewRef.current = true; preserveViewport(); };
+    editor?.addEventListener("pointerdown", preserveInteraction, true);
+    editor?.addEventListener("keydown", preserveInteraction, true);
+    window.addEventListener("pagehide", preserveViewport);
+    return () => {
+      preserveViewport();
+      editor?.removeEventListener("pointerdown", preserveInteraction, true);
+      editor?.removeEventListener("keydown", preserveInteraction, true);
+      window.removeEventListener("pagehide", preserveViewport);
+    };
+  }, [preserveViewport]);
   const beginViewportMove = useCallback((event: MouseEvent | TouchEvent | null) => {
     if (event) initialViewRef.current = true;
     if (rasterFrame.current !== null) cancelAnimationFrame(rasterFrame.current);
@@ -121,6 +158,7 @@ function FlowCanvas({
     if (viewport) viewport.style.willChange = "transform";
   }, []);
   const finishViewportMove = useCallback(() => {
+    preserveViewport();
     // Release the gesture's cached layer so the browser rasterizes text at
     // the final scale. Card layout remains in unchanged world coordinates.
     rasterFrame.current = requestAnimationFrame(() => {
@@ -129,14 +167,16 @@ function FlowCanvas({
       if (viewport) viewport.style.willChange = "auto";
       if (canvasRef.current) canvasRef.current.dataset.sharpCards = String(getZoom() > 1.25);
     });
-  }, [getZoom]);
+  }, [getZoom, preserveViewport]);
   useEffect(() => () => { if (rasterFrame.current !== null) cancelAnimationFrame(rasterFrame.current); }, []);
   useEffect(() => {
     if (!viewportInitialized || !nodesInitialized || initialViewRef.current || focusRequest) return;
     const root = nodes.find((node) => node.id === mindmap.rootId);
     const pane = canvasRef.current;
     if (!root || !pane) return;
-    const left = pane.clientWidth < 600 ? Math.max(24, (pane.clientWidth - root.width) / 2) : 48;
+    const tray = pane.closest("[data-mindmap-editor]")?.querySelector('aside[aria-label="Unplaced paper TODOs"]');
+    const left = pane.clientWidth < 600 ? Math.max(24, (pane.clientWidth - root.width) / 2)
+      : tray ? tray.getBoundingClientRect().right - pane.getBoundingClientRect().left + 48 : 48;
     void setViewport({ x: left - root.x, y: pane.clientHeight / 2 - root.y - root.height / 2, zoom: 1 });
   }, [viewportInitialized, nodesInitialized, nodes, mindmap.rootId, focusRequest, setViewport]);
   useEffect(() => {
@@ -219,6 +259,7 @@ function FlowCanvas({
   return (
     <ReactFlow
       key="fixed-card-geometry"
+      defaultViewport={savedViewport}
       ref={canvasRef}
       className="mindmap-viewport mindmap-rf"
       onPointerDownCapture={(event) => {
@@ -322,7 +363,7 @@ export function MindmapCanvas(props: {
 }) {
   return (
     <div className={cn("h-full min-h-0 w-full", props.className)}>
-      <ReactFlowProvider>
+      <ReactFlowProvider key={viewportStorageKey(props.mindmap)}>
         <FlowCanvas {...props} />
       </ReactFlowProvider>
     </div>

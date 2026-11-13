@@ -221,6 +221,7 @@ const MINDMAP_ACTIVITY_NODE_FIELDS = [
   "progress",
   "priority",
   "tableLayout",
+  "cardWidth",
   "refs",
   "metadata",
   "contentFormat",

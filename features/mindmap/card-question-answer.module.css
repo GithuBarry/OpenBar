@@ -1,0 +1,9 @@
+.content { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.question, .answer { display: flex; align-items: flex-start; gap: 7px; min-width: 0; }
+.label { flex: 0 0 13px; padding-top: 1px; font-size: 10px; font-weight: 700; line-height: var(--card-title-line, 19px); color: rgb(var(--muted)); }
+.answer > .label { color: rgb(var(--accent-text)); }
+.copy { flex: 1; min-width: 0; }
+.title, .questionText { color: rgb(var(--ink)); font-size: var(--card-title-size, 14px); font-weight: var(--card-title-weight, 600); line-height: var(--card-title-line, 19px); }
+.body { color: rgb(var(--muted)); font-size: var(--card-body-size, 12px); line-height: var(--card-body-line, 17px); }
+.title + .body { margin-top: 6px; }
+.title, .questionText, .body { overflow-wrap: anywhere; white-space: pre-wrap; }

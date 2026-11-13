@@ -5,7 +5,7 @@ import * as Tooltip from "@radix-ui/react-tooltip";
 import { RichText } from "@/components/rich-text";
 import styles from "./child-navigation.module.css";
 
-export type ChildNavigationItem = {
+export type CardNavigationItem = {
   id: string;
   title: string;
   body: string;
@@ -14,7 +14,7 @@ export type ChildNavigationItem = {
 
 export function ChildNavigation({ parentTitle, items, onJump }: {
   parentTitle: string;
-  items: ChildNavigationItem[];
+  items: CardNavigationItem[];
   onJump: (id: string) => void;
 }) {
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -53,7 +53,6 @@ export function ChildNavigation({ parentTitle, items, onJump }: {
       <Tooltip.Portal>
         <Tooltip.Content className={styles.preview} side="right" sideOffset={10} align="start" collisionPadding={12}
           onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
-          <small>{parentTitle} · immediate child</small>
           <strong><RichText text={item.title || "Untitled card"} format={item.format} /></strong>
           {item.body.trim() && <div className={styles.body}><RichText text={item.body} format={item.format} /></div>}
           <span className={styles.hint}>↑ ↓ preview · Enter to jump</span>

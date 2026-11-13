@@ -2,7 +2,7 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 
 export type InlineFormat = "bold" | "italic";
 export type InlineSyntax = "markdown" | "tex";
-type Span = { from: number; to: number; innerFrom: number; innerTo: number; open: string; close: string };
+export type InlineFormattingSpan = { from: number; to: number; innerFrom: number; innerTo: number; open: string; close: string };
 export type FormatChange = { from: number; to: number; insert: string; selFrom: number; selTo: number };
 
 function wordAt(doc: string, cursor: number): { from: number; to: number } | null {
@@ -24,10 +24,11 @@ export function texClosingBrace(doc: string, opening: number): number | null {
   return null;
 }
 
-function formattingSpans(doc: string, syntax: InlineSyntax, kind: InlineFormat): Span[] {
-  const spans: Span[] = [];
+export function inlineFormattingSpans(doc: string, syntax: InlineSyntax, kind: InlineFormat): InlineFormattingSpan[] {
+  const spans: InlineFormattingSpan[] = [];
   if (syntax === "tex") {
     for (const match of doc.matchAll(/\\(textbf|emph|textit)\{/g)) {
+      if (match.index > 0 && doc[match.index - 1] === "\\") continue;
       if ((kind === "bold") !== (match[1] === "textbf")) continue;
       const close = texClosingBrace(doc, match.index + match[0].length - 1);
       if (close !== null) spans.push({ from: match.index, to: close + 1, innerFrom: match.index + match[0].length, innerTo: close, open: match[0], close: "}" });
@@ -57,7 +58,7 @@ function wrap(text: string, open: string, close: string, syntax: InlineSyntax): 
 }
 
 /** Slice a formatted phrase while keeping nested marks balanced on each side. */
-function styledSlice(doc: string, start: number, end: number, from: number, to: number, spans: Span[], syntax: InlineSyntax): string {
+function styledSlice(doc: string, start: number, end: number, from: number, to: number, spans: InlineFormattingSpan[], syntax: InlineSyntax): string {
   let result = "";
   let cursor = start;
   const children = spans.filter((span) => span.from >= start && span.to <= end)
@@ -83,13 +84,13 @@ export function formatInlineSelection(doc: string, from: number, to: number, syn
     if (!word) return null;
     ({ from, to } = word);
   }
-  const span = formattingSpans(doc, syntax, kind)
+  const span = inlineFormattingSpans(doc, syntax, kind)
     .filter((item) => (from === item.from && to === item.to) || (from >= item.innerFrom && to <= item.innerTo))
     .sort((a, b) => (a.to - a.from) - (b.to - b.from))[0];
   if (span) {
     const start = Math.max(from, span.innerFrom);
     const end = Math.min(to, span.innerTo);
-    const nested = [...formattingSpans(doc, syntax, "bold"), ...formattingSpans(doc, syntax, "italic")];
+    const nested = [...inlineFormattingSpans(doc, syntax, "bold"), ...inlineFormattingSpans(doc, syntax, "italic")];
     const slice = (from: number, to: number) => styledSlice(doc, span.innerFrom, span.innerTo, from, to, nested, syntax);
     const before = wrap(slice(span.innerFrom, start), span.open, span.close, syntax);
     const picked = slice(start, end);

@@ -1,3 +1,5 @@
+import { MINDMAP_CARD_GUIDANCE } from "./research/agent-guidance";
+
 /**
  * OpenBar — bundled research skills.
  *
@@ -31,6 +33,8 @@ export const SKILLS: Skill[] = [
 Lead with the subject, answer, and evidence. State scope positively and name the source of factual uncertainty precisely.
 
 Mindmap fields: title/text and caution.critical/important are visible, caption opens in the collapsed notes, and caution.background opens in its own collapsed AI note section.
+
+${MINDMAP_CARD_GUIDANCE}
 
 Optional further guidance: https://github.com/Kiterlin/anti-defensive-writing/blob/main/SKILL.md`,
   },

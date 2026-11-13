@@ -14,9 +14,13 @@ import { FastTooltip } from "@/components/fast-tooltip";
 import paperStyles from "@/features/paper/paper-outline-rail.module.css";
 import styles from "./mindmap-editor.module.css";
 import { RichText as NodeRichText } from "@/components/rich-text";
-import { ChildNavigation, type ChildNavigationItem } from "./child-navigation";
+import { ChildNavigation, type CardNavigationItem } from "./child-navigation";
+import { ParentNavigation } from "./parent-navigation";
+import { MapNavigationDock } from "./map-navigation-dock";
+import { CardResizeGrip } from "./card-resize-grip";
 import { useAgentReplies } from "./use-agent-replies";
-import { agentReplyContentHash } from "@/lib/research/agent-reply-state";
+import { agentReplyContentHash, cleanAgentReplyDisplay, type AgentReplyPresentation } from "@/lib/research/agent-reply-state";
+import { CardQuestionAnswer } from "./card-question-answer";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useTransition, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
@@ -283,7 +287,7 @@ export function MindmapEditor({
   const [activitySince, setActivitySince] = useState<string | null>(null);
   const [customActivityDate, setCustomActivityDate] = useState(() => daysAgoDate(LAST_WEEK_DAYS));
   const collapseMapId = mindmap.id || initialMindmap.id || "draft";
-  const { replies: agentReplies, unreadNodeIds, markRead: markReplyRead } = useAgentReplies(project, collapseMapId, inboxRevision, persistedDiskHashRef.current);
+  const { replies: agentReplies, unreadNodeIds, presentationByNodeId, markRead: markReplyRead } = useAgentReplies(project, collapseMapId, inboxRevision, persistedDiskHashRef.current);
   const [replyReadRequest, setReplyReadRequest] = useState(0);
   const readAgentReply = useCallback((id: string, visibleNode?: MindmapNode) => {
     if (inlineEditorSessionRef.current?.nodeId === id || editingId === id) return;
@@ -726,6 +730,7 @@ export function MindmapEditor({
             caption: node.caption,
             caution: node.caution,
             tableLayout: node.tableLayout,
+            cardWidth: node.cardWidth,
             createdAt: node.createdAt,
             updatedAt: node.updatedAt,
             completed: Boolean(node.todoId && paperTodoFor(node, paperState)?.completed),
@@ -787,6 +792,7 @@ export function MindmapEditor({
         progress?: MindmapNode["progress"];
         priority?: MindmapNode["priority"];
         tableLayout?: MindmapNode["tableLayout"];
+        cardWidth?: number;
       } = {};
       if (patch.title !== undefined) nodePatch.title = patch.title;
       if (patch.text !== undefined) nodePatch.text = patch.text;
@@ -797,6 +803,7 @@ export function MindmapEditor({
       if (patch.metadata !== undefined) nodePatch.metadata = patch.metadata || undefined;
       if (Object.prototype.hasOwnProperty.call(patch, "priority")) nodePatch.priority = patch.priority;
       if (patch.presentation?.tableLayout !== undefined) nodePatch.tableLayout = patch.presentation.tableLayout;
+      if (patch.presentation && Object.hasOwn(patch.presentation, "cardWidth")) nodePatch.cardWidth = patch.presentation.cardWidth ?? undefined;
       if (patch.presentation) {
         if (patch.presentation.contentFormat !== undefined) nodePatch.contentFormat = patch.presentation.contentFormat;
         if (patch.presentation.shape !== undefined) nodePatch.shape = patch.presentation.shape;
@@ -908,6 +915,20 @@ export function MindmapEditor({
   });
   const [cardMenuOpen, setCardMenuOpen] = useState(true);
   const [unplacedOpen, setUnplacedOpen] = useState(true);
+  const controlDockRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const dock = controlDockRef.current;
+    const editor = dock?.closest<HTMLElement>("[data-mindmap-editor]");
+    if (!dock || !editor) return;
+    const measure = () => {
+      if (getComputedStyle(dock).display === "contents") editor.style.removeProperty("--mindmap-control-clearance");
+      else editor.style.setProperty("--mindmap-control-clearance", `${editor.getBoundingClientRect().bottom - dock.getBoundingClientRect().top + 8}px`);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(dock);
+    return () => { observer.disconnect(); editor.style.removeProperty("--mindmap-control-clearance"); };
+  }, []);
   const [selectMultiple, setSelectMultiple] = useState(false);
   const [inspectorPresent, setInspectorPresent] = useState(true);
   useEffect(() => {
@@ -1066,6 +1087,21 @@ export function MindmapEditor({
     return map;
   }, [mindmap, reconciliation]);
 
+  const [cardWidthPreviews, setCardWidthPreviews] = useState<Map<string, number>>(() => new Map());
+  useEffect(() => { if (readOnly) setCardWidthPreviews(new Map()); }, [readOnly]);
+  const previewCardWidth = useCallback((id: string, width: number | undefined) => {
+    setCardWidthPreviews(current => {
+      const next = new Map(current);
+      if (width === undefined) next.delete(id);
+      else next.set(id, width);
+      return next;
+    });
+  }, []);
+  const commitCardWidth = useCallback((id: string, width: number | undefined) => {
+    previewCardWidth(id, undefined);
+    if (readOnly) return;
+    dispatch({ type: "patch-node", id, patch: { cardWidth: width } });
+  }, [dispatch, previewCardWidth, readOnly]);
   const [measuredCards, setMeasuredCards] = useState<Map<string, Dimensions>>(() => new Map());
   useEffect(() => { setMeasuredCards(new Map()); }, [mindmap.fontSize]);
   const pendingMeasurements = useRef(new Map<string, Dimensions>());
@@ -1101,9 +1137,10 @@ export function MindmapEditor({
       if (coverage && coverage.total > 0) extra += 22;
       if (extra) extraHeight.set(node.id, extra);
     }
-    const next = createCanvasLayout(mindmap, extraHeight, collapsedIds, paperState, measuredCards);
+    const displayed = cardWidthPreviews.size ? { ...mindmap, nodes: mindmap.nodes.map(node => cardWidthPreviews.has(node.id) ? { ...node, cardWidth: cardWidthPreviews.get(node.id) } : node) } : mindmap;
+    const next = createCanvasLayout(displayed, extraHeight, collapsedIds, paperState, measuredCards);
     return next;
-  }, [mindmap, coverageById, collapsedIds, paperState?.paper?.todos, measuredCards]);
+  }, [mindmap, coverageById, collapsedIds, paperState?.paper?.todos, measuredCards, cardWidthPreviews]);
   const selected = selectedIds.length > 0
     ? layout.nodeById.get(selectedId) || layout.nodeById.get(mindmap.rootId)
     : undefined;
@@ -1740,8 +1777,8 @@ export function MindmapEditor({
   useEffect(() => {
     const changedReply = agentReplies.some(reply => {
       const node = mindmap.nodes.find(item => item.id === reply.nodeId);
-      return unreadNodeIds.has(reply.nodeId) && node
-        && agentReplyContentHash(node, paperTodoFor(node, paperState)) !== reply.contentHash;
+      return unreadNodeIds.has(reply.nodeId) && (!node
+        || agentReplyContentHash(node, paperTodoFor(node, paperState)) !== reply.contentHash);
     });
     if (!changedReply || !replyHydrationAllowed.current()) return;
     let cancelled = false;
@@ -2161,6 +2198,7 @@ export function MindmapEditor({
     const dimensions = layout.dimensions.get(id);
     if (!node || !dimensions) return null;
     const activityAt = nodeActivityAt(node, reconciliation);
+    const parent = node.parentId ? layout.nodeById.get(node.parentId) : undefined;
     return (
       <CanvasNode
         project={project}
@@ -2176,7 +2214,12 @@ export function MindmapEditor({
           ...cardContentForNodeWithPaperState(child, paperState),
           format: child.todoId ? "tex" : child.contentFormat,
         }))}
-        onJumpToChild={focusCard}
+        parentNavigation={parent ? {
+          id: parent.id,
+          ...cardContentForNodeWithPaperState(parent, paperState),
+          format: parent.todoId ? "tex" : parent.contentFormat,
+        } : undefined}
+        onJumpToCard={focusCard}
         completed={Boolean(paperTodoFor(node, paperState)?.completed)}
         todoBusy={todoProgressBusy}
         onToggleTodo={node.todoId ? completed => setTodoCompleted(node.todoId!, completed) : undefined}
@@ -2186,9 +2229,12 @@ export function MindmapEditor({
         coverage={coverageById.get(node.id)}
         activityLabel={activityNodeIds.has(node.id) ? Date.parse(activityAt) >= Date.parse(activitySince || "") ? relativeActivityLabel(activityAt) : "recent activity in this branch" : null}
         unreadReply={unreadNodeIds.has(node.id)}
+        replyPresentation={presentationByNodeId.get(node.id)}
         onRead={() => readAgentReply(node.id, node)}
         dimensions={dimensions}
         onMeasure={measureCard}
+        onResizePreview={width => previewCardWidth(node.id, width)}
+        onResizeCommit={width => commitCardWidth(node.id, width)}
         orphan={!layout.reachable.has(node.id)}
         selected={selectedIdSet.has(node.id)}
         editing={node.id === editingId}
@@ -2252,6 +2298,7 @@ export function MindmapEditor({
     activityNodeIds,
     activitySince,
     unreadNodeIds,
+    presentationByNodeId,
     readAgentReply,
     imageUploads,
     collapsedIds,
@@ -2276,6 +2323,8 @@ export function MindmapEditor({
     setTodoCompleted,
     toggleCollapse,
     measureCard,
+    previewCardWidth,
+    commitCardWidth,
   ]);
 
   const moveTargets = useMemo(() => {
@@ -2383,70 +2432,6 @@ export function MindmapEditor({
       onKeyDown={onKeyDown}
     >
       <div className={styles.toolbar} role="group" aria-label="Mindmap controls">
-        <div className={cn("p-glass-sm", paperStyles.toolbar, styles.canvasTools)} role="group" aria-label="Map view controls">
-          {viewMode === "changes" && <button type="button" className="p-button p-button-glass ob-glass-button" onClick={() => setViewMode("map")}>Back to map</button>}
-          <button type="button" className="p-button p-button-glass ob-glass-button" aria-label="Unplaced paper TODOs" aria-expanded={unplacedOpen} onClick={() => { setUnplacedOpen((open) => !open); setViewMode("map"); }}><ListTodo size={15} aria-hidden="true" /><span className={styles.unplacedLabel}>Unplaced</span><span className="ob-paper-metric-value">{unplacedCount}</span></button>
-          <div className={styles.depthControls}>
-          <FastTooltip label={expandAllFromToolbar ? "Expand all cards" : `Collapse cards at depth ${collapseDepth} and deeper`}>
-            <button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.depthCollapse)} aria-label={expandAllFromToolbar ? "Expand all cards" : `Collapse all cards at depth ${collapseDepth} and deeper`}
-              data-collapsed={depthCollapsed} aria-pressed={depthCollapsed} disabled={collapseTargetIds.length === 0 && collapsedIds.size === 0}
-              onClick={() => void toggleDepthCollapse()}>
-              {expandAllFromToolbar ? <ChevronsUpDown size={15} aria-hidden="true" /> : <ChevronsDownUp size={15} aria-hidden="true" />}
-              <span className={styles.depthCollapseLabel}>{expandAllFromToolbar ? "Expand all" : "Collapse"}</span>
-            </button>
-          </FastTooltip>
-          <Select label="Collapse depth" value={String(collapseDepth)} onValueChange={value => setCollapseDepth(Number(value))}
-            className={cn("p-button p-button-glass ob-glass-button", styles.depthSelect)}
-            options={Array.from({ length: maxCollapseDepth - 1 }, (_, index) => ({ value: String(index + 2), label: `${index + 2}+` }))} />
-          </div>
-          <Popover.Root open={searchOpen || moveOpen} onOpenChange={(open) => { setSearchOpen(open); if (!open) setMoveOpen(false); }}>
-            <Popover.Trigger asChild>
-              <button ref={searchTriggerRef} type="button" className={cn("p-button p-button-glass ob-glass-button", styles.searchTrigger)} aria-label="Find a card" onClick={() => { setMoveQuery(""); setSearchIndex(0); }}>
-                <Search size={15} /><span>Find a card</span>
-              </button>
-            </Popover.Trigger>
-            <Popover.Portal>
-              <Popover.Content ref={searchPanelRef} className={styles.searchPanel} side="top" sideOffset={10} align="end" collisionPadding={12} aria-label={moveOpen ? "Move card" : "Find a card"}
-                onCloseAutoFocus={(event) => { if (searchDismissedOutsideRef.current) event.preventDefault(); }}>
-                <div className={styles.searchField}>
-                  <Search size={17} />
-                  <input autoFocus value={moveQuery} placeholder={moveOpen ? "Move under…" : "Search titles, text, and labels…"} aria-label={moveOpen ? "Search move destination" : "Search cards"} role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="mindmap-search-results" aria-activedescendant={visibleSearchResults[searchIndex] ? `mindmap-search-result-${searchIndex}` : undefined}
-                    onChange={(event) => { setMoveQuery(event.target.value); setSearchIndex(0); }}
-                    onKeyDown={(event) => {
-                      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                        event.preventDefault();
-                        setSearchIndex((index) => Math.max(0, Math.min(visibleSearchResults.length - 1, index + (event.key === "ArrowDown" ? 1 : -1))));
-                      }
-                      if (event.key === "Enter" && visibleSearchResults[searchIndex]) { event.preventDefault(); chooseSearchResult(visibleSearchResults[searchIndex].id); }
-                    }} />
-                </div>
-                <div id="mindmap-search-results" role="listbox" aria-label="Cards" className={styles.searchResults}>
-                  {visibleSearchResults.map((result, index) => <button key={result.id} id={`mindmap-search-result-${index}`} type="button" role="option" aria-selected={index === searchIndex} onMouseEnter={() => setSearchIndex(index)} onClick={() => chooseSearchResult(result.id)}>
-                    <span className={styles.searchResultContent}>
-                      <span className={styles.searchResultTitle} title={result.label}>{result.label}</span>
-                      <small className={styles.searchResultContext} title={result.context}>{result.context}</small>
-                    </span>
-                    <span aria-hidden="true">↵</span>
-                  </button>)}
-                  {visibleSearchResults.length === 0 && <p>No matching cards.</p>}
-                </div>
-                <div className={styles.searchFooter}>{searchResults.length} cards · ↑ ↓ to choose · Enter to {moveOpen ? "move" : "jump"} · / to search</div>
-              </Popover.Content>
-            </Popover.Portal>
-          </Popover.Root>
-          <FastTooltip label="Add a child to the selected card (Tab)"><button type="button" aria-label="Add card" className={cn("p-button p-button-glass ob-glass-button", styles.primaryButton)} disabled={readOnly} onClick={() => addChild()}><Plus size={16} /><span>Add card</span></button></FastTooltip>
-          <div
-            className={styles.saveStatus}
-            role="status"
-            aria-live="polite"
-            data-local-save-state={localSaveState}
-            data-remote-save-state={remoteSaveState}
-          >
-            <SaveSyncStatus iconOnly className={cn("p-button p-button-glass ob-glass-button", paperStyles.unifiedStatus)} saved={!dirty && localSaveState === "saved"} saving={localSaveState === "saving"}
-              conflict={saveConflict || localSaveState === "conflict"} remote={remoteSaveState}
-              error={primaryIssue?.message} onConnectionIssue={() => setConnectionDetailsOpenRequest(value => value + 1)} onRetry={sessionWritable ? () => { void pushRemote("OpenBar: retry saved project sync"); } : undefined} />
-          </div>
-        </div>
         <div className={cn("p-glass-sm", paperStyles.toolbar, styles.projectBar)} role="group" aria-label="Map settings">
           {header}
           <div className={styles.fontTools}><MindmapFontSize value={mindmap.fontSize || DEFAULT_MINDMAP_FONT_SIZE} disabled={readOnly}
@@ -2515,9 +2500,85 @@ export function MindmapEditor({
           </div>
         </div>
       </div>
+      <div ref={controlDockRef} className={cn(styles.toolbar, styles.controlDock)} role="group" aria-label="Mindmap dock">
+        <div className={styles.dockUtility}>
+          <MapNavigationDock>
+          <div data-map-history role="group" aria-label="Map history">
+            <ToolbarButton title="Undo (⌘Z / Ctrl+Z)" onClick={undo} disabled={readOnly || !history.length}><Undo2 size={15} /></ToolbarButton>
+            <ToolbarButton title="Redo (⌘⇧Z / Ctrl+Y)" onClick={redo} disabled={readOnly || !future.length}><Redo2 size={15} /></ToolbarButton>
+            <span title={`${mindmap.nodes.length} cards`}>{mindmap.nodes.length} cards</span>
+          </div>
+          </MapNavigationDock>
       <div className={styles.resumeDock}>
         <BackendStatusNotice project={project} issues={editorIssues} diagnosticContext={getMindmapDiagnostics} openRequest={connectionDetailsOpenRequest} />
         <ResumeEditControl suppressError={primaryIssue?.id !== "access"} />
+      </div>
+        </div>
+        <div className={cn("p-glass-sm", paperStyles.toolbar, styles.canvasTools)} role="group" aria-label="Map view controls">
+          <button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.unplacedToggle)} aria-label={`Unplaced paper TODOs, ${unplacedCount} ready to place on the map`} aria-expanded={unplacedOpen && unplacedCount > 0} title={`${unplacedCount} paper TODOs are ready to place on your mindmap`} onClick={() => { setUnplacedOpen((open) => !open); setViewMode("map"); }}><ListTodo size={15} aria-hidden="true" /><span className={styles.unplacedLabel}>Unplaced</span>{unplacedCount > 0 && <sup className={styles.unplacedBadge} aria-hidden="true">{unplacedCount}</sup>}</button>
+          <div className={styles.canvasToolActions}>
+          {viewMode === "changes" && <button type="button" className="p-button p-button-glass ob-glass-button" onClick={() => setViewMode("map")}>Back to map</button>}
+          <div className={styles.depthControls}>
+          <FastTooltip label={expandAllFromToolbar ? "Expand all cards" : `Collapse cards at depth ${collapseDepth} and deeper`}>
+            <button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.depthCollapse)} aria-label={expandAllFromToolbar ? "Expand all cards" : `Collapse all cards at depth ${collapseDepth} and deeper`}
+              data-collapsed={depthCollapsed} aria-pressed={depthCollapsed} disabled={collapseTargetIds.length === 0 && collapsedIds.size === 0}
+              onClick={() => void toggleDepthCollapse()}>
+              {expandAllFromToolbar ? <ChevronsUpDown size={15} aria-hidden="true" /> : <ChevronsDownUp size={15} aria-hidden="true" />}
+            </button>
+          </FastTooltip>
+          <Select label="Collapse depth" value={String(collapseDepth)} onValueChange={value => setCollapseDepth(Number(value))}
+            className={cn("p-button p-button-glass ob-glass-button", styles.depthSelect)}
+            options={Array.from({ length: maxCollapseDepth - 1 }, (_, index) => ({ value: String(index + 2), label: `${index + 2}+` }))} />
+          </div>
+          <Popover.Root open={searchOpen || moveOpen} onOpenChange={(open) => { setSearchOpen(open); if (!open) setMoveOpen(false); }}>
+            <Popover.Trigger asChild>
+              <button ref={searchTriggerRef} type="button" className={cn("p-button p-button-glass ob-glass-button", styles.searchTrigger)} aria-label="Find a card" onClick={() => { setMoveQuery(""); setSearchIndex(0); }}>
+                <Search size={15} /><span>Find a card</span>
+              </button>
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content ref={searchPanelRef} className={styles.searchPanel} side="top" sideOffset={10} align="end" collisionPadding={12} aria-label={moveOpen ? "Move card" : "Find a card"}
+                onCloseAutoFocus={(event) => { if (searchDismissedOutsideRef.current) event.preventDefault(); }}>
+                <div className={styles.searchField}>
+                  <Search size={17} />
+                  <input autoFocus value={moveQuery} placeholder={moveOpen ? "Move under…" : "Search titles, text, and labels…"} aria-label={moveOpen ? "Search move destination" : "Search cards"} role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="mindmap-search-results" aria-activedescendant={visibleSearchResults[searchIndex] ? `mindmap-search-result-${searchIndex}` : undefined}
+                    onChange={(event) => { setMoveQuery(event.target.value); setSearchIndex(0); }}
+                    onKeyDown={(event) => {
+                      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                        event.preventDefault();
+                        setSearchIndex((index) => Math.max(0, Math.min(visibleSearchResults.length - 1, index + (event.key === "ArrowDown" ? 1 : -1))));
+                      }
+                      if (event.key === "Enter" && visibleSearchResults[searchIndex]) { event.preventDefault(); chooseSearchResult(visibleSearchResults[searchIndex].id); }
+                    }} />
+                </div>
+                <div id="mindmap-search-results" role="listbox" aria-label="Cards" className={styles.searchResults}>
+                  {visibleSearchResults.map((result, index) => <button key={result.id} id={`mindmap-search-result-${index}`} type="button" role="option" aria-selected={index === searchIndex} onMouseEnter={() => setSearchIndex(index)} onClick={() => chooseSearchResult(result.id)}>
+                    <span className={styles.searchResultContent}>
+                      <span className={styles.searchResultTitle} title={result.label}>{result.label}</span>
+                      <small className={styles.searchResultContext} title={result.context}>{result.context}</small>
+                    </span>
+                    <span aria-hidden="true">↵</span>
+                  </button>)}
+                  {visibleSearchResults.length === 0 && <p>No matching cards.</p>}
+                </div>
+                <div className={styles.searchFooter}>{searchResults.length} cards · ↑ ↓ to choose · Enter to {moveOpen ? "move" : "jump"} · / to search</div>
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
+          <FastTooltip label="Add a child to the selected card (Tab)"><button type="button" aria-label="Add card" className={cn("p-button p-button-glass ob-glass-button", styles.primaryButton)} disabled={readOnly} onClick={() => addChild()}><Plus size={16} /><span>Add card</span></button></FastTooltip>
+          <div
+            className={styles.saveStatus}
+            role="status"
+            aria-live="polite"
+            data-local-save-state={localSaveState}
+            data-remote-save-state={remoteSaveState}
+          >
+            <SaveSyncStatus iconOnly className={cn("p-button p-button-glass ob-glass-button", paperStyles.unifiedStatus)} saved={!dirty && localSaveState === "saved"} saving={localSaveState === "saving"}
+              conflict={saveConflict || localSaveState === "conflict"} remote={remoteSaveState}
+              error={primaryIssue?.message} onConnectionIssue={() => setConnectionDetailsOpenRequest(value => value + 1)} onRetry={sessionWritable ? () => { void pushRemote("OpenBar: retry saved project sync"); } : undefined} />
+          </div>
+          </div>
+        </div>
       </div>
       <div className="mindmap-workspace">
 
@@ -2564,13 +2625,6 @@ export function MindmapEditor({
         {assetError && primaryIssue?.id === "asset" && <p className="mindmap-save-error" role="alert">{assetError} <button type="button" onClick={() => setAssetError(null)}>Dismiss</button></p>}
 
 
-        <footer className={styles.workspaceFooter}>
-          <div className={styles.historyControls}>
-            <ToolbarButton title="Undo (⌘Z / Ctrl+Z)" onClick={undo} disabled={readOnly || !history.length}><Undo2 size={15} /></ToolbarButton>
-            <ToolbarButton title="Redo (⌘⇧Z / Ctrl+Y)" onClick={redo} disabled={readOnly || !future.length}><Redo2 size={15} /></ToolbarButton>
-            <span>{mindmap.nodes.length} cards</span>
-          </div>
-        </footer>
         {moveNotice && <div className={styles.moveNotice} role="status"><Check size={14} /><span>{moveNotice}</span><button type="button" onClick={() => { undo(); setMoveNotice(""); }}>Undo</button></div>}
 
       </div>
@@ -3249,7 +3303,8 @@ function CanvasNode({
   node,
   cardContent,
   childNavigation,
-  onJumpToChild,
+  parentNavigation,
+  onJumpToCard,
   completed,
   todoBusy,
   onToggleTodo,
@@ -3259,9 +3314,12 @@ function CanvasNode({
   coverage,
   activityLabel,
   unreadReply,
+  replyPresentation,
   onRead,
   dimensions,
   onMeasure,
+  onResizePreview,
+  onResizeCommit,
   orphan,
   selected,
   editing,
@@ -3288,8 +3346,9 @@ function CanvasNode({
   onImageFiles: (files: File[]) => void;
   node: MindmapNode;
   cardContent: { title: string; body: string };
-  childNavigation: ChildNavigationItem[];
-  onJumpToChild: (id: string) => void;
+  childNavigation: CardNavigationItem[];
+  parentNavigation?: CardNavigationItem;
+  onJumpToCard: (id: string) => void;
   completed: boolean;
   todoBusy: boolean;
   onToggleTodo?: (completed: boolean) => Promise<boolean>;
@@ -3299,10 +3358,13 @@ function CanvasNode({
   coverage?: { complete: number; total: number };
   activityLabel?: string | null;
   unreadReply: boolean;
+  replyPresentation?: AgentReplyPresentation;
   onRead: () => void;
   dimensions: Dimensions;
   fontSize: number;
   onMeasure: (id: string, size: Dimensions) => void;
+  onResizePreview: (width: number | undefined) => void;
+  onResizeCommit: (width: number | undefined) => void;
   orphan: boolean;
   selected: boolean;
   editing: boolean;
@@ -3327,7 +3389,7 @@ function CanvasNode({
     ? activityLabel === "recent activity in this branch" ? "Recent activity in this branch" : `Recent activity: ${activityLabel}`
     : undefined;
   const [imageDropActive, setImageDropActive] = useState(false);
-  const tableFitKey = node.contentFormat === "markdown" && node.tableLayout !== "scroll" && markdownTableColumns(node.text) > 0
+  const tableFitKey = node.cardWidth === undefined && node.contentFormat === "markdown" && node.tableLayout !== "scroll" && markdownTableColumns(node.text) > 0
     ? JSON.stringify([project, node, cardContent, coverage, activityLabel, fontSize]) : null;
   useLayoutEffect(() => {
     const card = cardRef.current;
@@ -3507,10 +3569,11 @@ function CanvasNode({
       ref={cardRef}
       data-drop-kind={dropPreviewKind || undefined}
       data-mind-node={node.id}
+      data-child-navigation={childNavigation.length > 0 || undefined}
       data-mind-editor={editing ? node.id : undefined}
       role="treeitem"
       aria-selected={selected}
-      aria-label={title || mindmapNodeLabel(node)}
+      aria-label={(replyPresentation ? cleanAgentReplyDisplay(title) : title) || mindmapNodeLabel(node)}
       aria-description={activityDescription}
       onClickCapture={onRead}
       className={cn(
@@ -3594,7 +3657,8 @@ function CanvasNode({
             ref={editorRef}
             variant="compact"
             readOnly={readOnly}
-            texHighlighting={draftFormat === "tex"}
+            texHighlighting={Boolean(node.todoId) || draftFormat === "tex"}
+            inlineFormatting={node.todoId || draftFormat === "tex" ? "tex" : draftFormat === "markdown" ? "markdown" : undefined}
             value={editingNodeRef.current !== node.id ? restoredDraft?.text ?? draft : draft}
             onChange={(value) => {
               onDraftActivity();
@@ -3612,7 +3676,10 @@ function CanvasNode({
         </div>
       ) : (
         <>
-          {node.todoId ? (
+          {replyPresentation ? (
+            <CardQuestionAnswer presentation={replyPresentation} title={title} body={body}
+              format={node.todoId ? "tex" : node.contentFormat} tableLayout={node.tableLayout} />
+          ) : node.todoId ? (
             <div className="mindmap-node-todo-text">
               {title.trim() && <div className="mindmap-node-todo-title"><NodeRichText text={title} format="tex" /></div>}
               {body.trim() && <div className="mindmap-node-detail"><NodeRichText text={body} format="tex" /></div>}
@@ -3651,7 +3718,9 @@ function CanvasNode({
           <CardScratchpad text={node.caption} background={node.caution?.background} editing={editing} readOnly={readOnly}
             onChange={onNoteChange} onCommit={() => void commit()} onCancel={cancel}
             footer={hasCardLinks(node.refs) ? <CardLinkIndicator project={project} refs={node.refs || []} /> : undefined} />
-      {!editing && <ChildNavigation parentTitle={title || "Untitled card"} items={childNavigation} onJump={onJumpToChild} />}
+      {!editing && <ParentNavigation cardTitle={title || "Untitled card"} item={parentNavigation} onJump={onJumpToCard} />}
+      {!editing && <ChildNavigation parentTitle={title || "Untitled card"} items={childNavigation} onJump={onJumpToCard} />}
+      {!readOnly && <CardResizeGrip width={dimensions.width} onPreview={onResizePreview} onCommit={onResizeCommit} />}
       {collapsedDescendantCount > 0 && (
         <FastTooltip label={collapsed ? "Expand child cards" : "Collapse all child cards"}><button
           type="button"
@@ -3670,10 +3739,7 @@ function CanvasNode({
           onDoubleClick={(event) => event.stopPropagation()}
         >
           {collapsed ? (
-            <>
-              <Plus size={11} strokeWidth={2.75} aria-hidden="true" />
-              <span className={cn(styles.collapseCount, "tabular-nums")}>{collapsedDescendantCount}</span>
-            </>
+            <span className={cn(styles.collapseCount, "tabular-nums")} aria-hidden="true">+{collapsedDescendantCount}</span>
           ) : (
             <Minus size={12} strokeWidth={2.75} aria-hidden="true" />
           )}
@@ -3778,7 +3844,7 @@ function createCanvasLayout(
     const size = nodeDimensions(node, displayTextById.get(node.id));
     const extra = extraHeight?.get(node.id) || 0;
     const measured = measuredCards?.get(node.id);
-    const fittedTable = node.contentFormat === "markdown" && node.tableLayout !== "scroll" && markdownTableColumns(node.text) > 0;
+    const fittedTable = node.cardWidth === undefined && node.contentFormat === "markdown" && node.tableLayout !== "scroll" && markdownTableColumns(node.text) > 0;
     const widthMatches = measured && (fittedTable
       ? measured.width <= size.width && measured.width >= Math.min(NODE_WIDTH, size.width)
       : Math.abs(measured.width - size.width) < 1);

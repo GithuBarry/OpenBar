@@ -158,6 +158,11 @@ export default async function AboutPage() {
       <section className="border-t border-line bg-surface/60" aria-label="What OpenBar provides">
         <AboutFeatureGrid />
       </section>
+
+      <footer className="mx-auto max-w-6xl px-6 py-8 text-sm leading-6 text-muted">
+        Thank you to <a href="https://xmind.com/" className="text-accent underline underline-offset-4">Xmind</a> and{" "}
+        <a href="https://www.marginnote.com/" className="text-accent underline underline-offset-4">MarginNote</a> for inspiring OpenBar’s mindmaps and connected notes.
+      </footer>
     </main>
   );
 }

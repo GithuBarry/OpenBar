@@ -156,6 +156,10 @@ promotes surviving children. `deleteMode: "branches"` removes selected subtrees.
 `set_mindmap_collapsed` changes the browser-local view preference for the
 current project and map. Browser `get_mindmap` returns it under `viewLocal`.
 
+The current tab saves each map’s position and zoom in `sessionStorage` and
+restores them across reloads, including Resume edit. The Unplaced tray overlays
+the canvas so opening and closing it preserves the map’s position and zoom.
+
 TeX owns each TODO id, title, text, and completion. Each map owns placement,
 labels, refs, optional progress/priority, table layout, and appearance. Primary
 covers paper TODOs through its tree or Primary Unplaced. Secondary maps can
@@ -257,6 +261,19 @@ visible paragraphs with red and amber accents. `caption` opens through the
 card’s collapsed notes disclosure. `caution.background` appears in the
 collapsed AI note section. All note fields are map-owned, including on TODO cards.
 
+Prefer concise visible cards, aiming for 80 words or fewer of visible card prose.
+Put explanations, reasoning (including “why”), methods, and supporting detail in
+`caption`. People click the existing Notes
+disclosure to expand this detail. Use child cards for distinct subtopics or
+independently useful results. Prefer Agent draft cards for new answers,
+explanations, and supporting material. Use paper TODOs for research work that
+belongs in the manuscript. Keep card prose focused on the subject. Let
+hierarchy, labels, and disclosures communicate organization. Add navigation
+directions only when they help locate a specific item the reader needs. Keep
+key findings, consequential risks, and factual uncertainty visible. Card length is a flexible authoring preference, and longer
+cards are welcome when useful. Apply this quietly and offer card-length advice
+only when the user asks.
+
 `apply_mindmap_edits` operations `add` and `patch` accept `caption` and `caution`.
 Supplying `caution` replaces all its fields, and `{}` clears them. An empty
 `caption` clears the notes. Existing scalar caution text and retired
@@ -332,3 +349,13 @@ portable browser bridge works with ordinary page-evaluation tooling.
 
 Use a configured bearer token for authenticated MCP access. The product
 instructions at `/llms.txt` and `/agents` describe the connection contract.
+
+Answered requests display as Q&A. Their saved request text retains its inbox
+identity, while the answered display omits the leading mention marker. Agents
+may add Agent draft child answer cards. Acknowledging the request publishes
+those answers together, each with its own unread red dot that clears when read.
+
+Card width is map-owned presentation. Drag the lower-right resize grip to set
+it, or use `presentation.cardWidth` (180–1200 canvas pixels) through map edits.
+Pass `null`, double-click the grip, or press Delete to restore automatic width.
+Card height continues to follow its content.

@@ -1,13 +1,12 @@
-.rail { position: absolute; top: 50%; right: -64px; display: flex; flex-direction: column; align-items: center; width: 64px; max-height: 240px; padding: 5px 3px 5px 39px; overflow-y: auto; transform: translateY(-50%); opacity: 0; pointer-events: none; scrollbar-width: thin; transition: opacity 100ms ease; }
+.rail { position: absolute; top: 50%; right: -11px; display: flex; flex-direction: column; align-items: center; width: 22px; max-height: min(240px, calc(100% - 12px)); padding: 5px 0; overflow-y: auto; transform: translateY(-50%); opacity: 0; pointer-events: none; scrollbar-width: thin; transition: opacity 100ms ease; }
 :global([data-mind-node]:hover) > .rail, :global([data-mind-node]:focus-within) > .rail, .rail:hover, .rail:focus-within { opacity: 1; pointer-events: auto; }
 .tick { display: grid; place-items: center; flex-shrink: 0; width: 22px; height: 14px; padding: 0; border: 0; border-radius: 3px; background: transparent; cursor: pointer; }
 .tick::before { content: ""; width: 10px; height: 1.5px; border-radius: 2px; background: rgb(var(--line)); transition: width 100ms ease, background 100ms ease; }
 .tick:hover::before, .tick:focus-visible::before, .tick[data-state="delayed-open"]::before, .tick[data-state="instant-open"]::before { width: 17px; background: rgb(var(--accent)); }
 .tick:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; }
 .preview { z-index: 130; width: min(245px, calc(100vw - 24px)); padding: 11px 13px; border: 1px solid rgb(var(--line)); border-radius: 9px; background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); font-family: var(--font-sans); }
-.preview > small { display: block; margin-bottom: 5px; color: rgb(var(--muted)); font-size: 10px; }
 .preview > strong { display: block; font-size: 12px; line-height: 1.4; }
 .body { display: -webkit-box; margin-top: 5px; overflow: hidden; -webkit-line-clamp: 5; -webkit-box-orient: vertical; color: rgb(var(--muted)); font-size: 11px; line-height: 1.5; white-space: pre-wrap; }
 .preview .hint { display: block; margin-top: 9px; color: rgb(var(--faint)); font-size: 10px; }
-@media (pointer: coarse) { .rail { right: -92px; width: 92px; padding: 3px 3px 3px 61px; } .tick { width: 28px; height: 28px; } }
+@media (pointer: coarse) { .rail { right: -16px; width: 32px; padding: 3px 2px; } .tick { width: 28px; height: 28px; } }
 @media (prefers-reduced-motion: reduce) { .rail, .tick::before { transition: none; } }

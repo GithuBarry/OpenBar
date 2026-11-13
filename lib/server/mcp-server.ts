@@ -1,5 +1,5 @@
 import { ProtocolError, Server, type CallToolResult, type Tool } from "@modelcontextprotocol/server"
-import { version } from "@/package.json"
+import packageJson from "@/package.json"
 
 import { AGENT_GUIDANCE } from "@/lib/research/agent-guidance"
 import { formatInboxPrefix } from "@/lib/research/agent-inbox-contract"
@@ -10,7 +10,7 @@ import { registerMcpDiscovery } from "@/lib/research/mcp-discovery"
 export function createOpenbarMcpServer(actor: string): Server {
   // The low-level SDK server preserves the existing JSON Schema tool catalog
   // and operation envelopes while owning protocol validation and cancellation.
-  const server = new Server({ name: "OpenBar", version }, {
+  const server = new Server({ name: "OpenBar", version: packageJson.version }, {
     instructions: AGENT_GUIDANCE,
     capabilities: { tools: { listChanged: false }, resources: {}, prompts: {} },
   })

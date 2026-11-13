@@ -57,6 +57,9 @@ const nextConfig: NextConfig = {
     "@citation-js/plugin-csl",
   ],
   experimental: {
+    // Keep production builds within a modest share of the shared WSL host.
+    cpus: 2,
+    webpackMemoryOptimizations: true,
     authInterrupts: true,
     useTypeScriptCli: false,
     serverActions: {

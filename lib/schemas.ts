@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { safeUrl } from "@/lib/safe-url";
+import { MIN_CARD_WIDTH, MAX_CARD_WIDTH } from "@/lib/mindmap/card-width";
 
 const isoDateTime = z.string().datetime({ offset: true });
 
@@ -114,6 +115,7 @@ export const mindmapNodeSchema = z
     metadata: z.record(z.string(), z.unknown()).optional(),
     contentFormat: z.enum(["plain", "markdown", "tex"]).optional(),
     tableLayout: z.enum(["wide", "scroll"]).optional(),
+    cardWidth: z.number().int().min(MIN_CARD_WIDTH).max(MAX_CARD_WIDTH).optional(),
     color: z.string().optional(),
     tags: z.array(z.string()).optional(),
     progress: z.union([z.number().int().min(0).max(6), z.literal("ditched")]).optional(),

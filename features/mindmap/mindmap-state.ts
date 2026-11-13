@@ -1,6 +1,7 @@
 import { byOrder, indexMindmap, type MindmapIndex } from "@/lib/mindmap-index";
 import { DEFAULT_MINDMAP_FONT_SIZE, normalizeMindmap } from "@/lib/mindmap/mindmap";
 import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
+import { normalizeCardWidth } from "@/lib/mindmap/card-width";
 import { normalizeMindmapCaution, type MindmapCaution } from "@/lib/mindmap/caution";
 import type { Mindmap, MindmapNode } from "@/lib/types";
 import { mergeSavedMindmap } from "@/lib/mindmap/merge-saved";
@@ -22,7 +23,7 @@ export type MindmapSession = {
 /** Semantic node fields that the inspector and agent tools may edit. */
 export type MindmapNodePatch = Pick<
   MindmapNode,
-  "agentDraft" | "title" | "caption" | "caution" | "shape" | "metadata" | "contentFormat" | "tableLayout" | "color" | "refs" | "tags" | "progress"
+  "agentDraft" | "title" | "caption" | "caution" | "shape" | "metadata" | "contentFormat" | "tableLayout" | "cardWidth" | "color" | "refs" | "tags" | "progress"
 > & { text?: string; priority?: MindmapNode["priority"] };
 
 function semanticPatch(patch: MindmapNodePatch): MindmapNodePatch {
@@ -36,6 +37,7 @@ function semanticPatch(patch: MindmapNodePatch): MindmapNodePatch {
   if (Object.prototype.hasOwnProperty.call(patch, "metadata")) next.metadata = patch.metadata;
   if (Object.prototype.hasOwnProperty.call(patch, "contentFormat")) next.contentFormat = patch.contentFormat;
   if (Object.prototype.hasOwnProperty.call(patch, "tableLayout")) next.tableLayout = patch.tableLayout;
+  if (Object.prototype.hasOwnProperty.call(patch, "cardWidth")) next.cardWidth = normalizeCardWidth(patch.cardWidth);
   if (Object.prototype.hasOwnProperty.call(patch, "color")) next.color = patch.color;
   if (Object.prototype.hasOwnProperty.call(patch, "refs")) next.refs = patch.refs;
   if (Object.prototype.hasOwnProperty.call(patch, "tags")) next.tags = patch.tags;

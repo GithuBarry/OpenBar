@@ -17,6 +17,7 @@ const MINDMAP_NODE_FIELDS: ReadonlyArray<keyof MindmapNode> = [
   "progress",
   "priority",
   "tableLayout",
+  "cardWidth",
   "refs",
   "order",
   "createdAt",

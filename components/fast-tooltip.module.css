@@ -12,3 +12,6 @@
   overflow-wrap: anywhere;
   pointer-events: none;
 }
+:global([data-radix-popper-content-wrapper]):has(> .tooltip) {
+  pointer-events: none;
+}

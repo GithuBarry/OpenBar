@@ -1,5 +1,5 @@
 .editor { --mindmap-dock-height: 46px; --mindmap-resume-height: var(--mindmap-dock-height); --mindmap-zoom-size: 34px; --mindmap-dock-bottom: 10px; --mindmap-controls-bottom: calc(var(--mindmap-dock-height) + 16px); --mindmap-bottom-clearance: calc(var(--mindmap-dock-bottom) + var(--mindmap-dock-height) + 8px); --overleaf-notice-top: var(--mindmap-controls-bottom); position: relative; height: 100%; min-height: 0; overflow: hidden; background: rgb(var(--canvas)); container-type: size; }
-.inspector { position: absolute; top: var(--mindmap-controls-bottom); right: 8px; z-index: 26; display: flex; min-height: 0; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; background: var(--surface-overlay); color: rgb(var(--ink)); padding: 0; font-family: var(--font-sans); width: 304px; max-height: calc(100% - var(--mindmap-controls-bottom) - var(--mindmap-panel-bottom-clearance, var(--mindmap-bottom-clearance))); border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); margin: 0; box-shadow: var(--shadow-pop); }
+.inspector { backdrop-filter: blur(16px) saturate(1.25); corner-shape: squircle; position: absolute; top: var(--mindmap-controls-bottom); right: 8px; z-index: 26; display: flex; min-height: 0; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; background: rgb(var(--surface) / .88); color: rgb(var(--ink)); padding: 0; font-family: var(--font-sans); width: 304px; max-height: calc(100% - var(--mindmap-controls-bottom) - var(--mindmap-panel-bottom-clearance, var(--mindmap-bottom-clearance))); border: 1px solid rgb(var(--line) / .75); border-radius: 24px; margin: 0; box-shadow: var(--shadow-pop), inset 0 1px 0 rgb(255 255 255 / .2); }
 .inspector > * { flex-shrink: 0; }
 @media (max-width: 600px) {
   .editor:has(:global([data-editor-notice])) .inspector { top: calc(var(--mindmap-controls-bottom) + 52px); max-height: calc(100% - var(--mindmap-controls-bottom) - var(--mindmap-panel-bottom-clearance, var(--mindmap-bottom-clearance)) - 52px); }
@@ -59,7 +59,7 @@
 .toolbar > .projectBar, .toolbar > .canvasTools { position: absolute; width: max-content; height: var(--mindmap-dock-height); min-height: 0; max-width: calc(100% - 16px); flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; overflow-y: hidden; pointer-events: auto; }
 .projectBar { top: 8px; left: 8px; }
 .canvasTools { top: auto; bottom: var(--mindmap-dock-bottom); left: 50%; transform: translateX(-50%); }
-.resumeDock { position: absolute; z-index: 30; bottom: var(--mindmap-bottom-clearance); left: 50%; width: max-content; max-width: calc(100% - 24px); transform: translateX(-50%); }
+.resumeDock { pointer-events: auto; position: absolute; z-index: 30; bottom: var(--mindmap-bottom-clearance); left: 50%; width: max-content; max-width: calc(100% - 24px); transform: translateX(-50%); }
 .resumeDock:empty { display: none; }
 .toolbarActions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .toolbar .iconButton { width: 34px; padding: 0; }
@@ -98,22 +98,16 @@
 .inspector :global(.mindmap-card-menu-danger) { border: 0; padding: 0; gap: 14px; }
 .inspector :global(.mindmap-field > span), .inspector :global(.mindmap-field-heading > span) { font-size: 12px; color: rgb(var(--muted)); font-weight: 500; }
 .inspector :global(.mindmap-field input), .inspector :global(.mindmap-field select) { min-height: 34px; border-radius: 6px; font-size: 12px; }
-.workspaceFooter { position: absolute; inset: auto 0 12px; z-index: 24; display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 0 16px 0 60px; background: transparent; pointer-events: none; color: rgb(var(--muted)); font-size: 12px; }
-.historyControls { display: flex; align-items: center; gap: 3px; padding: 4px 9px 4px 4px; border: 1px solid rgb(var(--line)); border-radius: 9px; background: var(--surface-floating); box-shadow: var(--shadow-float); pointer-events: auto; }
-.historyControls > span { margin-left: 9px; }
-.moveNotice { position: absolute; left: 50%; bottom: var(--mindmap-bottom-clearance); transform: translateX(-50%); z-index: 25; display: flex; align-items: center; gap: 9px; max-width: calc(100% - 32px); padding: 10px 14px; border: 1px solid rgb(var(--line)); border-radius: 9px; background: var(--surface-floating); box-shadow: var(--shadow-float); font-size: 12px; }
+.moveNotice { position: absolute; left: 50%; bottom: var(--mindmap-control-clearance, var(--mindmap-bottom-clearance)); transform: translateX(-50%); z-index: 25; display: flex; align-items: center; gap: 9px; max-width: calc(100% - 32px); padding: 10px 14px; border: 1px solid rgb(var(--line)); border-radius: 9px; background: var(--surface-floating); box-shadow: var(--shadow-float); font-size: 12px; }
 .moveNotice > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .moveNotice > button { color: rgb(var(--accent-text)); font-weight: 600; cursor: pointer; }
 .editor :global(.mindmap-viewport) { background: rgb(var(--canvas)); }
 .card { border-radius: 12px; box-shadow: 0 1px 3px rgb(0 0 0 / .035); }
 .card:global(.mindmap-node-selected) { border-color: var(--mind-node-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--mind-node-accent) 62%, transparent), 0 5px 16px rgb(0 0 0 / .08); }
 .card:global(.mindmap-node-root) { --mind-card-surface: rgb(var(--surface)); border-width: 1px; background: var(--mind-card-surface); }
-.editor :global(.react-flow__controls) { z-index: 25; margin: 0; overflow: hidden; border-radius: 9px; border: 1px solid rgb(var(--line)); box-shadow: 0 2px 8px rgb(0 0 0 / .04); bottom: 8px; left: 16px; }
-.editor :global(.react-flow__controls-button) { width: var(--mindmap-zoom-size); height: var(--mindmap-zoom-size); border-bottom: 1px solid rgb(var(--line)); }
 .editor :global(.mindmap-save-error) { font-size: 12px; line-height: 1.5; padding: 8px 16px; }
 .toolbar button:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: -2px; }
 @media (max-width: 899px) { .inspector { width: min(304px, calc(100% - 16px)); } }
-@media (max-width: 600px) { .workspaceFooter { padding-inline: 12px; } }
 @media (min-width: 1024px) { .editor { --mindmap-dock-bottom: 10cqh; } }
 @media (max-width: 1023px) { .editor { --mindmap-dock-height: 56px; --mindmap-resume-height: 56px; } }
 
@@ -122,9 +116,9 @@
 .card .rootTitle { display: flex; align-items: flex-start; gap: 9px; letter-spacing: -.025em; }
 .rootAccent { width: 3px; height: calc(20px * var(--map-font-scale, 1)); flex-shrink: 0; margin-top: 1px; border-radius: 2px; background: var(--mind-node-accent); }
 .rootSubject { min-width: 0; flex: 1; }
-.editor :global(.mindmap-collapse-toggle) { display: inline-flex; align-items: center; justify-content: center; gap: 0; width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 0; border-radius: 50%; aspect-ratio: 1; right: -27px; line-height: 1; }
+.editor :global(.mindmap-collapse-toggle) { display: inline-flex; align-items: center; justify-content: center; width: auto; min-width: 24px; height: 24px; min-height: 24px; padding: 0 4px; border-radius: 999px; left: calc(100% + 3px); right: auto; line-height: 1; }
 .editor :global(.mindmap-collapse-toggle) > svg { display: block; flex-shrink: 0; }
-.collapseCount { display: block; line-height: 1; transform: translateY(1px); }
+.collapseCount { display: block; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
 .card:global(.mindmap-node-todo) { padding: 12px 14px; }
 .card :global(.mindmap-node-title), .card :global(.mindmap-node-todo-title),
 .card :global(.mindmap-inline-editor .cm-line:first-child) { font-size: var(--card-title-size); line-height: var(--card-title-line); font-weight: var(--card-title-weight); }
@@ -157,7 +151,6 @@
 .outlineRow:hover .outlineOpen, .outlineRow:focus-within .outlineOpen { opacity: 1; }
 @media (hover: none) { .outlineOpen { opacity: 1; } }
 @media (max-width: 600px) { .editor :global(.mindmap-peer-view) { padding: 20px 16px; } }
-.editor :global(.react-flow__controls-button) { background: rgb(var(--surface)); color: rgb(var(--ink)); fill: currentColor; }
 .editor :global(.react-flow__controls-button:hover) { background: rgb(var(--surface-2)); }
 
 .todoHeading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 16px; margin-bottom: 8px; font-size: 12px; line-height: 16px; }
@@ -170,7 +163,6 @@
 .todoStatus { color: rgb(var(--muted)); }
 .todoMissing { color: rgb(var(--warn-text)); }
 .todoMissing > svg { color: rgb(var(--warn)); }
-@media (max-width: 700px) { .workspaceFooter { flex-wrap: wrap; padding: 0 12px 0 60px; } }
 .progressChoices { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
 .progressChoices > button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid transparent; border-radius: 6px; color: rgb(var(--ok)); }
 .progressChoices > button[aria-pressed="true"] { background: var(--surface-selected); border-color: var(--border-selected); color: rgb(var(--ink)); }
@@ -183,17 +175,21 @@
 .progressCompact { display: inline-flex; align-items: center; color: rgb(var(--ok)); }
 .cardProgress { position: absolute; top: 13px; right: 14px; display: inline-flex; }
 .card:has(> .cardProgress) :global(.mindmap-node-title), .card:has(> .cardProgress) :global(.mindmap-inline-editor .cm-line:first-child) { padding-right: 24px; }
-.canvasTools { display: flex; align-items: center; gap: 4px; }
+.toolbar > .canvasTools { z-index: 24; display: flex; align-items: center; gap: 4px; overflow: visible; }
+.canvasTools > .canvasToolActions { flex: 0 1 auto; display: flex; align-items: center; align-self: stretch; gap: 4px; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 .depthControls { display: flex; align-items: center; flex-shrink: 0; border-radius: 12px; }
 .depthControls:is(:hover, :focus-within), .depthControls:has([data-state="open"]) { background: rgb(var(--surface-2)); }
 .depthControls:has([aria-pressed="true"]) { background: var(--surface-selected); box-shadow: inset 0 0 0 1px var(--border-selected); }
 .toolbar .canvasTools .depthControls > :global(button.ob-glass-button.p-button) { --p-button-overlay-hover: 0; --p-button-overlay-pressed: 0; background: transparent; box-shadow: none; }
-.depthControls > .depthCollapse { gap: 5px; cursor: pointer; }
+.depthControls > .depthCollapse { width: 30px; min-width: 30px; padding: 0; justify-content: center; cursor: pointer; }
 .depthControls > .depthCollapse:disabled { opacity: .45; cursor: default; }
 .toolbar .depthSelect:global(.ob-select) { width: 48px; min-width: 48px; gap: 4px; padding-inline: 6px; border: 0; border-radius: var(--p-button-radius); font-size: 12px; }
-.canvasLayout { position: absolute; inset: 0; display: flex; min-width: 0; min-height: 0; }
-.canvasSurface { position: relative; min-width: 0; flex: 1; }
-.unplacedTray { width: 244px; flex-shrink: 0; overflow-y: auto; margin: var(--mindmap-controls-bottom) 0 var(--mindmap-panel-bottom-clearance, var(--mindmap-bottom-clearance)) 8px; padding: 12px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); background: var(--surface-overlay); box-shadow: var(--shadow-float); }
+.canvasLayout { position: absolute; inset: 0; min-width: 0; min-height: 0; }
+.canvasSurface { position: absolute; inset: 0; min-width: 0; }
+.unplacedTray { position: absolute; top: var(--mindmap-controls-bottom); bottom: var(--mindmap-panel-bottom-clearance, var(--mindmap-bottom-clearance)); left: 8px; z-index: 20; width: min(244px, calc(100% - 16px)); overflow-y: auto; padding: 12px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); background: var(--surface-overlay); box-shadow: var(--shadow-float); }
+.canvasTools > .unplacedToggle { position: relative; justify-content: center; gap: 5px; padding-inline: var(--p-button-padding-x); margin-right: 0; overflow: visible; }
+.canvasTools > .unplacedToggle:has(.unplacedBadge) { margin-right: 14px; }
+.unplacedBadge { position: absolute; top: 0; right: 0; display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; margin: 0; padding: 0 5px; border-radius: 999px; background: #d93025; color: #fff; box-shadow: 0 0 0 2px rgb(var(--surface)); font-family: var(--font-sans); font-size: 11px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; transform: translate(50%, -50%); pointer-events: none; }
 .unplacedTray header { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
 .unplacedTray p { margin: 8px 0; font-size: 12px; color: rgb(var(--muted)); }
 .unplacedTray input { width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid rgb(var(--line)); border-radius: 6px; background: rgb(var(--surface)); font-size: 12px; }
@@ -209,29 +205,16 @@
 .todoDragGhost { position: fixed; z-index: 1000; max-width: 220px; padding: 10px 14px; border: 1px solid rgb(var(--accent)); border-radius: 9px; box-shadow: 0 8px 24px rgb(0 0 0 / .15); background: rgb(var(--surface)); font-size: 12px; pointer-events: none; }
 .card[data-todo-drop-target="true"] { outline: 3px solid rgb(var(--accent)); outline-offset: 4px; }
 @container (max-width: 1100px) {
-  .editor:has(:global([data-resume-edit])) .inspector,
-  .editor:has(:global([data-resume-edit])) .unplacedTray { --mindmap-panel-bottom-clearance: calc(var(--mindmap-bottom-clearance) + var(--mindmap-resume-height) + 8px); }
-  .editor { --mindmap-bottom-clearance: calc(var(--mindmap-dock-bottom) + 2 * var(--mindmap-dock-height) + 16px); }
-  .workspaceFooter { bottom: calc(var(--mindmap-dock-bottom) + var(--mindmap-dock-height) + 8px); }
   .searchTrigger { width: 34px; justify-content: center; border-color: transparent; padding: 0; }
   .searchTrigger > span { display: none; }
 }
-/* Three zoom buttons, 2px border, and two 8px gaps. */
-.editor { --mindmap-zoom-clearance: calc(var(--mindmap-dock-bottom) + var(--mindmap-dock-height) + 3 * var(--mindmap-zoom-size) + 18px); }
 @container (max-width: 700px) {
-  .editor:global([data-mindmap-editor]) .inspector,
-  .editor:global([data-mindmap-editor]) .unplacedTray { --mindmap-panel-bottom-clearance: max(calc(var(--mindmap-bottom-clearance) + var(--mindmap-resume-height) + 8px), var(--mindmap-zoom-clearance)); }
   .fontTools button > span { display: none; }
   .fontTools button { width: 34px; padding: 0; }
-  .editor :global(.react-flow__controls.react-flow__panel) { bottom: calc(var(--mindmap-dock-bottom) + var(--mindmap-dock-height) + 8px); }
-  .unplacedTray { position: absolute; top: var(--mindmap-controls-bottom); right: auto; bottom: var(--mindmap-panel-bottom-clearance, var(--mindmap-bottom-clearance)); left: 8px; z-index: 20; width: min(300px, calc(100% - 16px)); margin: 0; }
+  .unplacedTray { width: min(300px, calc(100% - 16px)); }
 }
 @container (max-width: 520px) {
-  .resumeDock { bottom: var(--mindmap-zoom-clearance); }
-  .editor:has(:global([data-resume-edit])) .inspector,
-  .editor:has(:global([data-resume-edit])) .unplacedTray { --mindmap-panel-bottom-clearance: calc(var(--mindmap-zoom-clearance) + var(--mindmap-resume-height) + 8px); }
-  .canvasTools .unplacedLabel, .primaryButton > span, .canvasTools .depthCollapseLabel { display: none; }
-  .historyControls > span { display: none; }
+  .canvasTools .unplacedLabel, .primaryButton > span { display: none; }
   .primaryButton:global(.p-button) { width: 34px; padding-inline: 0; }
 }
 .editToolbar:global(.p-glass-sm) { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 7px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-glass); color: rgb(var(--ink)); max-width: calc(100vw - 60px); }
@@ -242,6 +225,7 @@
 
 .cardPlaceholder { color: rgb(var(--faint)); font-size: 14px; line-height: 20px; }
 .card.agentDraft { --mind-card-surface: rgb(var(--surface)); border: 1.5px dashed rgb(var(--accent) / .72); border-left-width: 2px; background: var(--mind-card-surface); box-shadow: 0 2px 7px rgb(0 0 0 / .10); }
+.card.agentDraft:global(.mindmap-node-selected) { box-shadow: 0 0 0 1px rgb(var(--accent) / .2), 0 0 14px rgb(var(--accent) / .16), 0 3px 10px rgb(0 0 0 / .08); }
 .draftHeading { position: absolute; top: -8px; left: 12px; padding: 0 4px; background: rgb(var(--surface)); color: rgb(var(--accent-text)); font-size: 12px; line-height: 16px; font-weight: 600; }
 .activityBadge { position: absolute; top: -3px; right: 12px; width: 7px; height: 7px; border-radius: 50%; background: rgb(var(--accent)); cursor: help; }
 .unreadReply { position: absolute; top: 9px; right: -4px; width: 7px; height: 7px; border-radius: 50%; background: var(--p-sys-red, #ef4444); box-shadow: 0 0 0 2px rgb(var(--surface)); pointer-events: none; }
@@ -255,12 +239,11 @@
 @media (pointer: coarse) {
   .editor { --mindmap-dock-height: 56px; --mindmap-zoom-size: 44px; }
   .toolbar :global(.ob-glass-button.p-button) { min-width: 44px; }
-  .workspaceFooter { padding-left: 72px; }
-  .editor :global(.mindmap-collapse-toggle) { width: 44px; min-width: 44px; height: 44px; min-height: 44px; right: -47px; }
-  .canvasTools > button, .toolbarActions > button, .primaryButton:global(.p-button), .searchTrigger, .iconButton,
-  .editToolbarButton, .inspector button, .inspector summary,
+  .editor :global(.mindmap-collapse-toggle) { min-width: 44px; height: 44px; min-height: 44px; }
+  .canvasTools > button, .canvasToolActions > button, .toolbarActions > button, .primaryButton:global(.p-button), .searchTrigger, .iconButton,
+  .inspector button, .inspector summary,
   .searchResults > button, .optionRow, .outlineToggle, .outlineOpen, .progressChoices > button,
-  .editor :global(.react-flow__controls-button) { min-height: 44px; }
+  .editToolbarButton { min-height: 44px; }
   .iconButton, .outlineToggle, .outlineOpen, .progressChoices > button,
   .editor :global(.react-flow__controls-button), .inspector :global(.mindmap-color-swatch) { min-width: 44px; }
   .inspector :global(.mindmap-color-swatch) { height: 44px; }
@@ -276,3 +259,16 @@
 @keyframes inspectorExit { from { opacity: 1; transform: translateX(0) scale(1); } to { opacity: 0; transform: translateX(40px) scale(.95); } }
 @keyframes inspectorHandleEnter { from { opacity: 0; transform: translate(16px, -50%); } to { opacity: 1; transform: translate(0, -50%); } }
 @media (prefers-reduced-motion: reduce) { .inspector, .inspector[data-state="closed"], .inspectorHandle { animation: none; } .inspector[data-state="closed"] { visibility: hidden; } }
+
+.controlDock, .dockUtility { display: contents; }
+.inspector, .unplacedTray { --mindmap-panel-bottom-clearance: var(--mindmap-control-clearance, var(--mindmap-bottom-clearance)); }
+@container (max-width: 1100px) {
+  .toolbar.controlDock { position: absolute; inset: auto; bottom: 10px; left: 50%; z-index: 30; display: flex; flex-direction: column; width: max-content; max-width: calc(100% - 16px); gap: 4px; padding: 6px; transform: translateX(-50%); border: 1px solid rgb(var(--line) / .75); border-radius: 22px; background: rgb(var(--surface) / .86); box-shadow: var(--shadow-float); backdrop-filter: blur(18px) saturate(1.2); pointer-events: auto; }
+  .dockUtility { display: flex; align-items: center; justify-content: space-between; width: 100%; min-width: 0; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid rgb(var(--line) / .65); }
+  .controlDock .resumeDock { position: static; inset: auto; width: max-content; max-width: calc(100% - var(--mindmap-zoom-size) - 8px); transform: none; pointer-events: auto; }
+  .controlDock .resumeDock :global([data-resume-edit]) { padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
+  .controlDock > .canvasTools { position: relative; inset: auto; width: 100%; max-width: 100%; height: var(--mindmap-dock-height); padding: 0; transform: none; border: 0; border-radius: 14px; background: transparent; box-shadow: none; backdrop-filter: none; }
+  .controlDock:not(:has(:global([data-resume-edit]))) .dockUtility { position: absolute; bottom: 6px; left: 6px; z-index: 1; width: var(--mindmap-zoom-size); height: var(--mindmap-dock-height); padding: 0; border: 0; }
+  .controlDock:not(:has(:global([data-resume-edit]))) > .canvasTools { padding-left: calc(var(--mindmap-zoom-size) + 6px); }
+}
+@media (prefers-reduced-transparency: reduce) { .toolbar.controlDock { background: rgb(var(--surface)); backdrop-filter: none; } }

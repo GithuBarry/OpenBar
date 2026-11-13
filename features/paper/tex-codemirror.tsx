@@ -50,6 +50,7 @@ import { bannerRanges } from "@/lib/tex-project/source-bundle-format";
 import { cn } from "@/lib/utils";
 import { formatInlineSelection, type InlineFormat, type InlineSyntax } from "@/lib/mindmap/text-formatting";
 import { AGENT_MENTION_PATTERN } from "@/lib/research/agent-mentions";
+import { inlineFormattingExtensions } from "./inline-formatting";
 
 export type { EditorView } from "@codemirror/view";
 
@@ -484,6 +485,7 @@ export type TexCodeMirrorProps = {
   variant?: "pane" | "compact" | "nested";
   nativeSearch?: boolean;
   texHighlighting?: boolean;
+  inlineFormatting?: InlineSyntax;
   lineOffset?: number;
   getCompletionContext?: () => PaperCompletionContext;
   getLspContext?: () => LatexLspContext | undefined;
@@ -529,6 +531,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
     variant = "pane",
     nativeSearch = true,
     texHighlighting = true,
+    inlineFormatting,
     lineOffset = 0,
     getCompletionContext,
     getLspContext,
@@ -547,6 +550,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
     const lineCompRef = useRef(new Compartment());
     const languageCompRef = useRef(new Compartment());
     const readOnlyCompRef = useRef(new Compartment());
+    const inlineFormattingCompRef = useRef(new Compartment());
     const onChangeRef = useRef(onChange);
     const onDocChangesRef = useRef(onDocChanges);
     const onScrollRef = useRef(onScroll);
@@ -685,6 +689,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
             languageCompRef.current.of(texHighlighting ? [latexSyntax(), completion] : []),
             syntaxHighlighting(obHighlightStyle),
             ...(compact ? [agentMentionDecorations] : []),
+            inlineFormattingCompRef.current.of(compact && inlineFormatting ? inlineFormattingExtensions(inlineFormatting) : []),
             history(),
             drawSelection(),
             ...(compact ? [] : [
@@ -843,6 +848,10 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
         effects: languageCompRef.current.reconfigure(texHighlighting ? [latexSyntax(), autocompletion({ override: [latexCompletionSource(true), projectCompletions(() => completionContextRef.current?.() ?? { source: viewRef.current?.state.doc.toString() || valueRef.current, citationKeys: [] }), latexLspCompletions(() => lspContextRef.current?.())] })] : []),
       });
     }, [texHighlighting]);
+
+    useEffect(() => {
+      viewRef.current?.dispatch({ effects: inlineFormattingCompRef.current.reconfigure(variantRef.current === "compact" && inlineFormatting ? inlineFormattingExtensions(inlineFormatting) : []) });
+    }, [inlineFormatting]);
 
     useEffect(() => { if (variantRef.current === "compact") return; viewRef.current?.dispatch({ effects: lineCompRef.current.reconfigure(lineNumbers({ formatNumber: (number) => String(number + lineOffset) })) }); }, [lineOffset]);
 

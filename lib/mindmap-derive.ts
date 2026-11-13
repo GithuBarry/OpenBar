@@ -4,7 +4,7 @@
  */
 
 import { getMindmap, getProject } from "@/lib/store";
-import { DRAFT_MINDMAP_ID } from "@/lib/tex-project/project";
+import { DEFAULT_PRIMARY_MINDMAP_TITLE, DRAFT_MINDMAP_ID } from "@/lib/tex-project/project";
 import type { Mindmap } from "@/lib/types";
 
 export function deriveMindmap(slug: string): Mindmap | null {
@@ -18,7 +18,7 @@ function emptyPlanningMap(slug: string): Mindmap | null {
   return {
     projectId: slug,
     id: DRAFT_MINDMAP_ID,
-    title: project.title,
+    title: DEFAULT_PRIMARY_MINDMAP_TITLE,
     role: "draft",
     rootId: "root",
     createdAt: now,

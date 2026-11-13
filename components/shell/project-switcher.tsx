@@ -7,6 +7,7 @@ import { Archive, Check, ChevronDown, ChevronsUpDown } from "lucide-react";
 
 import { MenuSurface } from "@/components/pop";
 import { CreateProjectButton } from "@/components/project/create-project";
+import { FastTooltip } from "@/components/fast-tooltip";
 import { Project } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -14,35 +15,42 @@ export function ProjectSwitcher({
   projects,
   activeSlug,
   allowCreate = true,
+  compact = false,
 }: {
   projects: Project[];
   activeSlug?: string;
   allowCreate?: boolean;
+  compact?: boolean;
 }) {
   const active = projects.find((p) => p.slug === activeSlug);
   const activeProjects = projects.filter((project) => !project.archivedAt);
   const archivedProjects = projects.filter((project) => project.archivedAt);
   const [archiveExpanded, setArchiveExpanded] = useState(false);
+  const trigger = (
+    <DropdownMenu.Trigger asChild>
+      <button
+        type="button"
+        aria-label={compact ? `Switch project: ${active?.title ?? "All projects"}` : "Choose project"}
+        className={compact ? "ob-press text-base" : "ob-press flex w-full items-center gap-2 rounded-lg border border-line bg-surface-2 px-2.5 py-2 text-left text-sm transition-colors hover:bg-surface-3"}
+      >
+        <span aria-hidden="true" className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-surface text-base">
+          {active?.icon ?? "🧪"}
+        </span>
+        {!compact && <>
+          <span className="flex-1 truncate font-semibold">
+            {active ? active.title : "All projects"}
+          </span>
+          <ChevronsUpDown size={14} className="shrink-0 text-faint" />
+        </>}
+      </button>
+    </DropdownMenu.Trigger>
+  );
 
   return (
     <DropdownMenu.Root onOpenChange={(open) => { if (!open) setArchiveExpanded(false); }}>
-      <DropdownMenu.Trigger asChild>
-      <button
-        type="button"
-        aria-label="Choose project"
-        className="ob-press flex w-full items-center gap-2 rounded-lg border border-line bg-surface-2 px-2.5 py-2 text-left text-sm transition-colors hover:bg-surface-3"
-      >
-        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-surface text-base">
-          {active?.icon ?? "🧪"}
-        </span>
-        <span className="flex-1 truncate font-semibold">
-          {active ? active.title : "All projects"}
-        </span>
-        <ChevronsUpDown size={14} className="shrink-0 text-faint" />
-      </button>
-      </DropdownMenu.Trigger>
+      {compact ? <FastTooltip label={`Switch project · ${active?.title ?? "All projects"}`}>{trigger}</FastTooltip> : trigger}
 
-      <MenuSurface align="start" className="max-h-[var(--radix-dropdown-menu-content-available-height)] w-64 max-w-[var(--radix-dropdown-menu-content-available-width)] overflow-y-auto p-1.5">
+      <MenuSurface side={compact ? "right" : "bottom"} align="start" className="max-h-[var(--radix-dropdown-menu-content-available-height)] w-64 max-w-[var(--radix-dropdown-menu-content-available-width)] overflow-y-auto p-1.5">
         {activeProjects.map((project) => <ProjectItem key={project.slug} project={project} activeSlug={activeSlug} />)}
         {archivedProjects.length > 0 && (
           <>

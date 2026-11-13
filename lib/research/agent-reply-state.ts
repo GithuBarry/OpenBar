@@ -8,11 +8,16 @@ export type AgentReplyReceipt = {
   currentNotificationId: string | null
   mapId: string
   nodeId: string
+  /** The request card stays separate from additional answer cards. */
+  requestNodeId?: string
+  question?: string
   contentHash: string
   responseRevision: string
   published?: ReplyPublication
 }
 export type AgentInboxReceipts = { version: 1, acknowledged: string[], receipts: Record<string, AgentReplyReceipt> }
+export type AgentReplyPresentation = { kind: 'question' | 'answer' | 'question-answer', question: string }
+export type PresentedAgentReply = { nodeId: string, requestNodeId?: string, question?: string, requestCurrent?: boolean }
 
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable)
@@ -21,6 +26,31 @@ function stable(value: unknown): unknown {
 }
 
 export function agentReplyCardKey(mapId: string, nodeId: string): string { return JSON.stringify([mapId, nodeId]) }
+
+/** The authored request stays available for inbox identity and history. */
+export function cleanAgentReplyDisplay(text: string): string {
+  const markerOnly = /^\s*(?:(\*\*|__|\*|_)@agents?\1|\\(?:textbf|textit|emph)\{\s*@agents?\s*\})[\t ]*/i
+  if (markerOnly.test(text)) return text.replace(markerOnly, '').trim()
+  const leading = /^(\s*(?:(?:\*\*|__|\*|_)|\\(?:textbf|textit|emph)\{)*)@agents?(?![\w])[\t ]*/i
+  return text.replace(leading, '$1').trim()
+}
+
+/** Only the answered generation changes presentation on the request card. */
+export function agentReplyPresentations(replies: readonly PresentedAgentReply[]): Map<string, AgentReplyPresentation> {
+  const result = new Map<string, AgentReplyPresentation>()
+  for (const reply of replies) {
+    const question = cleanAgentReplyDisplay(reply.question || '')
+    if (!question) continue
+    const requestNodeId = reply.requestNodeId || reply.nodeId
+    if (requestNodeId === reply.nodeId) {
+      if (reply.requestCurrent !== false) result.set(reply.nodeId, { kind: 'question-answer', question })
+    } else {
+      result.set(reply.nodeId, { kind: 'answer', question })
+      if (reply.requestCurrent !== false && !result.has(requestNodeId)) result.set(requestNodeId, { kind: 'question', question })
+    }
+  }
+  return result
+}
 
 /** Shared saved/live projection. TeX supplies TODO text and maps supply their notes. */
 export function agentReplyContentHash(node: MindmapNode, todo?: { title?: string, text: string }): string {

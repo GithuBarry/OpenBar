@@ -72,6 +72,8 @@ export interface MindmapNode {
   contentFormat?: "plain" | "markdown" | "tex";
   /** Table presentation for Markdown cards. Wide is the default. */
   tableLayout?: "wide" | "scroll";
+  /** Optional map-owned card width in canvas CSS pixels. Height follows content. */
+  cardWidth?: number;
   color?: string;
   tags?: string[];
   /** Optional map-local 0–6 progress or ditched status. Absent is hidden. */

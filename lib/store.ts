@@ -36,6 +36,7 @@ import {
   writeProjectRecord,
   type PaperSection,
   type TexPaper,
+  DEFAULT_PRIMARY_MINDMAP_TITLE,
   DRAFT_MINDMAP_ID,
   resolveMindmapStorageIdentity,
 } from "./tex-project/project";
@@ -373,7 +374,7 @@ export async function createProject(input: NewProjectInput): Promise<Project> {
         writeStarterPaper(staging, title);
       }
       if (!fs.existsSync(texPaths(staging).mindmapFile)) {
-        writeMindmapRecord(staging, emptyMindmap(slug, { id: DRAFT_MINDMAP_ID, title, role: "draft", rootText: title }));
+        writeMindmapRecord(staging, emptyMindmap(slug, { id: DRAFT_MINDMAP_ID, title: DEFAULT_PRIMARY_MINDMAP_TITLE, role: "draft", rootText: title }));
       }
       checkProjectName(input);
       if (!hasTexProject(staging)) throw new OverleafSetupError("The new project needs a readable LaTeX main document.");

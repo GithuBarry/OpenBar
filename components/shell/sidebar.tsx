@@ -118,6 +118,7 @@ export function Sidebar({
       {(!open || narrow) && (
         <nav className={cn("p-glass-sm", styles.collapsedRail)} aria-label="Project navigation">
           <FastTooltip label="All projects"><Link href="/" aria-label={`${workspaceName} home`} className={styles.collapsedLogo}><WorkspaceMark compact /></Link></FastTooltip>
+          {active && <ProjectSwitcher projects={projects} activeSlug={activeSlug} allowCreate={!publicDemo} compact />}
           <FastTooltip label="Show sidebar"><Dialog.Trigger asChild><button type="button" aria-label="Show sidebar" onClick={() => changeOpen(true)}><PanelLeft size={18} aria-hidden="true" /></button></Dialog.Trigger></FastTooltip>
           {active && <SidebarNav items={nav} compact />}
           {!publicDemo && writable && <FastTooltip label={canRelease ? "Release editing access" : "Finish saving before releasing editing access"}><button type="button" aria-label="Release editing access" disabled={!canRelease} onClick={() => { void release(); }}><LockKeyholeOpen size={18} /></button></FastTooltip>}

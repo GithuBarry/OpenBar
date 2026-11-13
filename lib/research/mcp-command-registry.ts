@@ -4,6 +4,7 @@ import { resolveFigureAsset } from "@/lib/tex-project/project";
 import "server-only";
 import { acknowledgeAgentInbox,readAgentInbox } from "./agent-inbox";
 import { INBOX_TOOL_DESCRIPTIONS,type AgentInbox } from "./agent-inbox-contract";
+import { MINDMAP_CARD_GUIDANCE } from "./agent-guidance";
 import { MCP_INPUTS,NATIVE_MINDMAP_INPUTS } from "./command-inputs";
 import { commandJsonSchema,parseCommandInput } from "./command-schema";
 import { applyProjectEdits,readProjectFiles } from "./project-files";
@@ -560,7 +561,7 @@ function parseBatchInput(args: JsonObject): MindmapBatchInput {
 }
 
 function changesForNode(before: MindmapNode, after: MindmapNode): ActivityChange[] {
-  return activityChanges(before, after, ["title", "text", "parentId", "order", "color", "tags", "progress", "priority", "tableLayout", "refs", "metadata"]);
+  return activityChanges(before, after, ["title", "text", "parentId", "order", "color", "tags", "progress", "priority", "tableLayout", "cardWidth", "refs", "metadata"]);
 }
 
 async function executeGetProjectState(args: unknown): Promise<OperationResult<unknown>> {
@@ -678,6 +679,7 @@ async function executePatchMindmapNode(args: unknown, context: McpCommandContext
         const presentation = parsed.value!;
         Object.assign(patch, presentation);
         if (Object.hasOwn(presentation, "progress")) patch.progress = presentation.progress === null ? undefined : presentation.progress;
+        if (Object.hasOwn(presentation, "cardWidth")) patch.cardWidth = presentation.cardWidth === null ? undefined : presentation.cardWidth;
       }
       if (record.priority !== undefined) {
         if (record.priority !== null && !["P0", "P1", "P2", "P3"].includes(String(record.priority))) throw new McpCommandError("invalid_arguments", "priority must be P0–P3 or null.", false);
@@ -988,7 +990,7 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
   tool("get_activity", "Read activity", "Read durable authored operation history after applying the selected day filter and before pagination.", executeActivity, { readOnlyHint: true }),
   tool("read_project_files", "Read project files", "List directories or read authored project files with exact byte SHA256 and bounded UTF-8/base64 content. Paths are relative to the project root. OpenBar managed state and Git metadata are protected.", executeReadProjectFiles, { readOnlyHint: true }),
   tool("apply_project_edits", "Apply project file edits", "Atomically create, replace, or delete authored project files using exact prior hashes. Batch a destination create and source delete to move a file. dryRun previews the complete batch. OpenBar managed state and Git metadata are protected.", executeProjectFileEdits, { destructiveHint: true }),
-  tool("apply_mindmap_edits", "Edit managed mindmap state", "Apply one revision-checked map operation. edit.operation: add, patch, move, preview-batch, apply-batch, place-todo, rename, font-size, attach-image, detach-image, caption-image, activity-window. args: add {parentId,title?,text?,caption?,caution?,id?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?}, move {id,parentId,beforeId?,afterId?}, batch {selectedIds,changes?,deleteMode?,move?,previewToken?}, place-todo {todoId,parentId}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, activity-window {days}. Preview batches first and pass their token to apply-batch. deleteMode cards promotes children, branches removes descendants. New cards remain Agent draft. TODO text/completion belongs to TeX files.", executeManagedMindmapEdit, { destructiveHint: true }),
+  tool("apply_mindmap_edits", "Edit managed mindmap state", `Apply one revision-checked map operation. edit.operation: add, patch, move, preview-batch, apply-batch, place-todo, rename, font-size, attach-image, detach-image, caption-image, activity-window. args: add {parentId,title?,text?,caption?,caution?,id?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?}, move {id,parentId,beforeId?,afterId?}, batch {selectedIds,changes?,deleteMode?,move?,previewToken?}, place-todo {todoId,parentId}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, activity-window {days}. Preview batches first and pass their token to apply-batch. deleteMode cards promotes children, branches removes descendants. New cards remain Agent draft. TODO text/completion belongs to TeX files. Set presentation.cardWidth to 180–1200 canvas pixels, or null for automatic width. ${MINDMAP_CARD_GUIDANCE}`, executeManagedMindmapEdit, { destructiveHint: true }),
 ];
 
 const REGISTRY_BY_NAME = new Map(MCP_TOOL_REGISTRY.map((entry) => [entry.name, entry]));

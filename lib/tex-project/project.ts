@@ -182,6 +182,7 @@ export function writeProjectRecord(projectDir: string, project: unknown): void {
 }
 
 export const DRAFT_MINDMAP_ID = "draft";
+export const DEFAULT_PRIMARY_MINDMAP_TITLE = "main-mindmap";
 
 function isDraftMindmapId(id: string | undefined): boolean {
   return !id || id === DRAFT_MINDMAP_ID || id === "mindmap";
@@ -214,7 +215,7 @@ export function normalizeStoredMindmap(mindmap: Mindmap, fileId: string): Mindma
     ...mindmap,
     id,
     role,
-    title: mindmap.title?.trim() || (role === "draft" ? "Draft" : id),
+    title: mindmap.title?.trim() || (role === "draft" ? DEFAULT_PRIMARY_MINDMAP_TITLE : id),
     createdAt: mindmap.createdAt || mindmap.updatedAt,
     nodes: mindmap.nodes.map((node) => ({
       ...stripLegacyCollapsedField(node),

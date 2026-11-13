@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PROJECT_WRITE_SESSION_HEADER, PROJECT_WRITE_SESSION_HEARTBEAT_MS, PROJECT_WRITE_SESSION_IDLE_MS, type ProjectWriteSessionCredential as Credential, type ProjectWriteSessionStatus as Status } from "@/lib/research/project-write-session-contract";
+import { projectWriteSessionDiagnosticAccess } from "@/lib/research/project-write-session-diagnostics";
 import { isBackendTransportError, markBackendTransportError } from "@/lib/backend-connection";
 import type { HostResources } from "@/lib/host-resources";
 
@@ -507,8 +508,8 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
   }, [resumeEdit, status, working]);
   const accessMessage = connectionState === "reconnecting" ? "Reconnecting to OpenBar. Your draft stays in this tab." : accessError || message || (working || !status ? "Checking access…" : idleYielded ? "Session idle. Editing paused." : status.state === "occupied" ? "Another session is editing." : pendingWork && heldWriterLease.current ? "Save your draft first." : "View only");
   const getDiagnostics = useCallback(() => ({
-    endpoint, state: status?.state || "checking", writable: publicDemo || writable,
-    reason: accessMessage, accessError, checking: working, idleYielded,
+    endpoint, ...projectWriteSessionDiagnosticAccess({ status, credential: credential.current, writable, publicDemo, reason: accessMessage }), writable: publicDemo || writable,
+    accessError, checking: working, idleYielded,
     hasSession: Boolean(credential.current), sessionIdPrefix: credential.current?.sessionId.slice(0, 8) || null,
     generation: credential.current?.generation || null, ownerGeneration: status?.ownerGeneration || null,
     expiresAt: status?.expiresAt || null, serverTime: status?.serverTime || null,

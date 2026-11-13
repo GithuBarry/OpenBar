@@ -1,0 +1,12 @@
+.grip { position: absolute; right: 0; bottom: 0; z-index: 4; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 0 0 12px 0; clip-path: polygon(100% 0, 100% 100%, 0 100%); background: transparent; color: rgb(var(--muted)); opacity: 0; cursor: nwse-resize; touch-action: none; transition: opacity 120ms ease, color 120ms ease; }
+/* The arc shares the card's 12px corner center, with a 4px inset. */
+.grip > svg { position: absolute; right: 1px; bottom: 1px; width: 16px; height: 16px; margin: 0; pointer-events: none; }
+.grip:hover, .grip:focus-visible, .grip[data-resizing] { opacity: 1; }
+.grip:hover, .grip[data-resizing] { color: rgb(var(--accent-text)); }
+.grip:focus-visible { clip-path: none; outline: 2px solid rgb(var(--accent)); outline-offset: -3px; }
+@media (hover: none) and (pointer: coarse) {
+  .grip { width: 44px; height: 44px; clip-path: polygon(100% calc(100% - 24px), 100% 100%, calc(100% - 24px) 100%); pointer-events: none; }
+  :global([data-mind-node][aria-selected="true"]) > .grip { opacity: .55; pointer-events: auto; }
+  .grip:focus-visible { clip-path: none; }
+}
+@media (prefers-reduced-motion: reduce) { .grip { transition: none; } }
