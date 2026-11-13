@@ -5,8 +5,7 @@ import { ChevronDown } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { cardNotesText, hasNoteText, type MindmapCaution } from "@/lib/mindmap/caution";
 import { NotesTextarea } from "./notes-textarea";
-
-const CONTENT_THRESHOLDS = [128, 512, 2048, 4096];
+import { NotesContentIndicator, notesContentDescription } from "./notes-content-indicator";
 
 function fitEditor(editor: HTMLTextAreaElement | null) {
   if (!editor) return;
@@ -27,10 +26,10 @@ export function CardScratchpad({ text, caution, editing = false, readOnly = fals
   const [open, setOpen] = useState(false);
   const notes = useMemo(() => cardNotesText(text, caution), [text, caution]);
   const hasNotes = useMemo(() => hasNoteText(notes), [notes]);
-  const count = notes.length;
-  const bars = CONTENT_THRESHOLDS.reduce((total, threshold) => total + Number(count > threshold), 0);
-  const description = `${hasNotes ? "Has content" : "Empty"} · ${count} characters · ${bars} of 4 bars`;
-  return <div className={`${styles.scratchpads} ${styles.withNotes} nodrag nopan`}
+  const showNotes = hasNotes || editing || open;
+  const description = notesContentDescription(notes);
+  if (!showNotes && !footer) return null;
+  return <div className={`${styles.scratchpads} ${showNotes ? styles.withNotes : ""} nodrag nopan`}
     onPointerDown={event => event.stopPropagation()}
     onClick={event => event.stopPropagation()}
     onDoubleClick={event => event.stopPropagation()}
@@ -41,14 +40,12 @@ export function CardScratchpad({ text, caution, editing = false, readOnly = fals
       if (!readOnly && event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); onCommit?.(); }
     }}
     onWheel={event => event.stopPropagation()}>
-    <details className={styles.scratchpad} open={open}
+    {showNotes && <details className={styles.scratchpad} open={open}
       onToggle={event => { setOpen(event.currentTarget.open); if (event.currentTarget.open) fitEditor(event.currentTarget.querySelector("textarea")); }}>
       <summary aria-label={open ? "Hide notes" : "Show notes"} aria-expanded={open} aria-description={description} title={description}>
         <span className={styles.tab}>
           <ChevronDown className={styles.chevron} size={12} aria-hidden="true" />Notes
-          <svg className={styles.amount} width={15} height={12} viewBox="0 0 15 12" fill="currentColor" aria-hidden="true">
-            {CONTENT_THRESHOLDS.map((threshold, index) => <rect key={threshold} x={index * 4} y={9 - index * 3} width={2.5} height={3 + index * 3} rx={0.7} opacity={count > threshold ? 1 : 0.2} />)}
-          </svg>
+          <NotesContentIndicator text={notes} className={styles.amount} />
         </span>
       </summary>
       <div className={styles.body}>
@@ -57,7 +54,7 @@ export function CardScratchpad({ text, caution, editing = false, readOnly = fals
           onInput={event => fitEditor(event.currentTarget)}
           onChange={value => onChange?.(value)} />
       </div>
-    </details>
+    </details>}
     {footer && <div className={styles.footer}>{footer}</div>}
   </div>;
 }
