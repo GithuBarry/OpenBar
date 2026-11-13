@@ -1456,13 +1456,13 @@ export function MindmapEditor({
   }
 
   const selectCard = useCallback((id: string, additive = false) => {
+    readAgentReply(id);
     setMapSettingsOpen(false);
     setCardMenuOpen(true);
     dispatch({ type: "select", id, additive: additive || selectMultiple });
-  }, [selectMultiple]);
+  }, [readAgentReply, selectMultiple]);
 
   const focusCard = useCallback((id: string) => {
-    readAgentReply(id);
     let parent = layout.nodeById.get(id)?.parentId;
     const visited = new Set<string>();
     while (parent && !visited.has(parent)) {
@@ -1473,7 +1473,7 @@ export function MindmapEditor({
     selectCard(id);
     setViewMode("map");
     setFocusRequest(current => ({ id, sequence: (current?.sequence || 0) + 1 }));
-  }, [layout.nodeById, selectCard, setLocalCollapsed, readAgentReply]);
+  }, [layout.nodeById, selectCard, setLocalCollapsed]);
 
   function indentSelected() {
     const id = sessionRef.current.selectedId;
