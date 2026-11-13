@@ -1,7 +1,8 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { requestInbox } from "@/features/use-inbox-webmcp"
+import { useQueryClient } from "@tanstack/react-query"
+import { agentInboxKey, useAgentInbox } from "@/features/use-agent-inbox"
 import type { AgentInbox } from "@/lib/research/agent-inbox-contract"
 import { answeredAgentRequestNodeIds } from "@/lib/research/agent-reply-state"
 
@@ -29,20 +30,18 @@ function storedSeen(prefix: string, replies: Reply[]): Record<string, string> {
 /** Reply delivery uses the existing session revision and inbox endpoint. */
 export function useAgentReplies(project: string, mapId: string, inboxRevision?: string, diskHash?: string) {
   const prefix = seenPrefix(project, mapId)
+  const inbox = useAgentInbox(project)
+  const client = useQueryClient()
   const [state, setState] = useState<ReplyState>({ scope: prefix, replies: [], seen: {} })
   const stateRef = useRef(state)
   stateRef.current = state
   useEffect(() => {
-    let stopped = false
-    let controller: AbortController | undefined
+    void client.invalidateQueries({ queryKey: agentInboxKey(project) })
+  }, [client, project, inboxRevision, diskHash])
+  useEffect(() => {
     const publish = (next: ReplyState) => { stateRef.current = next; setState(next) }
-    const refresh = async () => {
-      controller?.abort()
-      const request = new AbortController()
-      controller = request
-      const result = await requestInbox<AgentInbox>("GET", project, {}, request.signal)
-      if (stopped || request.signal.aborted || !result.ok || !Array.isArray(result.value?.replies)) return
-      const replies = result.value.replies.filter(reply => reply.project === project && reply.mapId === mapId)
+    if (Array.isArray(inbox.data?.replies)) {
+      const replies = inbox.data.replies.filter(reply => reply.project === project && reply.mapId === mapId)
       const previous = stateRef.current
       publish({ scope: prefix, replies, seen: { ...(previous.scope === prefix ? previous.seen : {}), ...storedSeen(prefix, replies) } })
     }
@@ -51,16 +50,11 @@ export function useAgentReplies(project: string, mapId: string, inboxRevision?: 
       const current = stateRef.current
       if (current.scope === prefix) publish({ ...current, seen: { ...current.seen, ...storedSeen(prefix, current.replies) } })
     }
-    void refresh()
-    window.addEventListener("openbar-inbox-updated", refresh)
     window.addEventListener("storage", storage)
     return () => {
-      stopped = true
-      controller?.abort()
-      window.removeEventListener("openbar-inbox-updated", refresh)
       window.removeEventListener("storage", storage)
     }
-  }, [project, mapId, inboxRevision, diskHash, prefix])
+  }, [project, mapId, prefix, inbox.data])
 
   const markRead = useCallback((nodeId: string, contentHash: string) => {
     const current = stateRef.current

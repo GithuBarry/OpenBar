@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import Link from "next/link";
 import * as Popover from "@radix-ui/react-popover";
 import { PopoverSurface } from "@/components/pop";
@@ -16,7 +17,8 @@ import {
 import { FastTooltip } from "@/components/fast-tooltip";
 import { cn } from "@/lib/utils";
 import { requestInbox, useInboxProject } from "@/features/use-inbox-webmcp";
-import type { AgentInbox, InboxNotification } from "@/lib/research/agent-inbox-contract";
+import { useAgentInbox } from "@/features/use-agent-inbox";
+import type { InboxNotification } from "@/lib/research/agent-inbox-contract";
 
 const SURFACE_LABEL: Partial<Record<WebMcpSurface, string>> = {
   workspace: "Workspace",
@@ -152,47 +154,25 @@ export function AgentReadyIndicator() {
 }
 
 function AgentInboxPanel({ project }: { project?: string }) {
-  const [inbox, setInbox] = useState<AgentInbox | null>(null);
   const [includeAcknowledged, setIncludeAcknowledged] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const revision = useRef(0);
-
-  const refresh = useCallback(async () => {
-    const current = ++revision.current;
-    setBusy(true);
-    setError(null);
-    const result = await requestInbox<AgentInbox>("GET", project, { limit: 50, includeAcknowledged });
-    if (revision.current !== current) return;
-    if (result.ok) setInbox(result.value);
-    else setError(result.message);
-    setBusy(false);
-  }, [project, includeAcknowledged]);
-
-  useEffect(() => {
-    setInbox(null);
-    void refresh();
-    const changed = () => { void refresh(); };
-    window.addEventListener("openbar-inbox-updated", changed);
-    return () => {
-      revision.current++;
-      window.removeEventListener("openbar-inbox-updated", changed);
-    };
-  }, [refresh]);
-
-  const acknowledge = async (notification: InboxNotification) => {
-    const current = ++revision.current;
-    setBusy(true);
-    setError(null);
-    const result = await requestInbox("POST", notification.project, {
-      ids: [notification.id], acknowledged: !notification.acknowledged,
-    });
-    if (revision.current !== current) return;
-    if (result.ok) await refresh();
-    else {
-      setError(result.message);
-      setBusy(false);
-    }
+  const query = useAgentInbox(project, includeAcknowledged);
+  const acknowledgement = useMutation({
+    mutationFn: async (notification: InboxNotification) => {
+      const result = await requestInbox("POST", notification.project, {
+        ids: [notification.id], acknowledged: !notification.acknowledged,
+      });
+      if (!result.ok) throw new Error(result.message);
+      return result.value;
+    },
+    onSuccess: () => window.dispatchEvent(new Event("openbar-inbox-updated")),
+  });
+  useEffect(() => acknowledgement.reset(), [project, includeAcknowledged, acknowledgement.reset]);
+  const inbox = query.data;
+  const busy = query.isFetching || acknowledgement.isPending;
+  const error = acknowledgement.error?.message || query.error?.message;
+  const refresh = () => {
+    acknowledgement.reset();
+    void query.refetch();
   };
 
   return <section className="mt-3 border-b border-line pb-3" aria-label="Agent inbox" data-agent-inbox>
@@ -217,7 +197,7 @@ function AgentInboxPanel({ project }: { project?: string }) {
           <p className="whitespace-pre-wrap break-words text-xs leading-snug">{notification.text}</p>
           <div className="mt-2 flex items-center justify-between gap-2 text-xs">
             <Link href={notification.href} className="text-accent underline">Open card</Link>
-            <button type="button" className="btn-ghost px-2 py-1" disabled={busy} onClick={() => { void acknowledge(notification); }}>{notification.acknowledged ? "Reopen" : "Mark handled"}</button>
+            <button type="button" className="btn-ghost px-2 py-1" disabled={busy} onClick={() => acknowledgement.mutate(notification)}>{notification.acknowledged ? "Reopen" : "Mark handled"}</button>
           </div>
         </li>)}
       </ul>

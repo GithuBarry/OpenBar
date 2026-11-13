@@ -66,10 +66,16 @@ export function readProjectFiles(projectDir: string, input: ProjectFilesReadInpu
         if (entries.length < limit) entries.push(entry);
         else hasMore = true;
       };
+      const requestedPaths = new Map<string, { requested: string; file: ReturnType<typeof projectPath>; stat: fs.Stats }>();
       for (const requested of parsed.data.paths || ["."]) {
         const file = projectPath(root, requested);
         if (!fs.existsSync(file.absolute)) throw new ProjectFileError(`File "${requested}" is missing.`, "invalid_path", requested);
         const stat = fs.statSync(file.absolute);
+        requestedPaths.set(file.relative, { requested, file, stat });
+      }
+      // Reserve the response budget for explicitly requested file contents.
+      const requestedEntries = [...requestedPaths.values()];
+      for (const { requested, file, stat } of [...requestedEntries.filter(entry => !entry.stat.isDirectory()), ...requestedEntries.filter(entry => entry.stat.isDirectory())]) {
         if (stat.isDirectory()) {
           for (const name of fs.readdirSync(file.absolute).sort()) {
             let child: ReturnType<typeof projectPath>;

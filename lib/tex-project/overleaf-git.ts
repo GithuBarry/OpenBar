@@ -5,7 +5,8 @@ import { StringDecoder } from "node:string_decoder";
 
 import { texPaths } from "./project";
 import { recoverSourceTransaction, sourceTransactionJournalPath } from "./source-transaction";
-import { sha256, withWriteLockAsync, writeTextAtomic } from "./codec";
+import { sha256, withWriteLockAsync } from "./codec";
+import { syncDirectory, writePrivateFileAtomic } from "@/lib/fs/atomic-write";
 import { gitProcessEnv } from "@/lib/server/git-credential-store";
 import { overleafProjectId, redactGitRemote, redactSensitiveText } from "@/lib/server/git-url";
 import { withProjectWriteLockAsync } from "@/lib/research/project-lock";
@@ -234,29 +235,9 @@ async function checkpointJournalPath(cwd: string): Promise<string> {
   return resolveGitAdministrativePath(cwd, "openbar-checkpoint-recovery.json");
 }
 
-function syncDirectory(directory: string): void {
-  try {
-    const descriptor = fs.openSync(directory, "r");
-    try { fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
-  } catch { /* Directory fsync is unavailable on some filesystems. */ }
-}
-
 async function writeCheckpointJournal(cwd: string, journal: CheckpointJournal): Promise<void> {
   const file = await checkpointJournalPath(cwd);
-  const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  let descriptor: number | undefined;
-  try {
-    descriptor = fs.openSync(temporary, "wx", 0o600);
-    fs.writeFileSync(descriptor, JSON.stringify(journal));
-    fs.fsyncSync(descriptor);
-    fs.closeSync(descriptor);
-    descriptor = undefined;
-    fs.renameSync(temporary, file);
-    syncDirectory(path.dirname(file));
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
-    fs.rmSync(temporary, { force: true });
-  }
+  writePrivateFileAtomic(file, JSON.stringify(journal));
 }
 
 async function clearCheckpointJournal(cwd: string): Promise<void> {
@@ -615,21 +596,7 @@ function readDirectPullReceipt(file: string, projectKey: string): DirectPullRece
 }
 
 function saveDirectPullReceipt(file: string, receipt: DirectPullReceipt): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  let descriptor: number | undefined;
-  try {
-    descriptor = fs.openSync(temporary, "wx", 0o600);
-    fs.writeFileSync(descriptor, JSON.stringify(receipt));
-    fs.fsyncSync(descriptor);
-    fs.closeSync(descriptor);
-    descriptor = undefined;
-    fs.renameSync(temporary, file);
-    syncDirectory(path.dirname(file));
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
-    fs.rmSync(temporary, { force: true });
-  }
+  writePrivateFileAtomic(file, JSON.stringify(receipt));
 }
 
 /** Resolve the exact request. A tombstone prevents an unseen request arriving later. */
@@ -1050,7 +1017,7 @@ async function removePullSession(cwd: string, token: string, session: PullSessio
 
 async function savePullSession(cwd: string, token: string, session: PullSession) {
   const file = await pullSessionPath(cwd, token);
-  writeTextAtomic(file, JSON.stringify(session));
+  writePrivateFileAtomic(file, JSON.stringify(session));
   fs.chmodSync(file, 0o600);
 }
 
@@ -1239,22 +1206,9 @@ async function forceSyncPath(cwd: string, token: string) {
 }
 async function saveForceSyncSession(cwd: string, session: ForceSyncSession): Promise<void> {
   const file = await forceSyncPath(cwd, session.token);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  let descriptor: number | undefined;
-  try {
-    descriptor = fs.openSync(temporary, "wx", 0o600);
-    fs.writeFileSync(descriptor, JSON.stringify(session));
-    fs.fsyncSync(descriptor);
-    fs.closeSync(descriptor);
-    descriptor = undefined;
-    fs.renameSync(temporary, file);
-    syncDirectory(path.dirname(file));
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
-    fs.rmSync(temporary, { force: true });
-  }
+  writePrivateFileAtomic(file, JSON.stringify(session));
 }
+
 export async function prepareForceSync(projectDir: string, direction: ForceSyncDirection): Promise<{ ok: true; review: ForceSyncReview } | { ok: false; message: string }> {
   if (direction !== "pull" && direction !== "push") return { ok: false, message: "Choose force pull or force push." };
   const initial = await getOverleafGitStatus(projectDir);

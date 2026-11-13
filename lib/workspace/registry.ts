@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { openBarPaths, type OpenBarPaths } from "../config/openbar-paths";
 import { sha256, withWriteLock } from "../tex-project/codec";
+import { writePrivateFileAtomic } from "../fs/atomic-write";
 import {
   registeredProjectSchema,
   workspaceIdSchema,
@@ -135,47 +136,8 @@ function ensurePrivateDirectory(directory: string): void {
 }
 
 function writePrivateAtomic(file: string, text: string): void {
-  const directory = path.dirname(file);
-  ensurePrivateDirectory(directory);
-  const temporary = path.join(directory, `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
-  let descriptor: number | undefined;
-  try {
-    descriptor = fs.openSync(temporary, "wx", 0o600);
-    fs.writeFileSync(descriptor, text, "utf8");
-    fs.fsyncSync(descriptor);
-    try {
-      fs.fchmodSync(descriptor, 0o600);
-    } catch (error) {
-      if (process.platform !== "win32") throw error;
-    }
-    fs.closeSync(descriptor);
-    descriptor = undefined;
-    fs.renameSync(temporary, file);
-    try {
-      const directoryDescriptor = fs.openSync(directory, "r");
-      try {
-        fs.fsyncSync(directoryDescriptor);
-      } finally {
-        fs.closeSync(directoryDescriptor);
-      }
-    } catch {
-      // Directory fsync is unavailable on some platforms after the rename.
-    }
-  } catch (error) {
-    if (descriptor !== undefined) {
-      try {
-        fs.closeSync(descriptor);
-      } catch {
-        // Preserve the original write error.
-      }
-    }
-    try {
-      fs.rmSync(temporary, { force: true });
-    } catch {
-      // Preserve the original write error.
-    }
-    throw error;
-  }
+  ensurePrivateDirectory(path.dirname(file));
+  writePrivateFileAtomic(file, text);
 }
 
 function currentSnapshot(paths: OpenBarPaths): WorkspaceRegistrySnapshot {
