@@ -6,6 +6,7 @@ import Link from "next/link";
 import * as Popover from "@radix-ui/react-popover";
 import { PopoverSurface } from "@/components/pop";
 import { Bot } from "lucide-react";
+import { AgentConnectionAddress } from "@/components/agent-connection-address";
 
 import {
   getWebMcpCatalog,
@@ -113,6 +114,7 @@ export function AgentReadyIndicator() {
       {open && (
         <PopoverSurface className="ob-agent-ready-panel" align="end" sideOffset={8} collisionPadding={12} aria-label="MCP and WebMCP agent tools">
           <p className="ob-agent-ready-heading">Tools and agent access</p>
+          <AgentConnectionAddress />
           <Link href="/agents" className="text-xs text-accent underline">How to connect a browser or headless agent</Link>
           <AgentInboxPanel project={project} />
           <p className="ob-agent-ready-heading mt-3">{statusText}</p>
@@ -202,6 +204,19 @@ function AgentInboxPanel({ project }: { project?: string }) {
         </li>)}
       </ul>
       {inbox.hasMore && <p className="ob-agent-ready-empty mt-2">More messages are available. Handle the pending messages and refresh.</p>}
+      {includeAcknowledged && Boolean(inbox.history?.length) && <details className="mt-2 text-xs">
+        <summary className="cursor-pointer text-muted">Request history ({inbox.history!.length})</summary>
+        <ul className="mt-2 max-h-60 space-y-2 overflow-y-auto" aria-label="Agent request history">
+          {inbox.history!.map(item => <li key={`${item.project}:${item.id}`} className="rounded-md border border-line p-2">
+            <p className="mb-1 text-muted">{item.project} · {item.disposition.replaceAll("_", " ")}</p>
+            <p className="whitespace-pre-wrap break-words">{item.question}</p>
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-accent underline">
+              <Link href={item.href}>Original card</Link>
+              {item.replies.map((reply, index) => <Link key={reply.responseRevision} href={reply.href}>Reply {index + 1}</Link>)}
+            </div>
+          </li>)}
+        </ul>
+      </details>}
     </>}
   </section>;
 }

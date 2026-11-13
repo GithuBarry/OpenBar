@@ -19,7 +19,8 @@ import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import type { Mindmap, Project, WikiPage } from "@/lib/types";
 import { buildSourceContextIndex, type LocatedPaperMarker, type LocatedPaperNote, type LocatedPaperTodo, type SourceContextIndex } from "./source-context";
 import type { SourceDiagnostic } from "@/lib/tex-project/source-graph";
-import { collectAgentMentions } from "./agent-mentions";
+import { collectAgentMentions, type AgentFieldHashes } from "./agent-mentions";
+import { readAgentInboxReceipts } from "./agent-reply-receipts";
 import {
   findPrimaryMindmap,
   isPrimaryMindmap,
@@ -539,6 +540,7 @@ export function buildProjectState(input: {
   manuscriptDir?: string;
   context?: SourceContextIndex;
   mindmaps: Mindmap[];
+  agentFieldHashes?: AgentFieldHashes;
   wiki?: WikiPage[];
   skills: ProjectSkill[];
   agentsMd?: { path: string; body: string; updatedAt?: string };
@@ -600,7 +602,7 @@ export function buildProjectState(input: {
     if (decisions.length >= 50) break;
   }
   return {
-    agentMentions: collectAgentMentions(slug, input.mindmaps, paper?.todos || []),
+    agentMentions: collectAgentMentions(slug, input.mindmaps, paper?.todos || [], 50, input.agentFieldHashes),
     project: {
       slug,
       title: input.project.title,
@@ -694,6 +696,7 @@ export function getProjectState(slug: string, current?: CurrentLocation): Projec
     manuscriptDir: paths.manuscriptDir,
     context,
     mindmaps: listMindmaps(slug),
+    agentFieldHashes: projectAgentFieldHashes(dir),
     wiki: listWiki(slug),
     skills,
     agentsMd: findAgentsMd(dir),
@@ -703,10 +706,16 @@ export function getProjectState(slug: string, current?: CurrentLocation): Projec
   });
 }
 
+/** Project reads stay available while optional inbox metadata is being recovered. */
+function projectAgentFieldHashes(dir: string): AgentFieldHashes | undefined {
+  try { return readAgentInboxReceipts(dir).agentFieldHashes }
+  catch { return undefined }
+}
+
 export function getProjectAgentMentions(slug: string, limit = 50) {
   const paper = getEditableTexPaper(slug);
   const todos = paper ? analyzePaper(paper.source).todos.map(todo => ({ ...todo, completed: !paperTodoIsOpen(todo) })) : [];
-  return collectAgentMentions(slug, listMindmaps(slug), todos, limit);
+  return collectAgentMentions(slug, listMindmaps(slug), todos, limit, projectAgentFieldHashes(projectContentDir(slug)));
 }
 
 export function projectStateForAgent(state: ProjectState, query: ProjectStateQuery = {}): unknown {

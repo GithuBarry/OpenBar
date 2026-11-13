@@ -500,12 +500,12 @@ export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: s
       })),
     };
     assertUniqueMindmapTodoIds(canonicalized);
-    const replyCapture = beginAgentReplyCapture(dir, slug, actor);
+    const replyCapture = beginAgentReplyCapture(dir, slug, actor, current);
     writeMindmapRecord(dir, persistableMindmap(canonicalized));
     const persisted = readMindmapRecord(dir, identity.id);
     if (!persisted) throw new Error(`Mindmap "${identity.id}" could not be read after saving.`);
     const normalizedPersisted = normalizeMindmap(persisted);
-    completeAgentReplyCapture(dir, slug, replyCapture);
+    completeAgentReplyCapture(dir, slug, replyCapture, normalizedPersisted);
     return {
       ...migrateMindmapArtifactRefs(normalizedPersisted, sections),
       diskHash: mindmapDiskHash(normalizedPersisted),

@@ -1,3 +1,17 @@
+export type InboxDisposition = 'acknowledged' | 'already_resolved' | 'reopened' | 'already_open' | 'stale' | 'missing'
+export type InboxAcknowledgement = { id: string, disposition: InboxDisposition, project?: string, requestId?: string }
+export type AgentRequestHistory = {
+  id: string
+  mapId: string
+  nodeId: string
+  question: string
+  href: string
+  recordedAt: string
+  updatedAt: string
+  disposition: 'captured' | InboxDisposition
+  replies: Array<{ mapId: string, nodeId: string, href: string, responseRevision: string, repliedAt?: string, updatedAt?: string }>
+}
+
 export type InboxNotification = {
   id: string
   project: string
@@ -16,6 +30,7 @@ export type AgentInbox = {
   hasMore: boolean
   revision: string
   replies: AgentReply[]
+  history?: Array<AgentRequestHistory & { project: string }>
 }
 
 export type AgentReply = {
@@ -35,8 +50,8 @@ export const AGENT_INBOX_ACTOR_HEADER = 'X-OpenBar-Actor'
 export const INBOX_GUIDANCE = 'At the start of each OpenBar agent session, including one without earlier chat context, call check_inbox after get_project_state. Treat "tick", "check updates", "check inbox", and "sync" as requests to call check_inbox. When sync also names a Git or Overleaf action, check the inbox first, then perform the requested synchronization. Tool responses can prefix pending OpenBar requests. Read each linked card and its current context. Reply on that card or Agent draft child cards using ordinary subject titles and direct answer text. Keep useful existing card wording. Use collapsed Notes for supporting detail. Preserve original request wording in its existing location or collapsed Notes. When moving map-owned request wording into caption, save it in the same patch as the visible card changes. After replying, acknowledge the original notification IDs. Repeated IDs refer to the same request. Changed request text receives a new ID. Acknowledgement records delivery handling. Paper TODO completion remains a separate research decision.'
 
 export const INBOX_TOOL_DESCRIPTIONS = {
-  check_inbox: 'Check human @agent requests at the start of every OpenBar agent session, including without earlier chat context. Suggested user phrases: "tick", "check updates", "check inbox", "sync". Returns pending request IDs, text and card links. includeAcknowledged also shows handled requests. Read the linked context, reply on the card or Agent draft children using ordinary card content, then acknowledge the exact IDs.',
-  acknowledge_inbox: 'Mark exact OpenBar notification IDs as handled after replying on their cards. Set acknowledged=false to reopen them. Acknowledgement preserves saved card content and paper TODO completion.',
+  check_inbox: 'Check human @agent requests at the start of every OpenBar agent session, including without earlier chat context. Suggested user phrases: "tick", "check updates", "check inbox", "sync". Returns pending request IDs, text and card links. includeAcknowledged also shows handled requests and bounded durable request history. Read the linked context, reply on the card or Agent draft children using ordinary card content, then acknowledge the exact IDs.',
+  acknowledge_inbox: 'Mark exact OpenBar notification IDs as handled after replying on their cards. Set acknowledged=false to reopen them. Returns a disposition for every supplied ID and retains original request text and reply links in bounded history. Acknowledgement preserves saved card content and paper TODO completion.',
 }
 
 export function formatInboxPrefix(inbox: AgentInbox): string {

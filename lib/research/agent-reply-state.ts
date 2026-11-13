@@ -1,5 +1,7 @@
 import type { MindmapNode } from '@/lib/types'
 import { sha256Hex } from '@/lib/mindmap/sha256'
+import type { AgentFieldHashes } from './agent-mentions'
+import type { AgentRequestHistory } from './agent-inbox-contract'
 import { mindmapCardContentForTodo, ordinaryMindmapCardContent } from './todo-map'
 
 export type ReplyPublication = { responseRevision: string, contentHash: string, repliedAt: string }
@@ -13,9 +15,16 @@ export type AgentReplyReceipt = {
   question?: string
   contentHash: string
   responseRevision: string
+  updatedAt?: string
   published?: ReplyPublication
 }
-export type AgentInboxReceipts = { version: 1, acknowledged: string[], receipts: Record<string, AgentReplyReceipt> }
+export type AgentInboxReceipts = {
+  version: 1
+  acknowledged: string[]
+  receipts: Record<string, AgentReplyReceipt>
+  agentFieldHashes?: AgentFieldHashes
+  history?: AgentRequestHistory[]
+}
 
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable)
