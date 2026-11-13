@@ -1,4 +1,4 @@
-.rail { position: absolute; top: 50%; right: -11px; display: flex; flex-direction: column; align-items: center; width: 22px; max-height: min(240px, calc(100% - 12px)); padding: 5px 0; overflow-y: auto; transform: translateY(-50%); opacity: 0; pointer-events: none; scrollbar-width: thin; transition: opacity 100ms ease; }
+.rail { position: absolute; z-index: 2; top: 50%; right: -11px; display: flex; flex-direction: column; align-items: center; width: 22px; max-height: min(240px, calc(100% - 12px)); padding: 5px 0; overflow-y: auto; transform: translateY(-50%); opacity: 0; pointer-events: none; scrollbar-width: thin; transition: opacity 100ms ease; }
 :global([data-mind-node]:hover) > .rail, :global([data-mind-node]:focus-within) > .rail, .rail:hover, .rail:focus-within { opacity: 1; pointer-events: auto; }
 .tick { display: grid; place-items: center; flex-shrink: 0; width: 22px; height: 14px; padding: 0; border: 0; border-radius: 3px; background: transparent; cursor: pointer; }
 .tick::before { content: ""; width: 10px; height: 1.5px; border-radius: 2px; background: rgb(var(--line)); transition: width 100ms ease, background 100ms ease; }

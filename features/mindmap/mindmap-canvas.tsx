@@ -56,9 +56,9 @@ const nodeTypes = {
   card: memo(function CardNode({ id, data }: NodeProps<Node<CardData>>) {
     return (
       <div className="mindmap-rf-card">
-        <Handle type="target" position={Position.Left} className="mindmap-rf-handle" aria-hidden="true" />
+        <Handle type="target" position={Position.Left} isConnectable={false} isConnectableStart={false} isConnectableEnd={false} className="mindmap-rf-handle" aria-hidden="true" />
         {data.render(id)}
-        <Handle type="source" position={Position.Right} className="mindmap-rf-handle" aria-hidden="true" />
+        <Handle type="source" position={Position.Right} isConnectable={false} isConnectableStart={false} isConnectableEnd={false} className="mindmap-rf-handle" aria-hidden="true" />
       </div>
     );
   }),
