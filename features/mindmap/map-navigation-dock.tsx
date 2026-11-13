@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import * as Popover from "@radix-ui/react-popover";
 import { ChevronDown, Move } from "lucide-react";
 import styles from "./map-navigation-dock.module.css";
 
@@ -23,59 +24,61 @@ export function MapNavigationDock({ children }: { children: ReactNode }) {
     observer.observe(editor);
     return () => observer.disconnect();
   }, []);
-  useEffect(() => () => clearTimeout(closeTimer.current), []);
-  useEffect(() => {
-    if (!compact || !open) return;
-    const outside = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) { transientOpen.current = false; setOpen(false); }
-    };
-    document.addEventListener("pointerdown", outside, true);
-    return () => document.removeEventListener("pointerdown", outside, true);
-  }, [compact, open]);
-  const show = () => {
+  const show = useCallback(() => {
     clearTimeout(closeTimer.current);
-    if (!open) { transientOpen.current = true; setOpen(true); }
-  };
-  const closeSoon = () => {
+    setOpen(current => { if (!current) transientOpen.current = true; return true; });
+  }, []);
+  const closeSoon = useCallback(() => {
     clearTimeout(closeTimer.current);
     closeTimer.current = setTimeout(() => {
       if (rootRef.current?.contains(document.activeElement)) return;
       transientOpen.current = false;
       setOpen(false);
     }, 180);
-  };
-  return <div ref={rootRef} className={styles.widget} data-map-navigation data-compact={compact || undefined} role="group" aria-label="Zoom and history"
-    onPointerEnter={event => { if (event.pointerType === "mouse") show(); }}
-    onPointerLeave={event => { if (event.pointerType === "mouse") closeSoon(); }}
-    onPointerDownCapture={event => { pointerType.current = event.pointerType; }}
-    onFocusCapture={() => {
-      clearTimeout(closeTimer.current);
-      if (suppressFocus.current) { suppressFocus.current = false; return; }
-      if (pointerType.current === "touch") { pointerType.current = ""; return; }
-      show();
-    }}
-    onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closeSoon(); }}
-    onKeyDown={event => {
-      event.stopPropagation();
-      if (event.key === "Escape" && compact) {
-        event.preventDefault();
+  }, []);
+  useEffect(() => {
+    const root = rootRef.current;
+    const enter = (event: PointerEvent) => { if (event.pointerType === "mouse") show(); };
+    const leave = (event: PointerEvent) => { if (event.pointerType === "mouse") closeSoon(); };
+    root?.addEventListener("pointerenter", enter);
+    root?.addEventListener("pointerleave", leave);
+    return () => { root?.removeEventListener("pointerenter", enter); root?.removeEventListener("pointerleave", leave); clearTimeout(closeTimer.current); };
+  }, [show, closeSoon]);
+  return <Popover.Root open={expanded} onOpenChange={next => {
+    clearTimeout(closeTimer.current);
+    transientOpen.current = false;
+    if (compact) setOpen(next);
+  }}>
+    <Popover.Anchor asChild>
+    <div ref={rootRef} className={styles.widget} data-map-navigation data-compact={compact || undefined} role="group" aria-label="Zoom and history"
+      onPointerDownCapture={event => { pointerType.current = event.pointerType; }}
+      onFocusCapture={() => {
         clearTimeout(closeTimer.current);
-        transientOpen.current = false;
-        setOpen(false);
-        if (document.activeElement !== triggerRef.current) { suppressFocus.current = true; triggerRef.current?.focus(); }
-      }
-    }}>
-    <button ref={triggerRef} type="button" className={styles.toggle} hidden={!compact} aria-label="Zoom and history controls" aria-expanded={expanded} title="Zoom and history"
-      onClick={() => {
-        clearTimeout(closeTimer.current);
-        if (transientOpen.current) { transientOpen.current = false; setOpen(true); }
-        else setOpen(current => !current);
-      }}>
-      {open ? <ChevronDown size={16} aria-hidden="true" /> : <Move size={16} aria-hidden="true" />}
-    </button>
-    <div className={styles.panel} hidden={!expanded} inert={!expanded} aria-label="Zoom and history actions">
-      <div className={styles.zoom} data-mindmap-zoom-controls role="group" aria-label="Map zoom controls" />
-      <div className={styles.history}>{children}</div>
+        if (suppressFocus.current) { suppressFocus.current = false; return; }
+        if (pointerType.current === "touch") { pointerType.current = ""; return; }
+        show();
+      }}
+      onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closeSoon(); }}
+      onKeyDown={event => event.stopPropagation()}>
+      <Popover.Trigger asChild><button ref={triggerRef} type="button" className={styles.toggle} hidden={!compact} aria-label="Zoom and history controls" title="Zoom and history"
+        onClick={event => {
+          if (transientOpen.current) { event.preventDefault(); transientOpen.current = false; setOpen(true); }
+        }}>
+        {open ? <ChevronDown size={16} aria-hidden="true" /> : <Move size={16} aria-hidden="true" />}
+      </button></Popover.Trigger>
+      <Popover.Content forceMount className={styles.panel} hidden={!expanded} inert={!expanded} role={compact ? "dialog" : "group"} aria-label="Zoom and history actions" side="bottom" align="start" sideOffset={compact ? 6 : 0} collisionPadding={12}
+        onOpenAutoFocus={event => event.preventDefault()}
+        onCloseAutoFocus={event => event.preventDefault()}
+        onInteractOutside={event => { if (!compact || !open || rootRef.current?.contains(event.target as Node)) event.preventDefault(); }}
+        onEscapeKeyDown={event => {
+          if (!compact || !open) { event.preventDefault(); return; }
+          event.stopPropagation();
+          if (document.activeElement !== triggerRef.current) { suppressFocus.current = true; triggerRef.current?.focus(); }
+        }}>
+        <div className={styles.zoom} data-mindmap-zoom-controls role="group" aria-label="Map zoom controls" />
+        <div className={styles.history}>{children}</div>
+      </Popover.Content>
     </div>
-  </div>;
+    </Popover.Anchor>
+  </Popover.Root>;
 }

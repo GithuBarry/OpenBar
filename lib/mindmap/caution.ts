@@ -3,21 +3,39 @@ export const CAUTION_LEVELS = ["critical", "important", "background"] as const;
 export type CautionLevel = (typeof CAUTION_LEVELS)[number];
 export type MindmapCaution = Partial<Record<CautionLevel, string>>;
 
-export const CAUTION_LEVEL_LABELS: Record<CautionLevel, string> = {
-  critical: "Critical",
-  important: "Important",
-  background: "AI note",
-};
+export const CARD_NOTE_FIELDS = ["caption", "background", "critical", "important"] as const;
+export type CardNoteField = (typeof CARD_NOTE_FIELDS)[number];
 
 export function hasNoteText(value?: string): boolean {
   return Boolean(value?.replace(/[\s\p{Default_Ignorable_Code_Point}]/gu, ""));
 }
 
-/** Present saved note fields together, preserving their original text. */
-export function cardNotesText(caption?: string, background?: string): string {
-  if (!caption) return background || "";
-  if (!background) return caption;
-  return `${caption}\n\n${background}`;
+/** Project saved fields into Notes while keeping the stored source untouched. */
+export function cardNotesText(caption?: string, caution?: MindmapCaution): string {
+  const seen = new Set<string>();
+  return [caption, caution?.background, caution?.critical, caution?.important]
+    .flatMap(text => text?.split(/\r?\n(?:[\t ]*\r?\n)+/) || [])
+    .filter(paragraph => {
+      if (!hasNoteText(paragraph) || seen.has(paragraph)) return false;
+      seen.add(paragraph);
+      return true;
+    }).join("\n\n");
+}
+
+/** Restore the active card's note fields while retaining its other live fields. */
+export function restoreCardNotes(
+  current: { caption?: string; caution?: MindmapCaution },
+  baseline: { caption?: string; caution?: MindmapCaution },
+  fields: ReadonlySet<CardNoteField>,
+): { caption?: string; caution?: MindmapCaution } {
+  const patch: { caption?: string; caution?: MindmapCaution } = {};
+  if (fields.has("caption")) patch.caption = baseline.caption;
+  const levels = CAUTION_LEVELS.filter(level => fields.has(level));
+  if (levels.length) {
+    patch.caution = { ...current.caution };
+    for (const level of levels) patch.caution[level] = baseline.caution?.[level];
+  }
+  return patch;
 }
 
 export function cautionValidationError(value: unknown): string | undefined {

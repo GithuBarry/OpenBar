@@ -57,9 +57,13 @@ import {
   X,
 } from "lucide-react";
 
+import { markAgentDraft } from "@/lib/mindmap/agent-draft";
 import { markdownTableColumns, startsWithMarkdownTable } from "@/lib/mindmap/markdown-table";
 import { ChoiceButtons } from "@/components/choice-buttons";
 import { countMindmapDescendants } from "@/lib/mindmap-index";
+import { CARD_NOTE_FIELDS, restoreCardNotes, type CardNoteField } from "@/lib/mindmap/caution";
+import { readTodoCardRecovery, todoCardRecoveryKey, writeTodoCardRecovery, type TodoCardRecovery } from "@/lib/mindmap/todo-card-recovery";
+import { analyzePaper } from "@/lib/research/paper-analysis";
 import { MINDMAP_PROGRESS_STATES, progressLabel } from "@/lib/mindmap/progress";
 import { useGitAutoSync } from "@/components/use-git-auto-sync";
 import { OverleafSyncNotice } from "@/components/overleaf-sync-notice";
@@ -108,6 +112,7 @@ import { captionMindmapImage, detachMindmapImage } from "@/lib/mindmap/image-ref
 import { availableTodoCandidates } from "@/lib/research/map-todo-candidates";
 import {
   clampMindmapLabels,
+  mindmapWriteAccess,
   isPrimaryMindmap,
   MAX_MINDMAP_LABEL_CHARS,
   MAX_MINDMAP_LABELS,
@@ -132,8 +137,7 @@ import {
   todosFromPaperState,
 } from "@/lib/research/todo-map";
 import { CardImages, hasImageTransfer, imageFilesFromTransfer } from "./card-images";
-import { CardCaution } from "./card-caution";
-import { CardScratchpad, type CardNoteField } from "./card-scratchpad";
+import { CardScratchpad } from "./card-scratchpad";
 import { CautionEditor } from "./caution-editor";
 import { MindmapCanvas, type MindmapFocusRequest } from "./mindmap-canvas";
 import { MindmapChangesView } from "./mindmap-changes";
@@ -200,6 +204,7 @@ export function MindmapEditor({
   const router = useRouter();
   const { writable: sessionWritable, setPendingWork, connectionState, isBackendUnavailable, accessMessage, accessError, inboxRevision } = useProjectWriteSession();
   const [connectionDetailsOpenRequest, setConnectionDetailsOpenRequest] = useState(0);
+  const manualReadOnlyRef = useRef(false);
   const sessionWritableRef = useRef(sessionWritable);
   sessionWritableRef.current = sessionWritable;
   const remoteQueue = useMemo(
@@ -681,6 +686,16 @@ export function MindmapEditor({
     }
   }, [clearBrowserDraft, enqueueRemote, isBackendUnavailable, preserveBrowserDraft, project]);
 
+  const currentWebMcpWriteAccess = useCallback(() => mindmapWriteAccess({
+    sessionWritable: sessionWritableRef.current,
+    backendUnavailable: isBackendUnavailable(),
+    viewOnly: manualReadOnlyRef.current,
+    recoveredDraft: Boolean(recoveryDraftRef.current),
+    applyingUpdates: applyingRemoteRef.current || hydrationPendingRef.current,
+    remoteConflict: remoteOutOfSyncRef.current,
+    reviewingRemote: reviewingRemoteRef.current,
+    savedFileConflict: Boolean(saveErrorRef.current && /conflict|changed.*reload|stale/i.test(saveErrorRef.current)),
+  }), [isBackendUnavailable]);
   const persistWebMcpMutation = useCallback(async (
     action: MindmapTreeAction | ((current: MindmapSession) => MindmapTreeAction | null),
     expectedRevision?: number,
@@ -689,11 +704,14 @@ export function MindmapEditor({
     webMcpSaveCountRef.current += 1;
     try {
       return await localSaveQueue.enqueue(async () => {
-        if (!sessionWritableRef.current) throw Object.assign(new Error("This tab is viewing. Start editing here to change this map."), { code: "write_session_required" });
-        if (recoveryDraftRef.current) throw new Error("Review the recovered draft before editing this map.");
-        if (remoteOutOfSyncRef.current) throw Object.assign(new Error("Editing is paused. Review and synchronize Git updates to resume."), { code: "remote_conflict" });
+        const assertWriteAccess = () => {
+          const access = currentWebMcpWriteAccess();
+          if (!access.writable) throw Object.assign(new Error(access.reason), { code: access.code });
+        };
+        assertWriteAccess();
         // Flush pending human edits before attributing an agent operation.
         await persistCurrentSnapshot("human");
+        assertWriteAccess();
         const current = sessionRef.current;
         if (expectedRevision !== undefined && current.revision !== expectedRevision) {
           throw Object.assign(
@@ -712,7 +730,7 @@ export function MindmapEditor({
     } finally {
       webMcpSaveCountRef.current -= 1;
     }
-  }, [localSaveQueue, persistCurrentSnapshot]);
+  }, [currentWebMcpWriteAccess, localSaveQueue, persistCurrentSnapshot]);
 
   useMindmapWebMcp({
     sharedActions: sharedWebMcpActions,
@@ -728,7 +746,10 @@ export function MindmapEditor({
         revision: sessionRef.current.revision,
         diskHash: persistedDiskHashRef.current,
         remoteSync: remoteSyncRef.current,
-        editingBlocked: remoteOutOfSyncRef.current || Boolean(recoveryDraftRef.current),
+        writeAccess: {
+          ...currentWebMcpWriteAccess(),
+          ...(inlineEditorSessionRef.current?.getDraft() ? { activeCardId: inlineEditorSessionRef.current.nodeId } : {}),
+        },
         rootId: current.rootId,
         nodes: current.nodes.map((node) => {
           const content = cardContentForNodeWithPaperState(node, paperState);
@@ -793,28 +814,21 @@ export function MindmapEditor({
       setLocalCollapsed(id, collapsed);
     },
     patchNode: async (id, patch, expectedRevision) => {
+      const assertCardAvailable = () => {
+        const active = inlineEditorSessionRef.current;
+        if (active?.nodeId === id && active.getDraft()) {
+          throw Object.assign(new Error("The human is editing this card. Add an Agent draft child or contribute to another card while the input stays open."), { code: "active_card_edit" });
+        }
+      };
+      assertCardAvailable();
       if (convertingCardIdRef.current === id) {
         throw Object.assign(
           new Error(`Mindmap card "${id}" is being converted to a paper TODO. Retry after the conversion finishes.`),
           { code: "stale_live_state" },
         );
       }
-      const nodePatch: {
-        title?: string;
-        text?: string;
-        caption?: string;
-        caution?: MindmapNode["caution"];
-        tags?: string[];
-        refs?: ArtifactRef[];
-        metadata?: Record<string, unknown>;
-        contentFormat?: MindmapNode["contentFormat"];
-        shape?: MindmapNode["shape"];
-        color?: string;
-        progress?: MindmapNode["progress"];
-        priority?: MindmapNode["priority"];
-        tableLayout?: MindmapNode["tableLayout"];
-        cardWidth?: number;
-      } = {};
+      const nodePatch: MindmapNodePatch = {};
+      if (patch.agentDraft === true) nodePatch.agentDraft = true;
       if (patch.title !== undefined) nodePatch.title = patch.title;
       if (patch.text !== undefined) nodePatch.text = patch.text;
       if (patch.caption !== undefined) nodePatch.caption = patch.caption;
@@ -834,8 +848,11 @@ export function MindmapEditor({
       }
       if (Object.keys(nodePatch).length === 0) return;
       await persistWebMcpMutation((current) => {
+        assertCardAvailable();
         const node = indexMindmap(current.mindmap).nodeById.get(id);
-        return node ? { type: "patch-node", id, patch: nodePatch } : null;
+        if (!node) return null;
+        const updated = markAgentDraft({ ...node, ...nodePatch }, node);
+        return { type: "patch-node", id, patch: { ...nodePatch, ...(updated.agentDraft ? { agentDraft: true } : {}) } };
       }, expectedRevision);
     },
     setActivityHighlight: (since) => {
@@ -984,6 +1001,8 @@ export function MindmapEditor({
     catch { /* In-memory section controls remain available. */ }
   };
   const [convertingCardId, setConvertingCardId] = useState<string | null>(null);
+  const [convertingTodoCard, setConvertingTodoCard] = useState(false);
+  const todoCardRecoveryRef = useRef(new Map<string, TodoCardRecovery>());
   convertingCardIdRef.current = convertingCardId;
   const [todoProgressBusy, setTodoProgressBusy] = useState(false);
   const [mapSettingsOpen, setMapSettingsOpen] = useState(false);
@@ -1051,6 +1070,7 @@ export function MindmapEditor({
   const [viewMode, setViewMode] = useState<MindmapViewMode>("map");
   const readOnlyStorageKey = `openbar:mindmap-read-only:v1:${encodeURIComponent(project)}:${encodeURIComponent(collapseMapId)}`;
   const [manualReadOnly, setReadOnly] = useState(false);
+  manualReadOnlyRef.current = manualReadOnly;
   const saveConflict = Boolean(saveError && /conflict|changed.*reload|stale/i.test(saveError));
   const outdatedSave = Boolean(saveError && isOutdatedMindmapPage(saveError));
   const readOnly = !sessionWritable || manualReadOnly || remoteOutOfSync || applyingRemote || saveConflict || Boolean(recoveryDraft);
@@ -1377,6 +1397,55 @@ export function MindmapEditor({
     }
   }
 
+  function rememberedTodoCard(todoId: string): TodoCardRecovery | null {
+    const key = todoCardRecoveryKey(project, todoId);
+    const cached = todoCardRecoveryRef.current.get(key);
+    if (cached) return cached;
+    try { return readTodoCardRecovery(window.sessionStorage, project, todoId); }
+    catch { return null; }
+  }
+
+  async function captureCurrentTodoCard(todoId: string) {
+    const paper = await getBrowserEditablePaper(project);
+    if (!paper) throw new Error("The saved paper is unavailable. Retry after it loads.");
+    const expectedHash = paperSourceHashRef.current ?? paperState?.paper?.sourceHash;
+    if (expectedHash && paper.bundle.bundleHash !== expectedHash) {
+      router.refresh();
+      throw new Error("The paper changed. Review the refreshed TODO before converting or deleting it.");
+    }
+    const todo = analyzePaper(paper.bundle.source).todos.find(item => item.id === todoId);
+    const content: TodoCardRecovery | null = todo ? { todoId, title: todo.title || "", body: todo.text, sourceHash: paper.bundle.bundleHash } : null;
+    if (content) {
+      todoCardRecoveryRef.current.set(todoCardRecoveryKey(project, todoId), content);
+      try { writeTodoCardRecovery(window.sessionStorage, project, content); }
+      catch { /* The mounted map retains its content snapshot. */ }
+    }
+    return { content, sourceHash: paper.bundle.bundleHash };
+  }
+
+  async function convertTodoCardToOrdinary(id: string) {
+    if (readOnly || convertingTodoCard) return;
+    const todoId = indexMindmap(sessionRef.current.mindmap).nodeById.get(id)?.todoId;
+    if (!todoId) return;
+    setConvertingTodoCard(true);
+    setSaveError(null);
+    try {
+      await flushPendingSaves();
+      const captured = await captureCurrentTodoCard(todoId);
+      const content = captured.content || rememberedTodoCard(todoId);
+      if (!content) throw new Error("The original TODO text is unavailable. Restore it from history before converting this card.");
+      await persistWebMcpMutation(current => {
+        if (indexMindmap(current.mindmap).nodeById.get(id)?.todoId !== todoId) throw new Error("The card's TODO binding changed. Review it before converting.");
+        if (paperSourceHashRef.current && paperSourceHashRef.current !== captured.sourceHash) throw new Error("The paper changed during conversion. Review the refreshed TODO and retry.");
+        return { type: "unbind-todo", id, todoId, title: content.title, text: content.body };
+      }, undefined, "human");
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not convert this TODO to an ordinary card.");
+    } finally {
+      setConvertingTodoCard(false);
+    }
+  }
+
   const setTodoCompleted = useCallback(async (todoId: string, completed: boolean): Promise<boolean> => {
     if (readOnly || todoProgressBusy || !paperState?.paper?.todos.some(todo => todo.id === todoId)) return false;
     setTodoProgressBusy(true);
@@ -1453,10 +1522,8 @@ export function MindmapEditor({
         dispatch(action);
       }
       if (baselineNode && currentNode && before.noteFields.size) {
-        const action = { type: "patch-node" as const, id: before.nodeId, transient: true, patch: {
-          ...(before.noteFields.has("caption") ? { caption: baselineNode.caption } : {}),
-          ...(before.noteFields.has("background") ? { caution: { ...currentNode.caution, background: baselineNode.caution?.background } } : {}),
-        } };
+        const action = { type: "patch-node" as const, id: before.nodeId, transient: true,
+          patch: restoreCardNotes(currentNode, baselineNode, before.noteFields) };
         sessionRef.current = mindmapReducer(sessionRef.current, action);
         dispatch(action);
       }
@@ -1552,11 +1619,10 @@ export function MindmapEditor({
     if (!node) return;
     const transient = before?.nodeId === id;
     if (transient) {
-      before.noteFields.add("caption");
-      before.noteFields.add("background");
+      for (const field of CARD_NOTE_FIELDS) before.noteFields.add(field);
     }
     const action: MindmapTreeAction = { type: "patch-node", id, transient,
-      patch: { caption: value, caution: { ...node.caution, background: undefined } } };
+      patch: { caption: value, caution: undefined } };
     sessionRef.current = mindmapReducer(sessionRef.current, action);
     dispatch(action);
     preserveBrowserDraft();
@@ -2569,8 +2635,6 @@ export function MindmapEditor({
           </div>
         </div>
       </div>
-      <div ref={controlDockRef} className={cn(styles.toolbar, styles.controlDock)} role="group" aria-label="Mindmap dock">
-        <div className={styles.dockUtility}>
           <MapNavigationDock>
           <div data-map-history role="group" aria-label="Map history">
             <ToolbarButton title="Undo (⌘Z / Ctrl+Z)" onClick={undo} disabled={readOnly || !history.length}><Undo2 size={15} /></ToolbarButton>
@@ -2578,6 +2642,9 @@ export function MindmapEditor({
             <span title={`${mindmap.nodes.length} cards`}>{mindmap.nodes.length} cards</span>
           </div>
           </MapNavigationDock>
+      <div ref={controlDockRef} className={cn(styles.toolbar, styles.controlDock)} role="group" aria-label="Mindmap dock">
+        <div className={styles.dockUtility}>
+
       <div className={styles.resumeDock}>
         <BackendStatusNotice project={project} issues={editorIssues} diagnosticContext={getMindmapDiagnostics} openRequest={connectionDetailsOpenRequest} />
         <ResumeEditControl suppressError={primaryIssue?.id !== "access"} />
@@ -2826,6 +2893,14 @@ export function MindmapEditor({
                   <span>{convertingCardId === selected.id ? "Making paper TODO…" : "Make paper TODO"}</span>
                 </button>
               )}
+              {selected.todoId && selectedTodo && <>
+                <button type="button" className="mindmap-card-menu-row" disabled={readOnly || convertingTodoCard}
+                  onClick={() => void convertTodoCardToOrdinary(selected.id)}>
+                  <FileText size={14} aria-hidden="true" />
+                  <span>{convertingTodoCard ? "Converting…" : "Convert to ordinary card"}</span>
+                </button>
+                <small className="w-full text-muted">{isPrimaryMindmap(mindmap) ? "The paper TODO stays in Unplaced." : "The TODO stays in the paper."}</small>
+              </>}
               {selected.todoId && selectedTodo && !selectedMissing && (
                 <>
                   <label className="mindmap-card-menu-row">
@@ -2876,10 +2951,8 @@ export function MindmapEditor({
                 <button
                   type="button"
                   className="p-button p-button-default btn-outline"
-                  onClick={() => {
-                    const content = selectedCardContent || { title: "Recovered paper TODO", body: "" };
-                    dispatch({ type: "unbind-todo", id: selected.id, title: content.title, text: content.body });
-                  }}
+                  disabled={readOnly || convertingTodoCard}
+                  onClick={() => void convertTodoCardToOrdinary(selected.id)}
                 >
                   Convert to ordinary card
                 </button>
@@ -3067,8 +3140,7 @@ export function MindmapEditor({
           <InspectorSection id="more" open={Boolean(inspectorSections.more)} onToggle={() => toggleInspectorSection("more")}>
           <fieldset disabled={readOnly || convertingCardId === selected.id} className="mindmap-card-menu-fields">
           <CautionEditor key={selected.id} value={selected.caution} caption={selected.caption}
-            onNotesChange={value => updateNodeNote(selected.id, value)}
-            onChange={caution => dispatch({ type: "patch-node", id: selected.id, patch: { caution } })} />
+            onNotesChange={value => updateNodeNote(selected.id, value)} />
           <CardLinks key={`links:${selected.id}`} project={project} refs={selectedRefs} onChange={refs => dispatch({ type: "patch-node", id: selected.id, patch: { refs } })} />
           <CardProperties key={`properties:${selected.id}`} value={selected.metadata} onChange={metadata => dispatch({ type: "patch-node", id: selected.id, patch: { metadata } })} />
           <div className="mindmap-card-menu-danger">
@@ -3081,11 +3153,13 @@ export function MindmapEditor({
                 onClick={() => {
                   if (!window.confirm("Delete this TODO from the paper? Its mindmap card and child topics will stay in place so you can repair or convert the card.")) return;
                   setCardMenuOpen(false);
-                  void runPaperMutation(async () => {
-                    const result = await removePaperTodoAction(project, selected.todoId!, paperSourceHashRef.current ?? paperSourceHash);
+                  void flushPendingSaves().then(() => runPaperMutation(async () => {
+                    const captured = await captureCurrentTodoCard(selected.todoId!);
+                    if (!captured.content) throw new Error("The paper TODO changed. Review it before deleting.");
+                    const result = await removePaperTodoAction(project, selected.todoId!, captured.sourceHash);
                     if (result.ok) recordPaperSourceHash(result.diskHash);
                     return result;
-                  }).then((result) => {
+                  })).then((result) => {
                       if (!result.ok) {
                         setSaveError(result.message);
                         return;
@@ -3758,7 +3832,6 @@ function CanvasNode({
           )}
         </>
       )}
-          <CardCaution caution={node.caution} />
           {(uploading > 0 || node.refs?.some(ref => ref.kind === "figure")) && (
             <CardImages project={project} refs={node.refs || []} readOnly={readOnly} uploading={uploading}
               onChange={onImageChange} />
@@ -3780,7 +3853,7 @@ function CanvasNode({
             {tags.slice(0, 2).map((tag) => <span className="mindmap-node-tag" key={tag}>{tag}</span>)}
             {tags.length > 2 && <span className="mindmap-node-tag">+{tags.length - 2}</span>}
           </div>
-          <CardScratchpad text={node.caption} background={node.caution?.background} editing={editing} readOnly={readOnly}
+          <CardScratchpad text={node.caption} caution={node.caution} editing={editing} readOnly={readOnly}
             onChange={onNoteChange} onCommit={() => void commit()} onCancel={cancel}
             footer={hasCardLinks(node.refs) ? <CardLinkIndicator project={project} refs={node.refs || []} /> : undefined} />
       {!editing && <ParentNavigation cardTitle={title || "Untitled card"} item={parentNavigation} onJump={onJumpToCard} />}

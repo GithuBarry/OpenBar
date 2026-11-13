@@ -59,6 +59,7 @@ import { assertUniqueMindmapTodoIds, emptyMindmap, persistableMindmap, slugifyMi
 import { isPrimaryMindmap } from "./research/todo-map";
 import { composeObtodo } from "./todo-meta";
 import { normalizeMindmap } from "./mindmap/mindmap";
+import { markAgentDraft } from "./mindmap/agent-draft";
 import {
   canonicalizeArtifactRef,
   migrateMindmapArtifactRefs,
@@ -477,8 +478,8 @@ export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: s
   }
   return withProjectWriteLock(dir, () => {
     const identity = resolveMindmapStorageIdentity(dir, requestedId);
+    const current = readMindmapRecord(dir, identity.id);
     if (expectedDiskHash) {
-      const current = readMindmapRecord(dir, identity.id);
       const currentHash = current ? mindmapDiskHash(current) : undefined;
       // A primary map can be loaded as an in-memory fallback before its first
       // durable save. The write lock makes that first creation race-safe. Once
@@ -490,10 +491,11 @@ export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: s
     }
     const normalized = normalizeMindmap({ ...mindmap, projectId: slug, id: identity.id, role: identity.role });
     const sections = paperSectionRefTargets(slug);
+    const previousNodes = new Map(current?.nodes.map(node => [node.id, node]));
     const canonicalized = {
       ...normalized,
       nodes: normalized.nodes.map(node => ({
-        ...node,
+        ...(actor === "webmcp" ? markAgentDraft(node, previousNodes.get(node.id)) : node),
         ...(node.refs ? { refs: node.refs.map(ref => canonicalizeArtifactRef(ref, sections)) } : {}),
       })),
     };

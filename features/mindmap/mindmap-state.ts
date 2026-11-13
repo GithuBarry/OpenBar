@@ -71,7 +71,7 @@ export type MindmapTreeAction =
   | { type: "patch-nodes"; ids: string[]; patch: MindmapNodePatch }
   | { type: "update-tags"; ids: string[]; tag: string; operation: "add" | "remove" }
   | { type: "bind-todo"; id: string; todoId: string }
-  | { type: "unbind-todo"; id: string; title?: string; text: string }
+  | { type: "unbind-todo"; id: string; todoId?: string; title?: string; text: string }
   | { type: "reparent"; id: string; parentId: string; beforeId?: string; afterId?: string }
   | { type: "rename-map"; title: string }
   | { type: "set-font-size"; fontSize: number }
@@ -355,11 +355,13 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
     case "unbind-todo": {
       return {
         mindmap: updateNode(mindmap, index, action.id, (node) => {
+          if (!node.todoId || (action.todoId !== undefined && node.todoId !== action.todoId)) return node;
           const { todoId: _todoId, ...rest } = node;
           return {
             ...rest,
             ...(action.title !== undefined ? { title: action.title } : {}),
             text: action.text,
+            contentFormat: "tex",
             updatedAt: new Date().toISOString(),
           };
         }),

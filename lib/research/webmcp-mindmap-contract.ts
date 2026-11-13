@@ -34,6 +34,7 @@ export type MindmapPresentationPatch = Pick<MindmapNode, "contentFormat" | "tabl
 };
 
 export type MindmapNodeContentPatch = {
+  agentDraft?: true;
   title?: string;
   text?: string;
   caption?: string;
@@ -82,6 +83,24 @@ export type MindmapTodoConversionFailure = {
 
 export type MindmapTodoConversionResult = OperationResult<MindmapTodoConversion> | MindmapTodoConversionFailure;
 
+export type MindmapWriteAccess = { writable: boolean; code?: string; reason?: string; activeCardId?: string };
+
+export function mindmapWriteAccess(state: {
+  sessionWritable: boolean; backendUnavailable: boolean; viewOnly: boolean; recoveredDraft: boolean;
+  applyingUpdates: boolean; remoteConflict: boolean; reviewingRemote: boolean; savedFileConflict: boolean;
+}): MindmapWriteAccess {
+  const blocked = [
+    [state.backendUnavailable, "backend_unavailable", "OpenBar is reconnecting. The local draft stays in this tab."],
+    [!state.sessionWritable, "write_session_required", "This tab is viewing. Contribute through the current writing tab or native MCP with the latest map revision and disk hash. Resume edit transfers browser writing access when the human requests it."],
+    [state.recoveredDraft, "recovered_draft_review_required", "Review the recovered draft before editing this map."],
+    [state.applyingUpdates, "updates_in_progress", "Saved updates are being applied. Wait for the latest map before editing."],
+    [state.remoteConflict || state.reviewingRemote, "remote_conflict", "Review and synchronize Git updates before editing this map."],
+    [state.savedFileConflict, "stale_disk_state", "The saved map changed. Load the latest saved map before editing."],
+    [state.viewOnly, "view_only", "This map is set to View only. The human can enable editing here."],
+  ].find(([active]) => active);
+  return blocked ? { writable: false, code: String(blocked[1]), reason: String(blocked[2]) } : { writable: true };
+}
+
 export type LiveMindmapSnapshot = {
   project: string;
   mapId: string;
@@ -103,7 +122,8 @@ export type LiveMindmapSnapshot = {
   remoteSaveState?: "checking" | "local" | "pending" | "syncing" | "synced" | "changed" | "blocked" | "unconfigured" | "unavailable" | "failed";
   /** Last local-save-to-Git outcome, including an actionable failure. */
   remoteSync?: RemoteSyncOutcome;
-  editingBlocked?: boolean;
+  /** Effective access for persisted edits in this browser tab. */
+  writeAccess: MindmapWriteAccess;
 };
 
 export type MindmapWebMcpHost = {
@@ -154,8 +174,8 @@ function mutationFailure(host: MindmapWebMcpHost, error: unknown): OperationResu
       currentRevision: current.revision,
     });
   }
-  if (code === "remote_conflict") {
-    return failResult("remote_conflict", message, {
+  if (["remote_conflict", "write_session_required", "recovered_draft_review_required", "updates_in_progress", "view_only", "backend_unavailable", "active_card_edit"].includes(code)) {
+    return failResult(code, message, {
       retryable: true,
       currentRevision: current.revision,
     });
@@ -329,7 +349,9 @@ export async function executeMindmapWebMcpTool(
   if (!parsedArgs.ok) return parsedArgs;
   const args = parsedArgs.value;
   const snapshot = host.getSnapshot();
-  if (snapshot.editingBlocked && !["get_mindmap", "focus_mindmap_node", "focus_todo_in_paper", "set_mindmap_collapsed", "highlight_mindmap_activity"].includes(name)) return failResult("remote_conflict", "Editing is paused. Review and synchronize Git updates to resume.", true);
+  if (!snapshot.writeAccess.writable && !["get_mindmap", "focus_mindmap_node", "focus_todo_in_paper", "set_mindmap_collapsed", "highlight_mindmap_activity"].includes(name)) {
+    return failResult(snapshot.writeAccess.code || "write_session_required", snapshot.writeAccess.reason || "Check editing access before changing this map.", true);
+  }
   const hasNode = (id: unknown): id is string => typeof id === "string" && snapshot.nodes.some((node) => node.id === id);
   switch (name) {
     case "get_mindmap": {
@@ -438,7 +460,11 @@ export async function executeMindmapWebMcpTool(
       if (!rev.ok) return rev;
       if (!hasNode(args.id)) return failResult("invalid_arguments", `Unknown mindmap node "${String(args.id ?? "")}".`, false);
       const node = snapshot.nodes.find((item) => item.id === args.id)!;
+      if (snapshot.writeAccess.activeCardId === args.id) {
+        return failResult("active_card_edit", "The human is editing this card. Add an Agent draft child or contribute to another card while the input stays open.", true);
+      }
       const patch: MindmapNodeContentPatch = {};
+      if (args.agentDraft === true) patch.agentDraft = true;
       if (args.title !== undefined) {
         if (typeof args.title !== "string") return failResult("invalid_arguments", "title must be a string.", false);
         if (node.todoId) return failResult("invalid_arguments", "TODO card title is derived from TeX via update_todo.", false);
@@ -484,8 +510,8 @@ export async function executeMindmapWebMcpTool(
         if (!presentation.ok) return presentation;
         patch.presentation = presentation.value;
       }
-      if (patch.title === undefined && patch.text === undefined && patch.caption === undefined && patch.caution === undefined && !patch.labels && !patch.refs && patch.metadata === undefined && !Object.prototype.hasOwnProperty.call(patch, "priority") && !patch.presentation) {
-        return failResult("invalid_arguments", "Provide title, text, caption, caution, labels, refs, metadata, priority, or presentation.", false);
+      if (patch.agentDraft === undefined && patch.title === undefined && patch.text === undefined && patch.caption === undefined && patch.caution === undefined && !patch.labels && !patch.refs && patch.metadata === undefined && !Object.prototype.hasOwnProperty.call(patch, "priority") && !patch.presentation) {
+        return failResult("invalid_arguments", "Provide title, text, caption, caution, labels, refs, metadata, priority, presentation, or agentDraft:true.", false);
       }
       const result = await runPersistedMutation(host, () => host.patchNode(String(args.id ?? ""), patch, snapshot.revision));
       return result.ok ? okResult({ id: args.id, patch }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
@@ -655,7 +681,7 @@ export function buildMindmapWebMcpTools(host: MindmapWebMcpHost) {
   return [...tools, {
     name: "apply_mindmap_edits",
     title: "Edit live mindmap state",
-    description: `Apply a live revision-checked operation. edit.operation: add, patch, move, delete-card, delete-branch, place-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, view-preferences. args: add {parentId,title?,text?,caption?,caution?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?}, move {id,parentId,beforeId?,afterId?}, delete {id}, TODO placement {todoId,parentId}, conversion {id,sectionId?}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, view-preferences {centerOnEdit}. View preferences are stored in this browser per project and map. Cards delete promotes children, branch delete includes descendants. New cards remain Agent draft. Edit TODO text/completion through project files. Set presentation.cardWidth to 180–1200 canvas pixels, or null for automatic width. ${MINDMAP_CARD_GUIDANCE}`,
+    description: `Apply a live revision-checked operation. edit.operation: add, patch, move, delete-card, delete-branch, place-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, view-preferences. args: add {parentId,title?,text?,caption?,caution?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, delete {id}, TODO placement {todoId,parentId}, conversion {id,sectionId?}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, view-preferences {centerOnEdit}. View preferences are stored in this browser per project and map. Cards delete promotes children, branch delete includes descendants. New cards and agent-authored content changes remain Agent draft until human Save or Delete. Contribute through the current writing tab. While a human edits one card, add Agent draft children or edit other cards. Edit TODO text/completion through project files. Set presentation.cardWidth to 180–1200 canvas pixels, or null for automatic width. ${MINDMAP_CARD_GUIDANCE}`,
     inputSchema: commandJsonSchema(MINDMAP_EDIT_INPUT),
     annotations: { readOnlyHint: false, destructiveHint: true, untrustedContentHint: true },
     execute: (args?: unknown) => executeManagedMapEdit(host, args),
@@ -664,7 +690,7 @@ export function buildMindmapWebMcpTools(host: MindmapWebMcpHost) {
 
 export function mindmapToolDescription(name: MindmapWebMcpToolName): string {
   if (name === "get_mindmap") {
-    return "Read the map and its current revision. TODO title, text, and completion come from TeX. Other card fields belong to this map.";
+    return "Read the map, current revision, effective writeAccess and activeCardId. writeAccess explains viewing, recovered drafts, conflicts and updates in progress. TODO title, text, and completion come from TeX. Other card fields belong to this map.";
   }
   if (name === "focus_mindmap_node") {
     return "Select a saved mindmap card on the open map. Use navigate_project first if the mindmap page is not open.";

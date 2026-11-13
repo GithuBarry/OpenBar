@@ -1,6 +1,7 @@
 import { AGENT_GUIDANCE } from "@/lib/research/agent-guidance";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AgentConnectionAddress } from "@/components/agent-connection-address";
 
 export const metadata: Metadata = { title: "Tools and agent access", description: "Start using OpenBar with the interface, browser WebMCP, or authenticated HTTP MCP." };
 
@@ -35,7 +36,8 @@ export default function AgentAccessPage() {
       </section>
       <section className="space-y-3" aria-labelledby="headless-help">
         <h2 id="headless-help" className="text-xl font-semibold">Connect a headless client</h2>
-        <p>Configure a Streamable HTTP MCP connection to <code>{'<OpenBar origin>/api/mcp'}</code>. Supply <code>Authorization: Bearer &lt;access token&gt;</code> using the server’s configured <code>OPENBARRY_ACCESS_TOKEN</code>, or its allowed Cloudflare Access identity. The workspace owner supplies credentials.</p>
+        <p>Copy this address into a Streamable HTTP MCP connection. Supply <code>Authorization: Bearer &lt;access token&gt;</code> using the server’s configured <code>OPENBARRY_ACCESS_TOKEN</code>, or its allowed Cloudflare Access identity. The workspace owner supplies credentials.</p>
+        <AgentConnectionAddress />
         <ol className="list-decimal space-y-2 pl-5">
           <li>Connect using a current MCP SDK. The endpoint handles each HTTP request independently and also supports 2025 clients through the SDK.</li>
           <li>Call <code>tools/list</code> for the current names, descriptions, and input schemas.</li>

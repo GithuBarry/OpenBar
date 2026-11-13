@@ -1,4 +1,5 @@
 import type { Mindmap, MindmapNode } from "@/lib/types"
+import { CARD_NOTE_FIELDS, type CardNoteField } from "./caution"
 
 export type MindmapCardRecoveryDraft = {
   nodeId: string
@@ -8,7 +9,7 @@ export type MindmapCardRecoveryDraft = {
   baseText: string
   baseNode: MindmapNode
   paperSourceHash?: string
-  noteFields: Array<"caption" | "background">
+  noteFields: CardNoteField[]
 }
 
 export type MindmapRecoveryDraft = {
@@ -42,7 +43,7 @@ export function readMindmapRecovery(storage: Pick<Storage, "getItem">, project: 
       || typeof active.baseText !== "string" || active.baseNode?.id !== active.nodeId
       || typeof active.baseNode.text !== "string"
       || !value.mindmap.nodes.some(node => node.id === active.nodeId)
-      || !Array.isArray(active.noteFields) || active.noteFields.some(field => field !== "caption" && field !== "background")
+      || !Array.isArray(active.noteFields) || active.noteFields.some(field => !CARD_NOTE_FIELDS.includes(field))
       || (active.contentFormat !== undefined && !["plain", "markdown", "tex"].includes(active.contentFormat))
       || (active.paperSourceHash !== undefined && !/^[a-f0-9]{64}$/i.test(active.paperSourceHash))
       || (active.selection && (!Number.isInteger(active.selection.from) || !Number.isInteger(active.selection.to)
@@ -60,7 +61,7 @@ export function hasMindmapCardRecoveryChanges(draft: MindmapRecoveryDraft): bool
   const node = draft.mindmap.nodes.find(node => node.id === active.nodeId)
   return active.noteFields.some(field => field === "caption"
     ? node?.caption !== active.baseNode.caption
-    : node?.caution?.background !== active.baseNode.caution?.background)
+    : node?.caution?.[field] !== active.baseNode.caution?.[field])
 }
 
 export function writeMindmapRecovery(storage: Pick<Storage, "setItem" | "getItem">, draft: MindmapRecoveryDraft): boolean {

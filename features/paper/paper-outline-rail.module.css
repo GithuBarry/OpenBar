@@ -10,7 +10,7 @@
 .mark[data-depth="2"] > span, .mark[data-depth="3"] > span { width: 9px; margin-left: 6px; }
 .mark[aria-current="location"] > span { background: rgb(var(--accent)); }
 .mark:focus-visible { outline: 2px solid rgb(var(--accent) / .5); outline-offset: -2px; border-radius: 4px; }
-.preview { position: fixed; z-index: 100; width: 264px; max-width: calc(100vw - 24px); padding: 12px 14px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); pointer-events: none; font-family: var(--font-sans); }
+.preview { position: relative; z-index: 100; width: 264px; max-width: calc(100vw - 24px); padding: 12px 14px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); pointer-events: none; font-family: var(--font-sans); }
 .parent { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 4px; color: rgb(var(--faint)); font-size: 12px; }
 .preview strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; font-weight: 600; line-height: 1.4; }
 .preview p { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: 6px 0 0; color: rgb(var(--muted)); font-size: 12px; line-height: 1.5; }

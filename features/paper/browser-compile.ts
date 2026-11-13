@@ -1,8 +1,8 @@
 import type { PaperCompileStatus } from "@/lib/tex-project/compile"
 
 /** Stable URLs let open editors keep observing compiler jobs across releases. */
-export function getBrowserPaperCompileStatus(project: string): Promise<PaperCompileStatus> {
-  return readCompileResponse(fetch(`/api/p/${encodeURIComponent(project)}/paper/compile`, { cache: "no-store" }))
+export function getBrowserPaperCompileStatus(project: string, signal?: AbortSignal): Promise<PaperCompileStatus> {
+  return readCompileResponse(fetch(`/api/p/${encodeURIComponent(project)}/paper/compile`, { cache: "no-store", signal }))
 }
 
 export function requestBrowserPaperCompile(project: string, signal?: AbortSignal): Promise<PaperCompileStatus> {

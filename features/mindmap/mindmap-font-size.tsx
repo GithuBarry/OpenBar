@@ -7,7 +7,6 @@ import { ChoiceButtons } from "@/components/choice-buttons";
 import { FastTooltip } from "@/components/fast-tooltip";
 import { AnchoredPop } from "@/components/pop";
 import { DEFAULT_MINDMAP_FONT_SIZE } from "@/lib/mindmap/mindmap";
-import { CardCaution } from "./card-caution";
 import styles from "./mindmap-font-size.module.css";
 
 const MIN_SIZE = 10;
@@ -104,7 +103,7 @@ export function MindmapFontSizeSlider({ value, disabled = false, onChange }: Siz
     <div className={styles.preview} aria-label="Card text preview" style={{ "--card-body-size": `${size}px`, "--card-body-line": `${size * 17 / 12}px`, "--card-title-size": `${size * 14 / 12}px` } as CSSProperties}>
       <strong>Research idea</strong>
       <p>Text and notes share one scale.</p>
-      <CardCaution caution={{ important: "Important context" }} />
+      <p>Supporting context stays in Notes.</p>
     </div>
   </section>;
 }

@@ -1,11 +1,11 @@
-.widget { position: absolute; bottom: 8px; left: 16px; z-index: 30; width: max-content; pointer-events: auto; }
-.widget[data-compact] { position: relative; inset: auto; flex: 0 0 var(--mindmap-zoom-size, 34px); width: var(--mindmap-zoom-size, 34px); height: var(--mindmap-zoom-size, 34px); }
+.widget { position: absolute; top: var(--mindmap-controls-bottom, 62px); left: 16px; z-index: 30; width: max-content; pointer-events: auto; }
+.widget[data-compact] { width: var(--mindmap-zoom-size, 34px); height: var(--mindmap-zoom-size, 34px); }
 .toggle { display: grid; place-items: center; width: var(--mindmap-zoom-size, 34px); height: var(--mindmap-zoom-size, 34px); min-width: 0; padding: 0; border: 0; border-radius: 10px; background: transparent; color: rgb(var(--muted)); cursor: pointer; }
 .toggle:hover, .toggle[aria-expanded="true"] { color: rgb(var(--ink)); background: rgb(var(--surface-2)); }
+.toggle > svg { pointer-events: none; }
 .toggle:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: -2px; }
 .toggle[hidden], .panel[hidden] { display: none; }
-.panel { pointer-events: none; display: flex; align-items: flex-end; width: max-content; max-width: calc(100vw - 24px); filter: drop-shadow(0 4px 9px rgb(0 0 0 / .12)); }
-.widget[data-compact] > .panel { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 5; }
+.panel { z-index: 30; pointer-events: none; display: flex; align-items: flex-end; width: max-content; max-width: calc(100vw - 24px); filter: drop-shadow(0 4px 9px rgb(0 0 0 / .12)); }
 .zoom { flex: none; pointer-events: auto; }
 .history { pointer-events: auto; }
 .zoom :global(.react-flow__controls.react-flow__panel) { position: static; display: flex; flex-direction: column; inset: auto; transform: none; margin: 0; overflow: hidden; border: 1px solid rgb(var(--line)); border-radius: 12px 12px 0 12px; background: rgb(var(--surface) / .9); box-shadow: none; backdrop-filter: blur(16px); }

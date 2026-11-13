@@ -32,7 +32,7 @@ export const SKILLS: Skill[] = [
 
 Lead with the subject, answer, and evidence. State scope positively and name the source of factual uncertainty precisely.
 
-Mindmap fields: title/text and caution.critical/important are visible. caption holds the collapsed Notes. Existing caution.background text appears in the same Notes section. Prefer caption for new notes.
+Mindmap fields: title/text are visible. caption holds the collapsed Notes. Existing caution.background, caution.critical, and caution.important text appears in the same Notes field. Prefer caption for new notes.
 
 ${MINDMAP_CARD_GUIDANCE}
 

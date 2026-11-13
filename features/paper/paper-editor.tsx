@@ -21,7 +21,8 @@ import { registerProjectFileEditor, runProjectFileOperation } from "@/features/p
 import { captureCitationSelection, resolveCitationSelection, type CitationSelection } from "./citation-selection";
 import { handlePaperAddShortcut, paperAddShortcut } from "./paper-add-shortcuts";
 import { PaperOutlineRail } from "./paper-outline-rail";
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ComponentProps, type CSSProperties } from "react";
+import { useQuery } from "@tanstack/react-query";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { flushSync } from "react-dom";
 import { EditorView } from "@codemirror/view";
@@ -1475,26 +1476,22 @@ export function PaperEditor({
     resetPreview(initialSource);
   }, [initialSource, resetPreview]);
 
-  useEffect(() => {
-    let active = true;
-    const refreshCompileStatus = async () => {
-      if (isBackendUnavailable()) return;
-      if (compileStartingRef.current || (compileRef.current.state === "running" && !compileRef.current.observationDelayed)) return;
+  const compileObservationScope = useId();
+  const budgetCompileStatus = useQuery({
+    queryKey: ["openbar", "compile-budget", project, compileObservationScope],
+    enabled: !isBackendUnavailable() && !compileStarting && (compile.state !== "running" || Boolean(compile.observationDelayed)),
+    staleTime: 0,
+    refetchInterval: PAGE_BUDGET_REFRESH_MS,
+    refetchIntervalInBackground: true,
+    queryFn: async ({ signal }) => {
+      if (isBackendUnavailable() || compileStartingRef.current || (compileRef.current.state === "running" && !compileRef.current.observationDelayed)) return null;
       const observation = captureCompileObservation();
-      try {
-        const status = await getBrowserPaperCompileStatus(project);
-        if (active) applyObservedCompileStatus(observation, status);
-      } catch {
-        // The editor remains available when compilation status cannot be read.
-      }
-    };
-    void refreshCompileStatus();
-    const timer = window.setInterval(() => { void refreshCompileStatus(); }, PAGE_BUDGET_REFRESH_MS);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [applyObservedCompileStatus, captureCompileObservation, isBackendUnavailable, project]);
+      return { observation, status: await getBrowserPaperCompileStatus(project, signal) };
+    },
+  });
+  useEffect(() => {
+    if (budgetCompileStatus.data) applyObservedCompileStatus(budgetCompileStatus.data.observation, budgetCompileStatus.data.status);
+  }, [applyObservedCompileStatus, budgetCompileStatus.data]);
 
   useEffect(() => {
     return () => {

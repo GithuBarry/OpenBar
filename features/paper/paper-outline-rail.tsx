@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { createPortal } from "react-dom";
+import * as Tooltip from "@radix-ui/react-tooltip";
 type JumpBookmark = { title: string; slug: string; line: number; level: number };
 import styles from "./paper-outline-rail.module.css";
 
@@ -25,8 +25,19 @@ export function PaperOutlineRail({ bookmarks, activeSlug, onJump, previewRef }: 
   onJump: (bookmark: JumpBookmark) => void;
   previewRef: RefObject<HTMLDivElement | null>;
 }) {
-  const [preview, setPreview] = useState<{ slug: string; title: string; parent: string; excerpt: string; x: number; y: number } | null>(null);
+  const [preview, setPreview] = useState<{ slug: string; title: string; parent: string; excerpt: string } | null>(null);
   const railRef = useRef<HTMLElement>(null);
+
+  function focusBookmark(index: number, key: string): boolean {
+    const next = key === "ArrowDown" ? Math.min(bookmarks.length - 1, index + 1)
+      : key === "ArrowUp" ? Math.max(0, index - 1)
+      : key === "Home" ? 0 : key === "End" ? bookmarks.length - 1 : undefined;
+    if (next === undefined) return false;
+    const button = railRef.current?.querySelectorAll<HTMLButtonElement>("button")[next];
+    button?.focus({ preventScroll: true });
+    button?.scrollIntoView({ block: "nearest" });
+    return true;
+  }
 
   useEffect(() => {
     if (!preview) return;
@@ -35,22 +46,9 @@ export function PaperOutlineRail({ bookmarks, activeSlug, onJump, previewRef }: 
       const target = event.target;
       if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       if (target instanceof Element && (railRef.current?.contains(target) || target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox'], .cm-editor"))) return;
-      if (event.key === "Escape") {
-        setPreview(null);
-        return;
-      }
       const index = bookmarks.findIndex((bookmark) => bookmark.slug === previewSlug);
       if (index < 0) return;
-      let next = index;
-      if (event.key === "ArrowDown") next = Math.min(bookmarks.length - 1, index + 1);
-      else if (event.key === "ArrowUp") next = Math.max(0, index - 1);
-      else if (event.key === "Home") next = 0;
-      else if (event.key === "End") next = bookmarks.length - 1;
-      else return;
-      event.preventDefault();
-      const button = railRef.current?.querySelectorAll<HTMLButtonElement>("button")[next];
-      button?.focus({ preventScroll: true });
-      button?.scrollIntoView({ block: "nearest" });
+      if (focusBookmark(index, event.key)) event.preventDefault();
     }
     window.addEventListener("keydown", handlePreviewKey);
     return () => window.removeEventListener("keydown", handlePreviewKey);
@@ -69,50 +67,43 @@ export function PaperOutlineRail({ bookmarks, activeSlug, onJump, previewRef }: 
   }
   if (bookmarks.length === 0) return null;
 
-  function showPreview(bookmark: JumpBookmark, button: HTMLButtonElement) {
-    const bounds = button.getBoundingClientRect();
+  function showPreview(bookmark: JumpBookmark) {
     const pane = previewRef.current;
     const heading = pane?.querySelector<HTMLElement>(`.ob-pv-heading[data-ob-heading-key="${CSS.escape(bookmark.slug)}"]`);
     const excerpt = sectionExcerpt(pane, heading);
     const index = bookmarks.findIndex((item) => item.slug === bookmark.slug);
     const parent = bookmarks.slice(0, index).reverse().find((item) => item.level < bookmark.level)?.title || "";
-    setPreview({ slug: bookmark.slug, title: bookmark.title, parent, excerpt, x: Math.max(12, Math.min(bounds.right + 6, window.innerWidth - 280)), y: Math.max(12, Math.min(bounds.top - 12, window.innerHeight - 160)) });
+    setPreview({ slug: bookmark.slug, title: bookmark.title, parent, excerpt });
   }
 
   return (
+    <Tooltip.Provider delayDuration={0} skipDelayDuration={0} disableHoverableContent>
     <nav ref={railRef} className={styles.rail} aria-label="Paper outline">
       <div className={styles.track}>
         {bookmarks.map((bookmark, index) => (
-          <button key={bookmark.slug} type="button" className={styles.mark} data-depth={Math.min(3, bookmark.level - baseLevel)} aria-label={`Jump to ${bookmark.title}`} data-active-parent={activeParents.has(bookmark.slug) || undefined} aria-current={index === activeIndex ? "location" : undefined} aria-describedby={preview?.slug === bookmark.slug ? "paper-outline-preview" : undefined} tabIndex={index === activeIndex ? 0 : -1}
+          <Tooltip.Root key={bookmark.slug} open={preview?.slug === bookmark.slug} onOpenChange={open => {
+            if (open) showPreview(bookmark);
+            else setPreview(current => current?.slug === bookmark.slug ? null : current);
+          }}>
+          <Tooltip.Trigger asChild>
+          <button type="button" className={styles.mark} data-depth={Math.min(3, bookmark.level - baseLevel)} aria-label={`Jump to ${bookmark.title}`} data-active-parent={activeParents.has(bookmark.slug) || undefined} aria-current={index === activeIndex ? "location" : undefined} tabIndex={index === activeIndex ? 0 : -1}
             onClick={() => onJump(bookmark)}
-            onMouseEnter={(event) => showPreview(bookmark, event.currentTarget)} onMouseLeave={() => setPreview(null)}
-            onFocus={(event) => showPreview(bookmark, event.currentTarget)} onBlur={() => setPreview(null)}
             onKeyDown={(event) => {
-              const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("button");
-              if (!buttons) return;
-              let next = index;
-              if (event.key === "ArrowDown") next = Math.min(bookmarks.length - 1, index + 1);
-              else if (event.key === "ArrowUp") next = Math.max(0, index - 1);
-              else if (event.key === "Home") next = 0;
-              else if (event.key === "End") next = bookmarks.length - 1;
-              else if (event.key === "Escape") { setPreview(null); return; }
-              else return;
-              event.preventDefault();
-              buttons[next]?.focus({ preventScroll: true });
-              buttons[next]?.scrollIntoView({ block: "nearest" });
+              if (focusBookmark(index, event.key)) event.preventDefault();
             }}>
             <span aria-hidden="true" />
           </button>
+          </Tooltip.Trigger>
+          <Tooltip.Portal><Tooltip.Content className={styles.preview} side="right" align="start" sideOffset={6} alignOffset={-12} collisionPadding={12}>
+            {preview?.parent && <span className={styles.parent}>{preview.parent}</span>}
+            <strong>{bookmark.title}</strong>
+            {preview?.excerpt && <p>{preview.excerpt}</p>}
+            <span className={styles.hint}>Click to jump or use ↑ ↓ to explore</span>
+          </Tooltip.Content></Tooltip.Portal>
+          </Tooltip.Root>
         ))}
       </div>
-      {preview && createPortal(
-        <div id="paper-outline-preview" className={styles.preview} role="tooltip" style={{ left: preview.x, top: preview.y }}>
-          {preview.parent && <span className={styles.parent}>{preview.parent}</span>}
-          <strong>{preview.title}</strong>
-          {preview.excerpt && <p>{preview.excerpt}</p>}
-          <span className={styles.hint}>Click to jump or use ↑ ↓ to explore</span>
-        </div>, document.body,
-      )}
     </nav>
+    </Tooltip.Provider>
   );
 }

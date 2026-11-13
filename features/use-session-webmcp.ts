@@ -20,6 +20,8 @@ export function SessionWebMcp({ disabled = false }: { disabled?: boolean }) {
         inspect: () => sessionRef.current.inspect(),
         resumeEdit: generation => sessionRef.current.resumeEdit(generation),
         pendingLocalWork: () => sessionRef.current.pendingLocalWork,
+        canRelease: () => sessionRef.current.canRelease,
+        release: () => sessionRef.current.release(),
       }), controller.signal, "shared");
       release = registration.release;
       if (controller.signal.aborted) release();
