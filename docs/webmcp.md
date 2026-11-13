@@ -255,11 +255,13 @@ Saved map mutations return map metadata with `updatedNodes` and
 `removedNodeIds`, covering changed cards, sibling order, and promoted children.
 `get_mindmap` reads the complete map through its existing pagination.
 
-Card presentation uses three levels: visible, collapsed, and hover. `title`
-and `text` form the main card. `caution.critical` and `caution.important` are
-visible paragraphs with red and amber accents. `caption` opens through the
-card’s collapsed notes disclosure. `caution.background` appears in the
-collapsed AI note section. All note fields are map-owned, including on TODO cards.
+`title` and `text` form the visible card. The collapsed Notes disclosure combines
+`caption`, `caution.background`, `caution.critical`, and `caution.important`,
+in that order, with exact repeated paragraphs combined. Prefer `caption` for
+new notes. These fields are map-owned, including on TODO cards. Reading this
+shared Notes projection preserves the saved fields and request identity. An
+explicit Notes edit folds the displayed text into `caption` and clears `caution`
+in the same map update.
 
 Prefer concise visible cards, aiming for 80 words or fewer of visible card prose.
 Put explanations, reasoning (including “why”), methods, and supporting detail in
@@ -276,10 +278,11 @@ only when the user asks.
 
 `apply_mindmap_edits` operations `add` and `patch` accept `caption` and `caution`.
 Supplying `caution` replaces all its fields, and `{}` clears them. An empty
-`caption` clears the notes. Existing scalar caution text and retired
-`minor` text migrate into `caption`, preserving the text and its existing
-notes contents. Reading performs this conversion in memory. The next
-ordinary save persists the canonical fields.
+`caption` clears that field. To replace the complete shared Notes through a
+tool, supply the new `caption` and `caution: {}` in one patch. Existing scalar
+caution text and retired `minor` text migrate into `caption`, preserving the
+text and its existing notes contents. Reading performs this retired-format
+conversion in memory. The next ordinary save persists those canonical fields.
 
 ### Request replay recovery
 
