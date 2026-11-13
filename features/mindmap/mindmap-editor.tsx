@@ -93,6 +93,7 @@ import { indentMindmapNode, mindmapMoveTargets, outdentMindmapNode, type Mindmap
 import { DEFAULT_MINDMAP_FONT_SIZE, mindmapDiskHash } from "@/lib/mindmap/mindmap";
 import { createMindmapSaveQueue } from "@/lib/mindmap/save-queue";
 import { mergeSavedMindmap } from "@/lib/mindmap/merge-saved";
+import { captureDeletedMindmapBranch, restoreDeletedMindmapBranch, type DeletedMindmapBranch } from "@/lib/mindmap/deleted-branch";
 import { isOutdatedMindmapPage, loadBrowserMindmap, saveBrowserMindmap } from "@/lib/mindmap/browser-save";
 import { hasMindmapCardRecoveryChanges, mindmapRecoveryKey, readMindmapRecovery, writeMindmapRecovery, type MindmapCardRecoveryDraft, type MindmapRecoveryDraft } from "@/lib/mindmap/browser-recovery";
 import {
@@ -1013,6 +1014,15 @@ export function MindmapEditor({
   }, [searchIndex, searchOpen, moveOpen]);
   const [focusRequest, setFocusRequest] = useState<MindmapFocusRequest | null>(null);
   const [moveNotice, setMoveNotice] = useState("");
+  const [deletedBranchNotice, setDeletedBranchNotice] = useState<{
+    token: string; branch: DeletedMindmapBranch; collapsedIds: string[]; expiresAt: number; error?: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!deletedBranchNotice) return;
+    const timer = window.setTimeout(() => setDeletedBranchNotice(current => current?.token === deletedBranchNotice.token ? null : current), Math.max(0, deletedBranchNotice.expiresAt - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [deletedBranchNotice]);
+  useEffect(() => setDeletedBranchNotice(null), [project, collapseMapId]);
   useEffect(() => {
     if (!moveNotice) return;
     const timer = window.setTimeout(() => setMoveNotice(""), 5000);
@@ -1591,23 +1601,52 @@ export function MindmapEditor({
     addChild(node.parentId);
   }
 
+  const deleteCardBranch = useCallback(async (id: string) => {
+    if (readOnly) return;
+    try {
+      if (inlineEditorSessionRef.current && !await inlineEditorSessionRef.current.commit()) return;
+      if (!sessionWritableRef.current || remoteOutOfSyncRef.current || applyingRemoteRef.current || recoveryDraftRef.current) return;
+      const branch = captureDeletedMindmapBranch(sessionRef.current.mindmap, id);
+      if (!branch) return;
+      const removedIds = new Set(branch.nodes.map(node => node.id));
+      const action: MindmapTreeAction = { type: "delete-subtree", id };
+      sessionRef.current = mindmapReducer(sessionRef.current, action);
+      dispatch(action);
+      setSaveError(null);
+      setMoveNotice("");
+      setDeletedBranchNotice({ token: newNodeId(), branch, expiresAt: Date.now() + 5000,
+        collapsedIds: [...collapsedIdsRef.current].filter(nodeId => removedIds.has(nodeId)) });
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not delete the card.");
+    }
+  }, [readOnly]);
+
   function deleteSelected() {
-    const current = sessionRef.current.mindmap;
-    const node = indexMindmap(current).nodeById.get(selected?.id || "");
-    if (!node || node.id === current.rootId) return;
-    setSaveError(null);
-    dispatch({ type: "delete-node-keep-children", id: node.id });
+    void deleteCardBranch(sessionRef.current.selectedId);
   }
 
-  function deleteSelectedBranch() {
-    const current = sessionRef.current.mindmap;
-    const node = indexMindmap(current).nodeById.get(selected?.id || "");
-    if (!node || node.id === current.rootId) return;
-    const descendants = descendantCounts.get(node.id) || 0;
-    const label = node.title?.trim() || firstLine(node.text) || node.id;
-    if (!window.confirm(`Delete "${label}" and its ${descendants} descendant card${descendants === 1 ? "" : "s"}? This removes the whole branch.`)) return;
-    setSaveError(null);
-    dispatch({ type: "delete-subtree", id: node.id });
+  async function revertDeletedBranch() {
+    const notice = deletedBranchNotice;
+    if (!notice || readOnly) return;
+    if (Date.now() >= notice.expiresAt) { setDeletedBranchNotice(null); return; }
+    try {
+      if (inlineEditorSessionRef.current && !await inlineEditorSessionRef.current.commit()) return;
+      if (!sessionWritableRef.current || remoteOutOfSyncRef.current || applyingRemoteRef.current || recoveryDraftRef.current) return;
+      const restored = restoreDeletedMindmapBranch(sessionRef.current.mindmap, notice.branch);
+      if (!restored.ok) {
+        setDeletedBranchNotice(current => current?.token === notice.token ? { ...current, error: restored.message } : current);
+        return;
+      }
+      if (restored.mindmap !== sessionRef.current.mindmap) {
+        const action: MindmapTreeAction = { type: "replace", mindmap: restored.mindmap, selectedId: notice.branch.nodeId };
+        sessionRef.current = mindmapReducer(sessionRef.current, action);
+        dispatch(action);
+        setLocalCollapsedIds(new Set([...collapsedIdsRef.current, ...notice.collapsedIds]));
+      }
+      setDeletedBranchNotice(current => current?.token === notice.token ? null : current);
+    } catch (error) {
+      setDeletedBranchNotice(current => current?.token === notice.token ? { ...current, error: error instanceof Error ? error.message : "Could not revert the deletion." } : current);
+    }
   }
 
   function placeUnplacedTodo(todoId: string, parentId = selected?.id || mindmap.rootId) {
@@ -2275,7 +2314,7 @@ export function MindmapEditor({
         onTextChange={(text, contentFormat) => updateNodeText(node.id, text, contentFormat)}
         onNoteChange={value => updateNodeNote(node.id, value)}
         onSaveDraft={() => saveAgentDraft(node.id)}
-        onDeleteDraft={() => dispatch({ type: "delete-node-keep-children", id: node.id })}
+        onDeleteDraft={() => void deleteCardBranch(node.id)}
         onTextFocus={() => beginTextTransaction(node.id)}
         onCommit={() => finishTextTransaction(true)}
         onCancel={() => finishTextTransaction(false)}
@@ -2353,6 +2392,7 @@ export function MindmapEditor({
     measureCard,
     previewCardWidth,
     commitCardWidth,
+    deleteCardBranch,
   ]);
 
   const moveTargets = useMemo(() => {
@@ -2653,7 +2693,12 @@ export function MindmapEditor({
         {assetError && primaryIssue?.id === "asset" && <p className="mindmap-save-error" role="alert">{assetError} <button type="button" onClick={() => setAssetError(null)}>Dismiss</button></p>}
 
 
-        {moveNotice && <div className={styles.moveNotice} role="status"><Check size={14} /><span>{moveNotice}</span><button type="button" onClick={() => { undo(); setMoveNotice(""); }}>Undo</button></div>}
+        {deletedBranchNotice ? <div className={styles.moveNotice} role="status">
+          <span>{deletedBranchNotice.error || (deletedBranchNotice.branch.nodes.length > 1
+            ? `${deletedBranchNotice.branch.nodes.length - 1} child card${deletedBranchNotice.branch.nodes.length === 2 ? "" : "s"} also deleted`
+            : "Card deleted")}</span>
+          <button type="button" aria-label="Revert deletion" disabled={readOnly} onClick={revertDeletedBranch}>Revert↩</button>
+        </div> : moveNotice && <div className={styles.moveNotice} role="status"><Check size={14} /><span>{moveNotice}</span><button type="button" onClick={() => { undo(); setMoveNotice(""); }}>Undo</button></div>}
 
       </div>
 
@@ -2842,7 +2887,7 @@ export function MindmapEditor({
                   className="p-button p-button-default btn-outline text-danger"
                   onClick={() => {
                     setCardMenuOpen(false);
-                    dispatch({ type: "delete-node-keep-children", id: selected.id });
+                    void deleteCardBranch(selected.id);
                   }}
                 >
                   Delete card
@@ -3063,20 +3108,8 @@ export function MindmapEditor({
                     deleteSelected();
                   }}
                 >
-                  Delete card, keep children
+                  Delete card
                 </button>
-                {(descendantCounts.get(selected.id) || 0) > 0 && (
-                  <button
-                    type="button"
-                    className="mindmap-text-button text-danger"
-                    onClick={() => {
-                      setCardMenuOpen(false);
-                      deleteSelectedBranch();
-                    }}
-                  >
-                    Delete branch…
-                  </button>
-                )}
               </>
             )}
           </div>
