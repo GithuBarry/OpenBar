@@ -10,6 +10,7 @@ import {
   ReactFlowProvider,
   useReactFlow,
   useNodesInitialized,
+  useUpdateNodeInternals,
   applyNodeChanges,
   Position,
   type Edge,
@@ -22,6 +23,8 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { applyMindmapDrop, resolveMindmapDrop, type MindmapDrop } from "@/lib/mindmap/drop-targets";
+import { childPortLayout, childSourceHandleId, GROUPED_CHILD_PORT_ID, type ChildPort } from "@/lib/mindmap/child-ports";
+import { indexMindmap } from "@/lib/mindmap-index";
 import type { Mindmap } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -37,7 +40,7 @@ export type MindmapFlowNode = {
 
 export type MindmapFocusRequest = { id: string; sequence: number; center?: boolean };
 
-type CardData = { render: (id: string) => ReactNode; renderVersion?: string };
+type CardData = { render: (id: string) => ReactNode; renderVersion?: string; ports: ChildPort[]; portSignature: string };
 
 function viewportStorageKey(mindmap: Mindmap): string {
   return `openbar:mindmap-viewport:v1:${encodeURIComponent(mindmap.projectId)}:${encodeURIComponent(mindmap.id || "draft")}`;
@@ -54,11 +57,16 @@ function readViewport(key: string): Viewport | undefined {
 
 const nodeTypes = {
   card: memo(function CardNode({ id, data }: NodeProps<Node<CardData>>) {
+    const updateNodeInternals = useUpdateNodeInternals();
+    useLayoutEffect(() => { updateNodeInternals(id); }, [id, data.portSignature, updateNodeInternals]);
     return (
       <div className="mindmap-rf-card">
-        <Handle type="target" position={Position.Left} isConnectable={false} isConnectableStart={false} isConnectableEnd={false} className="mindmap-rf-handle" aria-hidden="true" />
+        <Handle type="target" position={Position.Left} isConnectable={false} isConnectableStart={false} isConnectableEnd={false}
+          className="mindmap-rf-handle" style={{ transform: "translateY(-50%)", opacity: 0, pointerEvents: "none" }} aria-hidden="true" />
         {data.render(id)}
-        <Handle type="source" position={Position.Right} isConnectable={false} isConnectableStart={false} isConnectableEnd={false} className="mindmap-rf-handle" aria-hidden="true" />
+        {data.ports.map(port => <Handle key={port.id} id={port.id} type="source" position={Position.Right}
+          isConnectable={false} isConnectableStart={false} isConnectableEnd={false}
+          className="mindmap-rf-handle" style={{ top: `${port.top}%`, transform: "translateY(-50%)", opacity: 0, pointerEvents: "none" }} aria-hidden="true" />)}
       </div>
     );
   }),
@@ -200,6 +208,10 @@ function FlowCanvas({
     void setCenter(node.x + node.width / 2, node.y + node.height / 2, { zoom: Math.max(0.75, getZoom()), duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180 });
   }, [viewportInitialized, nodesInitialized, focusRequest, nodes, setCenter, getZoom, clearCollapseAnchor]);
 
+  const childPorts = useMemo(() => {
+    const { childrenByParent } = indexMindmap(mindmap);
+    return new Map(nodes.map(node => [node.id, childPortLayout((childrenByParent.get(node.id) || []).map(child => child.id), node.height)]));
+  }, [mindmap, nodes]);
   const baseFlowNodes: Node<CardData>[] = useMemo(
     () => nodes.map((node) => ({
       id: node.id,
@@ -212,9 +224,13 @@ function FlowCanvas({
       sourcePosition: Position.Right,
       targetPosition: Position.Left,
         style: { width: node.width, height: node.height },
-        data: { render: renderCard, renderVersion: node.renderVersion },
+        data: {
+          render: renderCard, renderVersion: node.renderVersion,
+          ports: childPorts.get(node.id)!.ports,
+          portSignature: childPorts.get(node.id)!.ports.map(port => `${port.id}:${port.top}`).join("|"),
+        },
       })),
-    [mindmap.rootId, nodes, readOnly, renderCard, selectMultiple],
+    [mindmap.rootId, nodes, readOnly, renderCard, selectMultiple, childPorts],
   );
   const [controlledNodes, setControlledNodes] = useState<Node<CardData>[]>(baseFlowNodes);
   useLayoutEffect(() => {
@@ -248,9 +264,11 @@ function FlowCanvas({
     const byId = new Map(nodes.map(node => [node.id, node]));
     return mindmap.nodes.flatMap(node => {
       if (!node.parentId || !byId.has(node.id) || !byId.has(node.parentId)) return [];
-      return [{ id: `${node.parentId}-${node.id}`, source: node.parentId, target: node.id, type: "default", focusable: false, interactionWidth: 0 }];
+      return [{ id: `${node.parentId}-${node.id}`, source: node.parentId, target: node.id,
+        sourceHandle: childPorts.get(node.parentId)!.grouped ? GROUPED_CHILD_PORT_ID : childSourceHandleId(node.id),
+        type: "default", focusable: false, interactionWidth: 0 }];
     });
-  }, [mindmap.nodes, nodes]);
+  }, [mindmap.nodes, nodes, childPorts]);
 
   const onNodeClick: NodeMouseHandler = useCallback((event, node) => {
     if (event.detail === 0) onSelect(node.id, event.shiftKey);

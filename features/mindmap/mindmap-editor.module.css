@@ -106,7 +106,7 @@
 .editor :global(.mindmap-viewport) { background: rgb(var(--canvas)); }
 .card { border-radius: 12px; box-shadow: 0 1px 3px rgb(0 0 0 / .035); }
 .card:global(.mindmap-node-selected) { border-color: var(--mind-node-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--mind-node-accent) 62%, transparent), 0 5px 16px rgb(0 0 0 / .08); }
-.card:global(.mindmap-node-root) { --mind-card-surface: rgb(var(--surface)); border-width: 1px; background: var(--mind-card-surface); }
+.card:global(.mindmap-node-root) { --mind-card-surface: rgb(var(--surface)); --mind-card-border-left: 1px; border-width: 1px; background: var(--mind-card-surface); }
 .editor :global(.mindmap-save-error) { font-size: 12px; line-height: 1.5; padding: 8px 16px; }
 .toolbar button:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: -2px; }
 @media (max-width: 899px) { .inspector { width: min(304px, calc(100% - 16px)); } }
@@ -227,7 +227,7 @@
 .canvasSurface { overflow: hidden; }
 
 .cardPlaceholder { color: rgb(var(--faint)); font-size: 14px; line-height: 20px; }
-.card.agentDraft { --mind-card-surface: rgb(var(--surface)); border: 1.5px dashed rgb(var(--accent) / .72); border-left-width: 2px; background: var(--mind-card-surface); box-shadow: 0 2px 7px rgb(0 0 0 / .10); }
+.card.agentDraft { --mind-card-surface: rgb(var(--surface)); --mind-card-border-left: 2px; --mind-card-border-right: 1.5px; border: 1.5px dashed rgb(var(--accent) / .72); border-left-width: 2px; background: var(--mind-card-surface); box-shadow: 0 2px 7px rgb(0 0 0 / .10); }
 .card.agentDraft:global(.mindmap-node-selected) { box-shadow: 0 0 0 1px rgb(var(--accent) / .2), 0 0 14px rgb(var(--accent) / .16), 0 3px 10px rgb(0 0 0 / .08); }
 .draftHeading { position: absolute; top: -8px; left: 12px; padding: 0 4px; background: rgb(var(--surface)); color: rgb(var(--accent-text)); font-size: 12px; line-height: 16px; font-weight: 600; }
 .activityBadge { position: absolute; top: -3px; right: 12px; width: 7px; height: 7px; border-radius: 50%; background: rgb(var(--accent)); cursor: help; }

@@ -3864,7 +3864,7 @@ function CanvasNode({
             onChange={onNoteChange} onCommit={() => void commit()} onCancel={cancel}
             footer={hasCardLinks(node.refs) ? <CardLinkIndicator project={project} refs={node.refs || []} /> : undefined} />
       {!editing && <ParentNavigation cardTitle={title || "Untitled card"} item={parentNavigation} onJump={onJumpToCard} />}
-      {!editing && <ChildNavigation parentTitle={title || "Untitled card"} items={childNavigation} onJump={onJumpToCard} />}
+      {!editing && <ChildNavigation parentTitle={title || "Untitled card"} items={childNavigation} height={dimensions.height} onJump={onJumpToCard} />}
       {!readOnly && <CardResizeGrip width={dimensions.width} onPreview={onResizePreview} onCommit={onResizeCommit} />}
       {collapsedDescendantCount > 0 && (
         <TooltipProvider delayDuration={650} skipDelayDuration={0}>
