@@ -23,7 +23,7 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { applyMindmapDrop, resolveMindmapDrop, type MindmapDrop } from "@/lib/mindmap/drop-targets";
-import { childPortLayout, childSourceHandleId, GROUPED_CHILD_PORT_ID, type ChildPort } from "@/lib/mindmap/child-ports";
+import { childPortLayout, childSourceHandleId, type ChildPort } from "@/lib/mindmap/child-ports";
 import { indexMindmap } from "@/lib/mindmap-index";
 import type { Mindmap } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -265,7 +265,7 @@ function FlowCanvas({
     return mindmap.nodes.flatMap(node => {
       if (!node.parentId || !byId.has(node.id) || !byId.has(node.parentId)) return [];
       return [{ id: `${node.parentId}-${node.id}`, source: node.parentId, target: node.id,
-        sourceHandle: childPorts.get(node.parentId)!.grouped ? GROUPED_CHILD_PORT_ID : childSourceHandleId(node.id),
+        sourceHandle: childSourceHandleId(node.id),
         type: "default", focusable: false, interactionWidth: 0 }];
     });
   }, [mindmap.nodes, nodes, childPorts]);
