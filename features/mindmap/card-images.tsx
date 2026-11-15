@@ -32,7 +32,7 @@ export function CardImages({ project, refs, readOnly, uploading = 0, onChange }:
   const image = refs.find(ref => ref.kind === "figure")
   const [viewing, setViewing] = useState(false)
   return <div className={styles.gallery + " nodrag nopan"} data-card-images
-    onPointerDown={event => event.stopPropagation()}
+    onPointerDown={event => { if (event.currentTarget.contains(event.target as Node)) event.stopPropagation() }}
     onClick={event => event.stopPropagation()}
     onDoubleClick={event => event.stopPropagation()}
     onKeyDown={event => event.stopPropagation()}>
@@ -123,7 +123,7 @@ function ImageViewer({ project, active, onClose }: {
         <button type="button" aria-label="Zoom in" disabled={zoom >= 4} onClick={() => setZoom(value => Math.min(4, value + .5))}><ZoomIn size={18} /></button>
       </>}
       <FastTooltip label="Open original"><a href={href} target="_blank" rel="noreferrer" aria-label="Open original image"><ExternalLink size={18} /></a></FastTooltip>
-      <button type="button" aria-label="Close image viewer" autoFocus onClick={onClose}><X size={20} /></button>
+      <button type="button" aria-label="Close image viewer" onClick={onClose}><X size={20} /></button>
     </header>
     <div className={styles.viewerBody}>
       {isPdf(active) ? <iframe src={href} title={active.label || "PDF preview"} /> : failed ?
