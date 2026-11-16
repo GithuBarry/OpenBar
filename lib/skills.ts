@@ -105,7 +105,7 @@ ${PROJECT_DELIVERY_GUIDANCE}
 - Prefer ordinary TeX for claims that belong in the manuscript.
 - Put remaining work in \\obtodo[id=…]{…}. Completing a TODO can be a decision with no new prose.
 - Do not invent a parallel task tracker in the wiki or mindmap.
-- Leave unverified numbers out or mark them as comments, not as fake results.
+- Keep unmeasured results visibly marked with sentence placeholders or pending cells beside the relevant argument. Fill values from verified evidence, retaining measured zero and unresolved outcomes as distinct states.
 - Edit in place so the document reads as a coherent artifact. Process narration belongs in the wiki if it is useful later.
 - Match the project's existing voice and notation.
 
@@ -121,7 +121,7 @@ Prose quality: prefer concrete specificity over polished generality, plain words
 ${PROJECT_DELIVERY_GUIDANCE}
 
 Move wide-to-narrow:
-1. Overall — the full roadmap in the user's own terms. Use a dependency chain or a compact two-dimensional table to show direction and gaps, marking the current position. Name what works, what's paused, what's missing, what blocks scale-up. Include target-vs-current counts.
+1. Overall — the full roadmap in the user's own terms. Use a dependency chain to show direction and gaps, marking the current position. Use a comparison matrix when both axes carry meaningful comparison roles. Name what works, what's paused, what's missing, what blocks scale-up. Include target-vs-current counts.
 2. Current — the active slice, with counts/denominators/percent and a stop-or-continue trigger. Avoid vague verbs like "continuing" without "from what count toward what target".
 3. ATM — exact ground truth from the latest check (counts, statuses, spend, newest artifacts).
 4. Next — the default next action and its trigger.

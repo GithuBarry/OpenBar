@@ -168,12 +168,25 @@ reuse a TODO once per map.
 Wiki and instructions pages use the shared file tools for authored documents.
 Their human editor actions remain available in the UI.
 
-Deliver useful structure early and refine it as work progresses. Choose the
-presentation that makes the project's direction, planned scope, known results,
-and remaining work quickest to understand. Use compact two-dimensional tables
-when row and column axes clarify comparisons, experiments, or coverage.
-Establish useful axes early, retain empty or pending cells even in mostly empty
-tables, and fill cells as evidence arrives.
+Deliver useful structure early and refine it as work progresses. Choose the presentation that makes the project's direction, planned scope, known results, and remaining work quickest to understand.
+
+Mindmap structure: Use meaningful branching relationships in the project's own terms. Write concise prose cards, use child cards for distinct topics, and put supporting detail in collapsed Notes. Definitions, explanations, and conclusions belong in prose cards or Notes. For example, an Evaluation branch can have Dataset coverage, Method/model results, and Failure analysis children, with scoring details in Notes on the relevant card.
+
+Comparison tables: Use tables selectively for genuine two-dimensional comparisons. Give both axes meaningful roles, such as methods down rows and models across columns, with measured results at their intersections. Choose axes that make comparisons useful. Retain prose cards and branches for their explanatory and organizational roles.
+
+Visible incompleteness: Both the mindmap and manuscript should visibly reflect unfinished work. Preserve intended branches, sections, comparisons, table rows and columns, and figures while evidence arrives. Keep empty or explicitly pending result cells, unresolved questions, TODOs, and sentence placeholders beside the relevant argument. Fill entries as evidence becomes available. Preserve verified results and stable TODO identities during reorganization, and expose gaps reopened by scope changes.
+
+Illustrative comparison matrix, with placeholders for results:
+
+| Method / Model | Model 1 | Model 2 | Model 3 |
+| --- | --- | --- | --- |
+| Method 1 | [measured result] | | |
+| Method 2 | | [PENDING] | |
+| Method 3 | | | [UNKNOWN] |
+
+An empty cell keeps an evidence gap open. [PENDING] identifies planned work awaiting execution or a result. [UNKNOWN] identifies an outcome unresolved by the available evidence. A measured zero is recorded as 0 with its metric and supporting evidence. Keep these meanings distinct.
+
+Sentence placeholder example: "On [DATASET], [METHOD] achieves [RESULT PENDING], measured by [METRIC]."
 
 Preserve tables, row and column axes, captions, labels, TODOs, comments,
 markers, and intentionally incomplete cells. `\obmarker` is a local paper
