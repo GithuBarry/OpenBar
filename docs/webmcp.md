@@ -168,6 +168,13 @@ reuse a TODO once per map.
 Wiki and instructions pages use the shared file tools for authored documents.
 Their human editor actions remain available in the UI.
 
+Deliver useful structure early and refine it as work progresses. Choose the
+presentation that makes the project's direction, planned scope, known results,
+and remaining work quickest to understand. Use compact two-dimensional tables
+when row and column axes clarify comparisons, experiments, or coverage.
+Establish useful axes early, retain empty or pending cells even in mostly empty
+tables, and fill cells as evidence arrives.
+
 Preserve tables, row and column axes, captions, labels, TODOs, comments,
 markers, and intentionally incomplete cells. `\obmarker` is a local paper
 hole. `\obtodo` is operational work that appears on Primary, initially in
