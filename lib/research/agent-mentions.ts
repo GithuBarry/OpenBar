@@ -4,15 +4,17 @@ import { DRAFT_MINDMAP_ID } from './todo-map'
 
 export type MentionTodo = { id: string | null, title?: string, text: string, completed: boolean }
 export type AgentFieldHashes = Record<string, Record<string, string>>
-export const AGENT_MENTION_PATTERN = /(?<![\w@])@agents?(?![\w])/i
+const REGULAR_AGENT_MENTION_PATTERN = /(?<![\w@])@agents?(?![\w])/i
+export const AGENT_MENTION_PATTERN = /(?<![\w@])@(?:agents?|stat)(?![\w])/i
+export const FAST_TRACKED_AGENT_MENTION_PATTERN = /(?<![\w@])@stat(?![\w])/i
 
 export function agentMentionFields(node: MindmapNode, todo?: MentionTodo): Record<string, string | undefined> {
   return { title: todo?.title ?? node.title, text: todo?.text ?? node.text, caption: node.caption, ...node.caution }
 }
 
 /** Mask quoted examples while retaining source offsets and authored request bytes. */
-export function agentMentionIndex(source: string): number | undefined {
-  if (!AGENT_MENTION_PATTERN.test(source)) return undefined
+export function agentMentionIndex(source: string, pattern = AGENT_MENTION_PATTERN): number | undefined {
+  if (!pattern.test(source)) return undefined
   const mask = (value: string) => value.replace(/[^\n]/g, ' ')
   let fence: string | undefined
   const prose = source.replace(/^.*$/gm, line => {
@@ -32,19 +34,24 @@ export function agentMentionIndex(source: string): number | undefined {
     .replace(/<(code|pre|blockquote)\b[^>]*>[\s\S]*?<\/\1>/gi, mask)
     .replace(/(`+)[^\n]*?\1/g, mask)
     .replace(/"(?:\\.|[^"\\\n])*"|“[^”\n]*”|‘[^’\n]*’|(?<!\w)'[^'\n]*'(?!\w)/g, mask)
-  return prose.match(AGENT_MENTION_PATTERN)?.index
+  return prose.match(pattern)?.index
 }
 
 export function collectAgentMention(project: string, mapId: string, nodeId: string, fields: Record<string, string | undefined>, origins?: Record<string, string>) {
-  const sources = Object.entries(fields).flatMap(([field, value]) => value && AGENT_MENTION_PATTERN.test(value)
-    && (!origins?.[field] || origins[field] !== sha256Hex(value)) ? [{ field, source: value }] : [])
+  // Preserve existing @agent request identities while admitting active @stat fields.
+  const sources = Object.entries(fields).flatMap(([field, value]) => value
+    && (!origins?.[field] || origins[field] !== sha256Hex(value))
+    && (REGULAR_AGENT_MENTION_PATTERN.test(value) || agentMentionIndex(value, FAST_TRACKED_AGENT_MENTION_PATTERN) !== undefined)
+    ? [{ field, source: value }] : [])
   const tagged = sources.flatMap(({ field, source }) => {
-    const index = agentMentionIndex(source)
-    return index === undefined ? [] : [{ field, source, text: source.slice(Math.max(0, index - 100), index + 500).trim() }]
+    const fastTrackedIndex = agentMentionIndex(source, FAST_TRACKED_AGENT_MENTION_PATTERN)
+    const index = fastTrackedIndex ?? agentMentionIndex(source)
+    return index === undefined ? [] : [{ field, source, fastTracked: fastTrackedIndex !== undefined, text: source.slice(Math.max(0, index - 100), index + 500).trim() }]
   })
   if (!tagged.length) return undefined
+  tagged.sort((a, b) => Number(b.fastTracked) - Number(a.fastTracked))
   const id = sha256Hex(JSON.stringify([project, mapId, nodeId, sources.map(item => [item.field, item.source])]))
-  return { id, mapId, nodeId, text: tagged.map(item => item.text).join('\n').slice(0, 900), fields: tagged.map(item => item.field),
+  return { id, mapId, nodeId, ...(tagged.some(item => item.fastTracked) ? { priority: 'fast-tracked' as const } : {}), text: tagged.map(item => item.text).join('\n').slice(0, 900), fields: tagged.map(item => item.field),
     href: `/p/${encodeURIComponent(project)}/mindmap/${encodeURIComponent(mapId)}#${encodeURIComponent(nodeId)}` }
 }
 
@@ -57,5 +64,6 @@ export function collectAgentMentions(project: string, maps: Mindmap[], todos: Me
     const note = collectAgentMention(project, mapId, node.id, agentMentionFields(node, todo), agentFields[JSON.stringify([mapId, node.id])])
     return note ? [{ ...note, ...(todo ? { todoId: todo.id, completed: todo.completed } : {}) }] : []
   }))
+  notes.sort((a, b) => Number(b.priority === 'fast-tracked') - Number(a.priority === 'fast-tracked'))
   return { count: notes.length, notes: notes.slice(0, limit), hasMore: notes.length > limit }
 }

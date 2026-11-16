@@ -25,7 +25,9 @@ context, call `check_inbox` after `get_project_state`. "Tick", "check updates",
 Overleaf action, check the inbox first, then perform the requested synchronization.
 A project page supplies
 its project identity. The workspace and headless tool can check all projects.
-Saved `@agent` mentions generate content-addressed notifications with card links.
+Saved `@agent` and `@stat` mentions generate content-addressed notifications with card links.
+`@stat` displays as "agent STAT" and fast tracks the request ahead of ordinary
+mentions, using the same reply and acknowledgement flow.
 Ordinary tool results prefix a bounded list of pending requests. MCP uses a leading
 text content block and a `notifications` field. REST and WebMCP preserve the normal
 operation result and place `notifications` first.

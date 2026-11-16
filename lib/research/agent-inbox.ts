@@ -55,6 +55,7 @@ export function readAgentInbox(query: InboxQuery = {}, scope?: readonly string[]
     if (query.includeAcknowledged) history.push(...(state.history || []).map(item => ({ ...item, project })))
     revisions.push([project, getAgentInboxRevision(dir) || 'unavailable'])
   }
+  all.sort((a, b) => Number(b.priority === 'fast-tracked') - Number(a.priority === 'fast-tracked'))
   const pending = all.filter(note => !note.acknowledged)
   const visible = query.includeAcknowledged ? [...pending, ...all.filter(note => note.acknowledged)] : pending
   return { count: pending.length, notifications: visible.slice(0, limit), hasMore: visible.length > limit,

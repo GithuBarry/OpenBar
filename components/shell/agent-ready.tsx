@@ -19,6 +19,7 @@ import { FastTooltip } from "@/components/fast-tooltip";
 import { cn } from "@/lib/utils";
 import { requestInbox, useInboxProject } from "@/features/use-inbox-webmcp";
 import { useAgentInbox } from "@/features/use-agent-inbox";
+import { RichText } from "@/components/rich-text";
 import type { InboxNotification } from "@/lib/research/agent-inbox-contract";
 
 const SURFACE_LABEL: Partial<Record<WebMcpSurface, string>> = {
@@ -192,11 +193,11 @@ function AgentInboxPanel({ project }: { project?: string }) {
     {inbox && <>
       {inbox.notifications.length === 0 && <p className="ob-agent-ready-empty">Your inbox is clear.</p>}
       <ul className="max-h-60 space-y-2 overflow-y-auto" aria-label="Mindmap messages">
-        {inbox.notifications.map((notification) => <li key={notification.id} className="rounded-md border border-line p-2" data-inbox-notification={notification.id} data-acknowledged={notification.acknowledged}>
+        {inbox.notifications.map((notification) => <li key={notification.id} className="rounded-md border border-line p-2" data-inbox-notification={notification.id} data-acknowledged={notification.acknowledged} data-agent-priority={notification.priority}>
           <div className="mb-1 flex items-center justify-between gap-2 text-xs text-muted">
-            <span>{notification.project}</span><span>{notification.acknowledged ? "Handled" : "Pending"}</span>
+            <span>{notification.project}</span>{notification.priority === "fast-tracked" && <span className="font-medium text-accent">Fast tracked</span>}<span>{notification.acknowledged ? "Handled" : "Pending"}</span>
           </div>
-          <p className="whitespace-pre-wrap break-words text-xs leading-snug">{notification.text}</p>
+          <p className="whitespace-pre-wrap break-words text-xs leading-snug"><RichText text={notification.text} /></p>
           <div className="mt-2 flex items-center justify-between gap-2 text-xs">
             <Link href={notification.href} className="text-accent underline">Open card</Link>
             <button type="button" className="btn-ghost px-2 py-1" disabled={busy} onClick={() => acknowledgement.mutate(notification)}>{notification.acknowledged ? "Reopen" : "Mark handled"}</button>
@@ -209,7 +210,7 @@ function AgentInboxPanel({ project }: { project?: string }) {
         <ul className="mt-2 max-h-60 space-y-2 overflow-y-auto" aria-label="Agent request history">
           {inbox.history!.map(item => <li key={`${item.project}:${item.id}`} className="rounded-md border border-line p-2">
             <p className="mb-1 text-muted">{item.project} · {item.disposition.replaceAll("_", " ")}</p>
-            <p className="whitespace-pre-wrap break-words">{item.question}</p>
+            <p className="whitespace-pre-wrap break-words"><RichText text={item.question} /></p>
             <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-accent underline">
               <Link href={item.href}>Original card</Link>
               {item.replies.map((reply, index) => <Link key={reply.responseRevision} href={reply.href}>Reply {index + 1}</Link>)}

@@ -5,6 +5,7 @@ import styles from "./rich-text.module.css";
 import ReactMarkdown from "react-markdown";
 import { ExternalLink } from "lucide-react";
 import { texClosingBrace } from "@/lib/mindmap/text-formatting";
+import { AGENT_MENTION_PATTERN } from "@/lib/research/agent-mentions";
 import { safeUrl } from "@/lib/safe-url";
 
 function RichTextLink({ href, children }: { href: string; children: ReactNode }) {
@@ -13,9 +14,23 @@ function RichTextLink({ href, children }: { href: string; children: ReactNode })
   </a>;
 }
 
+function mentionParts(text: string): string[] {
+  return text.split(new RegExp(`(${AGENT_MENTION_PATTERN.source})`, "gi"));
+}
+
+function mentionProperties(mention: string) {
+  const fastTracked = /^@stat$/i.test(mention);
+  return {
+    className: `${styles.agentMention}${fastTracked ? ` ${styles.agentStat}` : ""}`,
+    ...(fastTracked ? { title: "Fast tracked agent request", "data-agent-priority": "fast-tracked" } : {}),
+  };
+}
+
+function mentionLabel(mention: string): string { return /^@stat$/i.test(mention) ? "agent STAT" : mention; }
+
 function highlightedMentions(text: string): ReactNode {
-  return text.split(/(?<![\w@])(@agents?)(?![\w])/gi).map((part, index) =>
-    /^@agents?$/i.test(part) ? <mark key={index} className={styles.agentMention}>{part}</mark> : part,
+  return mentionParts(text).map((part, index) =>
+    AGENT_MENTION_PATTERN.test(part) ? <mark key={index} {...mentionProperties(part)}>{mentionLabel(part)}</mark> : part,
   );
 }
 
@@ -26,9 +41,9 @@ function remarkAgentMentions() {
       if (!node.children || node.type === "link" || node.type === "linkReference") return;
       node.children = node.children.flatMap((child): MarkdownNode[] => {
         if (child.type !== "text" || !child.value) { visit(child); return [child]; }
-        return child.value.split(/(?<![\w@])(@agents?)(?![\w])/gi).filter(Boolean).map((part) =>
-          /^@agents?$/i.test(part)
-            ? { type: "agentMention", data: { hName: "mark", hProperties: { className: styles.agentMention } }, children: [{ type: "text", value: part }] }
+        return mentionParts(child.value).filter(Boolean).map((part) =>
+          AGENT_MENTION_PATTERN.test(part)
+            ? { type: "agentMention", data: { hName: "mark", hProperties: mentionProperties(part) }, children: [{ type: "text", value: mentionLabel(part) }] }
             : { type: "text", value: part },
         );
       });

@@ -66,7 +66,7 @@ const latexSyntax = () => new LanguageSupport(paperLatexLanguage,
 
 const mentionMatcher = new MatchDecorator({
   regexp: new RegExp(AGENT_MENTION_PATTERN.source, "gi"),
-  decoration: Decoration.mark({ class: "ob-cm-agent-mention" }),
+  decoration: match => Decoration.mark({ class: /^@stat$/i.test(match[0]) ? "ob-cm-agent-mention ob-cm-agent-stat" : "ob-cm-agent-mention" }),
 });
 const agentMentionDecorations = ViewPlugin.fromClass(class {
   decorations: DecorationSet;
@@ -291,6 +291,10 @@ const obCompactTheme = EditorView.theme({
     backgroundColor: "rgb(var(--accent) / .12)",
     borderRadius: "3px",
     boxShadow: "0 0 0 1px rgb(var(--accent) / .2)",
+  },
+  ".ob-cm-agent-stat": {
+    color: "rgb(var(--accent-text))",
+    backgroundColor: "rgb(var(--accent) / .2)",
   },
   "&": {
     height: "auto !important",

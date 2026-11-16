@@ -84,7 +84,7 @@ const TOOL_META: Record<SharedToolName, { title: string; description: string }> 
   get_project_state: {
     title: "Read project state",
     description:
-      "Start here on every project visit, then call check_inbox at the start of each new agent session, including without earlier chat context. Read saved project state, @agent requests, TODO coverage, Git sync, and instruction/skill metadata. detail=full includes AGENTS.md bodies and all TODOs. Use get_paper_state or read_project_files for the browser's live draft.",
+      "Start here on every project visit, then call check_inbox at the start of each new agent session, including without earlier chat context. Read saved project state, @agent and fast tracked @stat requests, TODO coverage, Git sync, and instruction/skill metadata. detail=full includes AGENTS.md bodies and all TODOs. Use get_paper_state or read_project_files for the browser's live draft.",
   },
   navigate_project: {
     title: "Navigate the project UI",

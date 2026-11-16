@@ -36,9 +36,9 @@ export function agentReplyCardKey(mapId: string, nodeId: string): string { retur
 
 /** The authored request stays available for inbox identity and history. */
 export function cleanAgentReplyDisplay(text: string): string {
-  const markerOnly = /^\s*(?:(\*\*|__|\*|_)@agents?\1|\\(?:textbf|textit|emph)\{\s*@agents?\s*\})[\t ]*/i
+  const markerOnly = /^\s*(?:(\*\*|__|\*|_)@(?:agents?|stat)\1|\\(?:textbf|textit|emph)\{\s*@(?:agents?|stat)\s*\})[\t ]*/i
   if (markerOnly.test(text)) return text.replace(markerOnly, '').trim()
-  const leading = /^(\s*(?:(?:\*\*|__|\*|_)|\\(?:textbf|textit|emph)\{)*)@agents?(?![\w])[\t ]*/i
+  const leading = /^(\s*(?:(?:\*\*|__|\*|_)|\\(?:textbf|textit|emph)\{)*)@(?:agents?|stat)(?![\w])[\t ]*/i
   return text.replace(leading, '$1').trim()
 }
 
