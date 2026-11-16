@@ -1,4 +1,4 @@
-.control { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+.control { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; border-radius: var(--radius-glass); }
 .floating { padding: 5px 6px; border: 1px solid transparent; border-radius: var(--radius-glass); }
 .trigger { display: inline-flex; min-width: 0; }
 .control :global(.p-button) { --p-button-height: 34px; --p-button-padding-x: 12px; --p-button-radius: 12px; --p-button-font-size: 12px; --p-button-font-weight: 600; gap: 7px; }

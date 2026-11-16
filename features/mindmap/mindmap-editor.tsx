@@ -58,6 +58,7 @@ import {
 } from "lucide-react";
 
 import { markAgentDraft } from "@/lib/mindmap/agent-draft";
+import { isLockedMindmapEditIntent } from "@/lib/mindmap/locked-edit-intent";
 import { focusedMindmapCardId } from "@/lib/mindmap/focused-card";
 import { markdownTableColumns, startsWithMarkdownTable } from "@/lib/mindmap/markdown-table";
 import { ChoiceButtons } from "@/components/choice-buttons";
@@ -205,6 +206,7 @@ export function MindmapEditor({
   const router = useRouter();
   const { writable: sessionWritable, setPendingWork, connectionState, isBackendUnavailable, accessMessage, accessError, inboxRevision } = useProjectWriteSession();
   const [connectionDetailsOpenRequest, setConnectionDetailsOpenRequest] = useState(0);
+  const [resumeEditAttentionRequest, setResumeEditAttentionRequest] = useState(0);
   const manualReadOnlyRef = useRef(false);
   const sessionWritableRef = useRef(sessionWritable);
   sessionWritableRef.current = sessionWritable;
@@ -2563,7 +2565,26 @@ export function MindmapEditor({
     <section
       className={styles.editor}
       data-mindmap-editor
+      onPointerDownCapture={event => {
+        if (!sessionWritable && isLockedMindmapEditIntent(event)) setResumeEditAttentionRequest(current => current + 1);
+      }}
+      onDoubleClickCapture={event => {
+        if (!sessionWritable && isLockedMindmapEditIntent(event)) setResumeEditAttentionRequest(current => current + 1);
+      }}
+      onKeyDownCapture={event => {
+        if (!sessionWritable && isLockedMindmapEditIntent(event)) {
+          if (event.key !== "Tab") {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+          setResumeEditAttentionRequest(current => current + 1);
+        }
+      }}
       onPasteCapture={(event) => {
+        if (!sessionWritable && isLockedMindmapEditIntent(event)) {
+          setResumeEditAttentionRequest(current => current + 1);
+          return;
+        }
         const files = imageFilesFromTransfer(event.clipboardData);
         const targetId = (event.target as HTMLElement).closest("[data-mind-node]")?.getAttribute("data-mind-node") || selected?.id;
         if (!files.length || !targetId || readOnly) return;
@@ -2654,7 +2675,7 @@ export function MindmapEditor({
 
       <div className={styles.resumeDock}>
         <BackendStatusNotice project={project} issues={editorIssues} diagnosticContext={getMindmapDiagnostics} openRequest={connectionDetailsOpenRequest} />
-        <ResumeEditControl suppressError={primaryIssue?.id !== "access"} />
+        <ResumeEditControl suppressError={primaryIssue?.id !== "access"} attentionRequest={resumeEditAttentionRequest} />
       </div>
         </div>
         <div className={cn("p-glass-sm", paperStyles.toolbar, styles.canvasTools)} role="group" aria-label="Map view controls">
