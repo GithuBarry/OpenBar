@@ -29,7 +29,7 @@ export function CardScratchpad({ text, caution, editing = false, readOnly = fals
   const showNotes = hasNotes || editing || open;
   const description = notesContentDescription(notes);
   if (!showNotes && !footer) return null;
-  return <div className={`${styles.scratchpads} ${showNotes ? styles.withNotes : ""} nodrag nopan`}
+  return <div className={`${styles.scratchpads} ${showNotes ? styles.withNotes : ""} nodrag nopan nowheel`}
     onPointerDown={event => event.stopPropagation()}
     onClick={event => event.stopPropagation()}
     onDoubleClick={event => event.stopPropagation()}
