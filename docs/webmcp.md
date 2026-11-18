@@ -308,10 +308,20 @@ the complete unsaved source while a draft is shortened to fit this limit.
 Use compact static semantic HTML and self-contained inline SVG geometry, with a
 `viewBox`, accessible labels, and fill/stroke colors. OpenBar sanitizes the source
 and fits visuals within 440 × 240 CSS pixels. Paper TODO cards keep TeX formatting.
-For example:
+Draw the visual directly in the card body. Fit the SVG viewBox to the plot, use
+short labels, and put the takeaway beside the graphic in card text. Put methods
+and longer explanations in collapsed Notes. A nested SVG `<title>` can expose a
+precise value on mouseover. Keep the main finding and material uncertainty
+readable on touch. Use the OpenBar card accents (violet `#785ef0`, blue
+`#648fff`, pink `#dc267f`, orange `#fe6100`, amber `#ffb000`) unless the user
+chooses another palette. Select only the colors needed for the comparison.
+Give independently useful panels their own cards. Use HTML table elements
+for a table in an HTML card, or a Markdown-format card for a pipe table.
+
+For example, this card shows progress at a glance and reveals the count on hover.
 
 ```json
-{"edit":{"operation":"add","args":{"parentId":"root","title":"Planned comparison","presentation":{"contentFormat":"html"},"text":"<svg viewBox=\"0 0 160 40\" role=\"img\" aria-label=\"Result pending\"><rect x=\"2\" y=\"2\" width=\"156\" height=\"36\" rx=\"8\" fill=\"#ede9fe\"/><text x=\"12\" y=\"26\" fill=\"#5b21b6\">Result pending</text></svg>"}}}
+{"edit":{"operation":"add","args":{"parentId":"root","title":"72% of cases reviewed","presentation":{"contentFormat":"html"},"text":"<svg viewBox=\"0 0 100 10\" role=\"img\" aria-label=\"72 of 100 cases reviewed\"><rect width=\"100\" height=\"10\" rx=\"2\" fill=\"currentColor\" opacity=\".12\"/><rect width=\"72\" height=\"10\" rx=\"2\" fill=\"#785ef0\"><title>72 of 100 cases reviewed</title></rect></svg>"}}}
 ```
 
 Supply the current `expectedRevision` and, for native MCP, the project/map
