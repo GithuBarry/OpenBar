@@ -19,6 +19,7 @@ import { ChildNavigation, type CardNavigationItem } from "./child-navigation";
 import { ParentNavigation } from "./parent-navigation";
 import { MapNavigationDock } from "./map-navigation-dock";
 import { CardResizeGrip } from "./card-resize-grip";
+import { RequestRevision } from "./request-revision";
 import { CardLinkButton } from "./card-link-button";
 import { useAgentReplies } from "./use-agent-replies";
 import { agentReplyContentHash, cleanAgentReplyDisplay } from "@/lib/research/agent-reply-state";
@@ -1644,6 +1645,18 @@ export function MindmapEditor({
     preserveBrowserDraft();
   }
 
+  async function requestDraftRevision(id: string, note: string) {
+    const editor = inlineEditorSessionRef.current;
+    if (editor?.nodeId === id && !await editor.commit()) throw new Error("Finish saving the open card, then retry.");
+    await persistWebMcpMutation(current => {
+      const card = indexMindmap(current.mindmap).nodeById.get(id);
+      if (!card?.agentDraft) throw new Error("This card is no longer an agent draft.");
+      if (card.caption === note || card.caption?.startsWith(note + "\n\n")) return null;
+      const caption = card.caption ? note + "\n\n" + card.caption : note;
+      return { type: "patch-node", id, patch: { caption } };
+    }, undefined, "human");
+  }
+
   async function saveAgentDraft(id: string) {
     if (readOnly) return;
     if (inlineEditorSessionRef.current?.nodeId === id && !await inlineEditorSessionRef.current.commit()) return;
@@ -2415,6 +2428,7 @@ export function MindmapEditor({
         onDraftActivity={() => { remoteQueue.noteEdit(); preserveBrowserDraft(); }}
         onTextChange={(text, contentFormat) => updateNodeText(node.id, text, contentFormat)}
         onNoteChange={value => updateNodeNote(node.id, value)}
+        onRequestRevision={note => requestDraftRevision(node.id, note)}
         onSaveDraft={() => saveAgentDraft(node.id)}
         onDeleteDraft={node.id === mindmap.rootId ? undefined : () => void deleteCardBranch(node.id)}
         onTextFocus={() => beginTextTransaction(node.id)}
@@ -3537,6 +3551,7 @@ function CanvasNode({
   onTextChange,
   onNoteChange,
   onTextFocus,
+  onRequestRevision,
   onSaveDraft,
   onDeleteDraft,
   onCommit,
@@ -3583,6 +3598,7 @@ function CanvasNode({
   onTextChange: (text: string, contentFormat?: MindmapNode["contentFormat"]) => void;
   onNoteChange: (value: string) => void;
   onTextFocus: () => void;
+  onRequestRevision: (note: string) => Promise<void>;
   onSaveDraft: () => Promise<void>;
   onDeleteDraft?: () => void;
   onCommit: () => void;
@@ -3905,6 +3921,7 @@ function CanvasNode({
           )}
           {node.agentDraft && !readOnly && <div className={cn(styles.draftActions, "nodrag nopan")} data-mind-editor={node.id} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
             <FastTooltip label="Save card"><button type="button" aria-label="Save card" onClick={() => void onSaveDraft()}><Check size={13} /></button></FastTooltip>
+            <RequestRevision nodeId={node.id} onRequest={onRequestRevision} />
             {onDeleteDraft && <FastTooltip label="Delete draft"><button type="button" aria-label="Delete draft" onClick={onDeleteDraft}><X size={13} /></button></FastTooltip>}
           </div>}
           {coverage && coverage.total > 0 && (
