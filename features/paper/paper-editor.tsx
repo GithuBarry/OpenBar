@@ -356,9 +356,6 @@ export function PaperEditor({
   const sessionWritableRef = useRef(sessionWritable);
   sessionWritableRef.current = sessionWritable;
   const [restoreEditingAttention, setRestoreEditingAttention] = useState(false);
-  const nudgeRestoreEditing = (target: EventTarget) => {
-    if (!sessionWritable && target instanceof Element && target.closest(".cm-content")) setRestoreEditingAttention(true);
-  };
   const remoteQueue = useMemo(
     () => getMindmapRemoteSyncQueue<PaperRemotePushResult>(project, result => result.ok),
     [project],
@@ -381,6 +378,12 @@ export function PaperEditor({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [todoRemovalError, setTodoRemovalError] = useState<{ todo: EditorTodo; message: string; retry: "remove" | "save"; report: Record<string, unknown> } | null>(null);
   const [saveConflict, setSaveConflict] = useState(false);
+  const [saveConflictAttention, setSaveConflictAttention] = useState(0);
+  const nudgePausedEditing = (target: EventTarget) => {
+    if (!(target instanceof Element) || !target.closest(".cm-content")) return;
+    if (saveConflict) setSaveConflictAttention(current => current + 1);
+    else if (!sessionWritable) setRestoreEditingAttention(true);
+  };
   const [conflictCopyStatus, setConflictCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   useEffect(() => {
     if (!saveConflict) setConflictCopyStatus("idle");
@@ -2985,7 +2988,7 @@ export function PaperEditor({
               <span role="status">{conflictCopyStatus === "copied" ? "Local manuscript copied." : conflictCopyStatus === "failed" ? "Select and copy the manuscript below." : ""}</span>
               {conflictCopyStatus === "failed" && <textarea aria-label="Local manuscript for copying" className="w-full font-mono" readOnly value={liveSource()} rows={5} onFocus={event => event.currentTarget.select()} />}
             </EditorNotice>}
-            {(saveConflict || saveError || todoRemovalError) && <EditorNotice suppressed={primaryIssue?.id !== "save"} relatedIssues={relatedIssues} diagnosticContext={getPaperDiagnostics} project={project} title={saveConflict ? "Saved file conflict" : todoRemovalError ? todoRemovalError.retry === "save" ? "Saving TODO removal needs attention" : "TODO removal needs attention" : "Saving needs attention"} label={saveConflict ? "Editing paused, saved file changed" : todoRemovalError?.retry === "remove" ? "TODO removal needs attention" : "Save needs attention"} message={saveConflict ? "Your edits remain in the editor. Copy them for safekeeping. Retry save checks the saved file again. Reload replaces the editor text with the saved file." : todoRemovalError?.message || saveError || "Saving needs attention."} paused={saveConflict} openRequest={saveDetailsOpenRequest}
+            {(saveConflict || saveError || todoRemovalError) && <EditorNotice suppressed={primaryIssue?.id !== "save"} relatedIssues={relatedIssues} diagnosticContext={getPaperDiagnostics} project={project} title={saveConflict ? "Saved file conflict" : todoRemovalError ? todoRemovalError.retry === "save" ? "Saving TODO removal needs attention" : "TODO removal needs attention" : "Saving needs attention"} label={saveConflict ? "Editing paused, saved file changed" : todoRemovalError?.retry === "remove" ? "TODO removal needs attention" : "Save needs attention"} message={saveConflict ? "Your edits remain in the editor. Copy them for safekeeping. Retry save checks the saved file again. Reload replaces the editor text with the saved file." : todoRemovalError?.message || saveError || "Saving needs attention."} paused={saveConflict} attentionRequest={saveConflictAttention} openRequest={saveDetailsOpenRequest}
               report={JSON.stringify({
                 operation: todoRemovalError ? "remove_paper_todo" : "save_paper_source",
                 bundleHash,
@@ -3025,10 +3028,11 @@ export function PaperEditor({
               onWheelCapture={() => claimScrollSource("editor")}
               onTouchStartCapture={() => claimScrollSource("editor")}
               onPointerDownCapture={() => { claimScrollSource("editor"); if (remoteOutOfSync) setGitAttention(true); }}
-              onDoubleClickCapture={(event) => nudgeRestoreEditing(event.target)}
+              onDoubleClickCapture={(event) => nudgePausedEditing(event.target)}
+              onPasteCapture={(event) => nudgePausedEditing(event.target)}
               onKeyDownCapture={(event) => {
                 claimScrollSource("editor");
-                if (!event.metaKey && !event.ctrlKey && (event.key.length === 1 || ["Backspace", "Delete", "Enter", "Process"].includes(event.key))) nudgeRestoreEditing(event.target);
+                if (!event.metaKey && !event.ctrlKey && (event.key.length === 1 || ["Backspace", "Delete", "Enter", "Process"].includes(event.key))) nudgePausedEditing(event.target);
                 if (!sessionWritable || remoteOutOfSync || applyingRemote || saveConflict) return;
                 if (event.target instanceof Element && event.target.closest("input, textarea, select")) return;
                 handlePaperAddShortcut(event.nativeEvent, { comment: addComment, todo: addTodo });

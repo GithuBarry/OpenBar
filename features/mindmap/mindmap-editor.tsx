@@ -209,6 +209,7 @@ export function MindmapEditor({
   const focusCardRef = useRef<(id: string) => void>(() => {});
   const { writable: sessionWritable, setPendingWork, connectionState, isBackendUnavailable, accessMessage, accessError, inboxRevision } = useProjectWriteSession();
   const [connectionDetailsOpenRequest, setConnectionDetailsOpenRequest] = useState(0);
+  const [saveConflictAttention, setSaveConflictAttention] = useState(0);
   const [resumeEditAttentionRequest, setResumeEditAttentionRequest] = useState(0);
   const manualReadOnlyRef = useRef(false);
   const sessionWritableRef = useRef(sessionWritable);
@@ -2584,30 +2585,27 @@ export function MindmapEditor({
     };
   };
 
+  function signalBlockedEdit(event: Parameters<typeof isLockedMindmapEditIntent>[0]) {
+    if ((sessionWritable && !saveConflict) || !isLockedMindmapEditIntent(event)) return false;
+    if (saveConflict) setSaveConflictAttention(current => current + 1);
+    else setResumeEditAttentionRequest(current => current + 1);
+    return true;
+  }
+
   return (
     <section
       className={styles.editor}
       data-mindmap-editor
-      onPointerDownCapture={event => {
-        if (!sessionWritable && isLockedMindmapEditIntent(event)) setResumeEditAttentionRequest(current => current + 1);
-      }}
-      onDoubleClickCapture={event => {
-        if (!sessionWritable && isLockedMindmapEditIntent(event)) setResumeEditAttentionRequest(current => current + 1);
-      }}
+      onPointerDownCapture={signalBlockedEdit}
+      onDoubleClickCapture={signalBlockedEdit}
       onKeyDownCapture={event => {
-        if (!sessionWritable && isLockedMindmapEditIntent(event)) {
-          if (event.key !== "Tab") {
-            event.preventDefault();
-            event.stopPropagation();
-          }
-          setResumeEditAttentionRequest(current => current + 1);
+        if (signalBlockedEdit(event) && event.key !== "Tab") {
+          event.preventDefault();
+          event.stopPropagation();
         }
       }}
       onPasteCapture={(event) => {
-        if (!sessionWritable && isLockedMindmapEditIntent(event)) {
-          setResumeEditAttentionRequest(current => current + 1);
-          return;
-        }
+        if (signalBlockedEdit(event)) return;
         const files = imageFilesFromTransfer(event.clipboardData);
         const targetId = (event.target as HTMLElement).closest("[data-mind-node]")?.getAttribute("data-mind-node") || selected?.id;
         if (!files.length || !targetId || readOnly) return;
@@ -2846,7 +2844,7 @@ export function MindmapEditor({
           ? recoveryStored ? "OpenBar was updated while this page was open. Your draft is preserved in this tab. Refresh, then restore the draft to finish saving."
             : "OpenBar was updated while this page was open. Keep this tab open or download your draft. Browser recovery storage is currently unavailable."
           : recoveryStored === false ? `${saveError} Keep this tab open or download the draft before refreshing.` : saveError}
-        report={outdatedSave ? saveError : undefined} diagnosticContext={getMindmapDiagnostics} paused={saveConflict}>
+        report={outdatedSave ? saveError : undefined} diagnosticContext={getMindmapDiagnostics} paused={saveConflict} attentionRequest={saveConflictAttention}>
         <button type="button" className="p-button p-button-default btn-outline" onClick={outdatedSave ? () => void refreshWithDraft() : saveConflict ? reloadSavedMap : retrySave}>{outdatedSave ? "Refresh and retry" : saveConflict ? "Load saved map" : "Retry save"}</button>
         <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download draft</button>
       </EditorNotice>}

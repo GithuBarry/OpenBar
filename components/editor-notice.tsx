@@ -24,6 +24,7 @@ type Props = {
   paused?: boolean
   inline?: boolean
   floating?: boolean
+  attentionRequest?: number
   attention?: boolean
   triggerLabel?: string
   onOpen?: () => void
@@ -42,7 +43,7 @@ function redactDiagnosticText(value: string) {
 }
 
 /** One floating, accessible design for editor errors and synchronization conflicts. */
-export function EditorNotice({ project, title, label, message, report, diagnosticContext, relatedIssues = [], icon, suppressed = false, preserveContent = false, triggerClassName = "", paused, inline, floating, attention, triggerLabel = "Editor conflict details", onOpen, openRequest, primaryAction, children }: Props) {
+export function EditorNotice({ project, title, label, message, report, diagnosticContext, relatedIssues = [], icon, suppressed = false, preserveContent = false, triggerClassName = "", paused, inline, floating, attention, attentionRequest = 0, triggerLabel = "Editor conflict details", onOpen, openRequest, primaryAction, children }: Props) {
   const { getDiagnostics } = useProjectWriteSession()
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -51,6 +52,24 @@ export function EditorNotice({ project, title, label, message, report, diagnosti
   const copyingRef = useRef(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [capturedAt, setCapturedAt] = useState("")
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const lastAttentionRequest = useRef(attentionRequest)
+  useEffect(() => {
+    if (lastAttentionRequest.current === attentionRequest) return
+    lastAttentionRequest.current = attentionRequest
+    const trigger = triggerRef.current
+    if (!trigger || suppressed || !paused) return
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    const highlight = { boxShadow: "0 0 0 3px rgb(var(--warn) / .42)" }
+    const frames = reducedMotion ? [highlight, highlight, {}] : [
+      { transform: "translateY(0)" },
+      { transform: "translateY(-4px)", ...highlight, offset: 0.3 },
+      { transform: "translateY(1px)", offset: 0.65 },
+      { transform: "translateY(0)" },
+    ]
+    const animation = trigger.animate(frames, { duration: 420, easing: "ease-out" })
+    return () => animation.cancel()
+  }, [attentionRequest, paused, suppressed])
   const panelRef = useRef<HTMLDivElement>(null)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const onOpenRef = useRef(onOpen)
@@ -140,7 +159,7 @@ export function EditorNotice({ project, title, label, message, report, diagnosti
   return <div className={floating ? styles.floatingAnchor : inline ? styles.inlineAnchor : styles.anchor} style={suppressed ? { display: "none" } : undefined} data-editor-notice>
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
-        <button type="button" className={`${floating ? `${styles.inlineTrigger} ${styles.floatingTrigger}` : inline ? styles.inlineTrigger : styles.trigger} ${triggerClassName}`} data-paused={paused || undefined} data-attention={attention || undefined} aria-label={triggerLabel} title={message} onMouseEnter={keepOpen} onMouseLeave={closeSoon} onClick={event => { event.preventDefault(); keepOpen() }}>
+        <button ref={triggerRef} type="button" className={`${floating ? `${styles.inlineTrigger} ${styles.floatingTrigger}` : inline ? styles.inlineTrigger : styles.trigger} ${triggerClassName}`} data-paused={paused || undefined} data-attention={attention || undefined} aria-label={triggerLabel} title={message} onMouseEnter={keepOpen} onMouseLeave={closeSoon} onClick={event => { event.preventDefault(); keepOpen() }}>
           {icon || (paused && !inline && !floating ? <LockKeyhole size={13} /> : <AlertCircle size={13} />)}<span>{label}</span><ChevronDown size={12} />
         </button>
       </Popover.Trigger>
