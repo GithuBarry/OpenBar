@@ -1651,9 +1651,15 @@ export function MindmapEditor({
     await persistWebMcpMutation(current => {
       const card = indexMindmap(current.mindmap).nodeById.get(id);
       if (!card?.agentDraft) throw new Error("This card is no longer an agent draft.");
-      if (card.caption === note || card.caption?.startsWith(note + "\n\n")) return null;
-      const caption = card.caption ? note + "\n\n" + card.caption : note;
-      return { type: "patch-node", id, patch: { caption } };
+      // Paper owns TODO prose. Its revision comment belongs in the map's Notes.
+      if (card.todoId) {
+        if (card.caption === note || card.caption?.startsWith(note + "\n\n")) return null;
+        const caption = card.caption ? note + "\n\n" + card.caption : note;
+        return { type: "patch-node", id, patch: { caption } };
+      }
+      if (card.text === note || card.text.endsWith("\n\n" + note)) return null;
+      const text = card.text ? card.text + "\n\n" + note : note;
+      return { type: "patch-node", id, patch: { text } };
     }, undefined, "human");
   }
 
@@ -3606,6 +3612,7 @@ function CanvasNode({
   onTodoCommit?: (title: string, text: string) => Promise<boolean>;
 }) {
   const cardRef = useRef<HTMLElement | null>(null);
+  const [notesOpen, setNotesOpen] = useState(() => Boolean(node.todoId && node.agentDraft && node.caption?.startsWith("@agent ")));
   const collapsedChildCount = shiftExpandHeld ? childNavigation.length : collapsedDescendantCount;
   const expandChildLabel = `Expand ${collapsedChildCount} ${shiftExpandHeld ? "immediate " : ""}child card${collapsedChildCount === 1 ? "" : "s"}`;
   const activityDescription = activityLabel
@@ -3921,7 +3928,10 @@ function CanvasNode({
           )}
           {node.agentDraft && !readOnly && <div className={cn(styles.draftActions, "nodrag nopan")} data-mind-editor={node.id} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
             <FastTooltip label="Save card"><button type="button" aria-label="Save card" onClick={() => void onSaveDraft()}><Check size={13} /></button></FastTooltip>
-            <RequestRevision nodeId={node.id} onRequest={onRequestRevision} />
+            <RequestRevision nodeId={node.id} onRequest={async mention => {
+              await onRequestRevision(mention);
+              if (node.todoId) setNotesOpen(true);
+            }} />
             {onDeleteDraft && <FastTooltip label="Delete draft"><button type="button" aria-label="Delete draft" onClick={onDeleteDraft}><X size={13} /></button></FastTooltip>}
           </div>}
           {coverage && coverage.total > 0 && (
@@ -3937,7 +3947,7 @@ function CanvasNode({
             {tags.slice(0, 2).map((tag) => <span className="mindmap-node-tag" key={tag}>{tag}</span>)}
             {tags.length > 2 && <span className="mindmap-node-tag">+{tags.length - 2}</span>}
           </div>
-          <CardScratchpad text={node.caption} caution={node.caution} editing={editing} readOnly={readOnly}
+          <CardScratchpad open={notesOpen} onOpenChange={setNotesOpen} text={node.caption} caution={node.caution} editing={editing} readOnly={readOnly}
             onChange={onNoteChange} onCommit={() => void commit()} onCancel={cancel}
             footer={hasCardLinks(node.refs) ? <CardLinkIndicator project={project} refs={node.refs || []} /> : undefined} />
       {!editing && <ParentNavigation cardTitle={title || "Untitled card"} item={parentNavigation} onJump={onJumpToCard} />}

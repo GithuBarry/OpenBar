@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { MessageSquare } from "lucide-react";
 import { PopoverSurface } from "@/components/pop";
@@ -11,72 +11,57 @@ export function RequestRevision({ nodeId, onRequest }: {
 }) {
   const [open, setOpen] = useState(false);
   const [comment, setComment] = useState("");
-  const [sending, setSending] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [sent, setSent] = useState(false);
   const pending = useRef(false);
-  const request = useRef<{ comment: string; note: string } | null>(null);
+  const text = comment.trim().replace(/^@agent\b\s*/i, "").trim();
 
-  useEffect(() => {
-    if (!sent) return;
-    const timer = window.setTimeout(() => setSent(false), 2000);
-    return () => window.clearTimeout(timer);
-  }, [sent]);
-
-  async function send() {
-    const text = comment.trim();
+  async function addMention() {
     if (!text || pending.current) return;
-    if (request.current?.comment !== text) {
-      request.current = { comment: text, note: `@agent Revise this draft: ${text}\nRequested ${new Date().toISOString()}` };
-    }
     pending.current = true;
-    setSending(true);
+    setSaving(true);
     setError("");
     try {
-      await onRequest(request.current.note);
-      request.current = null;
+      await onRequest(`@agent ${text}`);
       setComment("");
       setOpen(false);
-      setSent(true);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not send the revision request.");
+      setError(cause instanceof Error ? cause.message : "Could not save the mention on this card.");
     } finally {
       pending.current = false;
-      setSending(false);
+      setSaving(false);
     }
   }
 
   return <Popover.Root open={open} onOpenChange={next => {
     if (pending.current) return;
     setOpen(next);
-    if (next) setSent(false);
   }}>
     <Popover.Trigger asChild>
-      <button type="button" aria-label="Revise draft" title="Request a revision with a comment" style={{ width: "auto", paddingInline: 5, gap: 4, fontSize: 11 }}>
-        <MessageSquare size={13} aria-hidden="true" />{sent ? "Sent" : "Revise"}
+      <button type="button" aria-label="Revise draft" title="Add an @agent revision comment to this card" style={{ width: "auto", paddingInline: 5, gap: 4, fontSize: 11 }}>
+        <MessageSquare size={13} aria-hidden="true" />Revise
       </button>
     </Popover.Trigger>
-    <span role="status" className="sr-only">{sent && "Revision request sent"}</span>
     <PopoverSurface side="bottom" align="end" aria-label="Request a draft revision" data-mind-editor={nodeId}
       className="w-72 max-w-[calc(100vw-24px)] p-3 nodrag nopan nowheel"
       onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
-      <form className="grid gap-2" onSubmit={event => { event.preventDefault(); void send(); }}
+      <form className="grid gap-2" onSubmit={event => { event.preventDefault(); void addMention(); }}
         onKeyDown={event => {
           if (event.key === "Escape") return;
           event.stopPropagation();
           if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !event.nativeEvent.isComposing) {
             event.preventDefault();
-            void send();
+            void addMention();
           }
         }}>
-        <label className="grid gap-2 text-sm font-semibold">What should the agent change?
+        <label className="grid gap-2 text-sm font-semibold">Add an @agent comment to this card
           <textarea className="w-full rounded-md border p-2 text-sm font-normal" rows={3} value={comment}
-            readOnly={sending} onChange={event => setComment(event.target.value)} />
+            readOnly={saving} onChange={event => setComment(event.target.value)} />
         </label>
         {error && <p role="alert" className="text-xs text-danger">{error}</p>}
         <div className="flex justify-end gap-2">
-          <Popover.Close asChild><button type="button" className="p-button p-button-borderless" disabled={sending}>Cancel</button></Popover.Close>
-          <button type="submit" className="p-button p-button-primary" disabled={sending || !comment.trim()}>{sending ? "Sending…" : "Request revision"}</button>
+          <Popover.Close asChild><button type="button" className="p-button p-button-borderless" disabled={saving}>Cancel</button></Popover.Close>
+          <button type="submit" className="p-button p-button-primary" disabled={saving || !text}>{saving ? "Saving…" : "Add to card"}</button>
         </div>
       </form>
     </PopoverSurface>
