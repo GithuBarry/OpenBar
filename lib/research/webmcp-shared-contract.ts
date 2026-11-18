@@ -29,6 +29,8 @@ export type ProjectStateQuery = {
   todoLimit?: number;
 };
 
+export type WorkspaceInstructionsPatch = { body: string; expectedHash: string };
+
 export type ProjectMetadataPatch = {
   expectedHash: string;
   title?: string;
@@ -53,6 +55,7 @@ export type SharedWebMcpActions = {
   resolveNavigation: (project: string, input: { id?: string; href?: string }) => Promise<{ href: string } | null>;
   readProjectSkill: (project: string, id: string, source?: "project" | "workspace" | "openbar") => Promise<unknown>;
   updateProject: (project: string, patch: ProjectMetadataPatch) => Promise<unknown>;
+  updateWorkspaceInstructions: (project: string, patch: WorkspaceInstructionsPatch) => Promise<OperationResult<unknown>>;
 };
 
 export type SharedWebMcpHost = {
@@ -84,7 +87,11 @@ const TOOL_META: Record<SharedToolName, { title: string; description: string }> 
   get_project_state: {
     title: "Read project state",
     description:
-      "Start here on every project visit, then call check_inbox at the start of each new agent session, including without earlier chat context. Read saved project state, @agent and fast tracked @stat requests, TODO coverage, Git sync, and instruction/skill metadata. detail=full includes AGENTS.md bodies and all TODOs. Use get_paper_state or read_project_files for the browser's live draft.",
+      "Start here on every project visit, then call check_inbox at the start of each new agent session, including without earlier chat context. Read saved project state, @agent and fast tracked @stat requests, TODO coverage, Git sync, and instruction/skill metadata. workspaceAgentsMd includes shared User / workspace instructions and the hash for update_workspace_instructions in the private workspace. detail=full also includes project AGENTS.md bodies and all TODOs. Use get_paper_state or read_project_files for the browser's live draft.",
+  },
+  update_workspace_instructions: {
+    title: "Update User / workspace instructions",
+    description: "Update the existing User / workspace instructions shared across every project. Read workspaceAgentsMd.body and hash from get_project_state, preserve useful existing preferences, and pass the complete body with expectedHash. Save only comments or preferences the user has asked to share across projects. The Instructions page exposes the same workspace AGENTS.md. A concurrent save returns a hash conflict for review.",
   },
   navigate_project: {
     title: "Navigate the project UI",
@@ -141,6 +148,7 @@ async function executeSharedWebMcpTool(
   const args = parsedArgs.value;
   try {
     switch (name) {
+      case "update_workspace_instructions": return await host.actions.updateWorkspaceInstructions(host.project, args as WorkspaceInstructionsPatch);
       case "sync_project": return host.actions.syncProject ? host.actions.syncProject(host.project, args) : failResult("capability_unavailable", "Synchronization review is unavailable in this client.", false);
       case "get_project_state": {
         if (args.detail !== undefined && args.detail !== "summary" && args.detail !== "full") {
@@ -264,7 +272,7 @@ async function executeSharedWebMcpTool(
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (/hash|conflict|stale/i.test(message)) return failResult("stale_disk_state", message, { retryable: true });
+    if (/hash|conflict|stale|changed on disk/i.test(message)) return failResult("stale_disk_state", message, { retryable: true });
     if (/forbidden|unauthorized|permission|access denied/i.test(message)) return failResult("permission_denied", message, { retryable: false });
     if (/unknown|invalid|not found|path/i.test(message)) return failResult("invalid_arguments", message, { retryable: false });
     return failResult("operation_failed", message, { retryable: true });

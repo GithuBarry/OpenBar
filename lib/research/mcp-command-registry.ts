@@ -8,7 +8,7 @@ import { MINDMAP_CARD_GUIDANCE } from "./agent-guidance";
 import { MCP_INPUTS,NATIVE_MINDMAP_INPUTS } from "./command-inputs";
 import { commandJsonSchema,parseCommandInput } from "./command-schema";
 import { applyProjectEdits,readProjectFiles } from "./project-files";
-import { readAnySkill } from "./project-skills";
+import { readAnySkill, writeWorkspaceInstructions } from "./project-skills";
 import { acquireProjectWriteSession,releaseProjectWriteSession,withProjectWriteSessionContext } from "./project-write-session";
 
 import { mindmapToolDescription,parseCautionArg,parsePresentationArg } from "./webmcp-mindmap-contract";
@@ -970,6 +970,16 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
     return okResult(await moveWorkspaceProject(MCP_INPUTS.move_project.parse(raw)));
   }, { idempotentHint: false }),
   tool("get_project_state", "Read project state", sharedToolDescription("get_project_state"), executeGetProjectState, { readOnlyHint: true }),
+  tool("update_workspace_instructions", "Update User / workspace instructions", sharedToolDescription("update_workspace_instructions"), async raw => {
+    const args = MCP_INPUTS.update_workspace_instructions.parse(raw);
+    try { return okResult(writeWorkspaceInstructions(args.body, args.expectedHash)); }
+    catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/changed on disk/i.test(message)) return failResult("stale_disk_state", message, true);
+      if (/permission denied|disabled in the public demo/i.test(message)) return failResult("permission_denied", message, false);
+      throw error;
+    }
+  }, { idempotentHint: false }),
   tool("check_inbox", "Check OpenBar updates", INBOX_TOOL_DESCRIPTIONS.check_inbox, async raw => okResult(readAgentInbox(MCP_INPUTS.check_inbox.parse(raw))), { readOnlyHint: true }),
   tool("acknowledge_inbox", "Handle OpenBar notifications", INBOX_TOOL_DESCRIPTIONS.acknowledge_inbox, async raw => okResult(await acknowledgeAgentInbox(MCP_INPUTS.acknowledge_inbox.parse(raw)))),
   tool("read_project_skill", "Read project skill", sharedToolDescription("read_project_skill"), async raw => {

@@ -69,7 +69,7 @@ import {
   writeAgentsMd,
   writeProjectSkill,
   writeWorkspaceSkill,
-  workspaceRoot,
+  writeWorkspaceInstructions,
 } from "@/lib/research/project-skills";
 import { persistPaperTodoOperation, insertTodoAtSection, persistPaperTodoPlacement, previewPaperTodoPlacement, relocatePaperTodo } from "@/lib/research/paper-todo-persist";
 import { convertMindmapCardToTodo } from "@/lib/research/mindmap-todo-conversion";
@@ -1337,7 +1337,8 @@ export async function deleteProjectSkillAction(slug: string, id: string, expecte
 export async function writeWorkspaceAgentsMdAction(body: string, expectedHash?: string) {
   await requireWorkbenchAccess();
   assertAdministrativeWriteAllowed("Workspace instructions");
-  return writeAgentsMd(workspaceRoot(), body, expectedHash);
+  if (!expectedHash) throw new Error("Read the User / workspace instructions and pass their current hash before saving.");
+  return writeWorkspaceInstructions(body, expectedHash);
 }
 
 export async function writeWorkspaceSkillAction(

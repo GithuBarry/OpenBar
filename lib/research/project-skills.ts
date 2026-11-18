@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import matter from "gray-matter";
 
 import { SKILLS, getSkill } from "@/lib/skills";
+import { assertAdministrativeWriteAllowed, isPublicDemoMode } from "@/lib/server/demo-mode";
 import { resolveConfinedPath, resolveConfinedRoot } from "@/lib/server/path-policy";
 import { safeFileSegment, withWriteLock, writeTextAtomic } from "@/lib/tex-project/codec";
 
@@ -66,6 +67,24 @@ function posixFrom(root: string, file: string): string {
 
 export function workspaceRoot(): string {
   return process.env.OPENBARRY_CONTENT || path.join(process.cwd(), "content");
+}
+
+/** Shared user instructions belong to the private workspace. */
+export function workspaceInstructionsAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !isPublicDemoMode(env) && env.OPENBAR_VIEW_ONLY !== "1";
+}
+
+export function readWorkspaceInstructions(): { path: string; body: string; hash: string } | undefined {
+  if (!workspaceInstructionsAvailable()) return undefined;
+  const saved = findAgentsMd(workspaceRoot());
+  const body = saved?.body || "";
+  return { path: saved?.path || "AGENTS.md", body, hash: hashText(body) };
+}
+
+export function writeWorkspaceInstructions(body: string, expectedHash: string): { path: string; hash: string } {
+  assertAdministrativeWriteAllowed("Workspace instructions");
+  if (!workspaceInstructionsAvailable()) throw new Error("Permission denied: workspace instructions require private workspace access.");
+  return writeAgentsMd(workspaceRoot(), body, expectedHash);
 }
 
 type ParsedSkillDocument = {

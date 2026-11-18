@@ -184,7 +184,7 @@ export function ProjectInstructionsClient({
       <EditorBlock
         id="user-instructions"
         title="User / workspace instructions"
-        hint={`${workspaceAgentsPath} — workspace AGENTS.md for every project.`}
+        hint={`${workspaceAgentsPath} — saved preferences and approved comments are shared with connected agents across projects at startup.`}
         value={workspaceBody}
         pending={pending}
         onChange={setWorkspaceBody}

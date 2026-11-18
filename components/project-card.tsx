@@ -5,7 +5,7 @@ import { ChoiceButtons } from "./choice-buttons";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
-import { Edit3, ExternalLink, FileText, LoaderCircle, Network, Plus, X } from "lucide-react";
+import { Edit3, ExternalLink, FileText, LoaderCircle, Network, Plus, ScrollText, X } from "lucide-react";
 
 import { saveProjectFromHomeAction } from "@/app/actions";
 import { takeProjectNavigationSession } from "@/components/project-session/project-write-session";
@@ -110,12 +110,14 @@ export function ProjectCard({
   destination,
   dragHandle,
   pendingMessage,
+  showInstructions = true,
 }: {
   project: Project;
   todos: number;
   destination?: ProjectGitDestination;
   dragHandle?: React.ReactNode;
   pendingMessage?: string;
+  showInstructions?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -447,6 +449,7 @@ export function ProjectCard({
           <nav aria-label={`${project.title} links`} className="mt-2.5 flex flex-wrap gap-1.5 text-xs">
             <Quick href={`/p/${project.slug}/paper`} icon={<FileText size={13} />} label="Paper" />
             <Quick href={`/p/${project.slug}/mindmap`} icon={<Network size={13} />} label="Mindmap" />
+            {showInstructions && <Quick href={`/p/${encodeURIComponent(project.slug)}/instructions`} icon={<ScrollText size={13} />} label="Instructions" />}
             {destination?.kind === "overleaf" && !(project.links ?? []).some(link => safeUrl(link.url) === destination.url) && (
               <ExternalProjectLink link={{ kind: "overleaf", label: "Overleaf", url: destination.url }} projectTitle={project.title} />
             )}

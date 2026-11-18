@@ -9,7 +9,8 @@ import {
   discoverWorkspaceSkills,
   findAgentsMd,
   mergeSkills,
-  workspaceRoot,
+  readWorkspaceInstructions,
+  workspaceInstructionsAvailable,
   type ProjectSkill,
 } from "@/lib/research/project-skills";
 import type { CurrentLocation, ProjectStateQuery } from "@/lib/research/webmcp-shared-contract";
@@ -700,7 +701,7 @@ export function getProjectState(slug: string, current?: CurrentLocation): Projec
     wiki: listWiki(slug),
     skills,
     agentsMd: findAgentsMd(dir),
-    workspaceAgentsMd: findAgentsMd(workspaceRoot()),
+    workspaceAgentsMd: readWorkspaceInstructions(),
     activity: readActivity(dir, 2_000),
     current,
   });
@@ -722,6 +723,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
   const detail = query.detail === "full" ? "full" : "summary";
   const todoLimit = query.todoLimit ?? (detail === "full" ? Infinity : 8);
   const paper = state.paper;
+  const workspaceAgentsMd = workspaceInstructionsAvailable() ? state.workspaceAgentsMd : undefined;
   const agentMentions = state.agentMentions;
   const primaryUnplaced = (todo: ProjectStateTodo) => todo.primaryUnplaced ?? todo.unplaced;
   const openTodos = paper?.todos.filter((todo) => !todo.completed) || [];
@@ -795,7 +797,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
       wiki: state.wiki,
       skills: state.skills,
       agentsMd: state.agentsMd,
-      workspaceAgentsMd: state.workspaceAgentsMd,
+      workspaceAgentsMd,
       expectations: state.expectations,
       todoSync,
     };
@@ -833,7 +835,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
     skills: state.skills.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, source: skill.source })),
     expectations: { version: state.expectations.version },
     agentsMd: state.agentsMd && { path: state.agentsMd.path, hash: state.agentsMd.hash },
-    workspaceAgentsMd: state.workspaceAgentsMd && { path: state.workspaceAgentsMd.path, hash: state.workspaceAgentsMd.hash },
+    workspaceAgentsMd,
     todoSync,
   };
 }

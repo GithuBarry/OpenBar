@@ -105,11 +105,11 @@ export function ProjectBoard({ rows: initialRows, initialHash, readOnly = false 
       <span role="status" className="sr-only">{pending ? "Saving project arrangement…" : notice}</span>
       <ProjectGroup group="active" disabled={readOnly || pending} dragging={Boolean(dragged)}>
         {active.length === 0 && <p className={styles.empty}>Drag a project here to keep it active.</p>}
-        {active.map((row, index) => <SortableProject key={row.project.slug} row={row} index={index} group="active" disabled={readOnly || pending} pendingMessage={movingProject?.slug === row.project.slug ? movingProject.message : undefined} />)}
+        {active.map((row, index) => <SortableProject key={row.project.slug} row={row} index={index} group="active" disabled={readOnly || pending} showInstructions={!readOnly} pendingMessage={movingProject?.slug === row.project.slug ? movingProject.message : undefined} />)}
       </ProjectGroup>
       <ProjectGroup group="archived" disabled={readOnly || pending} dragging={Boolean(dragged)}>
         {archived.length === 0 && <p className={styles.empty}>Drag projects here to archive them.</p>}
-        {visibleArchived.map((row, index) => <SortableProject key={row.project.slug} row={row} index={index} group="archived" disabled={readOnly || pending} pendingMessage={movingProject?.slug === row.project.slug ? movingProject.message : undefined} />)}
+        {visibleArchived.map((row, index) => <SortableProject key={row.project.slug} row={row} index={index} group="archived" disabled={readOnly || pending} showInstructions={!readOnly} pendingMessage={movingProject?.slug === row.project.slug ? movingProject.message : undefined} />)}
         {archived.length > 2 && <button type="button" className={`p-button p-button-glass ob-glass-button ${styles.archiveToggle}`}
           aria-expanded={archiveExpanded || Boolean(dragged)} aria-controls="archived-projects"
           onClick={() => setArchiveExpanded(expanded => !expanded)} disabled={Boolean(dragged)}>
@@ -124,10 +124,10 @@ export function ProjectBoard({ rows: initialRows, initialHash, readOnly = false 
   </DragDropProvider>;
 }
 
-function SortableProject({ row, index, group, disabled, pendingMessage }: { row: Row; index: number; group: Group; disabled: boolean; pendingMessage?: string }) {
+function SortableProject({ row, index, group, disabled, showInstructions, pendingMessage }: { row: Row; index: number; group: Group; disabled: boolean; showInstructions: boolean; pendingMessage?: string }) {
   const { ref, handleRef, isDragSource, isDropTarget } = useSortable({ id: row.project.slug, index, group, type: "project", accept: "project", data: { group }, disabled });
   return <div ref={ref} className={cn(styles.sortable, isDragSource && styles.dragging, isDropTarget && !isDragSource && styles.dropTarget)}>
-    <ProjectCard {...row} pendingMessage={pendingMessage} dragHandle={disabled ? undefined : <button type="button" ref={handleRef} className={styles.handle}
+    <ProjectCard {...row} pendingMessage={pendingMessage} showInstructions={showInstructions} dragHandle={disabled ? undefined : <button type="button" ref={handleRef} className={styles.handle}
       aria-label={`Move ${row.project.title}`} aria-describedby="project-drag-help" title="Drag to move project">
       <GripVertical size={16} aria-hidden="true" />
     </button>} />
