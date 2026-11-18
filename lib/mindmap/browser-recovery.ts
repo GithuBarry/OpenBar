@@ -44,7 +44,7 @@ export function readMindmapRecovery(storage: Pick<Storage, "getItem">, project: 
       || typeof active.baseNode.text !== "string"
       || !value.mindmap.nodes.some(node => node.id === active.nodeId)
       || !Array.isArray(active.noteFields) || active.noteFields.some(field => !CARD_NOTE_FIELDS.includes(field))
-      || (active.contentFormat !== undefined && !["plain", "markdown", "tex"].includes(active.contentFormat))
+      || (active.contentFormat !== undefined && !["plain", "markdown", "tex", "html"].includes(active.contentFormat))
       || (active.paperSourceHash !== undefined && !/^[a-f0-9]{64}$/i.test(active.paperSourceHash))
       || (active.selection && (!Number.isInteger(active.selection.from) || !Number.isInteger(active.selection.to)
         || active.selection.from < 0 || active.selection.to < active.selection.from || active.selection.to > active.text.length)))) return null

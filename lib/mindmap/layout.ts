@@ -5,6 +5,7 @@
 
 import { markdownTableColumns, markdownTableWidth } from "./markdown-table";
 import { normalizeCardWidth } from "./card-width";
+import { MAX_HTML_CARD_LENGTH } from "./html-card";
 import { hierarchy, tree } from "d3-hierarchy";
 
 import { indexMindmap } from "@/lib/mindmap-index";
@@ -62,6 +63,17 @@ function wrappedSize(text: string, maxInner: number, fontPx: number, linePx: num
 
 export function nodeDimensions(node: MindmapNode, displayText?: string): Dimensions {
   const isRoot = node.parentId === null;
+  if (node.contentFormat === "html" && !node.todoId) {
+    const width = normalizeCardWidth(node.cardWidth) ?? 360;
+    const inner = width - PAD_X;
+    const source = node.text.slice(0, MAX_HTML_CARD_LENGTH);
+    const visible = source.replace(/<!--[\s\S]*?-->|<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "")
+      .replace(/<[^>]*>/g, " ").replace(/&(?:#\d+|#x[\da-f]+|\w+);/gi, "x").replace(/\s+/g, " ").trim();
+    const title = node.title?.trim() ? wrappedSize(node.title, inner, isRoot ? ROOT_TITLE_PX : TITLE_PX, isRoot ? ROOT_TITLE_LH : TITLE_LH).height : 0;
+    const body = source.trim() ? /<svg\b/i.test(source) ? 240 : Math.min(240, wrappedSize(visible || " ", inner, DETAIL_PX, DETAIL_LH).height) : 0;
+    const meta = node.tags?.length || node.progress !== undefined || node.priority ? META_H : 0;
+    return { width, height: Math.max(isRoot ? ROOT_HEIGHT : NODE_HEIGHT, PAD_Y + title + (title && body ? 4 : 0) + body + meta) };
+  }
   const tableColumns = node.contentFormat === "markdown" ? markdownTableColumns(node.text) : 0;
   const baseMaxW = isRoot ? ROOT_WIDTH : NODE_WIDTH;
   const wideTable = tableColumns > 0 && node.tableLayout !== "scroll";

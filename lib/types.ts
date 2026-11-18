@@ -69,7 +69,7 @@ export interface MindmapNode {
   /** Agent-created card awaiting explicit human Save. */
   agentDraft?: boolean;
   metadata?: Record<string, unknown>;
-  contentFormat?: "plain" | "markdown" | "tex";
+  contentFormat?: "plain" | "markdown" | "tex" | "html";
   /** Table presentation for Markdown cards. Wide is the default. */
   tableLayout?: "wide" | "scroll";
   /** Optional map-owned card width in canvas CSS pixels. Height follows content. */

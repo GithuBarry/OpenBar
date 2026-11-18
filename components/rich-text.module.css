@@ -18,3 +18,28 @@
 .tableScroll th { font-weight: 600; background: rgb(var(--surface-2)); }
 .tableScroll tbody tr:nth-child(even) { background: rgb(var(--surface-2) / .5); }
 .tableScroll:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }
+
+.htmlCard {
+  contain: layout paint;
+  fill: currentColor;
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  max-width: 440px;
+  max-height: 240px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  scrollbar-width: thin;
+}
+.htmlCard svg { display: block; width: 100%; height: auto; max-height: 240px; }
+.htmlCard figure { margin: 0; }
+.htmlCard :is(h1, h2, h3, h4, h5, h6) { margin: 0; font-size: 1em; font-weight: 650; }
+.htmlCard figcaption, .htmlCard small { font-size: .85em; }
+.htmlCard :is(p, ul, ol, table) + :is(p, ul, ol, table) { margin-top: .4em; }
+.htmlCard :is(ul, ol) { padding-inline-start: 1.25em; }
+.htmlCard ul { list-style: disc; }
+.htmlCard ol { list-style: decimal; }
+.htmlCard table { border-collapse: collapse; max-width: 100%; }
+.htmlCard :is(th, td) { padding: .15em .35em; border: 1px solid rgb(var(--line)); }

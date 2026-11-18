@@ -80,7 +80,7 @@ export function mindmapMoveTargets(mindmap: Mindmap, id: string): Array<{ id: st
       if (blocked.has(child.id)) continue;
       out.push({
         id: child.id,
-        label: (child.title || child.text || child.id).trim().split("\n")[0] || child.id,
+        label: (child.title || (child.contentFormat === "html" ? "HTML card" : child.text) || child.id).trim().split("\n")[0] || child.id,
         depth,
       });
       walk(child.id, depth + 1);

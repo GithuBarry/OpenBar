@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import katex from "katex";
+import { HtmlCardBody } from "./html-card-body";
+import type { MindmapNode } from "@/lib/types";
 import remarkGfm from "remark-gfm";
 import styles from "./rich-text.module.css";
 import ReactMarkdown from "react-markdown";
@@ -73,7 +75,8 @@ function linkedPlainText(text: string, keyPrefix: string): ReactNode[] {
   return nodes;
 }
 
-export function RichText({ text, format = "plain", tableLayout = "wide" }: { text: string; format?: "plain" | "markdown" | "tex"; tableLayout?: "wide" | "scroll" }) {
+export function RichText({ text, format = "plain", tableLayout = "wide" }: { text: string; format?: MindmapNode["contentFormat"]; tableLayout?: "wide" | "scroll" }) {
+  if (format === "html") return <HtmlCardBody text={text} />;
   if (format === "plain") return <>{linkedPlainText(text, "text")}{text.endsWith("\n") && <span aria-hidden="true">{"\u200b"}</span>}</>;
   if (format === "markdown") return (
     <div className={`mindmap-rich-text ${styles.markdown}`}>

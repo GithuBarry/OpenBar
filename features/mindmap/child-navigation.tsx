@@ -10,7 +10,7 @@ export type CardNavigationItem = {
   id: string;
   title: string;
   body: string;
-  format?: "plain" | "markdown" | "tex";
+  format?: "plain" | "markdown" | "tex" | "html";
 };
 
 export function ChildNavigation({ parentTitle, items, height, onJump }: {
@@ -49,14 +49,14 @@ export function ChildNavigation({ parentTitle, items, height, onJump }: {
     {items.map((item, index) => <Tooltip.Root key={item.id} delayDuration={60} open={activeId === item.id}
       onOpenChange={open => setActiveId(current => open ? item.id : current === item.id ? null : current)}>
       <Tooltip.Trigger asChild>
-        <button type="button" className={styles.tick} style={{ top: `${layout.ports[index].top}%`, height: layout.hitHeight }} data-child-port={layout.ports[index].id} aria-label={`Jump to ${item.title || "Untitled card"}`}
+        <button type="button" className={styles.tick} style={{ top: `${layout.ports[index].top}%`, height: layout.hitHeight }} data-child-port={layout.ports[index].id} aria-label={`Jump to ${item.title || (item.format === "html" ? "HTML card" : "Untitled card")}`}
           onFocus={() => setActiveId(item.id)}
           onClick={() => { setActiveId(null); onJump(item.id); }} />
       </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content className={styles.preview} side="right" sideOffset={10} align="start" collisionPadding={12}
           onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
-          <strong><RichText text={item.title || "Untitled card"} format={item.format} /></strong>
+          <strong><RichText text={item.title || (item.format === "html" ? "HTML card" : "Untitled card")} format={item.format === "html" ? "plain" : item.format} /></strong>
           {item.body.trim() && <div className={styles.body}><RichText text={item.body} format={item.format} /></div>}
           <span className={styles.hint}>↑ ↓ preview · Enter to jump</span>
         </Tooltip.Content>

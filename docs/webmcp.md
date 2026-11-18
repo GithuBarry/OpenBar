@@ -299,6 +299,25 @@ cards are welcome when useful. Apply this quietly and offer card-length advice
 only when the user asks.
 
 `apply_mindmap_edits` operations `add` and `patch` accept `caption` and `caution`.
+Both operations also accept `presentation: { contentFormat: "html" }` for an
+ordinary card, including switching a saved card to HTML. Keep its plain subject
+in `title` and source markup in `text`. The authoritative writer limits HTML
+bodies to 16,384 UTF-16 code units, including markup. Browser recovery preserves
+the complete unsaved source while a draft is shortened to fit this limit.
+
+Use compact static semantic HTML and self-contained inline SVG geometry, with a
+`viewBox`, accessible labels, and fill/stroke colors. OpenBar sanitizes the source
+and fits visuals within 440 × 240 CSS pixels. Paper TODO cards keep TeX formatting.
+For example:
+
+```json
+{"edit":{"operation":"add","args":{"parentId":"root","title":"Planned comparison","presentation":{"contentFormat":"html"},"text":"<svg viewBox=\"0 0 160 40\" role=\"img\" aria-label=\"Result pending\"><rect x=\"2\" y=\"2\" width=\"156\" height=\"36\" rx=\"8\" fill=\"#ede9fe\"/><text x=\"12\" y=\"26\" fill=\"#5b21b6\">Result pending</text></svg>"}}}
+```
+
+Supply the current `expectedRevision` and, for native MCP, the project/map
+identity and current disk hash. Use `operation: "patch"` with the existing card's
+`id` and the same presentation/source fields to revise it.
+
 Supplying `caution` replaces all its fields, and `{}` clears them. An empty
 `caption` clears that field. To replace the complete shared Notes through a
 tool, supply the new `caption` and `caution: {}` in one patch. Existing scalar

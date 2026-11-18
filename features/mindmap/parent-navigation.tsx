@@ -24,14 +24,14 @@ export function ParentNavigation({ cardTitle, item, onJump }: {
     }}>
     <Tooltip.Root delayDuration={60} open={open} onOpenChange={setOpen}>
       <Tooltip.Trigger asChild>
-        <button type="button" className={styles.point} aria-label={`Jump to parent: ${item.title || "Untitled card"}`}
+        <button type="button" className={styles.point} aria-label={`Jump to parent: ${item.title || (item.format === "html" ? "HTML card" : "Untitled card")}`}
           onFocus={() => setOpen(true)}
           onClick={() => { setOpen(false); onJump(item.id); }} />
       </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content className={previewStyles.preview} side="left" sideOffset={10} align="center" collisionPadding={12}
           onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
-          <strong><RichText text={item.title || "Untitled card"} format={item.format} /></strong>
+          <strong><RichText text={item.title || (item.format === "html" ? "HTML card" : "Untitled card")} format={item.format === "html" ? "plain" : item.format} /></strong>
           {item.body.trim() && <div className={previewStyles.body}><RichText text={item.body} format={item.format} /></div>}
           <span className={previewStyles.hint}>Enter to jump to parent</span>
         </Tooltip.Content>

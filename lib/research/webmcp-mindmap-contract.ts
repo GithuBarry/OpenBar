@@ -10,6 +10,7 @@ import type { ArtifactRef,Mindmap,MindmapNode,MindmapNodeShape } from "@/lib/typ
 import { coercePaperSectionRefContext,isArtifactKind } from "./artifact-link";
 import { MINDMAP_CARD_GUIDANCE } from "./agent-guidance";
 import { MIN_CARD_WIDTH, MAX_CARD_WIDTH } from "@/lib/mindmap/card-width";
+import { htmlCardValidationError, HtmlCardValidationError } from "@/lib/mindmap/html-card";
 import { MINDMAP_EDIT_INPUT,MINDMAP_INPUTS } from "./command-inputs";
 import { commandJsonSchema,commandJsonSchemas,parseCommandInput } from "./command-schema";
 import { failResult,okResult,WEBMCP_ERROR_CODES,type OperationResult,type RemoteSyncOutcome } from "./operation-result";
@@ -130,7 +131,7 @@ export type MindmapWebMcpHost = {
   getSnapshot: () => LiveMindmapSnapshot;
   focusNode: (id: string) => void;
   setViewPreferences: (preferences: { centerOnEdit: boolean }) => void;
-  addNode: (parentId: string, text?: string, expectedRevision?: number, title?: string, caution?: MindmapCaution, caption?: string) => string | Promise<string>;
+  addNode: (parentId: string, text?: string, expectedRevision?: number, title?: string, caution?: MindmapCaution, caption?: string, presentation?: MindmapPresentationPatch) => string | Promise<string>;
   moveNode: (id: string, parentId: string, beforeId?: string, afterId?: string, expectedRevision?: number) => void | Promise<void>;
   deleteNode: (id: string, expectedRevision?: number) => void | Promise<void>;
   deleteBranch?: (id: string, expectedRevision?: number) => void | Promise<void>;
@@ -163,6 +164,7 @@ function assertRevision(expected: unknown, current: number): OperationResult<num
 }
 
 function mutationFailure(host: MindmapWebMcpHost, error: unknown): OperationResult<never> {
+  if (error instanceof HtmlCardValidationError) return failResult("invalid_arguments", error.message, false);
   const code = error && typeof error === "object" && "code" in error
     ? String((error as { code?: unknown }).code || "")
     : "";
@@ -282,8 +284,8 @@ export function parsePresentationArg(
   if (extra) return failResult("invalid_arguments", `Unknown presentation property "${extra}".`, false);
   const patch: NonNullable<MindmapNodeContentPatch["presentation"]> = {};
   if (rec.contentFormat !== undefined) {
-    if (rec.contentFormat !== "plain" && rec.contentFormat !== "markdown" && rec.contentFormat !== "tex") {
-      return failResult("invalid_arguments", "contentFormat must be plain, markdown, or tex.", false);
+    if (rec.contentFormat !== "plain" && rec.contentFormat !== "markdown" && rec.contentFormat !== "tex" && rec.contentFormat !== "html") {
+      return failResult("invalid_arguments", "contentFormat must be plain, markdown, tex, or html.", false);
     }
     patch.contentFormat = rec.contentFormat;
   }
@@ -381,6 +383,14 @@ export async function executeMindmapWebMcpTool(
         if (!parsed.ok) return parsed;
         caution = parsed.value;
       }
+      let presentation: MindmapPresentationPatch | undefined;
+      if (args.presentation !== undefined) {
+        const parsed = parsePresentationArg(args.presentation, snapshot.rootId, `child-of-${snapshot.rootId}`);
+        if (!parsed.ok) return parsed;
+        presentation = parsed.value;
+      }
+      const htmlError = htmlCardValidationError({ text: typeof args.text === "string" ? args.text : "", contentFormat: presentation?.contentFormat });
+      if (htmlError) return failResult("invalid_arguments", htmlError, false);
       const result = await runPersistedMutation(host, () => host.addNode(
         String(args.parentId ?? ""),
         typeof args.text === "string" ? args.text : undefined,
@@ -388,6 +398,7 @@ export async function executeMindmapWebMcpTool(
         typeof args.title === "string" ? args.title : undefined,
         caution,
         typeof args.caption === "string" ? args.caption : undefined,
+        presentation,
       ));
       return result.ok ? okResult({ id: result.value }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
     }
@@ -513,6 +524,8 @@ export async function executeMindmapWebMcpTool(
       if (patch.agentDraft === undefined && patch.title === undefined && patch.text === undefined && patch.caption === undefined && patch.caution === undefined && !patch.labels && !patch.refs && patch.metadata === undefined && !Object.prototype.hasOwnProperty.call(patch, "priority") && !patch.presentation) {
         return failResult("invalid_arguments", "Provide title, text, caption, caution, labels, refs, metadata, priority, presentation, or agentDraft:true.", false);
       }
+      const htmlError = htmlCardValidationError({ ...node, ...patch.presentation, text: patch.text ?? node.text });
+      if (htmlError) return failResult("invalid_arguments", htmlError, false);
       const result = await runPersistedMutation(host, () => host.patchNode(String(args.id ?? ""), patch, snapshot.revision));
       return result.ok ? okResult({ id: args.id, patch }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
     }
@@ -681,7 +694,7 @@ export function buildMindmapWebMcpTools(host: MindmapWebMcpHost) {
   return [...tools, {
     name: "apply_mindmap_edits",
     title: "Edit live mindmap state",
-    description: `Apply a live revision-checked operation. edit.operation: add, patch, move, delete-card, delete-branch, place-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, view-preferences. args: add {parentId,title?,text?,caption?,caution?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, delete {id}, TODO placement {todoId,parentId}, conversion {id,sectionId?}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, view-preferences {centerOnEdit}. View preferences are stored in this browser per project and map. Cards delete promotes children, branch delete includes descendants. New cards and agent-authored content changes remain Agent draft until human Save or Delete. Contribute through the current writing tab. While a human edits one card, add Agent draft children or edit other cards. Edit TODO text/completion through project files. Set presentation.cardWidth to 180–1200 canvas pixels, or null for automatic width. ${MINDMAP_CARD_GUIDANCE}`,
+    description: `Apply a live revision-checked operation. edit.operation: add, patch, move, delete-card, delete-branch, place-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, view-preferences. args: add {parentId,title?,text?,caption?,caution?,presentation?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, delete {id}, TODO placement {todoId,parentId}, conversion {id,sectionId?}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, view-preferences {centerOnEdit}. View preferences are stored in this browser per project and map. Cards delete promotes children, branch delete includes descendants. New cards and agent-authored content changes remain Agent draft until human Save or Delete. Contribute through the current writing tab. While a human edits one card, add Agent draft children or edit other cards. Edit TODO text/completion through project files. Set presentation.cardWidth to 180–1200 canvas pixels, or null for automatic width. ${MINDMAP_CARD_GUIDANCE}`,
     inputSchema: commandJsonSchema(MINDMAP_EDIT_INPUT),
     annotations: { readOnlyHint: false, destructiveHint: true, untrustedContentHint: true },
     execute: (args?: unknown) => executeManagedMapEdit(host, args),

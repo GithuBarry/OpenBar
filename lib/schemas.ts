@@ -113,7 +113,7 @@ export const mindmapNodeSchema = z
     shape: z.enum(["root", "branch", "leaf", "note", "callout"]).optional(),
     agentDraft: z.boolean().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
-    contentFormat: z.enum(["plain", "markdown", "tex"]).optional(),
+    contentFormat: z.enum(["plain", "markdown", "tex", "html"]).optional(),
     tableLayout: z.enum(["wide", "scroll"]).optional(),
     cardWidth: z.number().int().min(MIN_CARD_WIDTH).max(MAX_CARD_WIDTH).optional(),
     color: z.string().optional(),

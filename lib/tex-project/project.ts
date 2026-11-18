@@ -34,6 +34,7 @@ import { resolveProjectAsset, resolveProjectAssetPath, ASSET_EXTENSIONS } from "
 import { mindmapDiskHash } from "@/lib/mindmap/mindmap";
 import { stripLegacyCollapsedField } from "@/lib/mindmap/collapse-preferences";
 import { migrateStoredCardNotes } from "@/lib/mindmap/caution";
+import { assertHtmlCardBodies } from "@/lib/mindmap/html-card";
 import { maskTexLiterals } from "./tex-literals";
 
 export const TEX_SCHEMAS = {
@@ -256,6 +257,7 @@ export function serializeMindmapRecord(projectDir: string, mindmap: Mindmap): {
   normalized: Mindmap;
   source: string;
 } {
+  assertHtmlCardBodies(mindmap.nodes);
   const identity = resolveMindmapStorageIdentity(projectDir, mindmap.id || DRAFT_MINDMAP_ID);
   if (mindmap.role && mindmap.role !== identity.role) {
     throw new TexEnvelopeError(`Mindmap "${identity.id}" has role "${mindmap.role}" but its storage role is "${identity.role}".`);

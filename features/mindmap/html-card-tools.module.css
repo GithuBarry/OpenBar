@@ -1,0 +1,8 @@
+.tools { max-width: calc(100vw - 32px); color: rgb(var(--ink)); }
+.row { display: flex; align-items: center; gap: 2px; }
+.comment { min-width: 0; width: clamp(7rem, 24vw, 14rem); padding: 5px 8px; border-radius: 6px; background: rgb(var(--surface)); font-size: 12px; }
+.row button { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; color: rgb(var(--muted)); }
+.row button:enabled:hover { background: rgb(var(--surface-2)); color: rgb(var(--ink)); }
+.row button:disabled { opacity: .45; }
+.divider { width: 1px; height: 16px; margin: 0 3px; background: rgb(var(--line)); }
+.status:not(:empty) { max-width: 24rem; padding: 3px 6px; color: rgb(var(--muted)); font-size: 11px; }

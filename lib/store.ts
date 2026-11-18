@@ -59,6 +59,7 @@ import { assertUniqueMindmapTodoIds, emptyMindmap, persistableMindmap, slugifyMi
 import { isPrimaryMindmap } from "./research/todo-map";
 import { composeObtodo } from "./todo-meta";
 import { normalizeMindmap } from "./mindmap/mindmap";
+import { assertHtmlCardBodies } from "./mindmap/html-card";
 import { markAgentDraft } from "./mindmap/agent-draft";
 import {
   canonicalizeArtifactRef,
@@ -470,6 +471,7 @@ export function listMindmaps(slug: string): Mindmap[] {
 }
 
 export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: string, actor: "human" | "webmcp" = "human"): Mindmap {
+  assertHtmlCardBodies(mindmap.nodes);
   const dir = projectDir(slug);
   const requestedId = mindmap.id || DRAFT_MINDMAP_ID;
   const requested = resolveMindmapStorageIdentity(dir, requestedId);

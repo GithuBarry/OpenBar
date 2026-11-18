@@ -5,6 +5,7 @@ import { normalizeCardWidth } from "@/lib/mindmap/card-width";
 import { normalizeMindmapCaution, type MindmapCaution } from "@/lib/mindmap/caution";
 import type { Mindmap, MindmapNode } from "@/lib/types";
 import { mergeSavedMindmap } from "@/lib/mindmap/merge-saved";
+import { cardFormatPatch } from "./html-card-editing";
 
 export { byOrder, indexMindmap };
 export type { MindmapIndex };
@@ -26,7 +27,7 @@ export type MindmapNodePatch = Pick<
   "agentDraft" | "title" | "caption" | "caution" | "shape" | "metadata" | "contentFormat" | "tableLayout" | "cardWidth" | "color" | "refs" | "tags" | "progress"
 > & { text?: string; priority?: MindmapNode["priority"] };
 
-function semanticPatch(patch: MindmapNodePatch): MindmapNodePatch {
+function semanticPatch(patch: MindmapNodePatch, node?: MindmapNode): MindmapNodePatch {
   const next: MindmapNodePatch = {};
   if (Object.prototype.hasOwnProperty.call(patch, "agentDraft")) next.agentDraft = patch.agentDraft;
   if (Object.prototype.hasOwnProperty.call(patch, "title")) next.title = patch.title;
@@ -43,7 +44,7 @@ function semanticPatch(patch: MindmapNodePatch): MindmapNodePatch {
   if (Object.prototype.hasOwnProperty.call(patch, "tags")) next.tags = patch.tags;
   if (Object.prototype.hasOwnProperty.call(patch, "progress")) next.progress = patch.progress;
   if (Object.prototype.hasOwnProperty.call(patch, "priority")) next.priority = patch.priority;
-  return next;
+  return node && !node.todoId && next.contentFormat ? { ...cardFormatPatch(node, next.contentFormat), ...next } : next;
 }
 
 function patchTouchesActivity(patch: MindmapNodePatch): boolean {
@@ -61,7 +62,7 @@ function patchTouchesActivity(patch: MindmapNodePatch): boolean {
 
 export type MindmapTreeAction =
   | { type: "paste-images"; id: string; images: Array<{ ref: NonNullable<MindmapNode["refs"]>[number]; childId: string }> }
-  | { type: "add-node"; parentId: string; id: string; title?: string; text?: string; caption?: string; caution?: MindmapCaution; todoId?: string; agentDraft?: boolean }
+  | { type: "add-node"; parentId: string; id: string; title?: string; text?: string; caption?: string; caution?: MindmapCaution; todoId?: string; agentDraft?: boolean; presentation?: MindmapNodePatch }
   | { type: "move-sibling"; id: string; direction: -1 | 1 }
   | { type: "edit-text"; id: string; text: string }
   | { type: "edit-card"; id: string; title: string; text: string; contentFormat?: MindmapNode["contentFormat"] }
@@ -250,6 +251,7 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
               ...(action.agentDraft ? { agentDraft: true } : {}),
               parentId: action.parentId,
               shape: "leaf",
+              ...semanticPatch(action.presentation || {}),
               order: siblingOrders.length ? Math.max(...siblingOrders) + 1 : 0,
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
@@ -369,7 +371,7 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
     }
     case "patch-node": {
       const node = index.nodeById.get(action.id);
-      const patch = semanticPatch(action.patch);
+      const patch = semanticPatch(action.patch, node);
       if (node?.todoId) {
         delete patch.title;
         delete patch.text;
@@ -391,7 +393,7 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
       let changed = false;
       const nodes = mindmap.nodes.map((node) => {
         if (!ids.has(node.id)) return node;
-        const nodePatch = { ...patch };
+        const nodePatch = semanticPatch(patch, node);
         if (node.todoId) {
           delete nodePatch.title;
           delete nodePatch.text;

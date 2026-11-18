@@ -20,6 +20,7 @@ import { syncProjectCommand } from "./sync-project-command";
 import { applyMindmapAction,newNodeId } from "@/features/mindmap/mindmap-state";
 import { mindmapDiskHash,normalizeMindmap } from "@/lib/mindmap/mindmap";
 import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
+import { htmlCardValidationError, HtmlCardValidationError } from "@/lib/mindmap/html-card";
 import { assertAdministrativeWriteAllowed } from "@/lib/server/demo-mode";
 import {
 getMindmap,
@@ -478,6 +479,7 @@ function replaySafeFailure(result: OperationResult<unknown>): boolean {
 }
 
 function replaySafeWriterError(error: unknown): boolean {
+  if (error instanceof HtmlCardValidationError) return true;
   if (error instanceof RequestReplayStoreError) return false;
   if (error instanceof McpCommandError) return REPLAY_SAFE_FAILURE_CODES.has(error.code);
   // saveProject reports its compare-and-swap rejection as a TexEnvelopeError.
@@ -487,6 +489,7 @@ function replaySafeWriterError(error: unknown): boolean {
 }
 
 function caught(error: unknown): OperationResult<never> {
+  if (error instanceof HtmlCardValidationError) return failResult("invalid_arguments", error.message, false);
   if (error instanceof WorkspaceLayoutError) return failResult(error.code, error.message, { retryable: error.code === "stale_disk_state", ...(error.currentHash ? { currentHash: error.currentHash } : {}) });
   if (error instanceof McpCommandError) {
     return failResult(error.code, error.message, {
@@ -687,6 +690,8 @@ async function executePatchMindmapNode(args: unknown, context: McpCommandContext
       }
       if (current.todoId && (patch.title !== undefined || patch.text !== undefined)) throw new McpCommandError("invalid_arguments", "TODO title and text are TeX-owned. Use update_todo.", false);
       if (!Object.keys(patch).length) throw new McpCommandError("invalid_arguments", "Provide at least one card field.", false);
+      const htmlError = htmlCardValidationError({ ...current, ...patch } as MindmapNode);
+      if (htmlError) return failResult("invalid_arguments", htmlError, false);
       const next = applyMindmapAction(map, { type: "patch-node", id: nodeId!, patch: patch as never }).mindmap;
       return writeMap(project, map, next, requestId, "patch_mindmap_node", [{ kind: "mindmap-node", id: nodeId!, mapId }], changesForNode(current, next.nodes.find((node) => node.id === nodeId)!));
     });
@@ -711,7 +716,12 @@ async function executeAddMindmapNode(args: unknown, context: McpCommandContext):
       if (caution && !caution.ok) return caution;
       if (record.caption !== undefined && typeof record.caption !== "string") return failResult("invalid_arguments", "caption must be a string.", false);
       const id = typeof record.id === "string" && record.id.trim() ? record.id.trim() : newNodeId();
-      const next = applyMindmapAction(map, { type: "add-node", agentDraft: true, id, parentId: parentId!, title: typeof record.title === "string" ? record.title : undefined, text: typeof record.text === "string" ? record.text : "", caption: typeof record.caption === "string" ? record.caption : undefined, caution: caution?.ok ? caution.value : undefined }).mindmap;
+      const presentation = record.presentation === undefined ? undefined : parsePresentationArg(record.presentation, map.rootId, id);
+      if (presentation && !presentation.ok) return presentation;
+      const htmlError = htmlCardValidationError({ text: typeof record.text === "string" ? record.text : "", contentFormat: presentation?.value?.contentFormat });
+      if (htmlError) return failResult("invalid_arguments", htmlError, false);
+      const appearance = presentation?.value ? { ...presentation.value, cardWidth: presentation.value.cardWidth ?? undefined, progress: presentation.value.progress ?? undefined } : undefined;
+      const next = applyMindmapAction(map, { type: "add-node", agentDraft: true, id, parentId: parentId!, title: typeof record.title === "string" ? record.title : appearance?.contentFormat === "html" ? "" : undefined, text: typeof record.text === "string" ? record.text : "", caption: typeof record.caption === "string" ? record.caption : undefined, caution: caution?.ok ? caution.value : undefined, presentation: appearance }).mindmap;
       const result = await writeMap(project, map, next, requestId, "add_mindmap_node", [{ kind: "mindmap-node", id, mapId }], [{ field: "added", after: id }]);
       return result;
     });
@@ -1000,7 +1010,7 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
   tool("get_activity", "Read activity", "Read durable authored operation history after applying the selected day filter and before pagination.", executeActivity, { readOnlyHint: true }),
   tool("read_project_files", "Read project files", "List directories or read authored project files with exact byte SHA256 and bounded UTF-8/base64 content. Paths are relative to the project root. OpenBar managed state and Git metadata are protected.", executeReadProjectFiles, { readOnlyHint: true }),
   tool("apply_project_edits", "Apply project file edits", "Atomically create, replace, or delete authored project files using exact prior hashes. Batch a destination create and source delete to move a file. dryRun previews the complete batch. OpenBar managed state and Git metadata are protected.", executeProjectFileEdits, { destructiveHint: true }),
-  tool("apply_mindmap_edits", "Edit managed mindmap state", `Apply one revision-checked map operation. edit.operation: add, patch, move, preview-batch, apply-batch, place-todo, rename, font-size, attach-image, detach-image, caption-image, activity-window. args: add {parentId,title?,text?,caption?,caution?,id?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, batch {selectedIds,changes?,deleteMode?,move?,previewToken?}, place-todo {todoId,parentId}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, activity-window {days}. Preview batches first and pass their token to apply-batch. deleteMode cards promotes children, branches removes descendants. New cards and agent-authored content changes remain Agent draft until human Save or Delete. Native MCP contributes through revision and disk-hash checks while browser editing access stays with its current owner. TODO text/completion belongs to TeX files. Set presentation.cardWidth to 180–1200 canvas pixels, or null for automatic width. ${MINDMAP_CARD_GUIDANCE}`, executeManagedMindmapEdit, { destructiveHint: true }),
+  tool("apply_mindmap_edits", "Edit managed mindmap state", `Apply one revision-checked map operation. edit.operation: add, patch, move, preview-batch, apply-batch, place-todo, rename, font-size, attach-image, detach-image, caption-image, activity-window. args: add {parentId,title?,text?,caption?,caution?,presentation?,id?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, batch {selectedIds,changes?,deleteMode?,move?,previewToken?}, place-todo {todoId,parentId}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, activity-window {days}. Preview batches first and pass their token to apply-batch. deleteMode cards promotes children, branches removes descendants. New cards and agent-authored content changes remain Agent draft until human Save or Delete. Native MCP contributes through revision and disk-hash checks while browser editing access stays with its current owner. TODO text/completion belongs to TeX files. Set presentation.cardWidth to 180–1200 canvas pixels, or null for automatic width. ${MINDMAP_CARD_GUIDANCE}`, executeManagedMindmapEdit, { destructiveHint: true }),
 ];
 
 const REGISTRY_BY_NAME = new Map(MCP_TOOL_REGISTRY.map((entry) => [entry.name, entry]));

@@ -14,6 +14,9 @@ import { FastTooltip } from "@/components/fast-tooltip";
 import { PopoverSurface } from "@/components/pop";
 import paperStyles from "@/features/paper/paper-outline-rail.module.css";
 import styles from "./mindmap-editor.module.css";
+import { HtmlCardTools } from "./html-card-tools";
+import { cardFormatPatch } from "./html-card-editing";
+import { htmlCardValidationError } from "@/lib/mindmap/html-card";
 import { RichText as NodeRichText } from "@/components/rich-text";
 import { ChildNavigation, type CardNavigationItem } from "./child-navigation";
 import { ParentNavigation } from "./parent-navigation";
@@ -803,9 +806,10 @@ export function MindmapEditor({
     focusNode: (id) => focusCardRef.current(id),
     setViewPreferences: ({ centerOnEdit }) => setCenterOnEditPreference(centerOnEdit),
     hasTodo: (todoId) => Boolean(paperState?.paper?.todos.some((todo) => todo.id === todoId)),
-    addNode: async (parentId, text, expectedRevision, title, caution, caption) => {
+    addNode: async (parentId, text, expectedRevision, title, caution, caption, presentation) => {
       const id = newNodeId();
-      await persistWebMcpMutation({ type: "add-node", parentId, id, text, title, caution, caption, agentDraft: true }, expectedRevision);
+      const appearance = presentation ? { ...presentation, progress: presentation.progress ?? undefined, cardWidth: presentation.cardWidth ?? undefined } : undefined;
+      await persistWebMcpMutation({ type: "add-node", parentId, id, text, title: title ?? (presentation?.contentFormat === "html" ? "" : undefined), caution, caption, agentDraft: true, presentation: appearance }, expectedRevision);
       return id;
     },
     moveNode: async (id, parentId, beforeId, afterId, expectedRevision) => {
@@ -1510,7 +1514,7 @@ export function MindmapEditor({
   function beginTextTransaction(nodeId = sessionRef.current.selectedId) {
     if (editBaselineRef.current) return;
     const node = sessionRef.current.mindmap.nodes.find(node => node.id === nodeId);
-    if (!node) return;
+    if (!node || node.contentFormat === "html") return;
     const content = cardContentForNodeWithPaperState(node, paperState);
     editBaselineRef.current = {
       mindmap: cloneMindmap(sessionRef.current.mindmap), nodeId, noteFields: new Set(),
@@ -1629,6 +1633,34 @@ export function MindmapEditor({
     preserveBrowserDraft();
   }
 
+  async function setCardContentFormat(id: string, contentFormat: MindmapNode["contentFormat"], source?: string) {
+    if (source === undefined && inlineEditorSessionRef.current?.nodeId === id && !await inlineEditorSessionRef.current.commit()) return;
+    await persistWebMcpMutation(current => {
+      const card = indexMindmap(current.mindmap).nodeById.get(id);
+      if (!card || card.todoId) throw new Error("Open an ordinary card to change its format.");
+      const content = source === undefined ? undefined : card.contentFormat === "markdown" && startsWithMarkdownTable(source) ? { title: "", body: source } : splitCardText(source);
+      const patch = content ? { contentFormat, title: content.title, text: content.body } : cardFormatPatch(card, contentFormat);
+      const error = htmlCardValidationError({ ...card, ...patch });
+      if (error) throw new Error(error);
+      return { type: "patch-node", id, patch };
+    }, undefined, "human");
+    if (contentFormat === "html") {
+      inlineEditorSessionRef.current = null;
+      finishTextTransaction(true);
+      setEditingId(id);
+    }
+  }
+
+  async function pasteHtmlCard(id: string, text: string) {
+    await persistWebMcpMutation(current => {
+      const card = indexMindmap(current.mindmap).nodeById.get(id);
+      if (!card || card.todoId || card.contentFormat !== "html") throw new Error("Open an HTML card to paste its drawing.");
+      const error = htmlCardValidationError({ ...card, text });
+      if (error) throw new Error(error);
+      return { type: "patch-node", id, patch: { text } };
+    }, undefined, "human");
+  }
+
   function updateNodeNote(id: string, value: string) {
     if (readOnly) return;
     const before = editBaselineRef.current;
@@ -1650,9 +1682,9 @@ export function MindmapEditor({
     if (editor?.nodeId === id && !await editor.commit()) throw new Error("Finish saving the open card, then retry.");
     await persistWebMcpMutation(current => {
       const card = indexMindmap(current.mindmap).nodeById.get(id);
-      if (!card?.agentDraft) throw new Error("This card is no longer an agent draft.");
-      // Paper owns TODO prose. Its revision comment belongs in the map's Notes.
-      if (card.todoId) {
+      if (!card || (!card.agentDraft && card.contentFormat !== "html")) throw new Error("Open an Agent draft or HTML card to add an agent comment.");
+      // Paper and HTML source stay intact while comments live in map Notes.
+      if (card.todoId || card.contentFormat === "html") {
         if (card.caption === note || card.caption?.startsWith(note + "\n\n")) return null;
         const caption = card.caption ? note + "\n\n" + card.caption : note;
         return { type: "patch-node", id, patch: { caption } };
@@ -2433,6 +2465,8 @@ export function MindmapEditor({
         onDropTodo={(todoId) => placeUnplacedTodo(todoId, node.id)}
         onDraftActivity={() => { remoteQueue.noteEdit(); preserveBrowserDraft(); }}
         onTextChange={(text, contentFormat) => updateNodeText(node.id, text, contentFormat)}
+        onUseHtml={text => setCardContentFormat(node.id, "html", text)}
+        onPasteHtml={text => pasteHtmlCard(node.id, text)}
         onNoteChange={value => updateNodeNote(node.id, value)}
         onRequestRevision={note => requestDraftRevision(node.id, note)}
         onSaveDraft={() => saveAgentDraft(node.id)}
@@ -2530,7 +2564,7 @@ export function MindmapEditor({
       const content = cardContentForNodeWithPaperState(node, paperState);
       return `${content.title} ${content.body} ${(node.tags || []).join(" ")}`.toLocaleLowerCase().includes(moveQuery.trim().toLocaleLowerCase());
     })
-    .map((node) => ({ id: node.id, label: cardContentForNodeWithPaperState(node, paperState).title || "Untitled card" })))
+    .map((node) => ({ id: node.id, label: cardContentForNodeWithPaperState(node, paperState).title || (node.contentFormat === "html" ? "HTML card" : "Untitled card") })))
     .map((result) => {
       const node = layout.nodeById.get(result.id);
       const parent = node?.parentId ? layout.nodeById.get(node.parentId) : undefined;
@@ -2539,7 +2573,7 @@ export function MindmapEditor({
       const context = [
         depth === 0 ? "Root" : depth === undefined ? "Outside root" : `Depth ${depth}`,
         below ? `${below} ${below === 1 ? "card" : "cards"} below` : layout.children.get(result.id)?.length ? "Branch" : "Leaf",
-        parent ? `under ${cardContentForNodeWithPaperState(parent, paperState).title || "Untitled card"}` : undefined,
+        parent ? `under ${cardContentForNodeWithPaperState(parent, paperState).title || (parent.contentFormat === "html" ? "HTML card" : "Untitled card")}` : undefined,
       ].filter(Boolean).join(" · ");
       return { ...result, context };
     });
@@ -2912,6 +2946,10 @@ export function MindmapEditor({
           onClose={() => setCardMenuOpen(false)}
           onPatch={(patch) => {
             setSaveError(null);
+            if (patch.contentFormat) {
+              const error = selectedCards.map(card => htmlCardValidationError({ ...card, ...cardFormatPatch(card, patch.contentFormat), ...patch })).find(Boolean);
+              if (error) { setSaveError(error); return; }
+            }
             dispatch({ type: "patch-nodes", ids: selectedCards.map((card) => card.id), patch });
           }}
           onUpdateTag={(tag, operation) => {
@@ -2941,7 +2979,7 @@ export function MindmapEditor({
                   <CardLinkButton key={`${project}:${collapseMapId}:${selected.id}`} project={project} mapId={collapseMapId} nodeId={selected.id} className={cn("mindmap-icon-button", styles.copyCardLink)} />
                 </div>
                 <h2 id="mindmap-card-menu-title" className="mindmap-card-menu-title">
-                  {selectedCardContent?.title || "Untitled card"}
+                  {selectedCardContent?.title || (selected.contentFormat === "html" ? "HTML card" : "Untitled card")}
                 </h2>
               </div>
             </div>
@@ -3009,7 +3047,7 @@ export function MindmapEditor({
               )}
             </div>
 
-          {selected.id === mindmap.rootId && !selected.todoId && (
+          {selected.id === mindmap.rootId && !selected.todoId && selected.contentFormat !== "html" && (
             <div className="px-4 pb-4">
               <label className="mindmap-field">
                 <span>Root card content</span>
@@ -3138,7 +3176,9 @@ export function MindmapEditor({
               <div className="mindmap-field">
                 <span>Format</span>
                 {selected.todoId ? <span className="mindmap-paper-format-note">TeX shared with the paper</span> : (
-                <ChoiceButtons label="Card content format" value={selected.contentFormat || "plain"} options={[{value:"plain",label:"Plain"},{value:"markdown",label:"MD"},{value:"tex",label:"TeX"}]} onChange={(value) => dispatch({ type: "patch-node", id: selected.id, patch: { contentFormat: value as MindmapNode["contentFormat"] } })} />
+                <ChoiceButtons label="Card content format" value={selected.contentFormat || "plain"} options={[{value:"plain",label:"Plain"},{value:"markdown",label:"MD"},{value:"tex",label:"TeX"},{value:"html",label:"HTML"}]} onChange={(value) => {
+                  void setCardContentFormat(selected.id, value as MindmapNode["contentFormat"]).catch(error => setSaveError(error instanceof Error ? error.message : "Could not change card format."));
+                }} />
                 )}
               </div>
               {!selected.todoId && selected.contentFormat === "markdown" && markdownTableColumns(selected.text) > 0 && (
@@ -3381,7 +3421,7 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, readOnly, onCl
                 <ChoiceButtons<string>
                   label="Selected cards content format"
                   value={contentFormat ?? "__mixed__"}
-                  options={[{ value: "plain", label: "Plain" }, { value: "markdown", label: "MD" }, { value: "tex", label: "TeX" }]}
+                  options={[{ value: "plain", label: "Plain" }, { value: "markdown", label: "MD" }, { value: "tex", label: "TeX" }, { value: "html", label: "HTML" }]}
                   onChange={(value) => onPatch({ contentFormat: value as MindmapNode["contentFormat"] })}
                 />
               </div>
@@ -3464,7 +3504,7 @@ function AccentPicker({ value, label, onChange }: {
 function MindmapUnplacedTray({ project, paperState, nodes, selectedParentId, onPlaceTodo }: {
   project: string;
   paperState?: ProjectState | null;
-  nodes: ReadonlyArray<Pick<MindmapNode, "id" | "todoId" | "title" | "text">>;
+  nodes: ReadonlyArray<Pick<MindmapNode, "id" | "todoId" | "title" | "text" | "contentFormat">>;
   selectedParentId: string;
   onPlaceTodo: (todoId: string, parentId: string) => void;
 }) {
@@ -3474,7 +3514,7 @@ function MindmapUnplacedTray({ project, paperState, nodes, selectedParentId, onP
   const candidates = availableTodoCandidates(paperState?.paper?.todos || [], nodes);
   const visible = candidates.filter((todo) => `${todo.title || ""} ${todo.text}`.toLowerCase().includes(query.trim().toLowerCase()));
   const destination = nodes.find((node) => node.id === selectedParentId);
-  const destinationLabel = destination?.title || destination?.text.split("\n")[0] || "selected card";
+  const destinationLabel = destination?.title || (destination?.contentFormat === "html" ? "HTML card" : destination?.text.split("\n")[0]) || "selected card";
   function clearTarget() { document.querySelectorAll("[data-todo-drop-target]").forEach((element) => element.removeAttribute("data-todo-drop-target")); }
   return <aside className={styles.unplacedTray} aria-label="Unplaced paper TODOs">
     <header><strong>Unplaced TODOs</strong><span>{candidates.length}</span></header>
@@ -3555,6 +3595,8 @@ function CanvasNode({
   onDropTodo,
   onDraftActivity,
   onTextChange,
+  onUseHtml,
+  onPasteHtml,
   onNoteChange,
   onTextFocus,
   onRequestRevision,
@@ -3602,6 +3644,8 @@ function CanvasNode({
   onDropTodo: (todoId: string) => void;
   onDraftActivity: () => void;
   onTextChange: (text: string, contentFormat?: MindmapNode["contentFormat"]) => void;
+  onUseHtml: (source: string) => Promise<void>;
+  onPasteHtml: (html: string) => Promise<void>;
   onNoteChange: (value: string) => void;
   onTextFocus: () => void;
   onRequestRevision: (note: string) => Promise<void>;
@@ -3612,6 +3656,7 @@ function CanvasNode({
   onTodoCommit?: (title: string, text: string) => Promise<boolean>;
 }) {
   const cardRef = useRef<HTMLElement | null>(null);
+  const htmlCard = !node.todoId && (node.contentFormat === "html" || restoredDraft?.contentFormat === "html");
   const [notesOpen, setNotesOpen] = useState(() => Boolean(node.todoId && node.agentDraft && node.caption?.startsWith("@agent ")));
   const collapsedChildCount = shiftExpandHeld ? childNavigation.length : collapsedDescendantCount;
   const expandChildLabel = `Expand ${collapsedChildCount} ${shiftExpandHeld ? "immediate " : ""}child card${collapsedChildCount === 1 ? "" : "s"}`;
@@ -3660,6 +3705,8 @@ function CanvasNode({
   const tags = node.tags || [];
   const initial = node.todoId ? `${title}${body ? `\n${body}` : ""}`.trim() : editableCardText(node);
   const [draft, setDraft] = useState(initial);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const [commitError, setCommitError] = useState<string | null>(null);
   const commitInFlightRef = useRef<Promise<boolean> | null>(null);
   const finishedRef = useRef(false);
@@ -3673,9 +3720,12 @@ function CanvasNode({
     if (finishedRef.current) return Promise.resolve(true);
     if (commitInFlightRef.current) return commitInFlightRef.current;
     if (readOnly) return Promise.resolve(false);
-    const text = editorRef.current?.getLiveSource() ?? draft;
+    if (htmlCard) { onCommit(); return Promise.resolve(true); }
+    const text = draftFormatRef.current === "html" ? draftRef.current : editorRef.current?.getLiveSource() ?? draftRef.current;
     if (!node.todoId) {
-      onTextChange(text, draftFormat);
+      const error = htmlCardValidationError({ text: splitCardText(text).body, contentFormat: draftFormatRef.current });
+      if (error) { setCommitError(error); return Promise.resolve(false); }
+      onTextChange(text, draftFormatRef.current);
       finishedRef.current = true;
       onCommit();
       return Promise.resolve(true);
@@ -3702,16 +3752,16 @@ function CanvasNode({
       .finally(() => { commitInFlightRef.current = null; });
     commitInFlightRef.current = pending;
     return pending;
-  }, [draft, draftFormat, initial, node.todoId, onTextChange, onCommit, onTodoCommit, readOnly]);
+  }, [draft, draftFormat, initial, htmlCard, node.todoId, onTextChange, onCommit, onTodoCommit, readOnly]);
 
   const getDraft = useCallback((): InlineCardDraft | null => {
-    if (finishedRef.current) return null;
+    if (finishedRef.current || htmlCard) return null;
     return {
-      text: editorRef.current?.getLiveSource() ?? draft,
+      text: draftFormatRef.current === "html" ? draftRef.current : editorRef.current?.getLiveSource() ?? draftRef.current,
       contentFormat: draftFormatRef.current || "plain",
       selection: editorRef.current?.getSelection() ?? undefined,
     };
-  }, [draft]);
+  }, [draft, htmlCard]);
 
   const cancel = () => {
     if (commitInFlightRef.current) return;
@@ -3720,7 +3770,7 @@ function CanvasNode({
   };
 
   useEffect(() => {
-    if (!editing) return;
+    if (!editing || htmlCard) return;
     const session = { nodeId: node.id, commit, getDraft };
     editSessionRef.current = session;
     const finishOutside = (event: Event) => {
@@ -3737,7 +3787,21 @@ function CanvasNode({
       if (editSessionRef.current === session) editSessionRef.current = null;
       document.removeEventListener("pointerdown", finishOutside, true);
     };
-  }, [editing, node.id, commit, getDraft, editSessionRef]);
+  }, [editing, htmlCard, node.id, commit, getDraft, editSessionRef]);
+
+  function changeDraftFormat(value: MindmapNode["contentFormat"]) {
+    if (value === "html") {
+      const text = editorRef.current?.getLiveSource() ?? draftRef.current;
+      const pending = onUseHtml(text).then(() => { finishedRef.current = true; return true; })
+        .catch(error => { setCommitError(error instanceof Error ? error.message : "Could not change card format."); return false; })
+        .finally(() => { commitInFlightRef.current = null; });
+      commitInFlightRef.current = pending;
+      return;
+    }
+    draftFormatRef.current = value;
+    setDraftFormat(value);
+    onDraftActivity();
+  }
 
   function formatSelection(kind: "bold" | "italic") {
     const syntax = node.todoId || draftFormat === "tex" ? "tex" : "markdown";
@@ -3750,21 +3814,24 @@ function CanvasNode({
     setFormatHint(applied ? "" : "Select a word or phrase to format.");
   }
   useEffect(() => {
+    if (htmlCard) { editingNodeRef.current = null; return; }
     if (editing && editingNodeRef.current !== node.id) {
       finishedRef.current = false;
       draftFormatRef.current = restoredDraft?.contentFormat || node.contentFormat || "plain";
       setDraftFormat(draftFormatRef.current);
       setFormatHint("");
-      setDraft(restoredDraft?.text ?? (node.todoId ? `${title}${body ? `\n${body}` : ""}`.trim() : editableCardText(node)));
+      const text = restoredDraft?.text ?? (node.todoId ? `${title}${body ? `\n${body}` : ""}`.trim() : editableCardText(node));
+      draftRef.current = text;
+      setDraft(text);
       setCommitError(null);
       editingNodeRef.current = node.id;
     } else if (!editing) {
       editingNodeRef.current = null;
       setCommitError(null);
     }
-  }, [editing, node.id, title, body, restoredDraft]);
+  }, [editing, htmlCard, node.id, title, body, restoredDraft]);
   useEffect(() => {
-    if (!editing) return;
+    if (!editing || htmlCard) return;
     const frame = requestAnimationFrame(() => {
       editorRef.current?.focus();
       requestAnimationFrame(() => {
@@ -3773,7 +3840,7 @@ function CanvasNode({
       });
     });
     return () => cancelAnimationFrame(frame);
-  }, [editing, restoredDraft]);
+  }, [editing, htmlCard, restoredDraft]);
   return (
     <>
     <NodeToolbar
@@ -3788,14 +3855,19 @@ function CanvasNode({
       onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
       onClick={(event) => event.stopPropagation()}
     >
+      {htmlCard ? <HtmlCardTools html={node.text} onPaste={onPasteHtml} onDone={onCommit} onComment={async comment => {
+        await onRequestRevision(`@agent ${comment}`);
+        setNotesOpen(true);
+      }} /> : <>
       <FastTooltip label="Bold (⌘B / Ctrl+B)"><button type="button" className={styles.editToolbarButton} aria-label="Bold selection" onPointerDown={(event) => event.preventDefault()} onClick={() => formatSelection("bold")}><Bold size={15} /></button></FastTooltip>
       <FastTooltip label="Italic (⌘I / Ctrl+I)"><button type="button" className={styles.editToolbarButton} aria-label="Italic selection" onPointerDown={(event) => event.preventDefault()} onClick={() => formatSelection("italic")}><Italic size={15} /></button></FastTooltip>
       {node.todoId ? <span className="mindmap-inline-editor-hint" title="Paper TODO formatting is saved in TeX">TeX</span> : (
-        <ChoiceButtons label="Editing card content format" value={draftFormat || "plain"} options={[{value:"plain",label:"Plain"},{value:"markdown",label:"Markdown"},{value:"tex",label:"TeX"}]} onChange={(value) => { draftFormatRef.current = value as MindmapNode["contentFormat"]; setDraftFormat(draftFormatRef.current); onDraftActivity(); }} />
+        <ChoiceButtons label="Editing card content format" value={draftFormat || "plain"} options={[{value:"plain",label:"Plain"},{value:"markdown",label:"Markdown"},{value:"tex",label:"TeX"},{value:"html",label:"HTML"}]} onChange={(value) => changeDraftFormat(value as MindmapNode["contentFormat"])} />
       )}
       <span className="mindmap-inline-editor-divider" />
       <FastTooltip label="Done (⌘Enter / Ctrl+Enter)"><button type="button" className={styles.editToolbarButton} aria-label="Finish editing card" onClick={() => void commit()}><Check size={15} /><span>{node.agentDraft ? "Keep draft" : "Done"}</span></button></FastTooltip>
       {formatHint && <span className="mindmap-format-hint" role="status">{formatHint}</span>}
+      </>}
     </NodeToolbar>
     <article
       ref={cardRef}
@@ -3876,7 +3948,7 @@ function CanvasNode({
         </div>
       )}
       {!node.todoId && node.progress !== undefined && <div className={styles.cardProgress}><ProgressCircles value={node.progress} compact label="Topic progress" /></div>}
-      {editing ? (
+      {editing && !htmlCard ? (
         <div className="nodrag nopan mindmap-inline-editor" onPointerDown={(event) => event.stopPropagation()} onKeyDownCapture={(event) => {
           if (!(event.metaKey || event.ctrlKey)) return;
           const key = event.key.toLowerCase();
@@ -3893,8 +3965,9 @@ function CanvasNode({
             inlineFormatting={node.todoId || draftFormat === "tex" ? "tex" : draftFormat === "markdown" ? "markdown" : undefined}
             value={editingNodeRef.current !== node.id ? restoredDraft?.text ?? draft : draft}
             onChange={(value) => {
-              onDraftActivity();
+              draftRef.current = value;
               setDraft(value);
+              onDraftActivity();
               setFormatHint("");
               if (commitError) setCommitError(null);
             }}
@@ -3916,8 +3989,8 @@ function CanvasNode({
           ) : (
             <>
               {!displayTitle.trim() && !displayBody.trim() && <div className={styles.cardPlaceholder}>New card</div>}
-              {displayTitle.trim() && <div className={cn("mindmap-node-title", node.parentId === null && styles.rootTitle)}>{node.parentId === null ? <><span className={styles.rootAccent} aria-hidden="true" /><div className={styles.rootSubject}><NodeRichText text={displayTitle} format={node.contentFormat} tableLayout={node.tableLayout} /></div></> : <NodeRichText text={displayTitle} format={node.contentFormat} tableLayout={node.tableLayout} />}</div>}
-              {displayBody.trim() && <div className="mindmap-node-detail"><NodeRichText text={displayBody} format={node.contentFormat} tableLayout={node.tableLayout} /></div>}
+              {displayTitle.trim() && <div className={cn("mindmap-node-title", node.parentId === null && styles.rootTitle)}>{node.parentId === null ? <><span className={styles.rootAccent} aria-hidden="true" /><div className={styles.rootSubject}><NodeRichText text={displayTitle} format={htmlCard ? "plain" : node.contentFormat} tableLayout={node.tableLayout} /></div></> : <NodeRichText text={displayTitle} format={htmlCard ? "plain" : node.contentFormat} tableLayout={node.tableLayout} />}</div>}
+              {displayBody.trim() && <div className="mindmap-node-detail"><NodeRichText text={displayBody} format={htmlCard ? "html" : node.contentFormat} tableLayout={node.tableLayout} /></div>}
             </>
           )}
         </>
@@ -3928,10 +4001,10 @@ function CanvasNode({
           )}
           {node.agentDraft && !readOnly && <div className={cn(styles.draftActions, "nodrag nopan")} data-mind-editor={node.id} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
             <FastTooltip label="Save card"><button type="button" aria-label="Save card" onClick={() => void onSaveDraft()}><Check size={13} /></button></FastTooltip>
-            <RequestRevision nodeId={node.id} onRequest={async mention => {
+            {!(editing && htmlCard) && <RequestRevision nodeId={node.id} onRequest={async mention => {
               await onRequestRevision(mention);
-              if (node.todoId) setNotesOpen(true);
-            }} />
+              if (node.todoId || htmlCard) setNotesOpen(true);
+            }} />}
             {onDeleteDraft && <FastTooltip label="Delete draft"><button type="button" aria-label="Delete draft" onClick={onDeleteDraft}><X size={13} /></button></FastTooltip>}
           </div>}
           {coverage && coverage.total > 0 && (
@@ -4019,7 +4092,7 @@ function formatMindmapDate(value: string): string {
 }
 
 function mindmapNodeLabel(node: MindmapNode): string {
-  const title = node.title !== undefined ? node.title.trim() : firstLine(node.text);
+  const title = node.title !== undefined ? node.title.trim() : node.contentFormat === "html" ? "HTML card" : firstLine(node.text);
   const bits = [title || "Untitled topic"];
   if (node.priority) bits.push(`Priority ${node.priority}`);
   if (node.progress !== undefined) bits.push(`${formatProgress(node.progress)} progress`);
@@ -4141,7 +4214,7 @@ function createCanvasLayout(
 
 function dropPreviewLabel(drop: MindmapDrop, nodeById: Map<string, MindmapNode>): string {
   const target = nodeById.get(drop.targetId);
-  const label = target?.title?.trim() || (target ? firstLine(target.text) : "card");
+  const label = target?.title?.trim() || (target?.contentFormat === "html" ? "HTML card" : target ? firstLine(target.text) : "card");
   return drop.kind === "child" ? `Drop to nest under “${label}”` : `Drop to place ${drop.kind === "before" ? "before" : "after"} “${label}”`;
 }
 
@@ -4193,12 +4266,14 @@ function splitCardText(text: string): { title: string; body: string } {
 }
 
 function editableCardContent(node: MindmapNode): { title: string; body: string } {
+  if (node.contentFormat === "html") return { title: node.title || "", body: node.text };
   if (node.title !== undefined) return { title: node.title, body: node.text };
   return splitCardText(node.text);
 }
 
 function editableCardText(node: MindmapNode): string {
-  return joinMindmapCardContent(editableCardContent(node));
+  const content = editableCardContent(node);
+  return node.contentFormat === "html" ? `${content.title}\n${content.body}` : joinMindmapCardContent(content);
 }
 
 function mindmapTodoPayload(node: MindmapNode): { title?: string; text: string } {
