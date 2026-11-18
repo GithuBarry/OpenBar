@@ -245,6 +245,7 @@ export function MindmapEditor({
   const { mindmap, selectedId, selectedIds, past: history, future, revision } = session;
   const persistedDiskHashRef = useRef(initialMindmap.diskHash || mindmapDiskHash(initialMindmap));
   const lastAcknowledgedMapRef = useRef(initialMindmap);
+  const [recoveryReviewOpen, setRecoveryReviewOpen] = useState(false);
   const [recoveryDraft, setRecoveryDraft] = useState<MindmapRecoveryDraft | null>(null);
   const recoveryDraftRef = useRef<MindmapRecoveryDraft | null>(null);
   recoveryDraftRef.current = recoveryDraft;
@@ -2108,6 +2109,7 @@ export function MindmapEditor({
     sessionRef.current = mindmapReducer(sessionRef.current, action);
     dispatch(action);
     recoveryDraftRef.current = null;
+    setRecoveryReviewOpen(false);
     setRecoveryDraft(null);
     const message = sameBase ? null : "conflict: The saved map changed while this draft was open. Your recovered edits are preserved. Download the draft or load the saved map to review both versions.";
     saveErrorRef.current = message;
@@ -2122,6 +2124,7 @@ export function MindmapEditor({
     inlineEditorSessionRef.current = null;
     setRestoredCardDraft(null);
     setEditingId(null);
+    setRecoveryReviewOpen(false);
     setRecoveryDraft(null);
     clearBrowserDraft();
   }, [clearBrowserDraft]);
@@ -2586,7 +2589,12 @@ export function MindmapEditor({
   };
 
   function signalBlockedEdit(event: Parameters<typeof isLockedMindmapEditIntent>[0]) {
-    if ((sessionWritable && !saveConflict) || !isLockedMindmapEditIntent(event)) return false;
+    if ((sessionWritable && !saveConflict && !recoveryDraft) || !isLockedMindmapEditIntent(event)) return false;
+    if (recoveryDraft) {
+      if (event.key === "Tab") return false;
+      setRecoveryReviewOpen(true);
+      return true;
+    }
     if (saveConflict) setSaveConflictAttention(current => current + 1);
     else setResumeEditAttentionRequest(current => current + 1);
     return true;
@@ -2820,15 +2828,15 @@ export function MindmapEditor({
       </div>
 
       <div className={styles.noticeRow} hidden={!Boolean(recoveryDraft || primaryIssue?.id === "save" || primaryIssue?.id === "git" || (primaryIssue?.id === "access" && !sessionWritable && (dirty || editingId)))} data-editor-notices>
-      {recoveryDraft && <Popover.Root>
+      {recoveryDraft && <Popover.Root open={recoveryReviewOpen} onOpenChange={setRecoveryReviewOpen}>
         <div className={styles.recoveryNotice} role="status" data-editor-notice data-recovery-notice>
-          <span>Saved browser draft available</span>
+          <span>Editing paused for draft review</span>
           <Popover.Trigger asChild><button type="button" aria-label="Review browser draft">Review<ChevronRight size={12} aria-hidden="true" /></button></Popover.Trigger>
         </div>
-        <PopoverSurface className={styles.recoveryPanel} side="bottom" align="start" onOpenAutoFocus={event => event.preventDefault()} aria-label="Review browser draft" data-editor-notice data-recovery-review>
+        <PopoverSurface className={styles.recoveryPanel} side="bottom" align="start" aria-label="Review browser draft" data-editor-notice data-recovery-review>
           <header><strong>Review browser draft</strong><Popover.Close aria-label="Close browser draft review"><X size={15} /></Popover.Close></header>
-          <p>A browser draft from {new Date(recoveryDraft.savedAt).toLocaleString()} is preserved in this tab. The saved map is also available.</p>
-          {recoveryDraft.baseHash !== persistedDiskHashRef.current && <p>The saved map has a newer revision.</p>}
+          <p>This tab has a draft from {new Date(recoveryDraft.savedAt).toLocaleString()}. Restore it to recover your edits, or keep the saved map to discard the browser draft. You can download a copy first.</p>
+          {recoveryDraft.baseHash !== persistedDiskHashRef.current && <p>The saved map has a newer revision. Restoring this draft will require resolving that conflict before editing.</p>}
           <div className={styles.recoveryActions}>
             <button type="button" className="p-button p-button-primary btn-primary" onClick={restoreBrowserDraft}>Restore draft</button>
             <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download draft</button>
@@ -2934,13 +2942,11 @@ export function MindmapEditor({
               <button
                 type="button"
                 className="mindmap-card-menu-row"
-                disabled={readOnly || convertingCardId === selected.id}
-                onClick={() => {
-                  startEditing(selected.id);
-                }}
+                disabled={!recoveryDraft && (readOnly || convertingCardId === selected.id)}
+                onClick={() => recoveryDraft ? setRecoveryReviewOpen(true) : startEditing(selected.id)}
               >
-                <Pencil size={14} aria-hidden="true" />
-                <span>Edit</span>
+                {recoveryDraft ? <LockKeyhole size={14} aria-hidden="true" /> : <Pencil size={14} aria-hidden="true" />}
+                <span>{recoveryDraft ? "Review draft to edit" : "Edit"}</span>
                 <kbd>E</kbd>
               </button>
               {!selected.todoId && paperState?.paper && (
