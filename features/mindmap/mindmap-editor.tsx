@@ -1567,6 +1567,7 @@ export function MindmapEditor({
     if (editBaselineRef.current && editBaselineRef.current.nodeId !== id) finishTextTransaction(true);
     dispatch({ type: "select", id });
     beginTextTransaction(id);
+    if (node.contentFormat === "html") setCardMenuOpen(false);
     setViewMode("map");
     setFocusRequest((current) => ({ id, sequence: (current?.sequence || 0) + 1, center }));
     setEditingId(id);
@@ -1647,6 +1648,7 @@ export function MindmapEditor({
     if (contentFormat === "html") {
       inlineEditorSessionRef.current = null;
       finishTextTransaction(true);
+      setCardMenuOpen(false);
       setEditingId(id);
     }
   }
