@@ -11,6 +11,7 @@ import "katex/dist/katex.min.css";
 import { Select } from "@/components/select";
 import { getBrowserEditablePaper } from "@/features/paper/browser-source";
 import { FastTooltip } from "@/components/fast-tooltip";
+import { PopoverSurface } from "@/components/pop";
 import paperStyles from "@/features/paper/paper-outline-rail.module.css";
 import styles from "./mindmap-editor.module.css";
 import { RichText as NodeRichText } from "@/components/rich-text";
@@ -18,6 +19,7 @@ import { ChildNavigation, type CardNavigationItem } from "./child-navigation";
 import { ParentNavigation } from "./parent-navigation";
 import { MapNavigationDock } from "./map-navigation-dock";
 import { CardResizeGrip } from "./card-resize-grip";
+import { CardLinkButton } from "./card-link-button";
 import { useAgentReplies } from "./use-agent-replies";
 import { agentReplyContentHash, cleanAgentReplyDisplay } from "@/lib/research/agent-reply-state";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useTransition, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
@@ -204,6 +206,7 @@ export function MindmapEditor({
   paperState?: ProjectState | null;
 }) {
   const router = useRouter();
+  const focusCardRef = useRef<(id: string) => void>(() => {});
   const { writable: sessionWritable, setPendingWork, connectionState, isBackendUnavailable, accessMessage, accessError, inboxRevision } = useProjectWriteSession();
   const [connectionDetailsOpenRequest, setConnectionDetailsOpenRequest] = useState(0);
   const [resumeEditAttentionRequest, setResumeEditAttentionRequest] = useState(0);
@@ -794,7 +797,7 @@ export function MindmapEditor({
         remoteSaveState,
       };
     },
-    focusNode: (id) => dispatch({ type: "select", id }),
+    focusNode: (id) => focusCardRef.current(id),
     setViewPreferences: ({ centerOnEdit }) => setCenterOnEditPreference(centerOnEdit),
     hasTodo: (todoId) => Boolean(paperState?.paper?.todos.some((todo) => todo.id === todoId)),
     addNode: async (parentId, text, expectedRevision, title, caution, caption) => {
@@ -944,7 +947,7 @@ export function MindmapEditor({
         const url = new URL(href, window.location.origin);
         if (url.pathname === window.location.pathname) {
           const hash = decodeURIComponent(url.hash.replace(/^#/, ""));
-          if (hash) dispatch({ type: "select", id: hash });
+          if (hash) focusCardRef.current(hash);
           window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
           return;
         }
@@ -1570,6 +1573,7 @@ export function MindmapEditor({
   }, [readAgentReply, selectMultiple]);
 
   const focusCard = useCallback((id: string) => {
+    if (!layout.nodeById.has(id)) return;
     let parent = layout.nodeById.get(id)?.parentId;
     const visited = new Set<string>();
     while (parent && !visited.has(parent)) {
@@ -1581,6 +1585,7 @@ export function MindmapEditor({
     setViewMode("map");
     setFocusRequest(current => ({ id, sequence: (current?.sequence || 0) + 1 }));
   }, [layout.nodeById, selectCard, setLocalCollapsed]);
+  focusCardRef.current = focusCard;
 
   function indentSelected() {
     const id = sessionRef.current.selectedId;
@@ -1866,7 +1871,9 @@ export function MindmapEditor({
       if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
       if (!link || link.target === "_blank" || link.hasAttribute("download")) return;
-      const url = new URL(link.href, window.location.href);
+      let url: URL;
+      try { url = new URL(link.href, window.location.href); }
+      catch { return; }
       if (url.origin !== window.location.origin || url.href === window.location.href || navigationPendingRef.current) return;
       if (!pendingImageUploads.current && !inlineEditorSessionRef.current && !localSaveQueue.pending && mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current) return;
       event.preventDefault();
@@ -2305,15 +2312,31 @@ export function MindmapEditor({
   }
 
   useEffect(() => {
-    const apply = () => {
-      const hash = decodeURIComponent(window.location.hash.replace(/^#/, ""));
-      if (hash && sessionRef.current.mindmap.nodes.some((node) => node.id === hash)) {
-        dispatch({ type: "select", id: hash });
-      }
+    const focusHash = (hash: string) => {
+      let id: string;
+      try { id = decodeURIComponent(hash.replace(/^#/, "")); }
+      catch { return false; }
+      if (!id || !sessionRef.current.mindmap.nodes.some(node => node.id === id)) return false;
+      focusCardRef.current(id);
+      return true;
+    };
+    const apply = () => { focusHash(window.location.hash); };
+    const followCardLink = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
+      if (!link || link.hasAttribute("download") || (link.target && link.target !== "_self")) return;
+      const url = new URL(link.href, window.location.href);
+      if (url.origin !== window.location.origin || url.pathname !== window.location.pathname || !focusHash(url.hash)) return;
+      event.preventDefault();
+      window.history.pushState(null, "", `${url.pathname}${url.search}${url.hash}`);
     };
     apply();
     window.addEventListener("hashchange", apply);
-    return () => window.removeEventListener("hashchange", apply);
+    document.addEventListener("click", followCardLink, true);
+    return () => {
+      window.removeEventListener("hashchange", apply);
+      document.removeEventListener("click", followCardLink, true);
+    };
   }, []);
 
   const flowNodes = useMemo(() => (
@@ -2798,15 +2821,23 @@ export function MindmapEditor({
 
       </div>
 
-      {recoveryDraft && <div className="relative z-30 flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-xs" role="status">
-        <p>A browser draft from {new Date(recoveryDraft.savedAt).toLocaleString()} is preserved.
-          {recoveryDraft.baseHash !== persistedDiskHashRef.current && " The saved map has a newer revision."}</p>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" className="p-button p-button-primary btn-primary" onClick={restoreBrowserDraft}>Restore draft</button>
-          <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download draft</button>
-          <button type="button" className="p-button p-button-borderless btn-ghost" onClick={keepSavedMap}>Keep saved map</button>
+      <div className={styles.noticeRow} hidden={!Boolean(recoveryDraft || primaryIssue?.id === "save" || primaryIssue?.id === "git" || (primaryIssue?.id === "access" && !sessionWritable && (dirty || editingId)))} data-editor-notices>
+      {recoveryDraft && <Popover.Root>
+        <div className={styles.recoveryNotice} role="status" data-editor-notice data-recovery-notice>
+          <span>Saved browser draft available</span>
+          <Popover.Trigger asChild><button type="button" aria-label="Review browser draft">Review<ChevronRight size={12} aria-hidden="true" /></button></Popover.Trigger>
         </div>
-      </div>}
+        <PopoverSurface className={styles.recoveryPanel} side="bottom" align="start" onOpenAutoFocus={event => event.preventDefault()} aria-label="Review browser draft" data-editor-notice data-recovery-review>
+          <header><strong>Review browser draft</strong><Popover.Close aria-label="Close browser draft review"><X size={15} /></Popover.Close></header>
+          <p>A browser draft from {new Date(recoveryDraft.savedAt).toLocaleString()} is preserved in this tab. The saved map is also available.</p>
+          {recoveryDraft.baseHash !== persistedDiskHashRef.current && <p>The saved map has a newer revision.</p>}
+          <div className={styles.recoveryActions}>
+            <button type="button" className="p-button p-button-primary btn-primary" onClick={restoreBrowserDraft}>Restore draft</button>
+            <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download draft</button>
+            <button type="button" className="p-button p-button-borderless btn-ghost" onClick={keepSavedMap}>Keep saved map</button>
+          </div>
+        </PopoverSurface>
+      </Popover.Root>}
       {!sessionWritable && (dirty || editingId) && <EditorNotice suppressed={primaryIssue?.id !== "access"} relatedIssues={relatedIssues} project={project} title="Editing access changed" label="Editing paused, draft preserved" message="Your open card text remains available to select and copy. Download the map draft before refreshing." diagnosticContext={getMindmapDiagnostics} paused>
         <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download map draft</button>
       </EditorNotice>}
@@ -2831,6 +2862,7 @@ export function MindmapEditor({
         onCheck={async () => { await refreshRemoteStatus(); }}
         onPush={() => { void pushRemote("OpenBar: save mindmap"); }}
       />}
+      </div>
 
       {!cardMenuOpen && viewMode === "map" && selectedCards.length > 0 && (
         <FastTooltip label="Open card inspector"><button
@@ -2875,10 +2907,13 @@ export function MindmapEditor({
           <div className="mindmap-card-menu-header">
             <div className="mindmap-card-menu-heading min-w-0">
               <div className="min-w-0">
-                <span className="mindmap-card-menu-kicker">
-                  <span className="mindmap-card-menu-dot" aria-hidden="true" />
-                  {selected.todoId ? "Paper TODO" : "Card"}
-                </span>
+                <div className={styles.inspectorKickerRow}>
+                  <span className="mindmap-card-menu-kicker">
+                    <span className="mindmap-card-menu-dot" aria-hidden="true" />
+                    {selected.todoId ? "Paper TODO" : "Card"}
+                  </span>
+                  <CardLinkButton key={`${project}:${collapseMapId}:${selected.id}`} project={project} mapId={collapseMapId} nodeId={selected.id} className={cn("mindmap-icon-button", styles.copyCardLink)} />
+                </div>
                 <h2 id="mindmap-card-menu-title" className="mindmap-card-menu-title">
                   {selectedCardContent?.title || "Untitled card"}
                 </h2>
