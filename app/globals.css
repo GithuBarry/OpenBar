@@ -1645,6 +1645,7 @@ select.input { appearance: auto; cursor: pointer; }
 .mindmap-rich-text { white-space: normal; }
 .mindmap-rich-text p { margin: 0; white-space: pre-wrap; }
 .mindmap-rich-text > * + * { margin-top: 0.4em; }
+.mindmap-node-detail .mindmap-rich-text > p + p { margin-top: 1lh; }
 .mindmap-rich-text :is(h1, h2, h3, h4, h5, h6) { margin: 0; font-size: 1em; font-weight: 650; }
 .mindmap-rich-text :is(ul, ol) { margin: 0; padding-left: 2.25em; }
 .mindmap-rich-text ul { list-style: disc; }
