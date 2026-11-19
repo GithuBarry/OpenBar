@@ -241,9 +241,9 @@ export function MindmapEditor({
   const [session, rawDispatch] = useReducer(mindmapReducer, initialMindmap, createMindmapSession);
   const dispatch = useCallback((action: Parameters<typeof mindmapReducer>[1]) => {
     // Preserve navigation, hydration, and text typed before a conflict arrived.
-    const allowed = ["select", "select-many", "clear-selection", "replace", "hydrate", "ack-save", "record-history", "edit-card", "edit-text"];
+    const allowed = ["select", "select-many", "clear-selection", "replace", "hydrate", "ack-save", "begin-card-history", "record-history", "edit-card", "edit-text"];
     if (remoteOutOfSyncRef.current && !allowed.includes(action.type) && !(action.type === "patch-node" && action.transient)) return;
-    if (!["select", "select-many", "clear-selection", "replace", "hydrate", "ack-save", "record-history"].includes(action.type)) remoteQueue.noteEdit();
+    if (!["select", "select-many", "clear-selection", "replace", "hydrate", "ack-save", "begin-card-history", "record-history"].includes(action.type)) remoteQueue.noteEdit();
     rawDispatch(action);
   }, [remoteQueue]);
   const sessionRef = useRef(session);
@@ -262,7 +262,7 @@ export function MindmapEditor({
   const inlineEditorSessionRef = useRef<InlineCardSession | null>(null);
   const activeCardDraftRef = useRef<MindmapCardRecoveryDraft | null>(null);
   const [restoredCardDraft, setRestoredCardDraft] = useState<MindmapCardRecoveryDraft | null>(null);
-  const editBaselineRef = useRef<{ mindmap: Mindmap; nodeId: string; noteFields: Set<CardNoteField>; text: string; paperSourceHash?: string } | null>(null);
+  const editBaselineRef = useRef<{ baseNode: MindmapNode; nodeId: string; noteFields: Set<CardNoteField>; text: string; paperSourceHash?: string } | null>(null);
   const refreshingWithRecoveryRef = useRef(false);
   const localSaveQueue = useMemo(() => createMindmapSaveQueue(), []);
   const paperSourceHashRef = useRef<string | undefined>(paperState?.paper?.sourceHash);
@@ -619,7 +619,7 @@ export function MindmapEditor({
   const captureRecoveryDraft = useCallback((): MindmapRecoveryDraft => {
     const baseline = editBaselineRef.current;
     const live = inlineEditorSessionRef.current?.getDraft();
-    const baseNode = baseline?.mindmap.nodes.find(node => node.id === baseline.nodeId);
+    const baseNode = baseline?.baseNode;
     const activeCard = baseline && baseNode && live ? {
       nodeId: baseline.nodeId,
       ...live,
@@ -1566,8 +1566,9 @@ export function MindmapEditor({
     const node = sessionRef.current.mindmap.nodes.find(node => node.id === nodeId);
     if (!node || node.contentFormat === "html") return;
     const content = cardContentForNodeWithPaperState(node, paperState);
+    dispatch({ type: "begin-card-history" });
     editBaselineRef.current = {
-      mindmap: cloneMindmap(sessionRef.current.mindmap), nodeId, noteFields: new Set(),
+      baseNode: cloneMindmap(node), nodeId, noteFields: new Set(),
       text: node.todoId ? `${content.title}${content.body ? `\n${content.body}` : ""}`.trim() : editableCardText(node),
       paperSourceHash: paperSourceHashRef.current,
     };
@@ -1581,7 +1582,7 @@ export function MindmapEditor({
     setEditingId(null);
     if (!before) return;
     if (!commitChanges) {
-      const baselineNode = indexMindmap(before.mindmap).nodeById.get(before.nodeId);
+      const baselineNode = before.baseNode;
       const currentNode = indexMindmap(sessionRef.current.mindmap).nodeById.get(before.nodeId);
       // Cancel only this card's active fields. Other cards may have changed
       // while the editor was open and must remain in the live map.
@@ -1596,11 +1597,12 @@ export function MindmapEditor({
         sessionRef.current = mindmapReducer(sessionRef.current, action);
         dispatch(action);
       }
+      dispatch({ type: "record-history", baseNode: before.baseNode, noteFields: before.noteFields, cancelled: true });
       if (mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current) clearBrowserDraft();
       else preserveBrowserDraft();
       return;
     }
-    dispatch({ type: "record-history", before: before.mindmap });
+    dispatch({ type: "record-history", baseNode: before.baseNode, noteFields: before.noteFields });
     if (mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current) clearBrowserDraft();
     else preserveBrowserDraft();
     setFocusRequest((current) => ({ id: before.nodeId, sequence: (current?.sequence || 0) + 1, center: centerOnEditRef.current }));
@@ -2216,10 +2218,8 @@ export function MindmapEditor({
       || paperSourceHashRef.current !== recoveryPaperHash) return;
     const active = draft.activeCard;
     if (active) {
-      const baseline = cloneMindmap(draft.mindmap);
-      baseline.nodes = baseline.nodes.map(node => node.id === active.nodeId ? cloneMindmap(active.baseNode) : node);
       editBaselineRef.current = {
-        mindmap: baseline, nodeId: active.nodeId, text: active.baseText,
+        baseNode: active.baseNode, nodeId: active.nodeId, text: active.baseText,
         paperSourceHash: active.paperSourceHash, noteFields: new Set(active.noteFields),
       };
       activeCardDraftRef.current = active;
@@ -2238,6 +2238,7 @@ export function MindmapEditor({
     const action = { type: "replace" as const, mindmap: draft.mindmap, selectedId: active?.nodeId };
     sessionRef.current = mindmapReducer(sessionRef.current, action);
     dispatch(action);
+    if (active) dispatch({ type: "begin-card-history" });
     recoveryDraftRef.current = null;
     setRecoveryReviewOpen(false);
     setRecoveryDraft(null);

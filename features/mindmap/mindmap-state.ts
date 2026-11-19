@@ -2,7 +2,7 @@ import { byOrder, indexMindmap, type MindmapIndex } from "@/lib/mindmap-index";
 import { DEFAULT_MINDMAP_FONT_SIZE, normalizeMindmap } from "@/lib/mindmap/mindmap";
 import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import { normalizeCardWidth } from "@/lib/mindmap/card-width";
-import { normalizeMindmapCaution, type MindmapCaution } from "@/lib/mindmap/caution";
+import { normalizeMindmapCaution, restoreCardNotes, type CardNoteField, type MindmapCaution } from "@/lib/mindmap/caution";
 import type { Mindmap, MindmapNode } from "@/lib/types";
 import { mergeSavedMindmap } from "@/lib/mindmap/merge-saved";
 import { linkedTodoCaption } from "@/lib/mindmap/link-existing-todo";
@@ -18,6 +18,7 @@ export type MindmapSession = {
   selectedId: string;
   selectedIds: string[];
   past: Mindmap[];
+  cardEditHistoryBoundary?: Mindmap | null;
   future: Mindmap[];
   revision: number;
 };
@@ -89,7 +90,8 @@ export type MindmapSessionAction =
   | { type: "clear-selection" }
   | { type: "undo" }
   | { type: "redo" }
-  | { type: "record-history"; before: Mindmap }
+  | { type: "begin-card-history" }
+  | { type: "record-history"; cancelled?: boolean; baseNode: MindmapNode; noteFields: ReadonlySet<CardNoteField> }
   | { type: "revert"; mindmap: Mindmap };
 
 const TRANSIENT_TYPES = new Set<MindmapTreeAction["type"]>(["edit-text", "edit-card"]);
@@ -495,6 +497,23 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
   }
 }
 
+function beforeCardEdit(map: Mindmap, base: MindmapNode, noteFields: ReadonlySet<CardNoteField>, includeBody = true): Mindmap {
+  const current = map.nodes.find(node => node.id === base.id);
+  if (!current || current.todoId !== base.todoId) return map;
+  const notes = restoreCardNotes(current, base, noteFields);
+  const previous: MindmapNode = {
+    ...current,
+    ...(includeBody && !current.todoId ? { title: base.title, text: base.text, contentFormat: base.contentFormat } : {}),
+    ...notes,
+  };
+  if ("caution" in notes) previous.caution = normalizeMindmapCaution(previous.caution, { trim: false });
+  const signature = (value: MindmapNode) => JSON.stringify(stableSignatureValue(value));
+  if (signature(previous) === signature(current)) return map;
+  // Restore the original activity timestamp when the editor owns every change to this card.
+  if (signature({ ...previous, updatedAt: base.updatedAt }) === signature(base)) previous.updatedAt = base.updatedAt;
+  return { ...map, nodes: map.nodes.map(node => node.id === base.id ? previous : node) };
+}
+
 export function mindmapReducer(state: MindmapSession, action: MindmapSessionAction): MindmapSession {
   switch (action.type) {
     case "select": {
@@ -546,13 +565,20 @@ export function mindmapReducer(state: MindmapSession, action: MindmapSessionActi
         revision: state.revision + 1,
       };
     }
+    case "begin-card-history":
+      return { ...state, cardEditHistoryBoundary: state.past.at(-1) ?? null };
     case "record-history": {
-      if (mapSignature(action.before) === mapSignature(state.mindmap)) return state;
-      return {
-        ...state,
-        past: pushHistory(state.past, action.before),
-        future: [],
-      };
+      const { baseNode, noteFields } = action;
+      const before = beforeCardEdit(state.mindmap, baseNode, noteFields);
+      const boundary = state.cardEditHistoryBoundary;
+      let past = state.past;
+      // Independently recorded actions can contain transient Notes typed before they occurred.
+      if (noteFields.size && boundary !== undefined) {
+        const first = boundary === null ? 0 : past.lastIndexOf(boundary) + 1;
+        if (first < past.length) past = past.map((snapshot, i) => i < first ? snapshot : beforeCardEdit(snapshot, baseNode, noteFields, false));
+      }
+      if (action.cancelled || before === state.mindmap) return { ...state, cardEditHistoryBoundary: undefined, past };
+      return { ...state, cardEditHistoryBoundary: undefined, past: pushHistory(past, before), future: [] };
     }
     case "undo": {
       const previous = state.past.at(-1);
@@ -635,6 +661,7 @@ function withHistory(state: MindmapSession, next: Mindmap, selectedId?: string):
     mindmap: next,
     selectedId: nextSelected,
     selectedIds: nextSelectedIds,
+    cardEditHistoryBoundary: state.cardEditHistoryBoundary,
     past: pushHistory(state.past, state.mindmap),
     future: [],
     revision: state.revision + 1,
