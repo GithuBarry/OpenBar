@@ -22,9 +22,9 @@ export default async function PaperPage({
   const map = getMindmap(slug, DRAFT_MINDMAP_ID);
   const placementTargets = (map?.nodes || []).map((node) => ({
     id: node.id,
+    todoId: node.todoId,
     label: ((node.title?.trim() || node.text.split("\n")[0].trim() || node.todoId || node.id)).slice(0, 80),
   }));
-  const boundTodoIds = (map?.nodes || []).flatMap((node) => (node.todoId ? [node.todoId] : []));
   const bibliography = getBibliographyData(slug);
 
   return (
@@ -40,7 +40,6 @@ export default async function PaperPage({
           bibliography={bibliography.entries}
           bibliographyRaw={bibliography.raw}
           placementTargets={placementTargets}
-          boundTodoIds={boundTodoIds}
         />
       ) : (
         <p className="rounded-lg border border-line bg-surface px-4 py-3 text-sm text-muted">This project has no TeX manuscript yet.</p>

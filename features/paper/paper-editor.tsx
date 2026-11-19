@@ -99,7 +99,7 @@ import { assignMissingTodoIds, composeObtodo, rewriteObtodo, type TodoAttrPatch 
 import { applyTexLintFix, lintProsePercentages } from "@/lib/tex-project/tex-lint";
 import { PaperMetrics } from "./paper-metrics";
 import { PaperAppearance, type PaperEditorWidth, type PaperReaderFont, type PaperToolbarPosition } from "./paper-appearance";
-import { TodoPanel, type TodoUndoSnapshot } from "./todo-panel";
+import { TodoPanel, type PlacementTarget, type TodoUndoSnapshot } from "./todo-panel";
 import { sharedWebMcpActions } from "@/features/webmcp-actions";
 import { remoteSyncResult } from "@/lib/research/project-sync";
 import {
@@ -338,7 +338,6 @@ export function PaperEditor({
   bibliography: initialBibliography,
   bibliographyRaw: initialBibliographyRaw,
   placementTargets = [],
-  boundTodoIds = [],
 }: {
   project: string;
   title: string;
@@ -347,8 +346,7 @@ export function PaperEditor({
   sourceContext: HydratedPaper["sourceContext"];
   bibliography?: BibEntry[];
   bibliographyRaw?: string;
-  placementTargets?: { id: string; label: string }[];
-  boundTodoIds?: string[];
+  placementTargets?: PlacementTarget[];
 }) {
   const router = useRouter();
   const { writable: sessionWritable, setPendingWork, connectionState, isBackendUnavailable, accessMessage, accessError } = useProjectWriteSession();
@@ -3254,7 +3252,7 @@ export function PaperEditor({
               window.requestAnimationFrame(() => todoTriggerRef.current?.focus());
             }}
             placementTargets={placementTargets}
-            boundTodoIds={boundTodoIds}
+            mapHref={`/p/${encodeURIComponent(project)}/mindmap`}
             onJump={(todo) => {
               if (phone) {
                 setTodoOpen(false);
@@ -3302,13 +3300,25 @@ export function PaperEditor({
               }
               return true;
             }}
-            onPlace={(todoId, parentId) => {
-              remoteQueue.noteEdit();
-              void placeTodoOnMindmapAction(project, todoId, parentId)
-                .then(() => pushRemote("OpenBar: place paper TODO on mindmap", true))
-                .catch((error) => {
-                  setSaveError(error instanceof Error ? error.message : "Could not place the TODO on the primary mindmap.");
-                });
+            onPlace={async (todoId, parentId) => {
+              if (!sessionWritableRef.current) {
+                setRestoreEditingAttention(true);
+                throw new Error("Resume editing in this tab to place this TODO.");
+              }
+              if (recoveryDraft || saveConflict || applyingRemote || remoteOutOfSync) {
+                throw new Error("Review the paper’s pending changes before placing this TODO.");
+              }
+              const current = liveSource();
+              if (current !== savedSourceRef.current && !await saveNow(current)) {
+                throw new Error(saveFailureRef.current?.message || "Save this TODO in the paper before placing it.");
+              }
+              const result = await placeTodoOnMindmapAction(project, todoId, parentId);
+              if (!result.ok) throw new Error(result.message);
+              if (result.value.existing) router.refresh();
+              else {
+                remoteQueue.noteEdit();
+                void pushRemote("OpenBar: place paper TODO on mindmap", true);
+              }
             }}
           />
           {todos.some((todo) => !todo.id) && (

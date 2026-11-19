@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Select } from "@/components/select";
 import { AnchoredPop } from "@/components/pop";
 import { RichText } from "@/components/rich-text";
@@ -13,7 +14,7 @@ import paperStyles from "./paper-outline-rail.module.css";
 
 import { TexCodeMirror } from "./tex-codemirror";
 
-export type PlacementTarget = { id: string; label: string };
+export type PlacementTarget = { id: string; label: string; todoId?: string };
 
 type TodoFilter = "open" | "completed";
 export type TodoUndoSnapshot = {
@@ -32,7 +33,7 @@ type UndoAction =
 export function TodoPanel({
   todos,
   placementTargets = [],
-  boundTodoIds = [],
+  mapHref,
   onJump,
   onResolve,
   onPatch,
@@ -44,13 +45,13 @@ export function TodoPanel({
 }: {
   todos: EditorTodo[];
   placementTargets?: PlacementTarget[];
-  boundTodoIds?: string[];
+  mapHref: string;
   onJump: (todo: EditorTodo) => void;
   onResolve: (todo: EditorTodo) => Promise<boolean>;
   onPatch: (todo: EditorTodo, patch: TodoAttrPatch) => Promise<boolean>;
   onInsert: (tex: string) => void;
   onClose: () => void;
-  onPlace?: (todoId: string, parentId: string) => void;
+  onPlace?: (todoId: string, parentId: string) => Promise<void>;
   getTodoSource?: (todo: EditorTodo) => TodoUndoSnapshot;
   onRestore?: (todo: EditorTodo, snapshot: TodoUndoSnapshot) => Promise<boolean>;
 }) {
@@ -64,7 +65,12 @@ export function TodoPanel({
   const [createError, setCreateError] = useState<string | null>(null);
   const [pendingTodoId, setPendingTodoId] = useState<string | null>(null);
   const [undoBusy, setUndoBusy] = useState(false);
-  const bound = useMemo(() => new Set(boundTodoIds), [boundTodoIds]);
+  const bound = useMemo(() => new Map(placementTargets.flatMap(target =>
+    target.todoId ? [[target.todoId, target.id] as const] : [])), [placementTargets]);
+  const parentOptions = useMemo(() => {
+    const titles = new Map(todos.map(todo => [todo.id, (todo.title?.trim() || todo.text.split("\n")[0].trim()).slice(0, 80)]));
+    return placementTargets.map(target => ({ value: target.id, label: (target.todoId && titles.get(target.todoId)) || target.label }));
+  }, [placementTargets, todos]);
   const needle = query.trim().toLowerCase();
   const searched = useMemo(() => {
     const sorted = [...todos].sort((a, b) => Number(a.completed) - Number(b.completed) || a.from - b.from);
@@ -217,8 +223,8 @@ export function TodoPanel({
               <TodoRow
                 key={todo.id || `${todo.from}:${index}`}
                 todo={todo}
-                unplaced={Boolean(todo.id && !bound.has(todo.id))}
-                placementTargets={placementTargets}
+                cardHref={todo.id && bound.has(todo.id) ? `${mapHref}#${encodeURIComponent(bound.get(todo.id)!)}` : undefined}
+                parentOptions={parentOptions}
                 onJump={onJump}
                 onComplete={() => {
                   const key = todo.id || `${todo.from}:${todo.to}`;
@@ -257,8 +263,8 @@ export function TodoPanel({
 
 function TodoRow({
   todo,
-  unplaced,
-  placementTargets,
+  cardHref,
+  parentOptions,
   onJump,
   onComplete,
   onReopen,
@@ -269,13 +275,13 @@ function TodoRow({
   pending,
 }: {
   todo: EditorTodo;
-  unplaced: boolean;
-  placementTargets: PlacementTarget[];
+  cardHref?: string;
+  parentOptions: { value: string; label: string }[];
   onJump: (todo: EditorTodo) => void;
   onComplete: () => void;
   onReopen: () => void;
   onPatch: (todo: EditorTodo, patch: TodoAttrPatch) => Promise<boolean>;
-  onPlace?: (todoId: string, parentId: string) => void;
+  onPlace?: (todoId: string, parentId: string) => Promise<void>;
   onRemove: () => void;
   removing?: boolean;
   pending?: boolean;
@@ -285,7 +291,10 @@ function TodoRow({
   const actionsRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { if (editing) titleInputRef.current?.focus(); }, [editing]);
   const [details, setDetails] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [parentPickerOpen, setParentPickerOpen] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const [placementError, setPlacementError] = useState("");
   const [titleDraft, setTitleDraft] = useState(todo.title || "");
   const [bodyDraft, setBodyDraft] = useState(todo.text);
   const [editBusy, setEditBusy] = useState(false);
@@ -401,9 +410,30 @@ function TodoRow({
                   <TodoTexText text={detail} />
                 </span>
               )}
-              <span className="mt-0.5 block text-xs text-faint">{todo.section}{unplaced ? " (Unplaced)" : ""}</span>
             </button>
           )}
+          {!editing && (
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+              <span className="text-faint">{todo.section}</span>
+              {cardHref ? (
+                <Link href={cardHref} prefetch={false} className="inline-flex items-center gap-0.5 text-accent hover:underline">
+                  Show on map <ArrowUpRight size={12} aria-hidden="true" />
+                </Link>
+              ) : todo.id && onPlace && parentOptions.length > 0 ? (
+                <Select label={`Place on map: ${title}. Choose the primary map parent.`} placeholder={placing ? "Placing…" : "Place on map"}
+                  open={parentPickerOpen} onOpenChange={setParentPickerOpen} className="max-sm:min-h-9"
+                  value="" options={parentPickerOpen ? parentOptions : []} disabled={placing || pending || removing}
+                  onValueChange={async parentId => {
+                    setPlacementError("");
+                    setPlacing(true);
+                    try { await onPlace(todo.id!, parentId); }
+                    catch (error) { setPlacementError(error instanceof Error ? error.message : "Could not place this TODO."); }
+                    finally { setPlacing(false); }
+                  }} />
+              ) : null}
+            </div>
+          )}
+          {placementError && <p role="alert" className="mt-1 text-xs text-danger">{placementError}</p>}
           {details && (
             <p className="mt-1 font-mono text-xs text-faint">
               {todo.id || "no id"}
@@ -420,26 +450,16 @@ function TodoRow({
               className="inline-flex h-5 w-5 items-center justify-center rounded text-faint hover:bg-surface-2 hover:text-ink max-sm:h-9 max-sm:w-9"
               ref={actionsRef}
               aria-label="More TODO actions"
-              aria-expanded={placing}
+              aria-expanded={actionsOpen}
               disabled={pending || removing || editing}
-              onClick={() => setPlacing((value) => !value)}
+              onClick={() => setActionsOpen((value) => !value)}
             >
               <MoreHorizontal size={12} />
             </button>
-            <AnchoredPop open={placing} anchorRef={actionsRef} origin="br" onDismiss={() => setPlacing(false)} className="w-56 max-w-[calc(100vw-16px)] p-2">
-                <button type="button" className="ob-menu-item w-full text-left" onClick={() => { onJump(todo); setPlacing(false); }}>
+            <AnchoredPop open={actionsOpen} anchorRef={actionsRef} origin="br" onDismiss={() => setActionsOpen(false)} className="w-56 max-w-[calc(100vw-16px)] p-2">
+                <button type="button" className="ob-menu-item w-full text-left" onClick={() => { onJump(todo); setActionsOpen(false); }}>
                   Reveal in paper
                 </button>
-                {unplaced && todo.id && placementTargets.length > 0 && onPlace && (
-                  <label className="mt-1 block text-xs font-medium uppercase tracking-wide text-faint">
-                    Place on map
-                    <Select label="Primary map parent" placeholder="Choose a card…"
-                      className="mt-1 h-7 w-full text-xs normal-case tracking-normal"
-                      options={placementTargets.map(target => ({ value: target.id, label: target.label }))}
-                      onValueChange={parentId => { onPlace(todo.id!, parentId); setPlacing(false) }}
-                    />
-                  </label>
-                )}
                 <button type="button" className="ob-menu-item w-full text-left" onClick={() => setDetails((value) => !value)}>
                   {details ? "Hide details" : "Show id and timestamps"}
                 </button>
@@ -449,7 +469,7 @@ function TodoRow({
                   disabled={pending || removing}
                   onClick={() => {
                     onRemove();
-                    setPlacing(false);
+                    setActionsOpen(false);
                   }}
                 >
                   Remove

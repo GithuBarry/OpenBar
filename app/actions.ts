@@ -33,6 +33,7 @@ import {
   type NewProjectInput,
   getMindmap,
   assertSavedPaperTodos,
+  PaperTodoBindingError,
   saveMindmap,
   createMindmap,
   deleteMindmap,
@@ -918,17 +919,23 @@ export async function placeTodoOnMindmapAction(slug: string, todoId: string, par
   await requireProjectAccess(slug);
   return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
     const map = getMindmap(slug, DRAFT_MINDMAP_ID);
-    if (!map || !isPrimaryMindmap(map)) throw new Error("Primary mindmap is missing.");
+    if (!map || !isPrimaryMindmap(map)) return failResult("invalid_arguments", "Primary mindmap is missing.", false);
     const placement = placeTodoCard(map, todoId, parentId);
-    if (!placement.ok) throw new Error(placement.message);
+    if (!placement.ok) return placement;
     const next = placement.value;
-    if (next.existing) {
-      assertSavedPaperTodos(slug, new Set([todoId]));
-    } else {
-      saveMindmap(slug, { ...next.map, revision: (map.revision ?? 0) + 1 }, map.diskHash);
-      bust(slug);
+    try {
+      if (next.existing) {
+        assertSavedPaperTodos(slug, new Set([todoId]));
+      } else {
+        saveMindmap(slug, { ...next.map, revision: (map.revision ?? 0) + 1 }, map.diskHash);
+        bust(slug);
+      }
+    } catch (error) {
+      if (error instanceof PaperTodoBindingError) return failResult(error.code, error.message, false);
+      if (error instanceof TexEnvelopeError) return failResult("stale_disk_state", error.message, true);
+      throw error;
     }
-    return { todoId, parentId: next.parentId, nodeId: next.nodeId, existing: next.existing };
+    return okResult({ todoId, parentId: next.parentId, nodeId: next.nodeId, existing: next.existing });
   });
 }
 
