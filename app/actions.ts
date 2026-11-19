@@ -32,6 +32,7 @@ import {
   createProject,
   type NewProjectInput,
   getMindmap,
+  assertSavedPaperTodos,
   saveMindmap,
   createMindmap,
   deleteMindmap,
@@ -73,7 +74,7 @@ import {
 } from "@/lib/research/project-skills";
 import { persistPaperTodoOperation, insertTodoAtSection, persistPaperTodoPlacement, previewPaperTodoPlacement, relocatePaperTodo } from "@/lib/research/paper-todo-persist";
 import { convertMindmapCardToTodo } from "@/lib/research/mindmap-todo-conversion";
-import { applyMindmapAction, newNodeId } from "@/features/mindmap/mindmap-state";
+import { placeTodoCard } from "@/lib/research/place-todo-card";
 import { analyzePaper } from "@/lib/research/paper-analysis";
 import type { SourceOperation } from "@/lib/research/operations";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
@@ -918,18 +919,16 @@ export async function placeTodoOnMindmapAction(slug: string, todoId: string, par
   return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
     const map = getMindmap(slug, DRAFT_MINDMAP_ID);
     if (!map || !isPrimaryMindmap(map)) throw new Error("Primary mindmap is missing.");
-    const existing = map.nodes.find((node) => node.todoId === todoId);
-    if (existing) {
-      if (existing.parentId === parentId) return { todoId, parentId, nodeId: existing.id };
-      const next = applyMindmapAction(map, { type: "reparent", id: existing.id, parentId });
-      saveMindmap(slug, next.mindmap, map.diskHash);
+    const placement = placeTodoCard(map, todoId, parentId);
+    if (!placement.ok) throw new Error(placement.message);
+    const next = placement.value;
+    if (next.existing) {
+      assertSavedPaperTodos(slug, new Set([todoId]));
+    } else {
+      saveMindmap(slug, { ...next.map, revision: (map.revision ?? 0) + 1 }, map.diskHash);
       bust(slug);
-      return { todoId, parentId, nodeId: existing.id };
     }
-    const next = applyMindmapAction(map, { type: "add-node", parentId, id: newNodeId(), todoId });
-    saveMindmap(slug, next.mindmap, map.diskHash);
-    bust(slug);
-    return { todoId, parentId, nodeId: next.selectedId };
+    return { todoId, parentId: next.parentId, nodeId: next.nodeId, existing: next.existing };
   });
 }
 

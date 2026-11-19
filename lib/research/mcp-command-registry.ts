@@ -12,6 +12,7 @@ import { readAnySkill, writeWorkspaceInstructions } from "./project-skills";
 import { acquireProjectWriteSession,releaseProjectWriteSession,withProjectWriteSessionContext } from "./project-write-session";
 
 import { mindmapToolDescription,parseCautionArg,parsePresentationArg } from "./webmcp-mindmap-contract";
+import { placeTodoCard } from "./place-todo-card";
 import { sharedToolDescription } from "./webmcp-shared-contract";
 
 import { randomUUID } from "node:crypto";
@@ -23,6 +24,8 @@ import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import { htmlCardValidationError, HtmlCardValidationError } from "@/lib/mindmap/html-card";
 import { assertAdministrativeWriteAllowed } from "@/lib/server/demo-mode";
 import {
+assertSavedPaperTodos,
+PaperTodoBindingError,
 getMindmap,
 getProject,
 projectContentDir,
@@ -413,6 +416,7 @@ async function writeMap(
 }
 
 function mutationFailure(error: unknown, current?: Mindmap): OperationResult<never> {
+  if (error instanceof PaperTodoBindingError) return failResult(error.code, error.message, false);
   const message = error instanceof Error ? error.message : String(error);
   if (/root|cycle|destination|unknown|invalid|select/i.test(message)) return failResult("invalid_arguments", message, { retryable: false, currentRevision: current?.revision });
   if (/conflict|changed on disk|reload|hash|revision|stale/i.test(message)) return failResult("stale_disk_state", message, {
@@ -876,11 +880,16 @@ const executePlaceTodoCard: McpToolDefinition["execute"] = async (raw, context) 
       const map = mapRequired(project, mapArg(args));
       assertRevision(map, integerArg(args, "expectedRevision"));
       assertDiskHash(map, stringArg(args, "expectedDiskHash", false));
-      if (!getProjectState(project)?.paper?.todos.some(todo => todo.id === args.todoId)) return failResult("unknown_todo", "Unknown paper TODO.", false);
-      const existing = map.nodes.find(node => node.todoId === args.todoId);
-      if (existing) return okResult({ id: existing.id, todoId: args.todoId, revision: map.revision, diskHash: map.diskHash });
-      const next = applyMindmapAction(map, { type: "add-node", agentDraft: true, parentId: String(args.parentId), todoId: String(args.todoId), id: newNodeId() });
-      return writeMap(project, map, next.mindmap, requestId, "place_todo_card", [{ kind: "mindmap_node", id: next.selectedId!, mapId: map.id }]);
+      const todoId = String(args.todoId);
+      const placement = placeTodoCard(map, todoId, String(args.parentId), true);
+      if (!placement.ok) return placement;
+      const next = placement.value;
+      if (next.existing) {
+        try { assertSavedPaperTodos(project, new Set([todoId])); }
+        catch (error) { return mutationFailure(error, map); }
+        return okResult({ id: next.nodeId, parentId: next.parentId, todoId, shared: true, revision: map.revision, diskHash: map.diskHash });
+      }
+      return writeMap(project, map, next.map, requestId, "place_todo_card", [{ kind: "mindmap_node", id: next.nodeId, mapId: map.id }]);
     });
   };
 

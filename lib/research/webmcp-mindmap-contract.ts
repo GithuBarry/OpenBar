@@ -588,11 +588,14 @@ export async function executeMindmapWebMcpTool(
       }
       const existing = snapshot.nodes.find((node) => node.todoId === todoId);
       if (existing) {
-        return okResult({ id: existing.id, todoId, shared: true }, { revision: snapshot.revision, diskHash: snapshot.diskHash });
+        return okResult({ id: existing.id, parentId: existing.parentId, todoId, shared: true }, { revision: snapshot.revision, diskHash: snapshot.diskHash });
       }
       if (!host.placeTodoCard) return failResult("capability_unavailable", "This map cannot place TODOs.", false);
       const result = await runPersistedMutation(host, () => host.placeTodoCard!(todoId, String(args.parentId), snapshot.revision));
-      return result.ok ? okResult({ id: result.value, todoId }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
+      if (!result.ok) return result;
+      const placed = host.getSnapshot().nodes.find(node => node.id === result.value && node.todoId === todoId);
+      if (!placed) return failResult("stale_live_state", "The map changed during placement. Read the current map and retry.", true);
+      return okResult({ id: placed.id, parentId: placed.parentId, todoId }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) });
     }
     case "convert_card_to_todo": {
       const rev = assertRevision(args.expectedRevision, snapshot.revision);
