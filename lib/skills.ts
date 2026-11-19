@@ -1,4 +1,4 @@
-import { MINDMAP_CARD_GUIDANCE, PROJECT_DELIVERY_GUIDANCE } from "./research/agent-guidance";
+import { EXPERIMENT_WRITING_GUIDANCE, MINDMAP_CARD_GUIDANCE, PROJECT_DELIVERY_GUIDANCE } from "./research/agent-guidance";
 
 /**
  * OpenBar — bundled research skills.
@@ -80,6 +80,8 @@ For research code specifically: correctness and auditability of scientific claim
     when: "Planning experiments, making empirical claims, or writing up results.",
     source: "Evidence-grounded research practice",
     body: `Hold the line on scientific claims.
+
+${EXPERIMENT_WRITING_GUIDANCE}
 
 - Pre-register: write the hypothesis and the concrete expected outcome BEFORE running the experiment. Compare results to the frozen prediction; don't rewrite the prediction after seeing results (no HARKing).
 - Name the question, not just the method. Don't get stuck optimizing a method and lose the goal. Prefer research questions that stay interesting whichever way the result comes out.

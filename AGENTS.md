@@ -46,6 +46,7 @@ OpenBar edits an Overleaf-style research-paper repository.
 
   Sentence placeholder example: "On [DATASET], [METHOD] achieves [RESULT PENDING], measured by [METRIC]."
 - Place each TODO beside the passage, claim, theorem, comparison, or result where its outcome will most strengthen the argument. Keep local notes and missing-result markers at the corresponding point of use as the manuscript develops.
+- For a long experiment, identify the sentence, figure, or table cell its outcome could change. One paper TODO or placeholder is enough to start. During the run, give the researcher room to experiment. When evidence or a decision changes, draft the smallest update from the run artifact at the same location. A failed run can leave a result pending. Exploratory ideas can stay on draft cards.
 - The Primary mindmap covers every stable paper TODO: placed in its tree, or visible in Primary Unplaced. Unplaced counts as coverage.
 - Secondary mindmaps may reuse any subset of paper TODOs. The same `todoId` may appear once per map, including on Primary and several secondary maps. Two cards for one `todoId` inside a single map are invalid.
 - TeX owns TODO id, text, created/updated/completed. Each map independently owns placement, labels, refs, optional progress, and appearance. Do not persist duplicate TODO text or completion on the map.
