@@ -59,6 +59,8 @@ function readViewport(key: string): Viewport | undefined {
   } catch { /* A fresh view remains available when browser storage is unavailable. */ }
 }
 
+const CARD_PROSE = ".mindmap-node-title, .mindmap-node-todo-title, .mindmap-node-detail";
+
 const nodeTypes = {
   card: memo(function CardNode({ id, data }: NodeProps<Node<CardData>>) {
     const updateNodeInternals = useUpdateNodeInternals();
@@ -142,13 +144,19 @@ function FlowCanvas({
   const nodesInitialized = useNodesInitialized();
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [handTool, setHandTool] = useState(false);
+  const copyCardRef = useRef<HTMLElement | null>(null);
   const clearCanvasTextSelection = useCallback(() => {
+    copyCardRef.current?.classList.remove("mindmap-copy-card", "nopan");
+    copyCardRef.current = null;
     const canvas = canvasRef.current;
     const selection = window.getSelection();
     if (canvas && selection && !selection.isCollapsed && selection.rangeCount && selection.getRangeAt(0).intersectsNode(canvas)) {
       selection.removeAllRanges();
     }
   }, []);
+  useEffect(() => {
+    if ((!readOnly || handTool) && copyCardRef.current) clearCanvasTextSelection();
+  }, [readOnly, handTool, clearCanvasTextSelection]);
   useEffect(() => {
     // Focus may be on the document body, and map shortcuts can consume Escape.
     const onEscape = (event: KeyboardEvent) => {
@@ -356,8 +364,31 @@ function FlowCanvas({
         const target = event.target as Element;
         if (target.closest('button, a, input, textarea, select, summary, .cm-editor')) return;
         const card = target.closest<HTMLElement>('[data-mind-node]');
-        if (handTool || !card) clearCanvasTextSelection();
+        if (handTool || !card || (copyCardRef.current && card !== copyCardRef.current)) clearCanvasTextSelection();
+        if (card && card === copyCardRef.current && target.closest(CARD_PROSE)) return;
         if (!handTool && card?.dataset.mindNode) onSelect(card.dataset.mindNode, event.shiftKey);
+      }}
+      onMouseDownCapture={event => {
+        if (!readOnly || handTool || event.button !== 0) return;
+        const target = event.target as Element;
+        if (!target.closest(CARD_PROSE) || target.closest("button, a, input, textarea, select, summary")) return;
+        const card = target.closest<HTMLElement>("[data-mind-node]");
+        if (!card || (event.detail < 2 && copyCardRef.current !== card)) return;
+        // The browser selects the word on the second mousedown, before dblclick.
+        card.classList.add("mindmap-copy-card", "nopan");
+        copyCardRef.current = card;
+      }}
+      onMouseMoveCapture={event => {
+        const card = copyCardRef.current;
+        if (event.buttons !== 1 || !card || !card.contains(event.target as Element)) return;
+        const selection = window.getSelection();
+        if (!selection?.anchorNode || !card.contains(selection.anchorNode)) return;
+        const caret = document.caretPositionFromPoint?.(event.clientX, event.clientY);
+        const range = caret ? null : document.caretRangeFromPoint?.(event.clientX, event.clientY);
+        const text = caret?.offsetNode ?? range?.startContainer;
+        if (text?.nodeType !== window.Node.TEXT_NODE || !text.parentElement?.closest(CARD_PROSE) || !card.contains(text)) return;
+        event.preventDefault();
+        selection.extend(text, caret?.offset ?? range!.startOffset);
       }}
       onClickCapture={event => {
         const target = event.target as Element;

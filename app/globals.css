@@ -1693,6 +1693,7 @@ select.input { appearance: auto; cursor: pointer; }
 .mindmap-card-asset { display: block; overflow: hidden; aspect-ratio: 4 / 3; border: 1px solid rgb(var(--line)); border-radius: 0.35rem; background: rgb(var(--surface-2)); }
 .mindmap-card-asset img { width: 100%; height: 100%; object-fit: cover; }
 .mindmap-rf { -webkit-user-select: none; user-select: none; }
+.mindmap-rf .mindmap-copy-card :is(.mindmap-node-title, .mindmap-node-todo-title, .mindmap-node-detail) { cursor: text; -webkit-user-select: text; user-select: text; }
 .mindmap-rf :is(input, textarea, [contenteditable=true]) { -webkit-user-select: text; user-select: text; }
 .mindmap-rf-handle { width: 6px; height: 6px; border: 0; opacity: 0.01; background: rgb(var(--accent)); }
 .ob-preview-figure { margin: 0.75rem 0; max-width: 100%; overflow: hidden; }
