@@ -53,7 +53,9 @@ export function persistPaperTodoOperation(input: {
   });
 }
 
-export function insertTodoAtSection(source: string, sectionId: string | undefined, text: string, id?: string, title?: string): {
+export function insertTodoAtSection(
+  source: string, sectionId: string | undefined, text: string, id?: string, title?: string, textFormat?: "plain" | "tex",
+): {
   source: string;
   id: string;
   from: number;
@@ -65,7 +67,7 @@ export function insertTodoAtSection(source: string, sectionId: string | undefine
   after?: string;
   error?: string;
 } {
-  const placement = previewTodoAtSection(source, sectionId, text, title, id);
+  const placement = previewTodoAtSection(source, sectionId, text, title, id, textFormat);
   return {
     source: placement.nextSource,
     id: placement.id,

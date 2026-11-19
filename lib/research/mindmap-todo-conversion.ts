@@ -209,7 +209,8 @@ export async function convertMindmapCardToTodo(input: MindmapTodoConversionInput
     if (input.expectedBundleHash && bundle.bundleHash !== input.expectedBundleHash) {
       return conversionFailure("stale_disk_state", "The paper changed on disk. Reload before converting this card.", true, bundle.bundleHash);
     }
-    const inserted = insertTodoAtSection(bundle.source, sectionId, text, undefined, title || undefined);
+    const textFormat = node.contentFormat === "tex" ? "tex" : "plain";
+    const inserted = insertTodoAtSection(bundle.source, sectionId, text, undefined, title || undefined, textFormat);
     if (!inserted.sectionFound) return conversionFailure(sectionId ? "unknown_section" : "invalid_tex", inserted.error || "The paper has no writable source location.");
     if (inserted.error) return conversionFailure("invalid_tex", inserted.error);
 

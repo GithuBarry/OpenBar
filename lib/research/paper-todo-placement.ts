@@ -84,10 +84,11 @@ export function previewTodoAtSection(
   text: string,
   title?: string,
   id?: string,
+  textFormat: "plain" | "tex" = "plain",
 ): TodoPlacementResult {
   const normalizedSectionId = sectionId?.trim() || undefined;
   const target = targetPart(source, normalizedSectionId);
-  const composed = composeObtodo({ id, title, text });
+  const composed = composeObtodo({ id, title, text, textFormat });
   const idMatch = /\bid=([A-Za-z0-9._-]+)/.exec(composed);
   const todoId = id || idMatch?.[1] || "";
   if (!target) {
@@ -104,7 +105,8 @@ export function previewTodoAtSection(
       error: normalizedSectionId ? `Unknown paper section id "${normalizedSectionId}".` : "The paper has no writable source location.",
     };
   }
-  if (target.endOffset < 0) {
+  const invalidBody = textFormat === "tex" && findMacroMatches(composed, ["obtodo"])[0]?.length !== composed.length;
+  if (invalidBody || target.endOffset < 0) {
     return {
       source,
       id: todoId,
@@ -116,7 +118,9 @@ export function previewTodoAtSection(
       before: target.body.slice(Math.max(0, target.body.length - 320)),
       after: "",
       nextSource: source,
-      error: `Section "${normalizedSectionId}" has no complete OB-EDIT-END marker. Repair the envelope before inserting a TODO.`,
+      error: invalidBody
+        ? "Check the TeX braces and escape literal percent signs before creating the paper TODO."
+        : `Section "${normalizedSectionId}" has no complete OB-EDIT-END marker. Repair the envelope before inserting a TODO.`,
     };
   }
   const inserted = insertAtTarget(source, target, composed);
