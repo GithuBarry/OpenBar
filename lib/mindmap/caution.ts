@@ -7,19 +7,26 @@ export const CARD_NOTE_FIELDS = ["caption", "background", "critical", "important
 export type CardNoteField = (typeof CARD_NOTE_FIELDS)[number];
 
 export function hasNoteText(value?: string): boolean {
-  return Boolean(value?.replace(/[\s\p{Default_Ignorable_Code_Point}]/gu, ""));
+  return Boolean(value && /[^\s\p{Default_Ignorable_Code_Point}]/u.test(value));
 }
 
 /** Project saved fields into Notes while keeping the stored source untouched. */
 export function cardNotesText(caption?: string, caution?: MindmapCaution): string {
-  const seen = new Set<string>();
-  return [caption, caution?.background, caution?.critical, caution?.important]
-    .flatMap(text => text?.split(/\r?\n(?:[\t ]*\r?\n)+/) || [])
-    .filter(paragraph => {
-      if (!hasNoteText(paragraph) || seen.has(paragraph)) return false;
-      seen.add(paragraph);
-      return true;
-    }).join("\n\n");
+  const fields = [caption, caution?.background, caution?.critical, caution?.important]
+    .filter((field): field is string => hasNoteText(field));
+  if (fields.length < 2) return fields[0] ?? "";
+
+  // Repeated text within an authored field can be meaningful, including code fences.
+  const separator = /\r?\n(?:[\t ]*\r?\n)+/;
+  const merged = [fields[0]!];
+  const seen = new Set(fields[0]!.split(separator));
+  for (const field of fields.slice(1)) {
+    const paragraphs = field.split(separator);
+    const additional = paragraphs.filter(paragraph => hasNoteText(paragraph) && !seen.has(paragraph));
+    if (additional.length) merged.push(additional.length === paragraphs.length ? field : additional.join("\n\n"));
+    for (const paragraph of additional) seen.add(paragraph);
+  }
+  return merged.join("\n\n");
 }
 
 /** Restore the active card's note fields while retaining its other live fields. */
