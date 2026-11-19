@@ -106,7 +106,7 @@ import { createMindmapSaveQueue } from "@/lib/mindmap/save-queue";
 import { mergeSavedMindmap } from "@/lib/mindmap/merge-saved";
 import { captureDeletedMindmapBranch, restoreDeletedMindmapBranch, type DeletedMindmapBranch } from "@/lib/mindmap/deleted-branch";
 import { isOutdatedMindmapPage, loadBrowserMindmap, saveBrowserMindmap } from "@/lib/mindmap/browser-save";
-import { hasMindmapCardRecoveryChanges, mindmapRecoveryKey, readMindmapRecovery, writeMindmapRecovery, type MindmapCardRecoveryDraft, type MindmapRecoveryDraft } from "@/lib/mindmap/browser-recovery";
+import { editedCardBaselines, hasMindmapCardRecoveryChanges, mindmapRecoveryKey, readMindmapRecovery, recoverableMindmapDraft, recoveryBaseContentHash, writeMindmapRecovery, type MindmapCardRecoveryDraft, type MindmapRecoveryDraft } from "@/lib/mindmap/browser-recovery";
 import {
   expandMindmapImmediateChildren,
   mindmapCollapseStorageKey,
@@ -145,6 +145,7 @@ import {
 } from "@/lib/research/todo-map";
 import { CardImages, hasImageTransfer, imageFilesFromTransfer } from "./card-images";
 import { CardScratchpad } from "./card-scratchpad";
+import { RecoveryCardReview } from "./recovery-card-review";
 import { CautionEditor } from "./caution-editor";
 import { MindmapCanvas, type MindmapFocusRequest } from "./mindmap-canvas";
 import { MindmapChangesView } from "./mindmap-changes";
@@ -626,13 +627,17 @@ export function MindmapEditor({
       noteFields: [...baseline.noteFields],
     } : baseline && !inlineEditorSessionRef.current ? activeCardDraftRef.current || undefined : undefined;
     activeCardDraftRef.current = activeCard || null;
+    const local = sessionRef.current.mindmap;
+    const saved = lastAcknowledgedMapRef.current;
+    const hasBaseline = (saved.diskHash || recoveryBaseContentHash(saved)) === persistedDiskHashRef.current;
     return {
       version: 1,
       project,
       mapId: sessionRef.current.mindmap.id || "draft",
       baseHash: persistedDiskHashRef.current,
       savedAt: new Date().toISOString(),
-      mindmap: cloneMindmap(sessionRef.current.mindmap),
+      mindmap: cloneMindmap(local),
+      ...(hasBaseline ? { baseCards: editedCardBaselines(saved, local), baseContentHash: recoveryBaseContentHash(saved) } : {}),
       ...(activeCard ? { activeCard } : {}),
     };
   }, [project]);
@@ -1349,6 +1354,7 @@ export function MindmapEditor({
         return result;
       }
       const saved = result.value.mindmap;
+      lastAcknowledgedMapRef.current = saved;
       persistedDiskHashRef.current = saved.diskHash ?? mindmapDiskHash(saved);
       recordPaperSourceHash(result.value.sourceHash);
       pendingConversionRefreshRef.current = { cardId: id, todoId: result.value.todoId };
@@ -2168,11 +2174,16 @@ export function MindmapEditor({
     });
   }, [captureRecoveryDraft, initialMindmap.id, isPending, project, hydrateSavedMap, preserveBrowserDraft]);
 
+  const recoverySavedMap = lastAcknowledgedMapRef.current;
+  const recoverySavedHash = persistedDiskHashRef.current;
+  const recoveryPaperHash = paperSourceHashRef.current;
+  const restorableDraft = useMemo(() => recoveryDraft
+    ? recoverableMindmapDraft(recoveryDraft, recoverySavedMap, recoverySavedHash, recoveryPaperHash)
+    : null, [recoveryDraft, recoverySavedMap, recoverySavedHash, recoveryPaperHash]);
   const restoreBrowserDraft = useCallback(() => {
-    const draft = recoveryDraftRef.current;
-    if (!draft) return;
-    const sameBase = draft.baseHash === persistedDiskHashRef.current;
-    persistedDiskHashRef.current = draft.baseHash;
+    const draft = restorableDraft;
+    if (!draft || recoveryDraftRef.current !== recoveryDraft || persistedDiskHashRef.current !== draft.baseHash
+      || paperSourceHashRef.current !== recoveryPaperHash) return;
     const active = draft.activeCard;
     if (active) {
       const baseline = cloneMindmap(draft.mindmap);
@@ -2200,11 +2211,10 @@ export function MindmapEditor({
     recoveryDraftRef.current = null;
     setRecoveryReviewOpen(false);
     setRecoveryDraft(null);
-    const message = sameBase ? null : "conflict: The saved map changed while this draft was open. Your recovered edits are preserved. Download the draft or load the saved map to review both versions.";
-    saveErrorRef.current = message;
-    setSaveError(message);
-    setLocalSaveState(sameBase ? "dirty" : "conflict");
-  }, [dispatch, setLocalCollapsed]);
+    saveErrorRef.current = null;
+    setSaveError(null);
+    setLocalSaveState("dirty");
+  }, [dispatch, recoveryDraft, recoveryPaperHash, restorableDraft, setLocalCollapsed]);
 
   const keepSavedMap = useCallback(() => {
     recoveryDraftRef.current = null;
@@ -2756,7 +2766,9 @@ export function MindmapEditor({
                 onChange={fontSize => dispatch({ type: "set-font-size", fontSize })} />
               <button type="button" className={styles.optionRow} aria-pressed={selectMultiple} onClick={() => { setSelectMultiple((value) => !value); setMapSettingsOpen(false); setCardMenuOpen(false); }}><CheckSquare size={15} />Select multiple{selectMultiple && <Check size={14} />}</button>
               <button type="button" className={styles.optionRow} onClick={() => { setViewMode("changes"); setMapSettingsOpen(false); }}><GitBranch size={15} />Change history</button>
-              <button type="button" className={styles.optionRow} aria-pressed={readOnly} disabled={remoteOutOfSync} onClick={toggleReadOnly}><LockKeyhole size={15} />Read-only mode{readOnly && <Check size={14} />}</button>
+              <button type="button" className={styles.optionRow} aria-pressed={manualReadOnly}
+                disabled={!manualReadOnly && (!sessionWritable || remoteOutOfSync || applyingRemote || saveConflict || Boolean(recoveryDraft))}
+                onClick={toggleReadOnly}><LockKeyhole size={15} />Read-only mode{manualReadOnly && <Check size={14} />}</button>
               <button type="button" className={styles.optionRow} aria-pressed={centerOnEdit} onClick={() => setCenterOnEditPreference(!centerOnEdit)}><Crosshair size={15} />Center card while editing{centerOnEdit && <Check size={14} />}</button>
               <div className={styles.activityFilter}>
                 <label className="mindmap-field">
@@ -2927,10 +2939,13 @@ export function MindmapEditor({
         </div>
         <PopoverSurface className={styles.recoveryPanel} side="bottom" align="start" aria-label="Review browser draft" data-editor-notice data-recovery-review>
           <header><strong>Review browser draft</strong><Popover.Close aria-label="Close browser draft review"><X size={15} /></Popover.Close></header>
-          <p>This tab has a draft from {new Date(recoveryDraft.savedAt).toLocaleString()}. Restore it to recover your edits, or keep the saved map to discard the browser draft. You can download a copy first.</p>
-          {recoveryDraft.baseHash !== persistedDiskHashRef.current && <p>The saved map has a newer revision. Restoring this draft will require resolving that conflict before editing.</p>}
+          <p>This tab has a draft from {new Date(recoveryDraft.savedAt).toLocaleString()}.</p>
+          {restorableDraft ? recoveryDraft.baseHash !== recoverySavedHash && <p>Your edits can be restored onto the latest saved map.</p> : <>
+            <p>This draft needs manual review. Compare the cards or download a copy before discarding it.</p>
+            <RecoveryCardReview draft={recoveryDraft} saved={recoverySavedMap} todos={paperState?.paper?.todos} />
+          </>}
           <div className={styles.recoveryActions}>
-            <button type="button" className="p-button p-button-primary btn-primary" onClick={restoreBrowserDraft}>Restore draft</button>
+            {restorableDraft && <button type="button" className="p-button p-button-primary btn-primary" onClick={restoreBrowserDraft}>Restore draft</button>}
             <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download draft</button>
             <button type="button" className="p-button p-button-borderless btn-ghost" onClick={keepSavedMap}>Keep saved map</button>
           </div>
