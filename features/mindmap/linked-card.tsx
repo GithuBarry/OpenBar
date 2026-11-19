@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
+import { sameMapCardId } from "./card-link-history";
 import { RichText } from "@/components/rich-text";
 import type { CardNavigationItem } from "./child-navigation";
 import previewStyles from "./child-navigation.module.css";
@@ -15,17 +16,6 @@ type LinkNavigation = {
 
 const Navigation = createContext<LinkNavigation | null>(null);
 export const LinkPreviewContext = createContext<LinkPreview | null>(null);
-
-export function sameMapCardId(href: string, current: URL): string | undefined {
-  if (!href.includes("#")) return;
-  try {
-    const url = new URL(href, current);
-    const mapPath = (path: string) => path.replace(/\/$/, "").replace(/^(\/p\/[^/]+\/mindmap)\/(?:draft|mindmap)$/, "$1");
-    if (url.origin === current.origin && mapPath(url.pathname) === mapPath(current.pathname) && url.hash.length > 1) {
-      return decodeURIComponent(url.hash.slice(1));
-    }
-  } catch { /* A malformed fragment has no map destination. */ }
-}
 
 export function CardLinkNavigation({ mapPath, lookup, children }: {
   mapPath: string; lookup: LinkNavigation["lookup"]; children: ReactNode;
@@ -67,7 +57,7 @@ export function CardDestinationLink({ href, children, className = "", sourceId, 
     return () => preview(anchor, sourceId, id, false);
   }, [id, open, preview, sourceId]);
   const anchor = <a ref={trigger} href={href} className={`${className} nodrag nopan`}
-    data-map-card-link={id} target={id ? undefined : "_blank"} rel={id ? undefined : "noopener noreferrer"}
+    data-map-card-link={id} data-map-card-source={id ? sourceId : undefined} target={id ? undefined : "_blank"} rel={id ? undefined : "noopener noreferrer"}
     title={id ? undefined : title} onClick={event => { event.stopPropagation(); setOpen(false); }}
     onDoubleClick={event => event.stopPropagation()}>
     {children}{!id && externalIcon}

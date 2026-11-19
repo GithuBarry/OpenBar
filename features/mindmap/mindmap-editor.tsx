@@ -18,7 +18,8 @@ import { HtmlCardTools } from "./html-card-tools";
 import { cardFormatPatch } from "./html-card-editing";
 import { htmlCardValidationError } from "@/lib/mindmap/html-card";
 import { RichText as NodeRichText } from "@/components/rich-text";
-import { CardLinkNavigation, sameMapCardId } from "./linked-card";
+import { CardLinkNavigation } from "./linked-card";
+import { connectCardLinkHistory, sameMapCardId } from "./card-link-history";
 import { ChildNavigation, type CardNavigationItem } from "./child-navigation";
 import { ParentNavigation } from "./parent-navigation";
 import { MapNavigationDock } from "./map-navigation-dock";
@@ -2443,33 +2444,11 @@ export function MindmapEditor({
     }).finally(() => { pendingImageUploads.current -= files.length; });
   }
 
-  useEffect(() => {
-    const focusHash = (hash: string) => {
-      let id: string;
-      try { id = decodeURIComponent(hash.replace(/^#/, "")); }
-      catch { return false; }
-      if (!id || !sessionRef.current.mindmap.nodes.some(node => node.id === id)) return false;
-      focusCardRef.current(id);
-      return true;
-    };
-    const apply = () => { focusHash(window.location.hash); };
-    const followCardLink = (event: MouseEvent) => {
-      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
-      if (!link || link.hasAttribute("download") || (link.target && link.target !== "_self")) return;
-      const url = new URL(link.href, window.location.href);
-      if (!sameMapCardId(url.href, new URL(window.location.href)) || !focusHash(url.hash)) return;
-      event.preventDefault();
-      if (url.hash !== window.location.hash) window.history.pushState(null, "", `${window.location.pathname}${window.location.search}${url.hash}`);
-    };
-    apply();
-    window.addEventListener("hashchange", apply);
-    document.addEventListener("click", followCardLink, true);
-    return () => {
-      window.removeEventListener("hashchange", apply);
-      document.removeEventListener("click", followCardLink, true);
-    };
-  }, []);
+  useEffect(() => connectCardLinkHistory(id => {
+    if (!indexMindmap(sessionRef.current.mindmap).nodeById.has(id)) return false;
+    focusCardRef.current(id);
+    return true;
+  }, () => sessionRef.current.selectedId), []);
 
   const flowNodes = useMemo(() => (
     layout.nodes.flatMap((node) => {
