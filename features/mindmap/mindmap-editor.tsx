@@ -2158,8 +2158,17 @@ export function MindmapEditor({
     startTransition(async () => {
       try {
         const mapId = sessionRef.current.mindmap.id || initialMindmap.id || "draft";
-        const saved = await loadBrowserMindmap(project, mapId);
+        const reviewPaper = Boolean(draft.activeCard?.baseNode.todoId);
+        const [saved, paper] = await Promise.all([
+          loadBrowserMindmap(project, mapId),
+          reviewPaper ? getBrowserEditablePaper(project) : null,
+        ]);
         if (!saved) throw new Error("The saved mindmap is unavailable.");
+        if (reviewPaper && paperSourceHashRef.current !== paper?.bundle.bundleHash) {
+          paperMutationGenerationRef.current += 1;
+          paperSourceHashRef.current = paper?.bundle.bundleHash;
+          router.refresh();
+        }
         recoveryDraftRef.current = draft;
         setRecoveryDraft(draft);
         editBaselineRef.current = null;
@@ -2172,7 +2181,7 @@ export function MindmapEditor({
         setSaveError(error instanceof Error ? error.message : "Could not reload the saved mindmap.");
       }
     });
-  }, [captureRecoveryDraft, initialMindmap.id, isPending, project, hydrateSavedMap, preserveBrowserDraft]);
+  }, [captureRecoveryDraft, initialMindmap.id, isPending, project, hydrateSavedMap, preserveBrowserDraft, router]);
 
   const recoverySavedMap = lastAcknowledgedMapRef.current;
   const recoverySavedHash = persistedDiskHashRef.current;
