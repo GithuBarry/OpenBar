@@ -4,6 +4,8 @@ Run these preparation steps from the repository root after installing dependenci
 
 ## Release preparation
 
+Before a version bump, review the private workspace’s **Platform wishlist** at `/wishlist`. Each entry records the version where someone encountered the issue. Use the entries to choose improvements and check whether earlier reports still reproduce. The list persists across deployments under `OPENBAR_DATA_HOME/platform-wishlist.json` (by default `~/.local/share/openbar/platform-wishlist.json`).
+
 Run the build and operational checks from the repository root:
 
 ```bash
