@@ -137,6 +137,23 @@ function FlowCanvas({
   }, [getViewport, storageKey, viewportInitialized]);
   const nodesInitialized = useNodesInitialized();
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const clearCanvasTextSelection = useCallback(() => {
+    const canvas = canvasRef.current;
+    const selection = window.getSelection();
+    if (canvas && selection && !selection.isCollapsed && selection.rangeCount && selection.getRangeAt(0).intersectsNode(canvas)) {
+      selection.removeAllRanges();
+    }
+  }, []);
+  useEffect(() => {
+    // A background drag can leave keyboard focus on the document body.
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+      if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable=true], .cm-editor")) return;
+      clearCanvasTextSelection();
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [clearCanvasTextSelection]);
   const [controlsHost, setControlsHost] = useState<HTMLElement | null>(null);
   useEffect(() => {
     const editor = canvasRef.current?.closest<HTMLElement>("[data-mindmap-editor]");
@@ -315,6 +332,7 @@ function FlowCanvas({
         const target = event.target as Element;
         if (target.closest('button, a, input, textarea, select, summary, .cm-editor')) return;
         const card = target.closest<HTMLElement>('[data-mind-node]');
+        if (!card) clearCanvasTextSelection();
         if (card?.dataset.mindNode) onSelect(card.dataset.mindNode, event.shiftKey);
       }}
       onClickCapture={event => {
@@ -382,6 +400,7 @@ function FlowCanvas({
       onPaneClick={onPaneClick}
       nodesConnectable={false}
       elementsSelectable
+      selectionKeyCode={null}
       multiSelectionKeyCode="Shift"
       deleteKeyCode={null}
       selectNodesOnDrag={false}
