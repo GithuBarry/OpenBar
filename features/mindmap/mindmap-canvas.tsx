@@ -145,14 +145,14 @@ function FlowCanvas({
     }
   }, []);
   useEffect(() => {
-    // A background drag can leave keyboard focus on the document body.
+    // Focus may be on the document body, and map shortcuts can consume Escape.
     const onEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+      if (event.key !== "Escape" || event.isComposing) return;
       if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable=true], .cm-editor")) return;
       clearCanvasTextSelection();
     };
-    window.addEventListener("keydown", onEscape);
-    return () => window.removeEventListener("keydown", onEscape);
+    window.addEventListener("keydown", onEscape, true);
+    return () => window.removeEventListener("keydown", onEscape, true);
   }, [clearCanvasTextSelection]);
   const [controlsHost, setControlsHost] = useState<HTMLElement | null>(null);
   useEffect(() => {
