@@ -58,6 +58,7 @@ export type MindmapTodoConversionInput = {
   /** The MCP idempotent-write wrapper owns replay persistence for this call. */
   replayOwner?: "service" | "caller";
   replayFingerprint?: string;
+  agentDraft?: true;
 };
 
 type ConversionFailure = OperationResult<never>;
@@ -199,22 +200,25 @@ export async function convertMindmapCardToTodo(input: MindmapTodoConversionInput
     }
     const node = map.nodes.find((item) => item.id === input.cardId);
     if (!node) return conversionFailure("unknown_card", `Unknown mindmap card "${input.cardId}".`);
-    if (node.todoId?.trim()) return success(node.todoId.trim(), map, sectionId);
+    if (!node.todoId && node.contentFormat === "html") {
+      return conversionFailure("conversion_loss", "HTML visuals stay on the map. Create a prose task card to promote into the manuscript.");
+    }
+    const bundle = buildSourceBundle(paths.manuscriptDir, undefined, 0, true);
+    if (input.expectedBundleHash && bundle.bundleHash !== input.expectedBundleHash) {
+      return conversionFailure("stale_disk_state", "The paper changed on disk. Reload before converting this card.", true, bundle.bundleHash);
+    }
+    if (node.todoId?.trim()) return success(node.todoId.trim(), map, undefined, undefined, bundle.bundleHash);
     const content = ordinaryMindmapCardContent(node);
     const title = content.title.trim();
     const text = content.body.trim();
     if (!title && !text) return conversionFailure("invalid_arguments", "The card needs a title or details before it can become a TODO.");
 
-    const bundle = buildSourceBundle(paths.manuscriptDir, undefined, 0, true);
-    if (input.expectedBundleHash && bundle.bundleHash !== input.expectedBundleHash) {
-      return conversionFailure("stale_disk_state", "The paper changed on disk. Reload before converting this card.", true, bundle.bundleHash);
-    }
     const textFormat = node.contentFormat === "tex" ? "tex" : "plain";
     const inserted = insertTodoAtSection(bundle.source, sectionId, text, undefined, title || undefined, textFormat);
     if (!inserted.sectionFound) return conversionFailure(sectionId ? "unknown_section" : "invalid_tex", inserted.error || "The paper has no writable source location.");
     if (inserted.error) return conversionFailure("invalid_tex", inserted.error);
 
-    const bound = applyMindmapAction(map, { type: "bind-todo", id: input.cardId, todoId: inserted.id }).mindmap;
+    const bound = applyMindmapAction(map, { type: "bind-todo", id: input.cardId, todoId: inserted.id, agentDraft: input.agentDraft }).mindmap;
     const sections = sectionRefTargets(bundle, paths.manuscriptDir);
     const normalizedNextMap = normalizeMindmap({
       ...bound,

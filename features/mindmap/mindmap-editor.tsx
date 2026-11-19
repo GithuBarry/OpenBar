@@ -918,7 +918,7 @@ export function MindmapEditor({
       return flushBeforeOperation(flushPendingSaves, async () => {
         convertingCardIdRef.current = id;
         setConvertingCardId(id);
-        return convertCardToTodo(id, sectionId, expectedRevision, requestId);
+        return convertCardToTodo(id, sectionId, expectedRevision, requestId, "webmcp");
       }).finally(() => {
         if (conversionStartingCardIdRef.current === id) conversionStartingCardIdRef.current = null;
         const pending = pendingConversionRefreshRef.current;
@@ -1304,6 +1304,7 @@ export function MindmapEditor({
     sectionId?: string,
     expectedRevision?: number,
     requestId?: string,
+    actor: "human" | "webmcp" = "human",
   ): Promise<MindmapTodoConversionResult> {
     return runPaperMutation(async () => {
       const current = sessionRef.current;
@@ -1350,6 +1351,7 @@ export function MindmapEditor({
         expectedMapDiskHash,
         expectedPaperSourceHash,
         requestId || (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `convert-${Date.now()}`),
+        actor,
       );
       if (!result.ok) {
         setSaveError(result.message);

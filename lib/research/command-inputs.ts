@@ -89,6 +89,10 @@ export const NATIVE_MINDMAP_INPUTS = {
   move_mindmap_node: MINDMAP_INPUTS.move_mindmap_node.extend({ project: projectId, mapId: mapId, expectedDiskHash: diskHash.optional(), requestId: z.string().optional() }),
   preview_mindmap_batch: z.strictObject({ project: projectId, mapId: mapId, selectedIds: z.array(z.string()).min(1).max(2000), expectedRevision: revision, expectedDiskHash: diskHash.optional(), previewToken: z.string().optional(), changes: z.record(z.string(), z.unknown()).optional(), deleteMode: z.enum(["cards", "branches"]).optional(), move: z.record(z.string(), z.unknown()).optional(), requestId: z.string().optional() }),
   apply_mindmap_batch: z.strictObject({ project: projectId, mapId: mapId, selectedIds: z.array(z.string()).min(1).max(2000), expectedRevision: revision, expectedDiskHash: diskHash.optional(), previewToken: z.string(), changes: z.record(z.string(), z.unknown()).optional(), deleteMode: z.enum(["cards", "branches"]).optional(), move: z.record(z.string(), z.unknown()).optional(), requestId: z.string().optional() }),
+  convert_card_to_todo: MINDMAP_INPUTS.convert_card_to_todo.extend({
+    project: projectId, mapId, id: z.string().min(1), sectionId: z.string().trim().min(1).optional(),
+    expectedDiskHash: diskHash.optional(), expectedBundleHash: diskHash.describe("paper.sourceHash from get_project_state."),
+  }),
   link_todo_card: MINDMAP_INPUTS.link_todo_card.extend({ project: projectId, mapId, expectedDiskHash: diskHash.optional(), requestId: z.string().optional() }),
   place_todo_card: MINDMAP_INPUTS.place_todo_card.extend({ project: projectId, mapId: mapId, expectedDiskHash: diskHash.optional(), requestId: z.string().optional() }),
   rename_mindmap: MINDMAP_INPUTS.rename_mindmap.extend({ project: projectId, mapId: mapId, title: z.string().min(1).max(500), expectedDiskHash: diskHash.optional(), requestId: z.string().optional() }),

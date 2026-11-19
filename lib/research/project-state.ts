@@ -811,6 +811,7 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
     paper: paper && {
       title: paper.title,
       rootFile: paper.rootFile,
+      sourceHash: paper.sourceHash,
       sections: paper.outline.length,
       openTodos: openTodos.length,
       primaryUnplaced: unplaced.length,

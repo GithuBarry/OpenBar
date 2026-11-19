@@ -173,6 +173,14 @@ prose that differs from the manuscript goes into Notes. Use `place-todo` with
 `{todoId, parentId}` for an unplaced task. Repeating placement returns the
 existing card and parent. Use `move` to relocate that card.
 
+Use `convert-to-todo` to promote an ordinary card into a new manuscript task.
+Native MCP takes `{id, sectionId?, expectedBundleHash}` in `edit.args`. Read
+`paper.sourceHash` and the current section from `get_project_state`, and pass
+the map revision from `get_mindmap`. The browser supplies the paper hash for
+WebMCP. A successful conversion preserves the card ID, Notes and children.
+Agent conversions are marked Agent draft. A visual HTML card can have a prose
+child card for the manuscript task.
+
 Wiki and instructions pages use the shared file tools for authored documents.
 Their human editor actions remain available in the UI.
 

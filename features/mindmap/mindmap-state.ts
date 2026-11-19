@@ -73,7 +73,7 @@ export type MindmapTreeAction =
   | { type: "patch-nodes"; ids: string[]; patch: MindmapNodePatch }
   | { type: "update-tags"; ids: string[]; tag: string; operation: "add" | "remove" }
   | { type: "link-existing-todo"; id: string; todoId: string; todoTitle?: string; todoText: string; agentDraft?: true }
-  | { type: "bind-todo"; id: string; todoId: string }
+  | { type: "bind-todo"; id: string; todoId: string; agentDraft?: true }
   | { type: "unbind-todo"; id: string; todoId?: string; title?: string; text: string }
   | { type: "reparent"; id: string; parentId: string; beforeId?: string; afterId?: string }
   | { type: "rename-map"; title: string }
@@ -372,6 +372,7 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
           return {
             ...rest,
             todoId: action.todoId,
+            ...(action.agentDraft ? { agentDraft: true } : {}),
             text: "",
             updatedAt: new Date().toISOString(),
           };

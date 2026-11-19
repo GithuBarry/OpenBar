@@ -588,6 +588,9 @@ export async function executeMindmapWebMcpTool(
       if (args.sectionId !== undefined && (typeof args.sectionId !== "string" || !args.sectionId.trim())) {
         return failResult("invalid_arguments", "sectionId must be a non-empty string when provided.", false);
       }
+      const card = snapshot.nodes.find(node => node.id === args.id);
+      if (!card?.todoId && card?.contentFormat === "html") return failResult("conversion_loss", "HTML visuals stay on the map. Create a prose task card to promote into the manuscript.", false);
+      if (snapshot.writeAccess.activeCardId === args.id) return failResult("active_card_edit", "The human is editing this card. Convert it after they finish.", true);
       if (!host.convertCardToTodo) return failResult("capability_unavailable", "This map cannot convert cards to TODOs.", false);
       let result: MindmapTodoConversionResult;
       try {

@@ -1201,6 +1201,7 @@ export async function convertMindmapCardToTodoAction(
   expectedMapDiskHash?: string,
   expectedBundleHash?: string,
   requestId?: string,
+  actor: "human" | "webmcp" = "human",
 ): Promise<MindmapTodoConversionResult> {
   await requireProjectAccess(slug);
   return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
@@ -1214,6 +1215,7 @@ export async function convertMindmapCardToTodoAction(
       expectedMapDiskHash,
       expectedBundleHash,
       requestId,
+      agentDraft: actor === "webmcp" ? true : undefined,
     });
     if (!local.ok) {
       const failure: MindmapTodoConversionFailure = {
@@ -1244,7 +1246,7 @@ export async function convertMindmapCardToTodoAction(
       ],
       title: local.value.todoId,
       href: `/p/${encodeURIComponent(slug)}/mindmap${current.id && !isPrimaryMindmap(current) ? `/${encodeURIComponent(current.id)}` : ""}#${encodeURIComponent(cardId)}`,
-    });
+    }, actor);
     bust(slug);
     // The editor owns the project-scoped quiet window and queues Git after it
     // receives this durable local result.
