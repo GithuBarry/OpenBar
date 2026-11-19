@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { MessageSquare } from "lucide-react";
+import { FastTooltip } from "@/components/fast-tooltip";
 import { PopoverSurface } from "@/components/pop";
 
 export function RequestRevision({ nodeId, onRequest }: {
@@ -37,11 +38,11 @@ export function RequestRevision({ nodeId, onRequest }: {
     if (pending.current) return;
     setOpen(next);
   }}>
-    <Popover.Trigger asChild>
-      <button type="button" aria-label="Revise draft" title="Add an @agent revision comment to this card" style={{ width: "auto", paddingInline: 5, gap: 4, fontSize: 11 }}>
-        <MessageSquare size={13} aria-hidden="true" />Revise
+    <FastTooltip label="Revise"><Popover.Trigger asChild>
+      <button type="button" aria-label="Revise draft" className="[@media(pointer:coarse)]:min-w-11 [@media(pointer:coarse)]:min-h-11">
+        <MessageSquare size={13} aria-hidden="true" />
       </button>
-    </Popover.Trigger>
+    </Popover.Trigger></FastTooltip>
     <PopoverSurface side="bottom" align="end" aria-label="Request a draft revision" data-mind-editor={nodeId}
       className="w-72 max-w-[calc(100vw-24px)] p-3 nodrag nopan nowheel"
       onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
