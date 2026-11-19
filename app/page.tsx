@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getEditableTexPaper, projectContentDir } from "@/lib/store";
 import { analyzePaper, paperTodoIsOpen } from "@/lib/research/paper-analysis";
 import { getProjectGitDestination } from "@/lib/tex-project/overleaf-git";
+import { platformWishlistAvailable } from "@/lib/research/platform-wishlist";
 import { requireWorkbenchPage } from "@/lib/server/project-access";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
 import { AboutFeatureGrid } from "@/components/about-features";
@@ -67,7 +68,10 @@ export default async function Home() {
           <p className="mt-4 max-w-3xl text-sm leading-6 text-muted sm:text-base">
             {workspace.name} turns the research paper into an agent-operable plan. Open work stays in the manuscript, and the mindmap shows how the shared TODOs connect to the research plan.
           </p>
-          <Link href="/about" className="mt-6 inline-block text-xs text-muted hover:text-ink">More about {workspace.name}</Link>
+          <div className="mt-6 flex flex-wrap gap-4 text-xs text-muted">
+            <Link href="/about" className="hover:text-ink">More about {workspace.name}</Link>
+            {platformWishlistAvailable() && <Link href="/wishlist" className="hover:text-ink">Platform wishlist</Link>}
+          </div>
         </div>
       </section>
     </main>

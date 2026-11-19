@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { platformWishlistAvailable } from "@/lib/research/platform-wishlist";
 import { notFound } from "next/navigation";
 import { ScrollText } from "lucide-react";
 
@@ -34,6 +36,7 @@ export default async function InstructionsPage({
         title="Project instructions"
         subtitle={project.title}
         icon={<ScrollText size={18} />}
+        actions={platformWishlistAvailable() && <Link className="p-button p-button-borderless" href="/wishlist">Platform wishlist</Link>}
       />
       <div className="mx-auto max-w-3xl p-6">
         <ProjectInstructionsClient

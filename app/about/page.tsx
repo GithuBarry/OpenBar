@@ -10,6 +10,7 @@ import { AboutFeatureGrid } from "@/components/about-features";
 import { ThemeToggle } from "@/components/shell/theme-toggle";
 import { WorkspaceMark } from "@/components/workspace-mark";
 import { getWorkspaceSettings } from "@/lib/workspace";
+import { platformWishlistAvailable } from "@/lib/research/platform-wishlist";
 import { requireWorkbenchPage } from "@/lib/server/project-access";
 import packageJson from "@/package.json";
 
@@ -53,6 +54,7 @@ export default async function AboutPage() {
           {workspace.name} keeps your paper, shared TODOs, mindmaps, and agent instructions together. Use an existing workspace, or run your own copy with the steps below.
         </p>
         <nav aria-label="Setup guide" className="mt-6 flex flex-wrap gap-3 text-sm">
+          {platformWishlistAvailable() && <Link href="/wishlist" className="text-accent underline underline-offset-4">Platform wishlist</Link>}
           <a href="#local-setup" className="text-accent underline underline-offset-4">Install locally</a>
           <a href="#first-paper" className="text-accent underline underline-offset-4">Start your first paper</a>
           <a href="#agent-setup" className="text-accent underline underline-offset-4">Connect an agent</a>
