@@ -1,3 +1,4 @@
+import { resolvePaperSectionRef, type PaperSectionRefTarget } from "./artifact-link";
 import type { MindmapNode } from "@/lib/types";
 
 /** Return the paper TODO ids currently bound by live nodes in one map. */
@@ -28,4 +29,16 @@ export function availableTodoCandidates<T extends { id: string }>(
     const id = todo.id.trim();
     return Boolean(id) && !bound.has(id);
   });
+}
+
+/** Prefer the card's single resolved destination, then the paper's sole heading. */
+export function defaultPaperTodoSection(card: Pick<MindmapNode, "refs">, sections: PaperSectionRefTarget[]): string {
+  const linked = new Set<string>();
+  for (const ref of card.refs || []) {
+    if (ref.kind !== "paper-section") continue;
+    const resolved = resolvePaperSectionRef(ref, sections);
+    if (resolved.status === "resolved") linked.add(resolved.section.id);
+  }
+  if (linked.size === 1) return [...linked][0]!;
+  return sections.length === 1 ? sections[0]!.id : "";
 }

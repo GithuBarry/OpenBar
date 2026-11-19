@@ -39,6 +39,8 @@ export type { CurrentLocation };
 
 export type ProjectStateOutlineItem = {
   id: string;
+  label?: string;
+  bodyHash?: string;
   title: string;
   level: number;
   openTodos: number;
@@ -180,6 +182,7 @@ export type ProjectState = {
 
 type SummarySection = {
   id: string;
+  bodyHash?: string;
   title: string;
   level: number;
   order: number;
@@ -328,6 +331,8 @@ export function buildPaperSummary(
     const openTodos = sourceTodos.filter((todo) => openTodoStatus(todo) && ("sectionId" in todo ? todo.sectionId : undefined) === section.id).length;
     return {
       id: section.id,
+      ...(section.label ? { label: section.label } : {}),
+      bodyHash: section.bodyHash,
       title: section.title,
       level: section.level,
       openTodos,

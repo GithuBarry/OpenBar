@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import { ChevronDown, FileCheck2 } from "lucide-react";
+import { defaultPaperTodoSection } from "@/lib/research/map-todo-candidates";
 import { linkedTodoCaption } from "@/lib/mindmap/link-existing-todo";
 import { mindmapCardContentForTodo } from "@/lib/research/todo-map";
 import type { ProjectStateOutlineItem, ProjectStateTodo } from "@/lib/research/project-state";
@@ -22,7 +23,9 @@ export function PaperTodoPicker({ card, todos, sections, disabled, onLink, onCre
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"existing" | "create">("existing");
   const [todoId, setTodoId] = useState("");
-  const [sectionId, setSectionId] = useState("");
+  const [sectionChoice, setSectionChoice] = useState<{ id: string; sourceHash?: string } | null>(null);
+  const chosenSection = sectionChoice?.id ? sections.find(section => section.id === sectionChoice.id && section.sourceHash === sectionChoice.sourceHash) : undefined;
+  const sectionId = sectionChoice?.id === "" ? "" : chosenSection?.id ?? defaultPaperTodoSection(card, sections);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const visual = card.contentFormat === "html";
@@ -74,8 +77,8 @@ export function PaperTodoPicker({ card, todos, sections, disabled, onLink, onCre
         </button>
       </> : <>
         <label>Manuscript location
-          <select value={sectionId} onChange={event => setSectionId(event.target.value)}>
-            <option value="">End of manuscript</option>
+          <select value={sectionId} onChange={event => setSectionChoice({ id: event.target.value, sourceHash: sections.find(section => section.id === event.target.value)?.sourceHash })}>
+            <option value="">End of manuscript (root file)</option>
             {sections.map(section => <option key={section.id} value={section.id}>{section.headingPath?.join(" › ") || section.title}</option>)}
           </select>
         </label>
