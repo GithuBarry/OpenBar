@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { Hand, LocateFixed } from "lucide-react";
 import {
   Background,
   Controls,
@@ -18,15 +19,18 @@ import {
   type NodeMouseHandler,
   type NodeProps,
   type NodeChange,
+  type Rect,
   type Viewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
 import { applyMindmapDrop, resolveMindmapDrop, type MindmapDrop } from "@/lib/mindmap/drop-targets";
 import { childPortLayout, childSourceHandleId, type ChildPort } from "@/lib/mindmap/child-ports";
+import { CardLinkPreviewLine } from "./card-link-preview-line";
 import { indexMindmap } from "@/lib/mindmap-index";
 import type { Mindmap } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import navigationStyles from "./map-navigation-dock.module.css";
 
 export type MindmapFlowNode = {
   id: string;
@@ -127,7 +131,7 @@ function FlowCanvas({
   onPaneClick?: () => void;
   focusRequest?: MindmapFocusRequest | null;
 }) {
-  const { setCenter, getZoom, getViewport, setViewport, viewportInitialized } = useReactFlow();
+  const { setCenter, getNodesBounds, getZoom, getViewport, setViewport, viewportInitialized } = useReactFlow();
   const storageKey = viewportStorageKey(mindmap);
   const [savedViewport] = useState(() => readViewport(storageKey));
   const preserveViewport = useCallback(() => {
@@ -137,6 +141,7 @@ function FlowCanvas({
   }, [getViewport, storageKey, viewportInitialized]);
   const nodesInitialized = useNodesInitialized();
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const [handTool, setHandTool] = useState(false);
   const clearCanvasTextSelection = useCallback(() => {
     const canvas = canvasRef.current;
     const selection = window.getSelection();
@@ -149,6 +154,7 @@ function FlowCanvas({
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.isComposing) return;
       if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable=true], .cm-editor")) return;
+      setHandTool(false);
       clearCanvasTextSelection();
     };
     window.addEventListener("keydown", onEscape, true);
@@ -214,6 +220,11 @@ function FlowCanvas({
       : tray ? tray.getBoundingClientRect().right - pane.getBoundingClientRect().left + 48 : 48;
     void setViewport({ x: left - root.x, y: pane.clientHeight / 2 - root.y - root.height / 2, zoom: 1 });
   }, [viewportInitialized, nodesInitialized, nodes, mindmap.rootId, focusRequest, setViewport]);
+  const centerBounds = useCallback((bounds: Rect, zoom: number) => {
+    void setCenter(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2, {
+      zoom, duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180,
+    });
+  }, [setCenter]);
   useEffect(() => {
     if (!viewportInitialized || !nodesInitialized || !focusRequest || lastFocusRef.current === focusRequest.sequence) return;
     const node = nodes.find((item) => item.id === focusRequest.id);
@@ -222,8 +233,8 @@ function FlowCanvas({
     clearCollapseAnchor();
     initialViewRef.current = true;
     if (focusRequest.center === false) return;
-    void setCenter(node.x + node.width / 2, node.y + node.height / 2, { zoom: Math.max(0.75, getZoom()), duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180 });
-  }, [viewportInitialized, nodesInitialized, focusRequest, nodes, setCenter, getZoom, clearCollapseAnchor]);
+    centerBounds(node, Math.max(0.75, getZoom()));
+  }, [viewportInitialized, nodesInitialized, focusRequest, nodes, centerBounds, getZoom, clearCollapseAnchor]);
 
   const childPorts = useMemo(() => {
     const { childrenByParent } = indexMindmap(mindmap);
@@ -235,7 +246,7 @@ function FlowCanvas({
       type: "card",
       position: { x: node.x, y: node.y },
       selected: node.selected,
-      draggable: !readOnly && !selectMultiple && node.id !== mindmap.rootId,
+      draggable: !handTool && !readOnly && !selectMultiple && node.id !== mindmap.rootId,
       initialWidth: node.width,
       initialHeight: node.height,
       sourcePosition: Position.Right,
@@ -247,7 +258,7 @@ function FlowCanvas({
           portSignature: childPorts.get(node.id)!.ports.map(port => `${port.id}:${port.top}`).join("|"),
         },
       })),
-    [mindmap.rootId, nodes, readOnly, renderCard, selectMultiple, childPorts],
+    [mindmap.rootId, nodes, readOnly, renderCard, selectMultiple, childPorts, handTool],
   );
   const [controlledNodes, setControlledNodes] = useState<Node<CardData>[]>(baseFlowNodes);
   useLayoutEffect(() => {
@@ -288,8 +299,9 @@ function FlowCanvas({
   }, [mindmap.nodes, nodes, childPorts]);
 
   const onNodeClick: NodeMouseHandler = useCallback((event, node) => {
-    if (event.detail === 0) onSelect(node.id, event.shiftKey);
-  }, [onSelect]);
+    const tapInHandMode = handTool && !(event.target as Element).closest("button, a, input, textarea, select, summary, .cm-editor");
+    if (event.detail === 0 || tapInHandMode) onSelect(node.id, event.shiftKey);
+  }, [handTool, onSelect]);
 
   const onNodeDoubleClickHandler: NodeMouseHandler = useCallback((_event, node) => {
     onDoubleClick(node.id);
@@ -318,13 +330,25 @@ function FlowCanvas({
     ));
   }, [mindmap, onDropPreview]);
 
-  const controls = <Controls showInteractive={false} />;
+  const selectedForCenter = nodes.filter(node => node.selected);
+  const centerLabel = selectedForCenter.length > 1 ? "Center selected cards" : selectedForCenter.length ? "Center selected card" : "Center root card";
+  const controls = <>
+    <Controls showInteractive={false} />
+    <div data-mindmap-movement role="group" aria-label="Map movement">
+      <button type="button" aria-label="Pan across cards" aria-pressed={handTool} title="Pan across cards · Esc to exit"
+        onClick={() => setHandTool(active => !active)}><Hand size={16} aria-hidden="true" /></button>
+      <button type="button" aria-label={centerLabel} title={centerLabel} disabled={!nodesInitialized} onClick={() => {
+        const ids = selectedForCenter.length ? selectedForCenter.map(node => node.id) : [mindmap.rootId];
+        centerBounds(getNodesBounds(ids), getZoom());
+      }}><LocateFixed size={16} aria-hidden="true" /></button>
+    </div>
+  </>;
   return (
     <ReactFlow
       key="fixed-card-geometry"
       defaultViewport={savedViewport}
       ref={canvasRef}
-      className="mindmap-viewport mindmap-rf"
+      className={cn("mindmap-viewport mindmap-rf", handTool && navigationStyles.handTool)}
       onPointerDownCapture={(event) => {
         if (event.button !== 0) return;
         clearCollapseAnchor();
@@ -332,8 +356,8 @@ function FlowCanvas({
         const target = event.target as Element;
         if (target.closest('button, a, input, textarea, select, summary, .cm-editor')) return;
         const card = target.closest<HTMLElement>('[data-mind-node]');
-        if (!card) clearCanvasTextSelection();
-        if (card?.dataset.mindNode) onSelect(card.dataset.mindNode, event.shiftKey);
+        if (handTool || !card) clearCanvasTextSelection();
+        if (!handTool && card?.dataset.mindNode) onSelect(card.dataset.mindNode, event.shiftKey);
       }}
       onClickCapture={event => {
         const target = event.target as Element;
@@ -418,8 +442,9 @@ function FlowCanvas({
         style: { stroke: "rgb(var(--line))", strokeWidth: 1.15 },
       }}
     >
+      <CardLinkPreviewLine />
       <Background gap={32} size={1} color="rgb(var(--accent) / 0.12)" />
-      {controlsHost ? createPortal(controls, controlsHost) : controls}
+      {controlsHost ? createPortal(controls, controlsHost) : null}
     </ReactFlow>
   );
 }

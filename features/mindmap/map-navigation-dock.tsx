@@ -50,7 +50,7 @@ export function MapNavigationDock({ children }: { children: ReactNode }) {
     if (compact) setOpen(next);
   }}>
     <Popover.Anchor asChild>
-    <div ref={rootRef} className={styles.widget} data-map-navigation data-compact={compact || undefined} role="group" aria-label="Zoom and history"
+    <div ref={rootRef} className={styles.widget} data-map-navigation data-compact={compact || undefined} role="group" aria-label="Map navigation and history"
       onPointerDownCapture={event => { pointerType.current = event.pointerType; }}
       onFocusCapture={() => {
         clearTimeout(closeTimer.current);
@@ -60,13 +60,13 @@ export function MapNavigationDock({ children }: { children: ReactNode }) {
       }}
       onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closeSoon(); }}
       onKeyDown={event => event.stopPropagation()}>
-      <Popover.Trigger asChild><button ref={triggerRef} type="button" className={styles.toggle} hidden={!compact} aria-label="Zoom and history controls" title="Zoom and history"
+      <Popover.Trigger asChild><button ref={triggerRef} type="button" className={styles.toggle} hidden={!compact} aria-label="Map navigation and history controls" title="Map navigation and history"
         onClick={event => {
           if (transientOpen.current) { event.preventDefault(); transientOpen.current = false; setOpen(true); }
         }}>
         {open ? <ChevronDown size={16} aria-hidden="true" /> : <Move size={16} aria-hidden="true" />}
       </button></Popover.Trigger>
-      <Popover.Content forceMount className={styles.panel} hidden={!expanded} inert={!expanded} role={compact ? "dialog" : "group"} aria-label="Zoom and history actions" side="top" align="start" sideOffset={compact ? 6 : 0} collisionPadding={12}
+      <Popover.Content forceMount className={styles.panel} hidden={!expanded} inert={!expanded} role={compact ? "dialog" : "group"} aria-label="Map navigation and history actions" side="top" align="start" sideOffset={compact ? 6 : 0} collisionPadding={12}
         onOpenAutoFocus={event => event.preventDefault()}
         onCloseAutoFocus={event => event.preventDefault()}
         onInteractOutside={event => { if (!compact || !open || rootRef.current?.contains(event.target as Node)) event.preventDefault(); }}
@@ -75,7 +75,7 @@ export function MapNavigationDock({ children }: { children: ReactNode }) {
           event.stopPropagation();
           if (document.activeElement !== triggerRef.current) { suppressFocus.current = true; triggerRef.current?.focus(); }
         }}>
-        <div className={styles.zoom} data-mindmap-zoom-controls role="group" aria-label="Map zoom controls" />
+        <div className={styles.zoom} data-mindmap-zoom-controls role="group" aria-label="Zoom and pan" />
         <div className={styles.history}>{children}</div>
       </Popover.Content>
     </div>
