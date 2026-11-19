@@ -20,7 +20,8 @@ export function sameMapCardId(href: string, current: URL): string | undefined {
   if (!href.includes("#")) return;
   try {
     const url = new URL(href, current);
-    if (url.origin === current.origin && url.pathname.replace(/\/$/, "") === current.pathname.replace(/\/$/, "") && url.hash.length > 1) {
+    const mapPath = (path: string) => path.replace(/\/$/, "").replace(/^(\/p\/[^/]+\/mindmap)\/(?:draft|mindmap)$/, "$1");
+    if (url.origin === current.origin && mapPath(url.pathname) === mapPath(current.pathname) && url.hash.length > 1) {
       return decodeURIComponent(url.hash.slice(1));
     }
   } catch { /* A malformed fragment has no map destination. */ }

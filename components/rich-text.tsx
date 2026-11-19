@@ -8,12 +8,12 @@ import ReactMarkdown from "react-markdown";
 import { ExternalLink } from "lucide-react";
 import { texClosingBrace } from "@/lib/mindmap/text-formatting";
 import { AGENT_MENTION_PATTERN } from "@/lib/research/agent-mentions";
+import { CardDestinationLink } from "@/features/mindmap/linked-card";
 import { safeUrl } from "@/lib/safe-url";
 
 function RichTextLink({ href, children }: { href: string; children: ReactNode }) {
-  return <a className={styles.link} href={href} target="_blank" rel="noreferrer" title={`${href} — opens in a new tab`} onClick={event => event.stopPropagation()}>
-    {children}<ExternalLink className={styles.linkIcon} size={11} aria-hidden="true" />
-  </a>;
+  return <CardDestinationLink className={styles.link} href={href} title={`${href} — opens in a new tab`}
+    externalIcon={<ExternalLink className={styles.linkIcon} size={11} aria-hidden="true" />}>{children}</CardDestinationLink>;
 }
 
 function mentionParts(text: string): string[] {
@@ -96,7 +96,7 @@ export function RichText({ text, format = "plain", tableLayout = "wide" }: { tex
           }}
         ><table>{children}</table></div>,
         a: ({ href, children }) => {
-          const target = href && safeUrl(href);
+          const target = href && (safeUrl(href) || (/^(?:#[^\s]+|\/p\/[^/\\?#]+\/mindmap(?:\/[^/\\?#]+)?#[^\s]+)$/.test(href) ? href : undefined));
           return target ? <RichTextLink href={target}>{children}</RichTextLink> : <span>{children}</span>;
         },
       }}>{text}</ReactMarkdown>

@@ -233,7 +233,7 @@ function FlowCanvas({
     clearCollapseAnchor();
     initialViewRef.current = true;
     if (focusRequest.center === false) return;
-    centerBounds(node, Math.max(0.75, getZoom()));
+    centerBounds(node, getZoom());
   }, [viewportInitialized, nodesInitialized, focusRequest, nodes, centerBounds, getZoom, clearCollapseAnchor]);
 
   const childPorts = useMemo(() => {

@@ -10,6 +10,7 @@ import { artifactRefSchema } from "@/lib/schemas";
 import { artifactHref } from "@/lib/research/artifact-link";
 import { safeUrl } from "@/lib/safe-url";
 import type { ArtifactRef } from "@/lib/types";
+import { CardDestinationLink, useLinkedCard } from "./linked-card";
 import { InspectorSummary } from "./inspector-summary";
 import styles from "./card-details.module.css";
 import linkStyles from "./card-links.module.css";
@@ -33,9 +34,16 @@ export function hasCardLinks(refs: ArtifactRef[] = []): boolean {
   return refs.some(ref => ref.kind !== "figure");
 }
 
-export function CardLinkIndicator({ project, refs }: { project: string; refs: ArtifactRef[] }) {
+export function CardLinkIndicator({ project, refs, sourceId }: { project: string; refs: ArtifactRef[]; sourceId: string }) {
   const links = refs.filter(ref => ref.kind !== "figure").map(ref => ({ ...ref, href: artifactHref(project, ref) }));
+  const singleCard = useLinkedCard(links.length === 1 ? links[0].href : "");
   if (!links.length) return null;
+  if (singleCard) {
+    const link = links[0];
+    return <CardDestinationLink href={link.href} sourceId={sourceId} className={styles.linkTrigger}>
+      <Link2 size={13} aria-hidden="true" /><span className={styles.linkDestination}>{link.label || singleCard.title || "Linked card"}</span>
+    </CardDestinationLink>;
+  }
   const external = links.find(ref => ref.kind === "web" || ref.kind === "external");
   const first = external || links[0]!;
   let destination = first.label || first.kind.replaceAll("-", " ");
@@ -56,16 +64,16 @@ export function CardLinkIndicator({ project, refs }: { project: string; refs: Ar
         </button>
       </Popover.Trigger></FastTooltip>
       <PopoverSurface className={styles.linkPopover} side="top" align="end" sideOffset={6} aria-label="Saved links">
-        {links.map((ref, index) => <a key={`${ref.href}:${index}`} href={ref.href} target="_blank" rel="noopener noreferrer">
+        {links.map((ref, index) => <CardDestinationLink key={`${ref.href}:${index}`} href={ref.href} sourceId={sourceId}>
           <LinkDestinationIcon href={ref.href} external={isWebLink(ref)} className={linkStyles.popoverIcon} />
           <span>{ref.label || ref.href}{ref.label && <small>{ref.href}</small>}</span>
-        </a>)}
+        </CardDestinationLink>)}
       </PopoverSurface>
     </Popover.Root>
   </span>;
 }
 
-export function CardLinks({ project, refs, onChange }: { project: string; refs: ArtifactRef[]; onChange: (refs: ArtifactRef[]) => void }) {
+export function CardLinks({ project, refs, sourceId, onChange }: { project: string; refs: ArtifactRef[]; sourceId: string; onChange: (refs: ArtifactRef[]) => void }) {
   const [draft, setDraft] = useState<ArtifactRef | null>(null);
   const [original, setOriginal] = useState<ArtifactRef | null>(null);
   const [context, setContext] = useState("");
@@ -101,7 +109,7 @@ export function CardLinks({ project, refs, onChange }: { project: string; refs: 
     <InspectorSummary label="Links" hasContent={refs.some(ref => ref.kind !== "figure")} />
     <div className={linkStyles.list}>
       {refs.filter(ref => ref.kind !== "figure").map((ref, index) => <div key={index} className={linkStyles.row}>
-        <a className={linkStyles.savedLink} href={artifactHref(project, ref)} title={ref.label || ref.id} target="_blank" rel="noopener noreferrer"><LinkDestinationIcon href={artifactHref(project, ref)} external={isWebLink(ref)} /><span>{ref.label || ref.id}</span></a>
+        <CardDestinationLink className={linkStyles.savedLink} href={artifactHref(project, ref)} sourceId={sourceId} title={ref.label || ref.id}><LinkDestinationIcon href={artifactHref(project, ref)} external={isWebLink(ref)} /><span>{ref.label || ref.id}</span></CardDestinationLink>
         <FastTooltip label="Edit link"><button type="button" className={linkStyles.iconButton} aria-label={`Edit link ${ref.label || ref.id}`} onClick={() => edit(ref)}><Pencil size={13} aria-hidden="true" /></button></FastTooltip>
         <FastTooltip label="Remove link"><button type="button" className={linkStyles.iconButton} aria-label={`Remove link ${ref.label || ref.id}`} onClick={() => onChange(refs.filter(item => item !== ref))}><Trash2 size={13} aria-hidden="true" /></button></FastTooltip>
       </div>)}

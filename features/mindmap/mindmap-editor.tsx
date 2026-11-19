@@ -18,6 +18,7 @@ import { HtmlCardTools } from "./html-card-tools";
 import { cardFormatPatch } from "./html-card-editing";
 import { htmlCardValidationError } from "@/lib/mindmap/html-card";
 import { RichText as NodeRichText } from "@/components/rich-text";
+import { CardLinkNavigation, sameMapCardId } from "./linked-card";
 import { ChildNavigation, type CardNavigationItem } from "./child-navigation";
 import { ParentNavigation } from "./parent-navigation";
 import { MapNavigationDock } from "./map-navigation-dock";
@@ -1640,6 +1641,10 @@ export function MindmapEditor({
     setFocusRequest(current => ({ id, sequence: (current?.sequence || 0) + 1 }));
   }, [layout.nodeById, selectCard, setLocalCollapsed]);
   focusCardRef.current = focusCard;
+  const linkedCardPreview = useCallback((id: string): CardNavigationItem | undefined => {
+    const node = layout.nodeById.get(id);
+    return node && { id, ...cardContentForNodeWithPaperState(node, paperState), format: node.todoId ? "tex" : node.contentFormat };
+  }, [layout.nodeById, paperState]);
 
   function indentSelected() {
     const id = sessionRef.current.selectedId;
@@ -1976,6 +1981,7 @@ export function MindmapEditor({
       try { url = new URL(link.href, window.location.href); }
       catch { return; }
       if (url.origin !== window.location.origin || url.href === window.location.href || navigationPendingRef.current) return;
+      if (link.dataset.mapCardLink && sameMapCardId(link.href, new URL(window.location.href))) return;
       if (!pendingImageUploads.current && !inlineEditorSessionRef.current && !localSaveQueue.pending && mapSignature(sessionRef.current.mindmap) === savedSignatureRef.current) return;
       event.preventDefault();
       navigationPendingRef.current = true;
@@ -2442,9 +2448,9 @@ export function MindmapEditor({
       const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
       if (!link || link.hasAttribute("download") || (link.target && link.target !== "_self")) return;
       const url = new URL(link.href, window.location.href);
-      if (url.origin !== window.location.origin || url.pathname !== window.location.pathname || !focusHash(url.hash)) return;
+      if (!sameMapCardId(url.href, new URL(window.location.href)) || !focusHash(url.hash)) return;
       event.preventDefault();
-      window.history.pushState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      if (url.hash !== window.location.hash) window.history.pushState(null, "", `${window.location.pathname}${window.location.search}${url.hash}`);
     };
     apply();
     window.addEventListener("hashchange", apply);
@@ -2716,6 +2722,7 @@ export function MindmapEditor({
   }
 
   return (
+    <CardLinkNavigation mapPath={artifactHref(project, { kind: "mindmap-node", mapId: mindmap.id, id: mindmap.rootId })} lookup={linkedCardPreview}>
     <section
       className={styles.editor}
       data-mindmap-editor
@@ -3330,7 +3337,7 @@ export function MindmapEditor({
           <fieldset disabled={readOnly || convertingCardId === selected.id} className="mindmap-card-menu-fields">
           <CautionEditor key={selected.id} value={selected.caution} caption={selected.caption}
             onNotesChange={value => updateNodeNote(selected.id, value)} />
-          <CardLinks key={`links:${selected.id}`} project={project} refs={selectedRefs} onChange={refs => dispatch({ type: "patch-node", id: selected.id, patch: { refs } })} />
+          <CardLinks key={`links:${selected.id}`} sourceId={selected.id} project={project} refs={selectedRefs} onChange={refs => dispatch({ type: "patch-node", id: selected.id, patch: { refs } })} />
           <CardProperties key={`properties:${selected.id}`} value={selected.metadata} onChange={metadata => dispatch({ type: "patch-node", id: selected.id, patch: { metadata } })} />
           <div className="mindmap-card-menu-danger">
             {selected.id !== mindmap.rootId && <button type="button" className="mindmap-text-button" onClick={() => { setMoveQuery(""); setSearchIndex(0); setMoveOpen(true); }}>Move card…</button>}
@@ -3382,6 +3389,7 @@ export function MindmapEditor({
         </aside>
       )}
     </section>
+    </CardLinkNavigation>
   );
 }
 
@@ -4084,7 +4092,7 @@ function CanvasNode({
           </div>
           <CardScratchpad open={notesOpen} onOpenChange={setNotesOpen} text={node.caption} caution={node.caution} editing={editing} readOnly={readOnly}
             onChange={onNoteChange} onCommit={() => void commit()} onCancel={cancel}
-            footer={hasCardLinks(node.refs) ? <CardLinkIndicator project={project} refs={node.refs || []} /> : undefined} />
+            footer={hasCardLinks(node.refs) ? <CardLinkIndicator sourceId={node.id} project={project} refs={node.refs || []} /> : undefined} />
       {!editing && <ParentNavigation cardTitle={title || "Untitled card"} item={parentNavigation} onJump={onJumpToCard} />}
       {!editing && <ChildNavigation parentTitle={title || "Untitled card"} items={childNavigation} height={dimensions.height} onJump={onJumpToCard} />}
       {!readOnly && <CardResizeGrip width={dimensions.width} onPreview={onResizePreview} onCommit={onResizeCommit} />}
