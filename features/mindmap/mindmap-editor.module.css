@@ -103,6 +103,7 @@
 .inspectorKickerRow { display: flex; align-items: center; gap: 4px; margin-bottom: 3px; }
 .inspector .inspectorKickerRow :global(.mindmap-card-menu-kicker) { margin-bottom: 0; }
 .copyCardLink { width: 22px; height: 22px; padding: 0; flex-shrink: 0; }
+@media (pointer: coarse) { .copyCardLink { min-width: 44px; min-height: 44px; } }
 .inspector :global(.mindmap-card-menu-header) { padding: 14px 14px 10px; align-items: flex-start; }
 .inspector :global(.mindmap-card-menu-title) { font-size: 14px; line-height: 1.45; font-weight: 600; white-space: normal; display: block; }
 .inspector :global(.mindmap-card-menu-kicker) { font-size: 10px; letter-spacing: .02em; margin-bottom: 3px; }
