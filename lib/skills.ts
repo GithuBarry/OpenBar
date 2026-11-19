@@ -1,4 +1,4 @@
-import { EXPERIMENT_WRITING_GUIDANCE, MINDMAP_CARD_GUIDANCE, MINDMAP_WRITING_REFERENCE, MINDMAP_WRITING_SKILL_ID, PROJECT_DELIVERY_GUIDANCE } from "./research/agent-guidance";
+import { EXPERIMENT_WRITING_GUIDANCE, MINDMAP_CARD_GUIDANCE, MINDMAP_WRITING_REFERENCE, MINDMAP_WRITING_SKILL_ID } from "./research/agent-guidance";
 
 /**
  * OpenBar — bundled research skills.
@@ -109,7 +109,9 @@ ${EXPERIMENT_WRITING_GUIDANCE}
     source: "OpenBar writing practice",
     body: `Write the paper. Unfinished actions are \\obtodo anchors in that paper.
 
-${PROJECT_DELIVERY_GUIDANCE}
+Before a long run, mark the sentence, figure or cell it could change. Return to that spot when evidence arrives. Keep planned sections and comparison axes visible as the paper grows.
+
+${MINDMAP_WRITING_REFERENCE}
 
 - Prefer ordinary TeX for claims that belong in the manuscript.
 - Put remaining work in \\obtodo[id=…]{…}. Completing a TODO can be a decision with no new prose.
@@ -127,7 +129,7 @@ Prose quality: prefer concrete specificity over polished generality, plain words
     source: "OpenBar research practice",
     body: `Give an evidence-backed picture of the WHOLE project, not just the last action. Verify live state before reporting; label any unchecked number as last-known.
 
-${PROJECT_DELIVERY_GUIDANCE}
+Report a long run when evidence, scope or the next decision changes. Keep planned, unknown and measured outcomes distinguishable. ${MINDMAP_WRITING_REFERENCE}
 
 Move wide-to-narrow:
 1. Overall — the full roadmap in the user's own terms. Use a dependency chain to show direction and gaps, marking the current position. Use a comparison matrix when both axes carry meaningful comparison roles. Name what works, what's paused, what's missing, what blocks scale-up. Include target-vs-current counts.
