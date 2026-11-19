@@ -1,0 +1,25 @@
+.panel {
+  display: grid;
+  flex-basis: 100%;
+  min-width: 0;
+  gap: 7px;
+  margin: 2px 0 0;
+  padding: 8px;
+  border: 1px solid rgb(var(--line));
+  border-radius: 9px;
+  color: rgb(var(--muted));
+  font-size: 12px;
+}
+.modes { display: flex; flex-wrap: wrap; gap: 2px; }
+.modes button, .submit { border-radius: 6px; padding: 5px 8px; }
+.modes button[aria-pressed="true"] { background: rgb(var(--surface-2)); color: rgb(var(--ink)); }
+.panel label { display: grid; gap: 3px; }
+.panel select { width: 100%; min-width: 0; padding: 5px; border: 1px solid rgb(var(--line)); border-radius: 6px; background: rgb(var(--surface)); }
+.panel p { margin: 0; overflow-wrap: anywhere; }
+.context { font-size: 11px; }
+.excerpt { max-height: 5lh; overflow: auto; white-space: pre-wrap; color: rgb(var(--ink)); }
+.submit { justify-self: start; color: rgb(var(--accent)); background: rgb(var(--accent) / 0.09); }
+.submit:disabled { opacity: 0.5; }
+@media (pointer: coarse) {
+  .panel button, .panel select { min-height: 44px; }
+}

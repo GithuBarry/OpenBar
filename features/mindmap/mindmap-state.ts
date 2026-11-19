@@ -5,6 +5,7 @@ import { normalizeCardWidth } from "@/lib/mindmap/card-width";
 import { normalizeMindmapCaution, type MindmapCaution } from "@/lib/mindmap/caution";
 import type { Mindmap, MindmapNode } from "@/lib/types";
 import { mergeSavedMindmap } from "@/lib/mindmap/merge-saved";
+import { linkedTodoCaption } from "@/lib/mindmap/link-existing-todo";
 import { cardFormatPatch } from "./html-card-editing";
 
 export { byOrder, indexMindmap };
@@ -71,6 +72,7 @@ export type MindmapTreeAction =
   | { type: "patch-node"; id: string; patch: MindmapNodePatch; transient?: boolean }
   | { type: "patch-nodes"; ids: string[]; patch: MindmapNodePatch }
   | { type: "update-tags"; ids: string[]; tag: string; operation: "add" | "remove" }
+  | { type: "link-existing-todo"; id: string; todoId: string; todoTitle?: string; todoText: string; agentDraft?: true }
   | { type: "bind-todo"; id: string; todoId: string }
   | { type: "unbind-todo"; id: string; todoId?: string; title?: string; text: string }
   | { type: "reparent"; id: string; parentId: string; beforeId?: string; afterId?: string }
@@ -339,6 +341,28 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
               return item;
             }),
         },
+      };
+    }
+    case "link-existing-todo": {
+      const node = index.nodeById.get(action.id);
+      if (!node) throw new Error("This card was removed. Choose the current card and try again.");
+      if (mindmap.nodes.some(other => other.id !== node.id && other.todoId === action.todoId)) {
+        throw new Error("This TODO already has a card on this map.");
+      }
+      if (node.todoId === action.todoId) return { mindmap };
+      if (node.todoId) throw new Error("This card already links to another paper TODO.");
+      if (node.contentFormat === "html") throw new Error("Keep this HTML visual and place the paper TODO under it as a child.");
+      const caption = linkedTodoCaption(node, { title: action.todoTitle, text: action.todoText });
+      return {
+        mindmap: updateNode(mindmap, index, node.id, ({ title: _title, ...rest }) => ({
+          ...rest,
+          todoId: action.todoId,
+          text: "",
+          contentFormat: "tex",
+          caption,
+          ...(action.agentDraft ? { agentDraft: true } : {}),
+          updatedAt: new Date().toISOString(),
+        })),
       };
     }
     case "bind-todo": {

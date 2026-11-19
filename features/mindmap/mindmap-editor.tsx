@@ -23,6 +23,7 @@ import { ParentNavigation } from "./parent-navigation";
 import { MapNavigationDock } from "./map-navigation-dock";
 import { CardResizeGrip } from "./card-resize-grip";
 import { RequestRevision } from "./request-revision";
+import { PaperTodoPicker } from "./paper-todo-picker";
 import { CardLinkButton } from "./card-link-button";
 import { useAgentReplies } from "./use-agent-replies";
 import { agentReplyContentHash, cleanAgentReplyDisplay } from "@/lib/research/agent-reply-state";
@@ -42,12 +43,10 @@ import {
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
-  FilePlus2,
   FileText,
   Bold,
   Italic,
   Keyboard,
-  LoaderCircle,
   ListTodo,
   Link2,
   LockKeyhole,
@@ -1384,7 +1383,7 @@ export function MindmapEditor({
     });
   }
 
-  async function makeSelectedCardTodo() {
+  async function makeSelectedCardTodo(sectionId?: string) {
     const selectedCard = selected;
     if (!selectedCard || selectedCard.todoId || convertingCardIdRef.current || conversionStartingCardIdRef.current) return;
     const id = selectedCard.id;
@@ -1399,13 +1398,11 @@ export function MindmapEditor({
       // reads the card. This keeps conversion content and the visible card in
       // agreement while unrelated map edits remain mergeable.
       await flushPendingSaves();
-      const result = await convertCardToTodo(id);
-      if (!result.ok) {
-        setSaveError(result.message);
-        return;
+      if (sectionId && paperState?.paper?.sourceHash !== paperSourceHashRef.current && paperSourceHashRef.current) {
+        throw new Error("The manuscript changed. Review the refreshed section before creating the TODO.");
       }
-      } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Could not make this card a paper TODO.");
+      const result = await convertCardToTodo(id, sectionId);
+      if (!result.ok) throw new Error(result.message);
     } finally {
       if (conversionStartingCardIdRef.current === id) conversionStartingCardIdRef.current = null;
       // The ref may be populated by the refresh effect while the conversion
@@ -1432,7 +1429,9 @@ export function MindmapEditor({
       router.refresh();
       throw new Error("The paper changed. Review the refreshed TODO before converting or deleting it.");
     }
-    const todo = analyzePaper(paper.bundle.source).todos.find(item => item.id === todoId);
+    const matches = analyzePaper(paper.bundle.source).todos.filter(item => item.id === todoId);
+    if (matches.length > 1) throw new Error("This TODO ID occurs more than once in the paper. Resolve its identity before continuing.");
+    const todo = matches[0];
     const content: TodoCardRecovery | null = todo ? { todoId, title: todo.title || "", body: todo.text, sourceHash: paper.bundle.bundleHash } : null;
     if (content) {
       todoCardRecoveryRef.current.set(todoCardRecoveryKey(project, todoId), content);
@@ -1440,6 +1439,43 @@ export function MindmapEditor({
       catch { /* The mounted map retains its content snapshot. */ }
     }
     return { content, sourceHash: paper.bundle.bundleHash };
+  }
+
+  async function linkCardToExistingTodo(
+    id: string, todoId: string, expectedRevision?: number, actor: "human" | "webmcp" = "human", asChild = false,
+  ) {
+    if (actor === "human" && inlineEditorSessionRef.current && !await inlineEditorSessionRef.current.commit()) {
+      throw new Error("Finish the active card edit before linking a paper TODO.");
+    }
+    const before = indexMindmap(sessionRef.current.mindmap).nodeById.get(id);
+    const shown = paperState?.paper?.todos.find(todo => todo.id === todoId);
+    const { content, sourceHash } = await captureCurrentTodoCard(todoId);
+    if (!content) throw new Error("This TODO is missing from the current paper.");
+    if (!shown || content.title !== (shown.title || "") || content.body !== shown.text) {
+      router.refresh();
+      throw new Error("The paper TODO changed. Review the refreshed wording before linking.");
+    }
+    await persistWebMcpMutation(current => {
+      const node = indexMindmap(current.mindmap).nodeById.get(id);
+      if (!node || !before || node.todoId !== before.todoId || node.title !== before.title
+          || node.text !== before.text || node.contentFormat !== before.contentFormat) {
+        throw new Error("The selected card changed. Review it before linking.");
+      }
+      if (paperSourceHashRef.current && paperSourceHashRef.current !== sourceHash) {
+        throw new Error("The paper changed. Review the current TODO and retry.");
+      }
+      if (asChild) {
+        if (current.mindmap.nodes.some(other => other.todoId === todoId)) {
+          throw new Error("This TODO already has a card on this map.");
+        }
+        return { type: "add-node", parentId: id, id: newNodeId(), todoId };
+      }
+      return {
+        type: "link-existing-todo", id, todoId, todoTitle: content.title, todoText: content.body,
+        ...(actor === "webmcp" ? { agentDraft: true as const } : {}),
+      };
+    }, expectedRevision, actor);
+    if (asChild) setLocalCollapsed(id, false);
   }
 
   async function convertTodoCardToOrdinary(id: string) {
@@ -3010,15 +3046,11 @@ export function MindmapEditor({
                 <kbd>E</kbd>
               </button>
               {!selected.todoId && paperState?.paper && (
-                <button
-                  type="button"
-                  className="mindmap-card-menu-row"
-                  disabled={readOnly || convertingCardId === selected.id}
-                  onClick={() => void makeSelectedCardTodo()}
-                >
-                  {convertingCardId === selected.id ? <LoaderCircle size={14} className="animate-spin" /> : <FilePlus2 size={14} aria-hidden="true" />}
-                  <span>{convertingCardId === selected.id ? "Making paper TODO…" : "Make paper TODO"}</span>
-                </button>
+                <PaperTodoPicker key={`${selected.id}:${selected.contentFormat}`} card={selected}
+                  todos={availableTodoCandidates(paperState.paper.todos, mindmap.nodes)}
+                  sections={paperState.paper.outline} disabled={readOnly || convertingCardId === selected.id}
+                  onLink={(todoId, asChild) => linkCardToExistingTodo(selected.id, todoId, undefined, "human", asChild)}
+                  onCreate={makeSelectedCardTodo} />
               )}
               {selected.todoId && selectedTodo && <>
                 <button type="button" className="mindmap-card-menu-row" disabled={readOnly || convertingTodoCard}
