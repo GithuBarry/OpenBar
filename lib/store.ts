@@ -46,7 +46,7 @@ import { attachOverleafCheckout, cloneOverleafProject, getProjectGitDestination,
 import { overleafProjectId } from "./server/git-url";
 import { mindmapDiskHash } from "./mindmap/mindmap";
 import { readPaper } from "./research/paper-service";
-import { analyzePaper } from "./research/paper-analysis";
+import { analyzePaper, type PaperTodo } from "./research/paper-analysis";
 import { beginAgentReplyCapture, completeAgentReplyCapture } from "./research/agent-reply-receipts";
 import { buildSourceBundle } from "./tex-project/source-bundle";
 import { buildSourceContextIndex } from "./research/source-context";
@@ -475,17 +475,19 @@ export class PaperTodoBindingError extends Error {
   constructor(readonly code: "unknown_todo" | "invalid_arguments", message: string) { super(message); }
 }
 
-export function assertSavedPaperTodos(slug: string, ids: Set<string>): void {
-  if (!ids.size) return;
+export function readSavedPaperTodos(slug: string, ids: Set<string>): Map<string, PaperTodo> {
+  const matches = new Map<string, PaperTodo>();
+  if (!ids.size) return matches;
   const { manuscriptDir } = texPaths(projectDir(slug));
-  const counts = new Map<string, number>();
   for (const todo of analyzePaper(buildSourceBundle(manuscriptDir).source).todos) {
-    if (todo.id && ids.has(todo.id)) counts.set(todo.id, (counts.get(todo.id) || 0) + 1);
+    if (!todo.id || !ids.has(todo.id)) continue;
+    if (matches.has(todo.id)) throw new PaperTodoBindingError("invalid_arguments", `Multiple paper TODOs use "${todo.id}". Give each a unique ID before placing it.`);
+    matches.set(todo.id, todo);
   }
   for (const id of ids) {
-    if (!counts.has(id)) throw new PaperTodoBindingError("unknown_todo", `Paper TODO "${id}" could not be found in the saved manuscript. Refresh the TODO list.`);
-    if (counts.get(id)! > 1) throw new PaperTodoBindingError("invalid_arguments", `Multiple paper TODOs use "${id}". Give each a unique ID before placing it.`);
+    if (!matches.has(id)) throw new PaperTodoBindingError("unknown_todo", `Paper TODO "${id}" could not be found in the saved manuscript. Refresh the TODO list.`);
   }
+  return matches;
 }
 
 export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: string, actor: "human" | "webmcp" = "human"): Mindmap {
@@ -524,7 +526,7 @@ export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: s
     // write lock. Older missing-source cards stay available for repair.
     const newBindings = new Set(canonicalized.nodes.flatMap(node =>
       node.todoId && previousNodes.get(node.id)?.todoId !== node.todoId ? [node.todoId] : []));
-    assertSavedPaperTodos(slug, newBindings);
+    readSavedPaperTodos(slug, newBindings);
     const replyCapture = beginAgentReplyCapture(dir, slug, actor, current);
     writeMindmapRecord(dir, persistableMindmap(canonicalized));
     const persisted = readMindmapRecord(dir, identity.id);

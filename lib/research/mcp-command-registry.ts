@@ -24,7 +24,7 @@ import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import { htmlCardValidationError, HtmlCardValidationError } from "@/lib/mindmap/html-card";
 import { assertAdministrativeWriteAllowed } from "@/lib/server/demo-mode";
 import {
-assertSavedPaperTodos,
+readSavedPaperTodos,
 PaperTodoBindingError,
 getMindmap,
 getProject,
@@ -692,7 +692,7 @@ async function executePatchMindmapNode(args: unknown, context: McpCommandContext
         if (record.priority !== null && !["P0", "P1", "P2", "P3"].includes(String(record.priority))) throw new McpCommandError("invalid_arguments", "priority must be P0–P3 or null.", false);
         patch.priority = record.priority || undefined;
       }
-      if (current.todoId && (patch.title !== undefined || patch.text !== undefined)) throw new McpCommandError("invalid_arguments", "TODO title and text are TeX-owned. Use update_todo.", false);
+      if (current.todoId && (patch.title !== undefined || patch.text !== undefined)) throw new McpCommandError("invalid_arguments", "Edit this TODO in the manuscript with read_project_files and apply_project_edits.", false);
       if (!Object.keys(patch).length) throw new McpCommandError("invalid_arguments", "Provide at least one card field.", false);
       const htmlError = htmlCardValidationError({ ...current, ...patch } as MindmapNode);
       if (htmlError) return failResult("invalid_arguments", htmlError, false);
@@ -885,7 +885,7 @@ const executePlaceTodoCard: McpToolDefinition["execute"] = async (raw, context) 
       if (!placement.ok) return placement;
       const next = placement.value;
       if (next.existing) {
-        try { assertSavedPaperTodos(project, new Set([todoId])); }
+        try { readSavedPaperTodos(project, new Set([todoId])); }
         catch (error) { return mutationFailure(error, map); }
         return okResult({ id: next.nodeId, parentId: next.parentId, todoId, shared: true, revision: map.revision, diskHash: map.diskHash });
       }
@@ -951,12 +951,31 @@ async function executeProjectFileEdits(raw: unknown, context: McpCommandContext)
   });
 }
 
+const executeLinkTodoCard: McpToolDefinition["execute"] = async (raw, context) => {
+  const args = NATIVE_MINDMAP_INPUTS.link_todo_card.parse(raw);
+  return idempotentWrite(args.project, "link_todo_card", args, context, requestId => {
+    const map = mapRequired(args.project, args.mapId);
+    assertRevision(map, args.expectedRevision);
+    assertDiskHash(map, args.expectedDiskHash);
+    let next: Mindmap;
+    try {
+      const todo = readSavedPaperTodos(args.project, new Set([args.todoId])).get(args.todoId)!;
+      next = applyMindmapAction(map, { type: "link-existing-todo", id: args.id, todoId: args.todoId, todoTitle: todo.title, todoText: todo.text, agentDraft: true }).mindmap;
+    } catch (error) {
+      if (error instanceof PaperTodoBindingError) return mutationFailure(error, map);
+      return failResult("invalid_arguments", error instanceof Error ? error.message : "Check the selected card and TODO.", false);
+    }
+    if (next === map) return okResult({ id: args.id, todoId: args.todoId, shared: true }, { revision: map.revision, diskHash: map.diskHash });
+    return writeMap(args.project, map, next, requestId, "link_todo_card", [{ kind: "mindmap_node", id: args.id, mapId: map.id }]);
+  });
+};
+
 async function executeManagedMindmapEdit(raw: unknown, context: McpCommandContext): Promise<OperationResult<unknown>> {
   const args = MCP_INPUTS.apply_mindmap_edits.parse(raw);
   const operations = {
     add: "add_mindmap_node", patch: "patch_mindmap_node", move: "move_mindmap_node",
     "preview-batch": "preview_mindmap_batch", "apply-batch": "apply_mindmap_batch",
-    "place-todo": "place_todo_card", rename: "rename_mindmap", "font-size": "set_mindmap_font_size",
+    "place-todo": "place_todo_card", "link-todo": "link_todo_card", rename: "rename_mindmap", "font-size": "set_mindmap_font_size",
     "attach-image": "attach_mindmap_image", "detach-image": "detach_mindmap_image", "caption-image": "caption_mindmap_image",
     "activity-window": "set_activity_window",
   } as const;
@@ -972,7 +991,7 @@ async function executeManagedMindmapEdit(raw: unknown, context: McpCommandContex
   const handlers: Record<keyof typeof NATIVE_MINDMAP_INPUTS, McpToolDefinition["execute"]> = {
     add_mindmap_node: executeAddMindmapNode, patch_mindmap_node: executePatchMindmapNode, move_mindmap_node: executeMoveMindmapNode,
     preview_mindmap_batch: executePreviewMindmapBatch, apply_mindmap_batch: executeApplyMindmapBatch,
-    place_todo_card: executePlaceTodoCard, rename_mindmap: executeRenameMindmap, set_mindmap_font_size: executeSetMindmapFontSize,
+    place_todo_card: executePlaceTodoCard, link_todo_card: executeLinkTodoCard, rename_mindmap: executeRenameMindmap, set_mindmap_font_size: executeSetMindmapFontSize,
     attach_mindmap_image: (input, context) => executeMapImage("attach_mindmap_image", input, context),
     detach_mindmap_image: (input, context) => executeMapImage("detach_mindmap_image", input, context),
     caption_mindmap_image: (input, context) => executeMapImage("caption_mindmap_image", input, context),
@@ -1019,7 +1038,7 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
   tool("get_activity", "Read activity", "Read durable authored operation history after applying the selected day filter and before pagination.", executeActivity, { readOnlyHint: true }),
   tool("read_project_files", "Read project files", "List directories or read authored project files with exact byte SHA256 and bounded UTF-8/base64 content. Paths are relative to the project root. OpenBar managed state and Git metadata are protected.", executeReadProjectFiles, { readOnlyHint: true }),
   tool("apply_project_edits", "Apply project file edits", "Atomically create, replace, or delete authored project files using exact prior hashes. Batch a destination create and source delete to move a file. dryRun previews the complete batch. OpenBar managed state and Git metadata are protected.", executeProjectFileEdits, { destructiveHint: true }),
-  tool("apply_mindmap_edits", "Edit managed mindmap state", `Apply one revision-checked map operation. edit.operation: add, patch, move, preview-batch, apply-batch, place-todo, rename, font-size, attach-image, detach-image, caption-image, activity-window. args: add {parentId,title?,text?,caption?,caution?,presentation?,id?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, batch {selectedIds,changes?,deleteMode?,move?,previewToken?}, place-todo {todoId,parentId}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, activity-window {days}. Preview batches first and pass their token to apply-batch. deleteMode cards promotes children, branches removes descendants. New cards and agent-authored content changes remain Agent draft until human Save or Delete. Native MCP contributes through revision and disk-hash checks while browser editing access stays with its current owner. TODO text/completion belongs to TeX files. Set presentation.cardWidth to 180–1200 canvas pixels, or null for automatic width. ${MINDMAP_CARD_GUIDANCE}`, executeManagedMindmapEdit, { destructiveHint: true }),
+  tool("apply_mindmap_edits", "Edit managed mindmap state", `Apply one revision-checked map operation. edit.operation: add, patch, move, preview-batch, apply-batch, place-todo, link-todo, rename, font-size, attach-image, detach-image, caption-image, activity-window. args: add {parentId,title?,text?,caption?,caution?,presentation?,id?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, batch {selectedIds,changes?,deleteMode?,move?,previewToken?}, place-todo {todoId,parentId}, link-todo {id,todoId}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, activity-window {days}. Preview batches first and pass their token to apply-batch. deleteMode cards promotes children, branches removes descendants. New cards and agent-authored content changes remain Agent draft until human Save or Delete. Native MCP contributes through revision and disk-hash checks while browser editing access stays with its current owner. TODO text/completion belongs to TeX files. Set presentation.cardWidth to 180–1200 canvas pixels, or null for automatic width. ${MINDMAP_CARD_GUIDANCE}`, executeManagedMindmapEdit, { destructiveHint: true }),
 ];
 
 const REGISTRY_BY_NAME = new Map(MCP_TOOL_REGISTRY.map((entry) => [entry.name, entry]));

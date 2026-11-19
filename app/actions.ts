@@ -32,7 +32,7 @@ import {
   createProject,
   type NewProjectInput,
   getMindmap,
-  assertSavedPaperTodos,
+  readSavedPaperTodos,
   PaperTodoBindingError,
   saveMindmap,
   createMindmap,
@@ -925,7 +925,7 @@ export async function placeTodoOnMindmapAction(slug: string, todoId: string, par
     const next = placement.value;
     try {
       if (next.existing) {
-        assertSavedPaperTodos(slug, new Set([todoId]));
+        readSavedPaperTodos(slug, new Set([todoId]));
       } else {
         saveMindmap(slug, { ...next.map, revision: (map.revision ?? 0) + 1 }, map.diskHash);
         bust(slug);

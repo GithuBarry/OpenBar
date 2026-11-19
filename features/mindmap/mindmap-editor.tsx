@@ -893,6 +893,7 @@ export function MindmapEditor({
       await persistWebMcpMutation({ type: "add-node", parentId, id, todoId, agentDraft: true }, expectedRevision);
       return id;
     },
+    linkTodo: (id, todoId, expectedRevision) => linkCardToExistingTodo(id, todoId, expectedRevision, "webmcp"),
     convertCardToTodo: (id, sectionId, expectedRevision, requestId) => {
       if (convertingCardIdRef.current || conversionStartingCardIdRef.current) {
         const message = "A mindmap card conversion is already in progress. Retry after it finishes.";
@@ -1462,6 +1463,9 @@ export function MindmapEditor({
       throw new Error("The paper TODO changed. Review the refreshed wording before linking.");
     }
     await persistWebMcpMutation(current => {
+      if (actor === "webmcp" && (focusedMindmapCardId(current.selectedId) === id || inlineEditorSessionRef.current?.nodeId === id)) {
+        throw Object.assign(new Error("The human is editing this card. Link it after they finish."), { code: "active_card_edit" });
+      }
       const node = indexMindmap(current.mindmap).nodeById.get(id);
       if (!node || !before || node.todoId !== before.todoId || node.title !== before.title
           || node.text !== before.text || node.contentFormat !== before.contentFormat) {

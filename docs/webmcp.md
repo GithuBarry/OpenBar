@@ -167,6 +167,12 @@ labels, refs, optional progress/priority, table layout, and appearance. Primary
 covers paper TODOs through its tree or Primary Unplaced. Secondary maps can
 reuse a TODO once per map.
 
+Use `link-todo` with `{id, todoId}` when the existing map card already describes
+the paper task. The card keeps its position, children and links. Its original
+prose that differs from the manuscript goes into Notes. Use `place-todo` with
+`{todoId, parentId}` for an unplaced task. Repeating placement returns the
+existing card and parent. Use `move` to relocate that card.
+
 Wiki and instructions pages use the shared file tools for authored documents.
 Their human editor actions remain available in the UI.
 

@@ -139,6 +139,7 @@ export type MindmapWebMcpHost = {
   patchNode: (id: string, patch: MindmapNodeContentPatch, expectedRevision?: number) => void | Promise<void>;
   setActivityHighlight: (since?: string) => void;
   placeTodoCard?: (todoId: string, parentId: string, expectedRevision?: number) => string | Promise<string>;
+  linkTodo?: (id: string, todoId: string, expectedRevision: number) => Promise<void>;
   hasTodo?: (todoId: string) => boolean;
   convertCardToTodo?: (id: string, sectionId?: string, expectedRevision?: number, requestId?: string) => MindmapTodoConversionResult | Promise<MindmapTodoConversionResult>;
   completeTodo?: (todoId: string) => void | Promise<void>;
@@ -478,12 +479,12 @@ export async function executeMindmapWebMcpTool(
       if (args.agentDraft === true) patch.agentDraft = true;
       if (args.title !== undefined) {
         if (typeof args.title !== "string") return failResult("invalid_arguments", "title must be a string.", false);
-        if (node.todoId) return failResult("invalid_arguments", "TODO card title is derived from TeX via update_todo.", false);
+        if (node.todoId) return failResult("invalid_arguments", "Edit this TODO title in the manuscript with read_project_files and apply_project_edits.", false);
         patch.title = args.title;
       }
       if (args.text !== undefined) {
         if (typeof args.text !== "string") return failResult("invalid_arguments", "text must be a string.", false);
-        if (node.todoId) return failResult("invalid_arguments", "TODO card text is edited in TeX via update_todo.", false);
+        if (node.todoId) return failResult("invalid_arguments", "Edit this TODO text in the manuscript with read_project_files and apply_project_edits.", false);
         patch.text = args.text;
       }
       if (args.caption !== undefined) {
@@ -597,6 +598,26 @@ export async function executeMindmapWebMcpTool(
       if (!placed) return failResult("stale_live_state", "The map changed during placement. Read the current map and retry.", true);
       return okResult({ id: placed.id, parentId: placed.parentId, todoId }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) });
     }
+    case "link_todo_card": {
+      const rev = assertRevision(args.expectedRevision, snapshot.revision);
+      if (!rev.ok) return rev;
+      const id = String(args.id);
+      const todoId = String(args.todoId);
+      if (!hasNode(id)) return failResult("invalid_arguments", "Choose an existing card to link.", false);
+      if (host.hasTodo && !host.hasTodo(todoId)) return failResult("unknown_todo", "Choose a current paper TODO.", false);
+      if (snapshot.nodes.some(node => node.id === id && node.todoId === todoId)) {
+        return okResult({ id, todoId, shared: true }, { revision: snapshot.revision, diskHash: snapshot.diskHash });
+      }
+      if (snapshot.writeAccess.activeCardId === id) return failResult("active_card_edit", "The human is editing this card. Link it after they finish.", true);
+      if (!host.linkTodo) return failResult("capability_unavailable", "This map cannot link existing paper TODOs.", false);
+      return runPersistedMutation(host, async () => {
+        await host.linkTodo!(id, todoId, snapshot.revision);
+        if (!host.getSnapshot().nodes.some(node => node.id === id && node.todoId === todoId)) {
+          throw Object.assign(new Error("The linked card changed. Read the current map before retrying."), { code: "stale_live_state" });
+        }
+        return { id, todoId };
+      });
+    }
     case "convert_card_to_todo": {
       const rev = assertRevision(args.expectedRevision, snapshot.revision);
       if (!rev.ok) return rev;
@@ -674,7 +695,7 @@ async function executeManagedMapEdit(host: MindmapWebMcpHost, raw: unknown): Pro
   const operations = {
     add: "add_mindmap_node", patch: "patch_mindmap_node", move: "move_mindmap_node",
     "delete-card": "delete_mindmap_node", "delete-branch": "delete_mindmap_branch",
-    "place-todo": "place_todo_card", "convert-to-todo": "convert_card_to_todo",
+    "place-todo": "place_todo_card", "link-todo": "link_todo_card", "convert-to-todo": "convert_card_to_todo",
     rename: "rename_mindmap", "font-size": "set_mindmap_font_size",
     "attach-image": "attach_mindmap_image", "detach-image": "detach_mindmap_image", "caption-image": "caption_mindmap_image",
   } as const;
@@ -697,7 +718,7 @@ export function buildMindmapWebMcpTools(host: MindmapWebMcpHost) {
   return [...tools, {
     name: "apply_mindmap_edits",
     title: "Edit live mindmap state",
-    description: `Apply a live revision-checked operation. edit.operation: add, patch, move, delete-card, delete-branch, place-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, view-preferences. args: add {parentId,title?,text?,caption?,caution?,presentation?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, delete {id}, TODO placement {todoId,parentId}, conversion {id,sectionId?}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, view-preferences {centerOnEdit}. View preferences are stored in this browser per project and map. Cards delete promotes children, branch delete includes descendants. New cards and agent-authored content changes remain Agent draft until human Save or Delete. Contribute through the current writing tab. While a human edits one card, add Agent draft children or edit other cards. Edit TODO text/completion through project files. Set presentation.cardWidth to 180–1200 canvas pixels, or null for automatic width. ${MINDMAP_CARD_GUIDANCE}`,
+    description: `Apply a live revision-checked operation. edit.operation: add, patch, move, delete-card, delete-branch, place-todo, link-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, view-preferences. args: add {parentId,title?,text?,caption?,caution?,presentation?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, delete {id}, place-todo {todoId,parentId}, link-todo {id,todoId}, conversion {id,sectionId?}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, view-preferences {centerOnEdit}. View preferences are stored in this browser per project and map. Cards delete promotes children, branch delete includes descendants. New cards and agent-authored content changes remain Agent draft until human Save or Delete. Contribute through the current writing tab. While a human edits one card, add Agent draft children or edit other cards. Edit TODO text/completion through project files. Set presentation.cardWidth to 180–1200 canvas pixels, or null for automatic width. ${MINDMAP_CARD_GUIDANCE}`,
     inputSchema: commandJsonSchema(MINDMAP_EDIT_INPUT),
     annotations: { readOnlyHint: false, destructiveHint: true, untrustedContentHint: true },
     execute: (args?: unknown) => executeManagedMapEdit(host, args),
@@ -727,7 +748,7 @@ export function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Visually highlight cards whose meaningful content changed since a date. Omit since for the past seven days. Pan, zoom, and collapse do not count.";
   }
   if (name === "patch_mindmap_node") {
-    return `Edit supplied fields on one card using its current revision. ${MINDMAP_CARD_GUIDANCE} Edit TODO title/text through update_todo.`;
+    return `Edit supplied fields on one card using its current revision. ${MINDMAP_CARD_GUIDANCE} Edit TODO title and text through apply_project_edits.`;
   }
   if (name === "attach_mindmap_image") return "Attach one existing project image asset to an empty card. For an occupied card, use apply_mindmap_edits with operation add to create a child and attach there. Use read_project_files to inspect the asset; this changes only this map's reference list.";
   if (name === "detach_mindmap_image") return "Detach one image reference from this card without deleting the shared project asset.";
