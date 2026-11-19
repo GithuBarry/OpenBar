@@ -4,7 +4,6 @@
 
 import { cautionValidationError,normalizeMindmapCaution,type MindmapCaution } from "@/lib/mindmap/caution";
 import { attachMindmapImage,captionMindmapImage,detachMindmapImage } from "@/lib/mindmap/image-refs";
-import { MAX_MINDMAP_LABEL_CHARS,MAX_MINDMAP_LABELS,normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import { safeUrl } from "@/lib/safe-url";
 import type { ArtifactRef,Mindmap,MindmapNode,MindmapNodeShape } from "@/lib/types";
 import { coercePaperSectionRefContext,isArtifactKind } from "./artifact-link";
@@ -22,7 +21,7 @@ export { isPrimaryMindmapRole as isPrimaryMindmap };
 
 const PRESENTATION_SHAPES = ["branch", "leaf", "callout"] as const;
 
-export { MAX_MINDMAP_LABEL_CHARS,MAX_MINDMAP_LABELS } from "@/lib/mindmap/node-metadata";
+export { MAX_MINDMAP_LABEL_CHARS, MAX_MINDMAP_LABELS, normalizeMindmapLabels as clampMindmapLabels } from "@/lib/mindmap/node-metadata";
 
 export type LiveMindmapNode = Pick<
   MindmapNode,
@@ -219,19 +218,6 @@ async function runPersistedMutation<T>(
   }
 }
 
-export const clampMindmapLabels = normalizeMindmapLabels;
-
-function parseLabelsArg(value: unknown): OperationResult<string[]> {
-  if (!Array.isArray(value)) return failResult("invalid_arguments", "labels must be an array of strings.", false);
-  if (value.length > MAX_MINDMAP_LABELS) {
-    return failResult("invalid_arguments", `labels must contain at most ${MAX_MINDMAP_LABELS} entries.`, false);
-  }
-  if (value.some((item) => typeof item !== "string" || !item.trim() || item.trim().length > MAX_MINDMAP_LABEL_CHARS)) {
-    return failResult("invalid_arguments", `Each label must be 1–${MAX_MINDMAP_LABEL_CHARS} characters.`, false);
-  }
-  return okResult(normalizeMindmapLabels(value));
-}
-
 function parseRefsArg(value: unknown): OperationResult<ArtifactRef[]> {
   if (!Array.isArray(value)) return failResult("invalid_arguments", "refs must be an array.", false);
   const refs: ArtifactRef[] = [];
@@ -324,21 +310,6 @@ export function parsePresentationArg(
   }
   if (Object.keys(patch).length === 0) return failResult("invalid_arguments", "presentation is empty.", false);
   return okResult(patch);
-}
-
-function parseMetadataArg(value: unknown): OperationResult<Record<string, unknown> | null> {
-  if (value === null) return okResult(null);
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return failResult("invalid_arguments", "metadata must be a JSON object or null.", false);
-  }
-  try {
-    if (JSON.stringify(value).length > 20_000) {
-      return failResult("invalid_arguments", "metadata must be at most 20,000 JSON characters.", false);
-    }
-  } catch {
-    return failResult("invalid_arguments", "metadata must contain JSON values.", false);
-  }
-  return okResult(value as Record<string, unknown>);
 }
 
 export async function executeMindmapWebMcpTool(
@@ -496,21 +467,13 @@ export async function executeMindmapWebMcpTool(
         if (!parsed.ok) return parsed;
         patch.caution = parsed.value;
       }
-      if (args.labels !== undefined) {
-        const labels = parseLabelsArg(args.labels);
-        if (!labels.ok) return labels;
-        patch.labels = labels.value;
-      }
+      if (args.labels !== undefined) patch.labels = args.labels as string[];
       if (args.refs !== undefined) {
         const refs = parseRefsArg(args.refs);
         if (!refs.ok) return refs;
         patch.refs = refs.value;
       }
-      if (args.metadata !== undefined) {
-        const metadata = parseMetadataArg(args.metadata);
-        if (!metadata.ok) return metadata;
-        patch.metadata = metadata.value;
-      }
+      if (args.metadata !== undefined) patch.metadata = args.metadata as MindmapNodeContentPatch["metadata"];
       if (args.priority !== undefined) {
         if (args.priority !== null && !["P0", "P1", "P2", "P3"].includes(String(args.priority))) {
           return failResult("invalid_arguments", "priority must be P0, P1, P2, P3, or null.", false);

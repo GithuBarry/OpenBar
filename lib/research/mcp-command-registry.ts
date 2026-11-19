@@ -5,7 +5,7 @@ import "server-only";
 import { acknowledgeAgentInbox,readAgentInbox } from "./agent-inbox";
 import { INBOX_TOOL_DESCRIPTIONS,type AgentInbox } from "./agent-inbox-contract";
 import { MINDMAP_CARD_GUIDANCE } from "./agent-guidance";
-import { MCP_INPUTS,NATIVE_MINDMAP_INPUTS } from "./command-inputs";
+import { MCP_INPUTS, MINDMAP_LABELS_INPUT, NATIVE_MINDMAP_INPUTS } from "./command-inputs";
 import { commandJsonSchema,parseCommandInput } from "./command-schema";
 import { applyProjectEdits,readProjectFiles } from "./project-files";
 import { readAnySkill, writeWorkspaceInstructions } from "./project-skills";
@@ -20,7 +20,6 @@ import { syncProjectCommand } from "./sync-project-command";
 
 import { applyMindmapAction,newNodeId } from "@/features/mindmap/mindmap-state";
 import { mindmapDiskHash,normalizeMindmap } from "@/lib/mindmap/mindmap";
-import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import { htmlCardValidationError, HtmlCardValidationError } from "@/lib/mindmap/html-card";
 import { assertAdministrativeWriteAllowed } from "@/lib/server/demo-mode";
 import {
@@ -537,9 +536,9 @@ function parseChanges(value: unknown): MindmapBatchChanges | undefined {
   }
   for (const key of ["labelsAdd", "labelsRemove"] as const) {
     if (record[key] !== undefined) {
-      const labels = requireArray(record[key], key);
-      if (labels.length > 50 || labels.some((item) => typeof item !== "string" || !item.trim())) throw new McpCommandError("invalid_arguments", `${key} must contain non-empty strings.`, false);
-      changes[key] = labels as string[];
+      const labels = MINDMAP_LABELS_INPUT.safeParse(record[key]);
+      if (!labels.success) throw new McpCommandError("invalid_arguments", `${key}: ${labels.error.issues[0].message}`, false);
+      changes[key] = labels.data;
     }
   }
   if (!Object.keys(changes).length) throw new McpCommandError("invalid_arguments", "changes must contain at least one field.", false);
@@ -665,13 +664,14 @@ async function executePatchMindmapNode(args: unknown, context: McpCommandContext
       const current = map.nodes.find((node) => node.id === nodeId);
       if (!current) throw new McpCommandError("invalid_arguments", `Unknown mindmap card "${nodeId}".`, false);
       const patch: Record<string, unknown> = {};
-      for (const key of ["title", "text", "caption", "metadata", "refs", "agentDraft"] as const) if (record[key] !== undefined) patch[key] = record[key];
+      for (const key of ["title", "text", "caption", "refs", "agentDraft"] as const) if (record[key] !== undefined) patch[key] = record[key];
       if (record.refs !== undefined) {
         const refs = artifactRefSchema.array().safeParse(record.refs);
         if (!refs.success || refs.data.filter(ref => ref.kind === "figure").length > 1) return failResult("invalid_arguments", "Use valid references with one image per card and imageWidth from 25 to 100. Add child cards for additional images.", false);
         patch.refs = refs.data;
       }
-      if (record.labels !== undefined) patch.tags = normalizeMindmapLabels(requireArray(record.labels, "labels") as string[]);
+      if (record.labels !== undefined) patch.tags = record.labels;
+      if (record.metadata !== undefined) patch.metadata = record.metadata ?? undefined;
       if (record.caption !== undefined) {
         if (typeof record.caption !== "string") throw new McpCommandError("invalid_arguments", "caption must be a string.", false);
       }
