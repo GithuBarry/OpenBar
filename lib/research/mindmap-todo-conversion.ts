@@ -13,6 +13,7 @@ import type { Mindmap } from "@/lib/types";
 import { ordinaryMindmapCardContent } from "./todo-map";
 import { requestFingerprint, readRequestReplay, recordRequestReplay, RequestReplayStoreError } from "./request-replay";
 import { failResult, type OperationResult } from "./operation-result";
+import { analyzePaper } from "./paper-analysis";
 import { insertTodoAtSection } from "./paper-todo-persist";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import { fileBytesUnchanged, splitBundleSource } from "@/lib/tex-project/source-bundle-format";
@@ -177,6 +178,8 @@ export async function convertMindmapCardToTodo(input: MindmapTodoConversionInput
   return withProjectWriteLockAsync(input.projectDir, async () => {
     const map = currentMap(input.projectDir, mapId);
     if (!map) return conversionFailure("unknown_map", `Unknown mindmap "${mapId}".`);
+    const node = map.nodes.find(item => item.id === input.cardId);
+    let replaying = false;
     if (ownsReplay) {
       let replay: ReturnType<typeof readRequestReplay>;
       try {
@@ -190,24 +193,31 @@ export async function convertMindmapCardToTodo(input: MindmapTodoConversionInput
           return conversionFailure("request_conflict", `Request id "${requestId}" was already used for another operation.`);
         }
         const replayTodoId = typeof replay.result.todoId === "string" ? replay.result.todoId : "";
-        const replayNode = map.nodes.find((node) => node.id === input.cardId);
-        if (replayTodoId && replayNode?.todoId === replayTodoId) return success(replayTodoId, map, sectionId);
+        if (!replayTodoId || node?.todoId !== replayTodoId) {
+          return conversionFailure("request_conflict", "This request already converted the card and its binding has since changed. Review the current card before starting a new conversion.");
+        }
+        replaying = true;
       }
     }
     const currentMapDiskHash = mindmapDiskHash(map);
-    if (input.expectedMapDiskHash && currentMapDiskHash !== input.expectedMapDiskHash) {
+    if (!replaying && input.expectedMapDiskHash && currentMapDiskHash !== input.expectedMapDiskHash) {
       return conversionFailure("stale_disk_state", "The mindmap changed on disk. Reload before converting this card.", true, currentMapDiskHash);
     }
-    const node = map.nodes.find((item) => item.id === input.cardId);
     if (!node) return conversionFailure("unknown_card", `Unknown mindmap card "${input.cardId}".`);
     if (!node.todoId && node.contentFormat === "html") {
       return conversionFailure("conversion_loss", "HTML visuals stay on the map. Create a prose task card to promote into the manuscript.");
     }
     const bundle = buildSourceBundle(paths.manuscriptDir, undefined, 0, true);
-    if (input.expectedBundleHash && bundle.bundleHash !== input.expectedBundleHash) {
+    if (!replaying && input.expectedBundleHash && bundle.bundleHash !== input.expectedBundleHash) {
       return conversionFailure("stale_disk_state", "The paper changed on disk. Reload before converting this card.", true, bundle.bundleHash);
     }
-    if (node.todoId?.trim()) return success(node.todoId.trim(), map, undefined, undefined, bundle.bundleHash);
+    if (node.todoId?.trim()) {
+      const todoId = node.todoId.trim();
+      const matches = analyzePaper(bundle.source).todos.filter(todo => todo.id === todoId);
+      if (matches.length === 0) return conversionFailure("unknown_todo", `The card links to paper TODO "${todoId}", which is missing from the current manuscript. Review its history before converting.`, false, bundle.bundleHash);
+      if (matches.length > 1) return conversionFailure("invalid_arguments", `Multiple paper TODOs use "${todoId}". Give each a unique ID before converting.`, false, bundle.bundleHash);
+      return success(todoId, map, replaying ? sectionId : undefined, undefined, bundle.bundleHash);
+    }
     const content = ordinaryMindmapCardContent(node);
     const title = content.title.trim();
     const text = content.body.trim();
