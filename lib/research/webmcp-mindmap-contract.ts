@@ -7,7 +7,7 @@ import { attachMindmapImage,captionMindmapImage,detachMindmapImage } from "@/lib
 import { safeUrl } from "@/lib/safe-url";
 import type { ArtifactRef,Mindmap,MindmapNode,MindmapNodeShape } from "@/lib/types";
 import { coercePaperSectionRefContext,isArtifactKind } from "./artifact-link";
-import { MINDMAP_CARD_GUIDANCE } from "./agent-guidance";
+import { MINDMAP_EDIT_GUIDANCE } from "./agent-guidance";
 import { MIN_CARD_WIDTH, MAX_CARD_WIDTH } from "@/lib/mindmap/card-width";
 import { htmlCardValidationError, HtmlCardValidationError } from "@/lib/mindmap/html-card";
 import { MINDMAP_EDIT_INPUT,MINDMAP_INPUTS } from "./command-inputs";
@@ -684,7 +684,7 @@ export function buildMindmapWebMcpTools(host: MindmapWebMcpHost) {
   return [...tools, {
     name: "apply_mindmap_edits",
     title: "Edit live mindmap state",
-    description: `Apply a live revision-checked operation. edit.operation: add, patch, move, delete-card, delete-branch, place-todo, link-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, view-preferences. args: add {parentId,title?,text?,caption?,caution?,presentation?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, delete {id}, place-todo {todoId,parentId}, link-todo {id,todoId}, conversion {id,sectionId?}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, view-preferences {centerOnEdit}. View preferences are stored in this browser per project and map. Cards delete promotes children, branch delete includes descendants. New cards and agent-authored content changes remain Agent draft until human Save or Delete. Contribute through the current writing tab. While a human edits one card, add Agent draft children or edit other cards. Edit TODO text/completion through project files. Set presentation.cardWidth to 180–1200 canvas pixels, or null for automatic width. ${MINDMAP_CARD_GUIDANCE}`,
+    description: `Apply a live revision-checked operation. edit.operation: add, patch, move, delete-card, delete-branch, place-todo, link-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, view-preferences. args: add {parentId,title?,text?,caption?,caution?,presentation?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, delete {id}, place-todo {todoId,parentId}, link-todo {id,todoId}, conversion {id,sectionId?}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, view-preferences {centerOnEdit}. View preferences are stored in this browser per project and map. Cards delete promotes children, branch delete includes descendants. New cards and agent-authored content changes remain Agent draft until human Save or Delete. Contribute through the current writing tab. While a human edits one card, add Agent draft children or edit other cards. Edit TODO text/completion through project files. Set presentation.cardWidth to 180–1200 canvas pixels, or null for automatic width. ${MINDMAP_EDIT_GUIDANCE}`,
     inputSchema: commandJsonSchema(MINDMAP_EDIT_INPUT),
     annotations: { readOnlyHint: false, destructiveHint: true, untrustedContentHint: true },
     execute: (args?: unknown) => executeManagedMapEdit(host, args),
@@ -699,7 +699,7 @@ export function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Select a saved mindmap card on the open map. Use navigate_project first if the mindmap page is not open.";
   }
   if (name === "add_mindmap_node") {
-    return `Create a card under an existing parent using the current map revision. ${MINDMAP_CARD_GUIDANCE} The card stays Agent draft until human Save or Delete.`;
+    return `Create an Agent draft under the given parent at the current map revision. Supply a visible title and body and optional collapsed Notes in caption.`;
   }
   if (name === "move_mindmap_node") {
     return "Move a saved mindmap card to a new parent or sibling position on this map only. Does not change TeX or other maps.";
@@ -714,7 +714,7 @@ export function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Visually highlight cards whose meaningful content changed since a date. Omit since for the past seven days. Pan, zoom, and collapse do not count.";
   }
   if (name === "patch_mindmap_node") {
-    return `Edit supplied fields on one card using its current revision. ${MINDMAP_CARD_GUIDANCE} Edit TODO title and text through apply_project_edits.`;
+    return `Edit supplied fields at the current card revision. Use caption for Notes. Edit paper TODO wording through apply_project_edits.`;
   }
   if (name === "attach_mindmap_image") return "Attach one existing project image asset to an empty card. For an occupied card, use apply_mindmap_edits with operation add to create a child and attach there. Use read_project_files to inspect the asset; this changes only this map's reference list.";
   if (name === "detach_mindmap_image") return "Detach one image reference from this card without deleting the shared project asset.";

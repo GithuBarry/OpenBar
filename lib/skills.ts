@@ -1,4 +1,4 @@
-import { EXPERIMENT_WRITING_GUIDANCE, MINDMAP_CARD_GUIDANCE, PROJECT_DELIVERY_GUIDANCE } from "./research/agent-guidance";
+import { EXPERIMENT_WRITING_GUIDANCE, MINDMAP_CARD_GUIDANCE, MINDMAP_WRITING_REFERENCE, MINDMAP_WRITING_SKILL_ID, PROJECT_DELIVERY_GUIDANCE } from "./research/agent-guidance";
 
 /**
  * OpenBar — bundled research skills.
@@ -24,6 +24,13 @@ export interface Skill {
 
 export const SKILLS: Skill[] = [
   {
+    id: MINDMAP_WRITING_SKILL_ID,
+    title: "Write mindmap cards and visuals",
+    when: "Creating or revising prose cards, paper TODO links, comparison matrices, or compact HTML/SVG visuals.",
+    source: "OpenBar writing practice",
+    body: MINDMAP_CARD_GUIDANCE,
+  },
+  {
     id: "anti-defensive-writing",
     title: "Direct, precise writing",
     when: "Writing or revising card text, manuscript prose, and explanations for clarity and a direct authorial voice.",
@@ -34,7 +41,7 @@ Lead with the subject, answer, and evidence. State scope positively and name the
 
 Mindmap fields: title/text are visible. caption holds the collapsed Notes. Existing caution.background, caution.critical, and caution.important text appears in the same Notes field. Prefer caption for new notes.
 
-${MINDMAP_CARD_GUIDANCE}
+${MINDMAP_WRITING_REFERENCE}
 
 Optional further guidance: https://github.com/Kiterlin/anti-defensive-writing/blob/main/SKILL.md`,
   },
