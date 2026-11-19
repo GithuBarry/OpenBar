@@ -63,7 +63,7 @@ import {
   X,
 } from "lucide-react";
 
-import { markAgentDraft } from "@/lib/mindmap/agent-draft";
+import { markAgentDraft, withAgentTableFormat } from "@/lib/mindmap/agent-draft";
 import { isLockedMindmapEditIntent } from "@/lib/mindmap/locked-edit-intent";
 import { focusedMindmapCardId } from "@/lib/mindmap/focused-card";
 import { markdownTableColumns, startsWithMarkdownTable } from "@/lib/mindmap/markdown-table";
@@ -1754,7 +1754,15 @@ export function MindmapEditor({
     if (readOnly) return;
     if (inlineEditorSessionRef.current?.nodeId === id && !await inlineEditorSessionRef.current.commit()) return;
     try {
-      await persistWebMcpMutation({ type: "patch-node", id, patch: { agentDraft: undefined } }, undefined, "human");
+      await persistWebMcpMutation(current => {
+        const saved = indexMindmap(current.mindmap).nodeById.get(id);
+        if (!saved) return null;
+        const rendered = withAgentTableFormat(saved);
+        return { type: "patch-node", id, patch: {
+          agentDraft: undefined,
+          ...(rendered !== saved ? { contentFormat: rendered.contentFormat, title: rendered.title, text: rendered.text } : {}),
+        } };
+      }, undefined, "human");
     } catch (error) {
       const restore: MindmapTreeAction = { type: "patch-node", id, patch: { agentDraft: true } };
       sessionRef.current = mindmapReducer(sessionRef.current, restore);
@@ -4229,8 +4237,8 @@ function createCanvasLayout(
   measuredCards?: Map<string, Dimensions>,
 ): CanvasLayout {
   const safeNodes = Array.isArray(mindmap?.nodes) ? mindmap.nodes : [];
-  const visibleNodes = safeNodes;
-  const { nodeById, childrenByParent: children } = indexMindmap(mindmap);
+  const visibleNodes = safeNodes.map(withAgentTableFormat);
+  const { nodeById, childrenByParent: children } = indexMindmap({ ...mindmap, nodes: visibleNodes });
   const displayTextById = new Map(visibleNodes.map((node) => [node.id, paperTodoText(node, paperState)]));
   const dimensions = new Map<string, Dimensions>();
   for (const node of visibleNodes) {
