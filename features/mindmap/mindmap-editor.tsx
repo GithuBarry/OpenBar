@@ -27,7 +27,7 @@ import { RequestRevision } from "./request-revision";
 import { PaperTodoPicker } from "./paper-todo-picker";
 import { CardLinkButton } from "./card-link-button";
 import { useAgentReplies } from "./use-agent-replies";
-import { agentReplyContentHash, cleanAgentReplyDisplay } from "@/lib/research/agent-reply-state";
+import { agentReplyContentHash, visibleAgentAnswer } from "@/lib/research/agent-reply-state";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useTransition, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
@@ -307,7 +307,7 @@ export function MindmapEditor({
   const [activitySince, setActivitySince] = useState<string | null>(null);
   const [customActivityDate, setCustomActivityDate] = useState(() => daysAgoDate(LAST_WEEK_DAYS));
   const collapseMapId = mindmap.id || initialMindmap.id || "draft";
-  const { replies: agentReplies, unreadNodeIds, answeredRequestNodeIds, markRead: markReplyRead } = useAgentReplies(project, collapseMapId, inboxRevision, persistedDiskHashRef.current);
+  const { replies: agentReplies, unreadNodeIds, answeredRequests, markRead: markReplyRead } = useAgentReplies(project, collapseMapId, inboxRevision, persistedDiskHashRef.current);
   const [replyReadRequest, setReplyReadRequest] = useState(0);
   const readAgentReply = useCallback((id: string, visibleNode?: MindmapNode) => {
     if (inlineEditorSessionRef.current?.nodeId === id || editingId === id) return;
@@ -2517,7 +2517,7 @@ export function MindmapEditor({
         coverage={coverageById.get(node.id)}
         activityLabel={activityNodeIds.has(node.id) ? Date.parse(activityAt) >= Date.parse(activitySince || "") ? relativeActivityLabel(activityAt) : "recent activity in this branch" : null}
         unreadReply={unreadNodeIds.has(node.id)}
-        answeredRequest={answeredRequestNodeIds.has(node.id)}
+        answeredRequest={answeredRequests.get(node.id)}
         onRead={() => readAgentReply(node.id, node)}
         dimensions={dimensions}
         onMeasure={measureCard}
@@ -2589,7 +2589,7 @@ export function MindmapEditor({
     activityNodeIds,
     activitySince,
     unreadNodeIds,
-    answeredRequestNodeIds,
+    answeredRequests,
     readAgentReply,
     imageUploads,
     collapsedIds,
@@ -3698,7 +3698,7 @@ function CanvasNode({
   coverage?: { complete: number; total: number };
   activityLabel?: string | null;
   unreadReply: boolean;
-  answeredRequest: boolean;
+  answeredRequest?: string;
   onRead: () => void;
   dimensions: Dimensions;
   fontSize: number;
@@ -3772,8 +3772,8 @@ function CanvasNode({
     return () => observer.disconnect();
   }, [node.id, onMeasure]);
   const { title, body } = cardContent;
-  const displayTitle = answeredRequest ? cleanAgentReplyDisplay(title) : title;
-  const displayBody = answeredRequest ? cleanAgentReplyDisplay(body) : body;
+  const displayTitle = visibleAgentAnswer(title, answeredRequest);
+  const displayBody = visibleAgentAnswer(body, answeredRequest);
   const tags = node.tags || [];
   const initial = node.todoId ? `${title}${body ? `\n${body}` : ""}`.trim() : editableCardText(node);
   const [draft, setDraft] = useState(initial);
@@ -4060,12 +4060,19 @@ function CanvasNode({
             </div>
           ) : (
             <>
-              {!displayTitle.trim() && !displayBody.trim() && <div className={styles.cardPlaceholder}>New card</div>}
+              {!answeredRequest && !displayTitle.trim() && !displayBody.trim() && <div className={styles.cardPlaceholder}>New card</div>}
               {displayTitle.trim() && <div className={cn("mindmap-node-title", node.parentId === null && styles.rootTitle)}>{node.parentId === null ? <><span className={styles.rootAccent} aria-hidden="true" /><div className={styles.rootSubject}><NodeRichText text={displayTitle} format={htmlCard ? "plain" : node.contentFormat} tableLayout={node.tableLayout} /></div></> : <NodeRichText text={displayTitle} format={htmlCard ? "plain" : node.contentFormat} tableLayout={node.tableLayout} />}</div>}
               {displayBody.trim() && <div className="mindmap-node-detail"><NodeRichText text={displayBody} format={htmlCard ? "html" : node.contentFormat} tableLayout={node.tableLayout} /></div>}
             </>
           )}
         </>
+      )}
+      {!editing && answeredRequest && (
+        <details className="nodrag nopan nowheel mt-1 text-[0.85em] text-muted-foreground"
+          onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
+          <summary className="cursor-pointer">Original request</summary>
+          <div className="mt-1 max-h-40 overflow-y-auto overscroll-contain whitespace-pre-wrap break-words" onWheel={event => event.stopPropagation()}>{answeredRequest}</div>
+        </details>
       )}
           {(uploading > 0 || node.refs?.some(ref => ref.kind === "figure")) && (
             <CardImages project={project} refs={node.refs || []} readOnly={readOnly} uploading={uploading}

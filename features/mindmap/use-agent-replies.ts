@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { agentInboxKey, useAgentInbox } from "@/features/use-agent-inbox"
 import type { AgentInbox } from "@/lib/research/agent-inbox-contract"
-import { answeredAgentRequestNodeIds } from "@/lib/research/agent-reply-state"
+import { answeredAgentRequests } from "@/lib/research/agent-reply-state"
 
 type Reply = AgentInbox["replies"][number]
 type ReplyState = { scope: string, replies: Reply[], seen: Record<string, string> }
@@ -70,6 +70,9 @@ export function useAgentReplies(project: string, mapId: string, inboxRevision?: 
   const replies = useMemo(() => state.scope === prefix ? state.replies : [], [state.scope, state.replies, prefix])
   const unreadNodeIds = useMemo(() => new Set(replies
     .filter(reply => state.seen[reply.nodeId] !== reply.responseRevision).map(reply => reply.nodeId)), [replies, state.seen])
-  const answeredRequestNodeIds = useMemo(() => answeredAgentRequestNodeIds(replies), [replies])
-  return { replies, unreadNodeIds, answeredRequestNodeIds, markRead }
+  const answeredRequests = useMemo(() => {
+    const pending = new Set(inbox.data?.notifications.filter(note => note.mapId === mapId && !note.acknowledged).map(note => note.nodeId))
+    return answeredAgentRequests(replies, pending)
+  }, [replies, inbox.data, mapId])
+  return { replies, unreadNodeIds, answeredRequests, markRead }
 }

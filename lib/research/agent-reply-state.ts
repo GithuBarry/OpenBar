@@ -42,13 +42,28 @@ export function cleanAgentReplyDisplay(text: string): string {
   return text.replace(leading, '$1').trim()
 }
 
-/** Published replies hide the request marker for their current generation. */
-export function answeredAgentRequestNodeIds(replies: readonly { nodeId: string, requestNodeId?: string, requestCurrent?: boolean }[]): Set<string> {
-  const result = new Set<string>()
-  for (const reply of replies) {
-    if (reply.requestCurrent !== false) result.add(reply.requestNodeId || reply.nodeId)
+/** Several answer cards can point to the same original request. */
+export function answeredAgentRequests(
+  replies: readonly { nodeId: string, requestNodeId?: string, requestCurrent?: boolean, question?: string, repliedAt: string }[],
+  pending: ReadonlySet<string>,
+): Map<string, string> {
+  const requests = new Map<string, string>()
+  for (const reply of [...replies].sort((a, b) => b.repliedAt.localeCompare(a.repliedAt))) {
+    const id = reply.requestNodeId || reply.nodeId
+    if (reply.requestCurrent === false || pending.has(id) || requests.has(id) || !reply.question?.trim()) continue
+    requests.set(id, reply.question)
   }
-  return result
+  return requests
+}
+
+/** Fold only lines that match an explicitly tagged ask in the recorded request. */
+export function visibleAgentAnswer(text: string, question?: string): string {
+  if (!question) return text
+  const requests = new Set(question.split(/\r?\n/).map(line => line.trim())
+    .filter(line => /@(?:agents?|stat)\b/i.test(line) && cleanAgentReplyDisplay(line) !== line)
+    .map(cleanAgentReplyDisplay))
+  if (!requests.size) return text
+  return text.split(/\r?\n/).filter(line => !line.trim() || !requests.has(cleanAgentReplyDisplay(line))).join('\n').trim()
 }
 
 /** Shared saved/live projection. TeX supplies TODO text and maps supply their notes. */
