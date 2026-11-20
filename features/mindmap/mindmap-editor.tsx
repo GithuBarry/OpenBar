@@ -3456,9 +3456,8 @@ export function MindmapEditor({
             onNotesChange={value => updateNodeNote(selected.id, value)} />
           <CardLinks key={`links:${selected.id}`} sourceId={selected.id} project={project} refs={selectedRefs} pickerOptions={linkPickerOptions} onChange={refs => dispatch({ type: "patch-node", id: selected.id, patch: { refs } })} />
           <CardProperties key={`properties:${selected.id}`} value={selected.metadata} onChange={metadata => dispatch({ type: "patch-node", id: selected.id, patch: { metadata } })} />
-          <div className="mindmap-card-menu-danger">
-            <button type="button" className="mindmap-text-button" onClick={() => addChild(selected.id)}>Add child card</button>
-            {selected.todoId && selectedTodo && !selectedMissing && paperSourceHash && (
+          {selected.todoId && selectedTodo && !selectedMissing && paperSourceHash && (
+            <div className="mindmap-card-menu-danger">
               <button
                 type="button"
                 className="mindmap-text-button text-warn"
@@ -3484,8 +3483,8 @@ export function MindmapEditor({
               >
                 Delete paper TODO
               </button>
-            )}
-          </div>
+            </div>
+          )}
           </fieldset>
           </InspectorSection>
         </aside>
@@ -3690,12 +3689,14 @@ function MindmapUnplacedTray({ project, paperState, nodes, selectedParentId, onP
   const destinationLabel = destination?.title || (destination?.contentFormat === "html" ? "HTML card" : destination?.text.split("\n")[0]) || "selected card";
   function clearTarget() { document.querySelectorAll("[data-todo-drop-target]").forEach((element) => element.removeAttribute("data-todo-drop-target")); }
   return <aside className={styles.unplacedTray} aria-label="Unplaced paper TODOs">
-    <header>
-      <div className={styles.unplacedHeaderTitle}><strong>Unplaced TODOs</strong><span>{candidates.length}</span></div>
-      <FastTooltip label="Close Unplaced TODOs"><button type="button" className={styles.unplacedClose} aria-label="Close Unplaced TODOs" onClick={onClose}><X size={14} aria-hidden="true" /></button></FastTooltip>
-    </header>
-    <p>Drag a TODO onto any card.</p>
-    <input aria-label="Search unplaced paper TODOs" placeholder="Find a TODO…" value={query} onChange={(event) => setQuery(event.target.value)} />
+    <div className={styles.unplacedTop}>
+      <header>
+        <div className={styles.unplacedHeaderTitle}><strong>Unplaced TODOs</strong><span>{candidates.length}</span></div>
+        <FastTooltip label="Close Unplaced TODOs"><button type="button" className={styles.unplacedClose} aria-label="Close Unplaced TODOs" onClick={onClose}><X size={14} aria-hidden="true" /></button></FastTooltip>
+      </header>
+      <p>Drag a TODO onto any card.</p>
+      <input aria-label="Search unplaced paper TODOs" placeholder="Find a TODO…" value={query} onChange={(event) => setQuery(event.target.value)} />
+    </div>
     <ul>{visible.map((todo) => <li key={todo.id} data-unplaced-todo={todo.id}
       onPointerDown={(event) => {
         const target = event.target as HTMLElement;
