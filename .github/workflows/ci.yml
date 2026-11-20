@@ -7,9 +7,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   build:
-    name: Typecheck and build
+    name: Typecheck, build, and smoke check
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -30,11 +34,93 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Cache Next.js build
+        uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
       - name: Typecheck
         run: pnpm typecheck
 
       - name: Build production app
         run: pnpm build
+
+      - name: Smoke check standalone server, SSR routes, and MCP
+        run: |
+          set -euo pipefail
+          rm -rf .next/standalone/public .next/standalone/.next/static
+          cp -a public .next/standalone/public
+          cp -a .next/static .next/standalone/.next/static
+
+          CONTENT_DIR="${RUNNER_TEMP:-/tmp}/openbar-ci-content"
+          rm -rf "$CONTENT_DIR"
+          mkdir -p "$CONTENT_DIR/projects"
+          cp -a examples/published-papers/command-v "$CONTENT_DIR/projects/command-v"
+
+          PORT=3299
+          TOKEN="ci-smoke-token"
+          LOG_FILE="${RUNNER_TEMP:-/tmp}/openbar-ci-server.log"
+          HOSTNAME=127.0.0.1 PORT="$PORT" OPENBARRY_CONTENT="$CONTENT_DIR" OPENBARRY_ACCESS_TOKEN="$TOKEN" \
+            node .next/standalone/server.js >"$LOG_FILE" 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true' EXIT
+
+          for _ in $(seq 1 30); do
+            if curl -sf "http://127.0.0.1:${PORT}/api/health" >/dev/null; then
+              break
+            fi
+            sleep 0.5
+          done
+
+          HEALTH=$(curl -sf "http://127.0.0.1:${PORT}/api/health")
+          echo "Health: $HEALTH"
+          node -e 'const h = JSON.parse(process.argv[1]); if (!h.ok) process.exit(1);' "$HEALTH"
+
+          for route in "/" "/agents" "/openapi.json" "/p/command-v/mindmap" "/p/command-v/paper"; do
+            CODE=$(curl -sS -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PORT}${route}")
+            echo "GET ${route} -> HTTP ${CODE}"
+            if [ "$CODE" != "200" ]; then
+              cat "$LOG_FILE"
+              exit 1
+            fi
+          done
+
+          MCP_INIT=$(curl -sf -X POST "http://127.0.0.1:${PORT}/api/mcp" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"1.0.0"}}}')
+          MCP_TOOLS=$(curl -sf -X POST "http://127.0.0.1:${PORT}/api/mcp" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
+          MCP_STATE=$(curl -sf -X POST "http://127.0.0.1:${PORT}/api/mcp" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_project_state","arguments":{"project":"command-v"}}}')
+          node -e '
+            const parse = (raw) => {
+              const trimmed = raw.trim();
+              if (trimmed.startsWith("{")) return JSON.parse(trimmed);
+              const data = trimmed.split(/\r?\n/).find((l) => l.startsWith("data:"));
+              if (!data) throw new Error("Unexpected MCP response: " + trimmed.slice(0, 200));
+              return JSON.parse(data.slice(5).trim());
+            };
+            const init = parse(process.argv[1]);
+            const list = parse(process.argv[2]);
+            const state = parse(process.argv[3]);
+            const names = (list.result?.tools || []).map((t) => t.name);
+            const text = state.result?.content?.[0]?.text || "";
+            console.log("MCP server:", init.result?.serverInfo?.name, "tools:", names.length, "state chars:", text.length);
+            if (!init.result?.serverInfo?.name || !names.includes("get_project_state") || !names.includes("apply_mindmap_edits") || !text.includes("command-v")) {
+              process.exit(1);
+            }
+          ' "$MCP_INIT" "$MCP_TOOLS" "$MCP_STATE"
 
       # `pnpm docker:build` stays in the deployment acceptance docs because
       # it requires a Docker image runtime and an image-capable environment.
