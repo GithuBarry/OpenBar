@@ -273,7 +273,7 @@
 .activityBadge:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 3px; }
 .agentDraft .activityBadge { right: 94px; }
 .agentDraft > .cardProgress { top: 14px; }
-.draftActions { position: absolute; top: -17px; right: 10px; display: inline-flex; align-items: center; gap: 2px; padding: 2px 3px; border: 1px solid rgb(var(--accent) / .35); border-radius: 999px; background: rgb(var(--surface)); box-shadow: 0 1px 4px rgb(0 0 0 / .10); }
+.draftActions { position: absolute; top: -17px; right: 10px; display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid rgb(var(--accent) / .35); border-radius: 999px; background: rgb(var(--surface)); box-shadow: 0 1px 4px rgb(0 0 0 / .10); }
 .draftActions button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 999px; color: rgb(var(--accent-text)); cursor: pointer; transition: background 140ms ease, color 140ms ease; }
 .draftActions button:hover:enabled { color: rgb(var(--accent-text)); background: rgb(var(--accent) / .14); }
 .draftActions button:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; }
@@ -285,7 +285,7 @@
 .draftRevise:hover:enabled .draftBubble, .draftRevise:focus-visible:enabled .draftBubble { opacity: 1; transform: scale(1); }
 :global(html[data-alt-key="true"]) .draftRevise:is(:hover, :focus-visible):enabled .draftStatMark { opacity: 1; transform: scale(1); }
 .cardReviseZone { position: absolute; top: -22px; right: 2px; z-index: 3; display: flex; align-items: flex-start; justify-content: flex-end; width: 52px; height: 44px; padding: 5px 8px 0 0; pointer-events: auto; }
-.cardRevisePill { display: inline-flex; align-items: center; padding: 2px 3px; border: 1px solid rgb(var(--line)); border-radius: 999px; background: rgb(var(--surface)); box-shadow: 0 1px 4px rgb(0 0 0 / .08); opacity: 0; transform: translateY(2px) scale(.94); pointer-events: none; transition: opacity 140ms ease, transform 140ms ease, border-color 140ms ease; }
+.cardRevisePill { display: inline-flex; align-items: center; padding: 2px; border: 1px solid rgb(var(--line)); border-radius: 999px; background: rgb(var(--surface)); box-shadow: 0 1px 4px rgb(0 0 0 / .08); opacity: 0; transform: translateY(2px) scale(.94); pointer-events: none; transition: opacity 140ms ease, transform 140ms ease, border-color 140ms ease; }
 .cardReviseZone:hover .cardRevisePill, .cardReviseZone:focus-within .cardRevisePill, .cardReviseZone:has([data-state="open"]) .cardRevisePill { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
 .cardRevisePill:hover, .cardRevisePill:has([data-state="open"]) { border-color: rgb(var(--accent) / .4); }
 @media (hover: none) and (pointer: coarse) {
