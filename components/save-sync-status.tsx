@@ -182,50 +182,21 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
       const style = getComputedStyle(button);
       const accent = style.getPropertyValue("--accent").trim() || "120 94 240";
       const accentText = style.getPropertyValue("--accent-text").trim() || accent;
-      const warn = style.getPropertyValue("--warn").trim() || "254 97 0";
       const baseBg = style.backgroundColor;
       const baseColor = style.color;
       const baseShadow = style.boxShadow === "none" ? "0 0 0 0 transparent" : style.boxShadow;
-      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       const base = { backgroundColor: baseBg, color: baseColor, boxShadow: baseShadow };
-
-      if (reduced) {
-        const tone = attentionRequest >= 3 ? warn : accent;
-        const solid = attentionRequest >= 2;
-        bounceRef.current = button.animate([
-          base,
-          { backgroundColor: solid ? `rgb(${tone})` : `rgb(${tone} / 0.36)`, color: solid ? "#fff" : `rgb(${accentText})`, boxShadow: `inset 0 0 0 1.5px rgb(${tone} / 0.7)`, offset: 0.25 },
-          base,
-        ], { duration: 900, easing: "ease-out" });
-      } else if (attentionRequest === 1) {
-        bounceRef.current = button.animate([
-          base,
-          { backgroundColor: `rgb(${accent} / 0.42)`, color: `rgb(${accentText})`, boxShadow: `inset 0 0 0 1.5px rgb(${accent} / 0.55)`, offset: 0.28 },
-          base,
-        ], { duration: 760, easing: "ease-out" });
-      } else if (attentionRequest === 2) {
-        const peak = { backgroundColor: `rgb(${accent})`, color: "#fff", boxShadow: `inset 0 0 0 1.5px rgb(${accent})` };
-        const dip = { backgroundColor: `rgb(${accent} / 0.24)`, color: `rgb(${accentText})`, boxShadow: `inset 0 0 0 1.5px rgb(${accent} / 0.45)` };
-        bounceRef.current = button.animate([
-          base,
-          { ...peak, offset: 0.22 },
-          { ...dip, offset: 0.48 },
-          { ...peak, offset: 0.72 },
-          base,
-        ], { duration: 1050, easing: "ease-in-out" });
-      } else {
-        const strong = { backgroundColor: `rgb(${warn})`, color: "#fff", boxShadow: `inset 0 0 0 1.5px rgb(${warn})` };
-        const mid = { backgroundColor: `rgb(${warn} / 0.2)`, color: `rgb(${warn})`, boxShadow: `inset 0 0 0 1.5px rgb(${warn} / 0.5)` };
-        bounceRef.current = button.animate([
-          base,
-          { ...strong, offset: 0.14 },
-          { ...mid, offset: 0.32 },
-          { ...strong, offset: 0.5 },
-          { ...mid, offset: 0.68 },
-          { ...strong, offset: 0.82 },
-          base,
-        ], { duration: 1350, easing: "ease-in-out" });
-      }
+      const level = Math.min(attentionRequest, 3);
+      const peak = level === 1
+        ? { backgroundColor: `rgb(${accent} / 0.36)`, color: `rgb(${accentText})`, boxShadow: `inset 0 0 0 1.5px rgb(${accent} / 0.45)` }
+        : level === 2
+          ? { backgroundColor: `rgb(${accent} / 0.74)`, color: "#fff", boxShadow: `inset 0 0 0 1.5px rgb(${accent} / 0.85)` }
+          : { backgroundColor: `rgb(${accent})`, color: "#fff", boxShadow: `inset 0 0 0 1.5px rgb(${accent})` };
+      bounceRef.current = button.animate([
+        base,
+        { ...peak, offset: 0.28 },
+        base,
+      ], { duration: level === 1 ? 620 : level === 2 ? 720 : 820, easing: "ease-out" });
     }
 
     if (attentionRequest >= 3) {
@@ -249,11 +220,11 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
         const rect = button.getBoundingClientRect();
         const burst = ++zBurstIdRef.current;
         const specs = [
-          { frac: 0.18, dx: -10, drop: 78, rot: -18, size: 14, delay: 0, duration: 960, glyph: "Z" as const, warm: true },
-          { frac: 0.42, dx: 6, drop: 92, rot: 14, size: 11, delay: 95, duration: 1060, glyph: "z" as const, warm: false },
-          { frac: 0.68, dx: -6, drop: 84, rot: -12, size: 15, delay: 185, duration: 1020, glyph: "Z" as const, warm: true },
-          { frac: 0.3, dx: 9, drop: 72, rot: 20, size: 12, delay: 270, duration: 920, glyph: "z" as const, warm: false },
-          { frac: 0.82, dx: 4, drop: 88, rot: -16, size: 13, delay: 340, duration: 1040, glyph: "Z" as const, warm: true },
+          { frac: 0.18, dx: -10, drop: 78, rot: -18, size: 14, delay: 0, duration: 960, glyph: "Z" as const, warm: false },
+          { frac: 0.42, dx: 6, drop: 92, rot: 14, size: 11, delay: 95, duration: 1060, glyph: "z" as const, warm: true },
+          { frac: 0.68, dx: -6, drop: 84, rot: -12, size: 15, delay: 185, duration: 1020, glyph: "Z" as const, warm: false },
+          { frac: 0.3, dx: 9, drop: 72, rot: 20, size: 12, delay: 270, duration: 920, glyph: "z" as const, warm: true },
+          { frac: 0.82, dx: 4, drop: 88, rot: -16, size: 13, delay: 340, duration: 1040, glyph: "Z" as const, warm: false },
         ];
         const batch: FallingZ[] = specs.map((spec, index) => ({
           id: burst * 100 + index,
