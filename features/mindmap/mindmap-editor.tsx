@@ -102,7 +102,7 @@ import {
   layoutMindmapTree,
   nodeDimensions,
 } from "@/lib/mindmap/layout";
-import { indentMindmapNode, mindmapMoveTargets, outdentMindmapNode, type MindmapDrop } from "@/lib/mindmap/drop-targets";
+import { indentMindmapNode, outdentMindmapNode, type MindmapDrop } from "@/lib/mindmap/drop-targets";
 import { DEFAULT_MINDMAP_FONT_SIZE, mindmapDiskHash } from "@/lib/mindmap/mindmap";
 import { createMindmapSaveQueue } from "@/lib/mindmap/save-queue";
 import { mergeSavedMindmap, rebaseSavedMindmap } from "@/lib/mindmap/merge-saved";
@@ -1065,7 +1065,6 @@ export function MindmapEditor({
   const [todoProgressBusy, setTodoProgressBusy] = useState(false);
   const [mapSettingsOpen, setMapSettingsOpen] = useState(false);
   const [moveQuery, setMoveQuery] = useState("");
-  const [moveOpen, setMoveOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchIndex, setSearchIndex] = useState(0);
   const [cardFilter, setCardFilter] = useState<"all" | "todos" | "drafts" | "active">("all");
@@ -1073,7 +1072,7 @@ export function MindmapEditor({
   const searchPanelRef = useRef<HTMLDivElement>(null);
   const searchDismissedOutsideRef = useRef(false);
   useEffect(() => {
-    if (!searchOpen && !moveOpen) return;
+    if (!searchOpen) return;
     searchDismissedOutsideRef.current = false;
     // Canvas gestures intercept bubbling events used by the popover's dismissal.
     const onPointerDown = (event: PointerEvent) => {
@@ -1081,15 +1080,14 @@ export function MindmapEditor({
       if (searchTriggerRef.current?.contains(target) || searchPanelRef.current?.contains(target)) return;
       searchDismissedOutsideRef.current = true;
       setSearchOpen(false);
-      setMoveOpen(false);
     };
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [searchOpen, moveOpen]);
+  }, [searchOpen]);
   useEffect(() => {
-    if (!searchOpen && !moveOpen) return;
+    if (!searchOpen) return;
     document.getElementById(`mindmap-search-result-${searchIndex}`)?.scrollIntoView({ block: "nearest" });
-  }, [searchIndex, searchOpen, moveOpen]);
+  }, [searchIndex, searchOpen]);
   const [focusRequest, setFocusRequest] = useState<MindmapFocusRequest | null>(null);
   const [moveNotice, setMoveNotice] = useState("");
   const [deletedBranchNotice, setDeletedBranchNotice] = useState<{
@@ -1701,17 +1699,6 @@ export function MindmapEditor({
     if (!payload) return;
     setSaveError(null);
     dispatch({ type: "reparent", id, parentId: payload.parentId, afterId: payload.afterId });
-  }
-
-  function moveSelectedTo(parentId: string) {
-    const id = sessionRef.current.selectedId;
-    if (id === parentId) return;
-    setSaveError(null);
-    dispatch({ type: "reparent", id, parentId });
-    setLocalCollapsed(parentId, false);
-    setFocusRequest((current) => ({ id, sequence: (current?.sequence || 0) + 1 }));
-    setMoveOpen(false);
-    setMoveQuery("");
   }
 
   function updateNodeText(id: string, text: string, contentFormat?: MindmapNode["contentFormat"]) {
@@ -2349,7 +2336,6 @@ export function MindmapEditor({
 
       if (event.key === "/") {
         event.preventDefault();
-        setMoveOpen(false);
         setMoveQuery("");
         setSearchIndex(0);
         setSearchOpen(true);
@@ -2682,17 +2668,10 @@ export function MindmapEditor({
     mindmap.rootId,
   ]);
 
-  const moveTargets = useMemo(() => {
-    if (!selected) return [];
-    const all = mindmapMoveTargets(mindmap, selected.id);
-    const needle = moveQuery.trim().toLowerCase();
-    return needle ? all.filter((item) => item.label.toLowerCase().includes(needle)) : all;
-  }, [mindmap, moveQuery, selected]);
-
   const searchResults = useMemo(() => {
-    if (!searchOpen && !moveOpen) return [];
+    if (!searchOpen) return [];
     const needle = moveQuery.trim().toLocaleLowerCase();
-    const base = moveOpen ? moveTargets : mindmap.nodes
+    const base = mindmap.nodes
       .filter((node) => {
         if (!needle) return true;
         const content = cardContentForNodeWithPaperState(node, paperState);
@@ -2713,13 +2692,11 @@ export function MindmapEditor({
       ].filter(Boolean).join(", ");
       return { ...result, context };
     });
-  }, [searchOpen, moveOpen, moveTargets, mindmap.nodes, moveQuery, paperState, layout, hierarchyDepths, descendantCounts]);
+  }, [searchOpen, mindmap.nodes, moveQuery, paperState, layout, hierarchyDepths, descendantCounts]);
   const visibleSearchResults = searchResults.slice(0, 60);
   const chooseSearchResult = (id: string) => {
-    if (moveOpen) moveSelectedTo(id);
-    else focusCard(id);
+    focusCard(id);
     setSearchOpen(false);
-    setMoveOpen(false);
     setMoveQuery("");
   };
 
@@ -2930,7 +2907,7 @@ export function MindmapEditor({
             if (event.altKey && selected && selected.parentId) addChild(selected.parentId);
             else addChild();
           }}><Plus size={16} aria-hidden="true" /></button></FastTooltip>
-          <Popover.Root open={searchOpen || moveOpen} onOpenChange={(open) => { setSearchOpen(open); if (!open) setMoveOpen(false); }}>
+          <Popover.Root open={searchOpen} onOpenChange={setSearchOpen}>
               <FastTooltip label={cardFilter === "all" ? "Find or filter cards (/)" : `Filtered: ${cardFilter === "todos" ? "Open TODOs" : cardFilter === "drafts" ? "Drafts" : "Active only"} — click to change (/)`}>
                 <Popover.Trigger asChild>
                   <button ref={searchTriggerRef} type="button" className={cn("p-button p-button-glass ob-glass-button", styles.iconButton, cardFilter !== "all" && styles.searchFiltered)} aria-label="Find or filter cards" onClick={() => { setMoveQuery(""); setSearchIndex(0); }}>
@@ -2940,11 +2917,11 @@ export function MindmapEditor({
                 </Popover.Trigger>
               </FastTooltip>
             <Popover.Portal>
-              <Popover.Content ref={searchPanelRef} className={styles.searchPanel} side="top" sideOffset={10} align="end" collisionPadding={12} aria-label={moveOpen ? "Move card" : "Find a card"}
+              <Popover.Content ref={searchPanelRef} className={styles.searchPanel} side="top" sideOffset={10} align="end" collisionPadding={12} aria-label="Find a card"
                 onCloseAutoFocus={(event) => { if (searchDismissedOutsideRef.current) event.preventDefault(); }}>
                 <div className={styles.searchField}>
                   <Search size={17} />
-                  <input autoFocus value={moveQuery} placeholder={moveOpen ? "Move under…" : "Search titles, text, and labels…"} aria-label={moveOpen ? "Search move destination" : "Search cards"} role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="mindmap-search-results" aria-activedescendant={visibleSearchResults[searchIndex] ? `mindmap-search-result-${searchIndex}` : undefined}
+                  <input autoFocus value={moveQuery} placeholder="Search titles, text, and labels…" aria-label="Search cards" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="mindmap-search-results" aria-activedescendant={visibleSearchResults[searchIndex] ? `mindmap-search-result-${searchIndex}` : undefined}
                     onChange={(event) => { setMoveQuery(event.target.value); setSearchIndex(0); }}
                     onKeyDown={(event) => {
                       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -2954,21 +2931,19 @@ export function MindmapEditor({
                       if (event.key === "Enter" && visibleSearchResults[searchIndex]) { event.preventDefault(); chooseSearchResult(visibleSearchResults[searchIndex].id); }
                     }} />
                 </div>
-                {!moveOpen && (
-                  <div className={styles.filterRow}>
-                    <ChoiceButtons
-                      label="Filter canvas"
-                      value={cardFilter}
-                      options={[
-                        { value: "all", label: "All" },
-                        { value: "todos", label: "Open TODOs" },
-                        { value: "drafts", label: "Drafts" },
-                        { value: "active", label: "Hide ditched" },
-                      ]}
-                      onChange={(value) => setCardFilter(value as "all" | "todos" | "drafts" | "active")}
-                    />
-                  </div>
-                )}
+                <div className={styles.filterRow}>
+                  <ChoiceButtons
+                    label="Filter canvas"
+                    value={cardFilter}
+                    options={[
+                      { value: "all", label: "All" },
+                      { value: "todos", label: "Open TODOs" },
+                      { value: "drafts", label: "Drafts" },
+                      { value: "active", label: "Hide ditched" },
+                    ]}
+                    onChange={(value) => setCardFilter(value as "all" | "todos" | "drafts" | "active")}
+                  />
+                </div>
                 <div id="mindmap-search-results" role="listbox" aria-label="Cards" className={styles.searchResults}>
                   {visibleSearchResults.map((result, index) => <button key={result.id} id={`mindmap-search-result-${index}`} type="button" role="option" aria-selected={index === searchIndex} onMouseEnter={() => setSearchIndex(index)} onClick={() => chooseSearchResult(result.id)}>
                     <span className={styles.searchResultContent}>
@@ -2979,7 +2954,7 @@ export function MindmapEditor({
                   </button>)}
                   {visibleSearchResults.length === 0 && <p>No matching cards.</p>}
                 </div>
-                <div className={styles.searchFooter}>{searchResults.length} cards, ↑ ↓ to choose, Enter to {moveOpen ? "move" : "jump"}, / to search</div>
+                <div className={styles.searchFooter}>{searchResults.length} cards, ↑ ↓ to choose, Enter to jump, / to search</div>
               </Popover.Content>
             </Popover.Portal>
           </Popover.Root>
@@ -3464,7 +3439,6 @@ export function MindmapEditor({
           <CardLinks key={`links:${selected.id}`} sourceId={selected.id} project={project} refs={selectedRefs} pickerOptions={linkPickerOptions} onChange={refs => dispatch({ type: "patch-node", id: selected.id, patch: { refs } })} />
           <CardProperties key={`properties:${selected.id}`} value={selected.metadata} onChange={metadata => dispatch({ type: "patch-node", id: selected.id, patch: { metadata } })} />
           <div className="mindmap-card-menu-danger">
-            {selected.id !== mindmap.rootId && <button type="button" className="mindmap-text-button" onClick={() => { setMoveQuery(""); setSearchIndex(0); setMoveOpen(true); }}>Move card…</button>}
             <button type="button" className="mindmap-text-button" onClick={() => addChild(selected.id)}>Add child card</button>
             {selected.todoId && selectedTodo && !selectedMissing && paperSourceHash && (
               <button
@@ -3492,20 +3466,6 @@ export function MindmapEditor({
               >
                 Delete paper TODO
               </button>
-            )}
-            {selected.id !== mindmap.rootId && (
-              <>
-                <button
-                  type="button"
-                  className="mindmap-text-button text-warn"
-                  onClick={() => {
-                    setCardMenuOpen(false);
-                    deleteSelected();
-                  }}
-                >
-                  Delete card
-                </button>
-              </>
             )}
           </div>
           </fieldset>
