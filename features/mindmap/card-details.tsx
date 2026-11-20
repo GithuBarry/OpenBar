@@ -33,45 +33,86 @@ export function hasCardLinks(refs: ArtifactRef[] = []): boolean {
   return refs.some(ref => ref.kind !== "figure");
 }
 
+const RELATION_PRESETS = ["supports", "refutes", "ablates", "depends-on", "supersedes", "motivates"] as const;
+
+export type LinkPickerOptions = {
+  sections?: Array<{ id: string; label: string }>;
+  todos?: Array<{ id: string; label: string }>;
+  nodes?: Array<{ id: string; label: string }>;
+  wiki?: Array<{ id: string; label: string }>;
+};
+
+export function CardMetadataPills({ metadata }: { metadata?: Record<string, unknown> }) {
+  if (!metadata) return null;
+  const entries = Object.entries(metadata).filter(([, v]) => (
+    typeof v === "string" || typeof v === "number" || typeof v === "boolean"
+  ));
+  if (!entries.length) return null;
+  const compact = entries.filter(([k, v]) => k.length <= 16 && String(v).length <= 18);
+  const shown = (compact.length ? compact : entries).slice(0, 2);
+  const hiddenCount = entries.length - shown.length;
+  const formatVal = (v: unknown) => typeof v === "boolean" ? (v ? "yes" : "no") : String(v);
+  return <>
+    {shown.map(([key, val]) => (
+      <span key={key} className="mindmap-node-tag font-mono tabular-nums" title={`${key}: ${formatVal(val)}`}>
+        {key}: {formatVal(val).slice(0, 16)}
+      </span>
+    ))}
+    {hiddenCount > 0 && (
+      <span className="mindmap-node-tag font-mono" title={entries.slice(2).map(([k, v]) => `${k}: ${formatVal(v)}`).join("\n")}>
+        +{hiddenCount}
+      </span>
+    )}
+  </>;
+}
+
 export function CardLinkIndicator({ project, refs }: { project: string; refs: ArtifactRef[] }) {
   const links = refs.filter(ref => ref.kind !== "figure").map(ref => ({ ...ref, href: artifactHref(project, ref) }));
   if (!links.length) return null;
   const external = links.find(ref => ref.kind === "web" || ref.kind === "external");
   const first = external || links[0]!;
-  let destination = first.label || first.kind.replaceAll("-", " ");
-  if (external) {
+  let destination = first.label?.trim() || first.kind.replaceAll("-", " ");
+  if (external && !first.label?.trim()) {
     try { destination = new URL(first.href).hostname.replace(/^www\./, ""); } catch { /* The safe link fallback keeps its label. */ }
   }
+  const characters = Array.from(destination)
+  const displayLabel = characters.length > 28 ? `${characters.slice(0, 27).join("").trimEnd()}…` : destination
   return <span className={`${styles.linkIndicator} nodrag nopan`}
     onPointerDown={event => event.stopPropagation()}
     onClick={event => event.stopPropagation()}
     onDoubleClick={event => event.stopPropagation()}
     onKeyDown={event => event.stopPropagation()}>
     <Popover.Root>
-      <FastTooltip label={links.map(ref => `${ref.label ? `${ref.label}: ` : ""}${ref.href}`).join("\n")}><Popover.Trigger asChild>
+      <FastTooltip label={links.map(ref => `${ref.relation ? `[${ref.relation}] ` : ""}${ref.label ? `${ref.label}: ` : ""}${ref.href}`).join("\n")}><Popover.Trigger asChild>
         <button type="button" className={styles.linkTrigger} aria-label={`${links.length} saved ${links.length === 1 ? "link" : "links"}: ${destination}`}>
           <LinkDestinationIcon href={first.href} external={Boolean(external)} />
-          <span className={styles.linkDestination}>{destination}</span>
+          {first.relation && <span className={linkStyles.relationPill}>{first.relation}</span>}
+          <span className={styles.linkDestination}>{displayLabel}</span>
           {links.length > 1 && <span className={styles.linkCount}>+{links.length - 1}</span>}
         </button>
       </Popover.Trigger></FastTooltip>
       <PopoverSurface className={styles.linkPopover} side="top" align="end" sideOffset={6} aria-label="Saved links">
         {links.map((ref, index) => <a key={`${ref.href}:${index}`} href={ref.href} target="_blank" rel="noopener noreferrer">
           <LinkDestinationIcon href={ref.href} external={isWebLink(ref)} className={linkStyles.popoverIcon} />
-          <span>{ref.label || ref.href}{ref.label && <small>{ref.href}</small>}</span>
+          <span>{ref.relation && <em className={linkStyles.relationPill}>{ref.relation}</em>} {ref.label || ref.href}{ref.label && <small>{ref.href}</small>}</span>
         </a>)}
       </PopoverSurface>
     </Popover.Root>
   </span>;
 }
 
-export function CardLinks({ project, refs, onChange }: { project: string; refs: ArtifactRef[]; onChange: (refs: ArtifactRef[]) => void }) {
+export function CardLinks({ project, refs, onChange, pickerOptions }: { project: string; refs: ArtifactRef[]; onChange: (refs: ArtifactRef[]) => void; pickerOptions?: LinkPickerOptions }) {
   const [draft, setDraft] = useState<ArtifactRef | null>(null);
   const [original, setOriginal] = useState<ArtifactRef | null>(null);
   const [context, setContext] = useState("");
   const [error, setError] = useState("");
-  const edit = (ref: ArtifactRef | null) => { setOriginal(ref); setDraft(ref ? { ...ref } : { kind: "web", id: "" }); setContext(ref?.sectionContext ? JSON.stringify(ref.sectionContext, null, 2) : ""); setError(""); };
+  const edit = (ref: ArtifactRef | null) => { setOriginal(ref); setDraft(ref ? { ...ref } : { kind: "paper-section", id: "" }); setContext(ref?.sectionContext ? JSON.stringify(ref.sectionContext, null, 2) : ""); setError(""); };
   const webLink = Boolean(draft && isWebLink(draft));
+  const targetChoices = draft?.kind === "paper-section" ? pickerOptions?.sections
+    : draft?.kind === "paper-todo" ? pickerOptions?.todos
+      : draft?.kind === "mindmap-node" ? pickerOptions?.nodes
+        : draft?.kind === "wiki-page" ? pickerOptions?.wiki
+          : undefined;
   const updateUrl = (value: string) => {
     if (!draft) return;
     const separateTarget = draft.url !== undefined && draft.id !== draft.url;
@@ -80,7 +121,7 @@ export function CardLinks({ project, refs, onChange }: { project: string; refs: 
   const save = () => {
     try {
       if (!draft) return;
-      let candidate: ArtifactRef = { ...draft, label: draft.label?.trim() || undefined, ...(context.trim() ? { sectionContext: JSON.parse(context) } : { sectionContext: undefined }) };
+      let candidate: ArtifactRef = { ...draft, label: draft.label?.trim() || undefined, relation: draft.relation?.trim() || undefined, ...(context.trim() ? { sectionContext: JSON.parse(context) } : { sectionContext: undefined }) };
       if (isWebLink(draft)) {
         const url = safeUrl(draft.url ?? draft.id);
         if (!url) throw new Error("Add a valid http(s) URL.");
@@ -101,22 +142,35 @@ export function CardLinks({ project, refs, onChange }: { project: string; refs: 
     <InspectorSummary label="Links" hasContent={refs.some(ref => ref.kind !== "figure")} />
     <div className={linkStyles.list}>
       {refs.filter(ref => ref.kind !== "figure").map((ref, index) => <div key={index} className={linkStyles.row}>
-        <a className={linkStyles.savedLink} href={artifactHref(project, ref)} title={ref.label || ref.id} target="_blank" rel="noopener noreferrer"><LinkDestinationIcon href={artifactHref(project, ref)} external={isWebLink(ref)} /><span>{ref.label || ref.id}</span></a>
+        <a className={linkStyles.savedLink} href={artifactHref(project, ref)} title={ref.label || ref.id} target="_blank" rel="noopener noreferrer"><LinkDestinationIcon href={artifactHref(project, ref)} external={isWebLink(ref)} />{ref.relation && <span className={linkStyles.relationPill}>{ref.relation}</span>}<span>{ref.label || ref.id}</span></a>
         <FastTooltip label="Edit link"><button type="button" className={linkStyles.iconButton} aria-label={`Edit link ${ref.label || ref.id}`} onClick={() => edit(ref)}><Pencil size={13} aria-hidden="true" /></button></FastTooltip>
         <FastTooltip label="Remove link"><button type="button" className={linkStyles.iconButton} aria-label={`Remove link ${ref.label || ref.id}`} onClick={() => onChange(refs.filter(item => item !== ref))}><Trash2 size={13} aria-hidden="true" /></button></FastTooltip>
       </div>)}
       {draft ? <div className={linkStyles.editor}>
         <div className={linkStyles.heading}>
-          <Select label="Link type" value={draft.kind} options={["web", "external", "project", "paper-section", "paper-todo", "paper-comment", "wiki-page", "mindmap-node"].map(value => ({ value, label: value.replaceAll("-", " ") }))} onValueChange={value => setDraft({ ...draft, kind: value as ArtifactRef["kind"] })} />
-          <input aria-label="Link label" placeholder="Label (optional)" value={draft.label || ""} onChange={event => setDraft({ ...draft, label: event.target.value || undefined })} />
+          <Select label="Link type" value={draft.kind} options={["paper-section", "paper-todo", "paper-comment", "mindmap-node", "wiki-page", "file", "web", "external", "project"].map(value => ({ value, label: value.replaceAll("-", " ") }))} onValueChange={value => setDraft({ ...draft, kind: value as ArtifactRef["kind"], id: "" })} />
+          <input aria-label="Link relation" list="ob-link-relations" placeholder="Relation (e.g. supports)" value={draft.relation || ""} onChange={event => setDraft({ ...draft, relation: event.target.value || undefined })} />
+          <datalist id="ob-link-relations">{RELATION_PRESETS.map(rel => <option key={rel} value={rel} />)}</datalist>
         </div>
         {webLink ? <input aria-label="Link URL" type="url" placeholder="https://…" autoComplete="url" value={draft.url ?? draft.id} onChange={event => updateUrl(event.target.value)} />
-          : <input aria-label="Link target" placeholder="Section, card, or page id" value={draft.id} onChange={event => setDraft({ ...draft, id: event.target.value })} />}
+          : targetChoices && targetChoices.length > 0 ? (
+            <Select
+              label="Link target"
+              value={draft.id}
+              options={[{ value: "", label: `Choose ${draft.kind.replaceAll("-", " ")}…` }, ...targetChoices.map(item => ({ value: item.id, label: item.label }))]}
+              onValueChange={value => {
+                const chosen = targetChoices.find(item => item.id === value);
+                setDraft({ ...draft, id: value, label: draft.label || chosen?.label });
+              }}
+            />
+          )
+          : <input aria-label="Link target" placeholder={draft.kind === "file" ? "scripts/eval.py" : "Section, card, or page id"} value={draft.id} onChange={event => setDraft({ ...draft, id: event.target.value })} />}
+        <input aria-label="Link label" placeholder="Display label (optional)" value={draft.label || ""} onChange={event => setDraft({ ...draft, label: event.target.value || undefined })} />
         <details className={linkStyles.options}>
           <summary><ChevronRight size={12} aria-hidden="true" />Reference details</summary>
           <div className={linkStyles.optionFields}>
             {webLink ? <label><span>Reference target</span><input aria-label="Link target" value={draft.id} onChange={event => setDraft({ ...draft, id: event.target.value, url: draft.url ?? draft.id })} /></label>
-              : <label><span>URL (optional)</span><input aria-label="Link URL" type="url" value={draft.url || ""} onChange={event => setDraft({ ...draft, url: event.target.value || undefined })} /></label>}
+              : <label><span>Target id / URL</span><input aria-label="Link target raw" value={draft.id} onChange={event => setDraft({ ...draft, id: event.target.value })} /></label>}
             {(draft.kind === "mindmap-node" || draft.mapId !== undefined) && <label><span>Map</span><input aria-label="Link map" value={draft.mapId || ""} onChange={event => setDraft({ ...draft, mapId: event.target.value || undefined })} /></label>}
             {(draft.kind === "paper-section" || context.trim()) && <label><span>Section context</span><textarea aria-label="Section link context" value={context} spellCheck={false} onChange={event => setContext(event.target.value)} /></label>}
           </div>

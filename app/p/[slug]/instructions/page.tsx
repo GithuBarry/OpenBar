@@ -31,11 +31,14 @@ export default async function InstructionsPage({
   return (
     <>
       <PageHeader
-        title="Project instructions"
-        subtitle={project.title}
+        title={project.title}
+        subtitle="Project and workspace instructions"
+        location="Instructions"
+        project={project}
+        readOnlyProject={isPublicDemoMode()}
         icon={<ScrollText size={18} />}
       />
-      <div className="mx-auto max-w-3xl p-6">
+      <div className="mx-auto max-w-6xl p-6">
         <ProjectInstructionsClient
           slug={slug}
           agentsPath={agents?.path || "AGENTS.md"}

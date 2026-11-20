@@ -34,9 +34,6 @@ const nextConfig: NextConfig = {
   outputFileTracingExcludes: {
     "/*": ["./content/projects/**", "./scratch/**", "./.scratch/**", "./.next*/standalone/**"],
   },
-  outputFileTracingIncludes: {
-    "/*": ["./lib/tex-project/pandoc-openbarry.lua"],
-  },
   // Next 16 treats each browser host as a separate origin and blocks
   // /_next chunks + HMR unless listed here. Keep the stable tailnet name and
   // current tailnet address available for the long-lived private workbench.
@@ -57,9 +54,6 @@ const nextConfig: NextConfig = {
     "@citation-js/plugin-csl",
   ],
   experimental: {
-    // Keep production builds within a modest share of the shared WSL host.
-    cpus: 2,
-    webpackMemoryOptimizations: true,
     authInterrupts: true,
     useTypeScriptCli: false,
     serverActions: {
@@ -90,6 +84,7 @@ const nextConfig: NextConfig = {
       path: { browser: "./lib/empty-module.ts" },
       "node:path": { browser: "./lib/empty-module.ts" },
       module: { browser: "./lib/empty-module.ts" },
+      canvas: { browser: "./lib/empty-module.ts" },
     },
   },
   webpack: (config, { isServer }) => {

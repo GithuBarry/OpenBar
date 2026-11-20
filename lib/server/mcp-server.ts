@@ -30,9 +30,12 @@ export function createOpenbarMcpServer(actor: string): Server {
     const notification = result.notifications
     const prefix = notification ? "error" in notification ? notification.error : formatInboxPrefix(notification) : ""
     const { notifications: _notifications, ...operation } = result
+    const compactStructuredNotifications = notification && !("error" in notification)
+      ? { count: notification.count, hasMore: notification.hasMore, revision: notification.revision, notifications: notification.notifications }
+      : notification
     return {
       content: [...(prefix ? [{ type: "text" as const, text: prefix }] : []), { type: "text", text: JSON.stringify(operation) }],
-      structuredContent: result,
+      structuredContent: compactStructuredNotifications ? { ...operation, notifications: compactStructuredNotifications } : operation,
       ...(result.ok ? {} : { isError: true }),
     } satisfies CallToolResult
   })

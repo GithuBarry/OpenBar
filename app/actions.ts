@@ -22,7 +22,10 @@ import {
   getEditableTexPaper,
   getBibliographyData,
   getPaperEditorState,
+  deleteWikiPage,
   getWikiPage,
+  renameWikiPage,
+  saveWikiPage,
   projectContentDir,
   saveProject,
   getProject,
@@ -48,12 +51,11 @@ import { importBibtex, previewBibtexImport } from "@/lib/research/bibliography-i
 import { readProjectFiles, applyProjectEdits } from "@/lib/research/project-files";
 import type { ProjectFilesReadInput, ProjectFilesEditInput } from "@/lib/research/project-files-contract";
 import { isProtectedProjectPath } from "@/lib/research/project-files-contract";
-import { persistSourceBundle, applyConversionWrite } from "@/lib/tex-project/source-persist";
+import { persistSourceBundle } from "@/lib/tex-project/source-persist";
 import { syncProjectCommand } from "@/lib/research/sync-project-command";
 import { getOverleafSyncDetails, prepareForceSync, confirmForceSync, finishForceSync, type ForceSyncDirection, prepareOverleafPull, finishOverleafPull, type OverleafConflictChoice, commitOverleafGit, getProjectGitHistory, getOverleafGitStatus, pullOverleafGit, reconcileDirectPull, pushOverleafGit, refreshOverleafGitStatus, syncOverleafGit, OverleafSetupError } from "@/lib/tex-project/overleaf-git";
 import { prepareOverleafProject } from "@/lib/tex-project/overleaf-export";
 import { inspectRepository } from "@/lib/tex-project/source-graph";
-import { getConversionPlan, previewManuscriptConversion } from "@/lib/tex-project/pandoc";
 import { getRuntimeCapabilities } from "@/lib/research/capabilities";
 import { failResult, okResult, type OperationResult } from "@/lib/research/operation-result";
 import { getProjectState, projectStateForAgent, resolveProjectNavigation, searchProject } from "@/lib/research/project-state";
@@ -114,20 +116,6 @@ function recordActivity(
     // write receipt useful when activity storage is temporarily unavailable.
     console.warn("OpenBar activity record failed", error instanceof Error ? error.message : String(error));
   }
-}
-
-/** Wiki storage remains readable while its dormant mutation surface is unavailable. */
-class CapabilityUnavailableError extends Error {
-  readonly code = "capability_unavailable" as const;
-
-  constructor(message: string) {
-    super(message);
-    this.name = "CapabilityUnavailableError";
-  }
-}
-
-function wikiMutationUnavailable(): never {
-  throw new CapabilityUnavailableError("Wiki editing is currently unavailable. Use paper TODOs for actionable work.");
 }
 
 /** Guard the editable canvas against malformed client payloads and tree cycles. */
@@ -439,9 +427,9 @@ export async function saveMindmapAction(
       .slice(0, 48);
     const mapTitle = next.title || next.id || "Mindmap";
     const activityTitle = changedNodeIds.length === 1
-      ? `${mapTitle} · ${afterNodes.get(changedNodeIds[0])?.title?.trim() || changedNodeIds[0]}`
+      ? `${mapTitle}: ${afterNodes.get(changedNodeIds[0])?.title?.trim() || changedNodeIds[0]}`
       : changedNodeIds.length > 1
-        ? `${mapTitle} · ${changedNodeIds.length} cards changed`
+        ? `${mapTitle}: ${changedNodeIds.length} cards changed`
         : mapTitle;
     const mapId = next.id || DRAFT_MINDMAP_ID;
     const mapHref = `/p/${encodeURIComponent(slug)}/mindmap${next.id && !isPrimaryMindmap(next) ? `/${encodeURIComponent(next.id)}` : ""}`;
@@ -933,90 +921,6 @@ export async function placeTodoOnMindmapAction(slug: string, todoId: string, par
   });
 }
 
-export async function previewConversionAction(
-  slug: string,
-  filePath: string,
-  source = "",
-  to = "html5",
-  expandProject = false,
-) {
-  await requireProjectAccess(slug);
-  const cwd = texPaths(projectContentDir(slug)).manuscriptDir;
-  const preview = await previewManuscriptConversion({
-    projectId: slug,
-    manuscriptDir: cwd,
-    filePath,
-    source,
-    to,
-    expandProject,
-  });
-  if (!preview.ok) throw new Error(preview.message);
-  const plan = preview.plan;
-  return {
-    id: plan.id,
-    filePath: plan.filePath,
-    toFormat: plan.toFormat,
-    loss: plan.artifact.loss,
-    diagnostics: plan.artifact.diagnostics,
-    unsupported: plan.artifact.unsupported,
-    sourceHash: plan.artifact.sourceHash,
-    sourceFileHash: plan.artifact.sourceFileHash,
-    outputHash: plan.artifact.outputHash,
-    output: plan.artifact.output,
-    expandMethod: plan.artifact.expandMethod,
-  };
-}
-
-export async function applyConversionAction(slug: string, planId: string, expectedHash: string, acknowledgeLoss: boolean, dryRun = false) {
-  await requireProjectAccess(slug);
-  return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
-    assertAdministrativeWriteAllowed("Conversion");
-    const manuscriptDir = texPaths(projectContentDir(slug)).manuscriptDir;
-    const plan = getConversionPlan(planId, manuscriptDir);
-    if (!plan || plan.projectId !== slug) {
-      return { ok: false as const, code: "invalid_arguments", message: "Unknown conversion plan.", retryable: false };
-    }
-    if (!expectedHash || plan.artifact.sourceHash !== expectedHash) {
-      return { ok: false as const, code: "stale_disk_state", message: "Conversion plan is stale.", retryable: true, currentHash: plan.artifact.sourceHash };
-    }
-    const result = await applyConversionWrite({
-      manuscriptDir,
-      filePath: plan.filePath,
-      output: plan.artifact.output,
-      loss: plan.artifact.loss,
-      acknowledgeLoss,
-      expectedSourceFileHash: plan.artifact.sourceFileHash,
-      expectedSourceBundleHash: plan.artifact.sourceBundleHash,
-      expectedExpandedSourceHash: plan.artifact.sourceHash,
-      expandProject: plan.artifact.expandMethod !== "none",
-      dryRun,
-    });
-    if (result.ok && !dryRun) bust(slug);
-    return result;
-  });
-}
-
-export async function readDocumentAction(slug: string, kind: "wiki", id: string) {
-  await requireProjectAccess(slug);
-  const document = readDocument(projectContentDir(slug), kind, id);
-  return document ? { ...document, bodyHash: document.hash, hash: document.stateHash } : null;
-}
-
-export async function patchDocumentAction(
-  slug: string,
-  kind: "wiki",
-  id: string,
-  baseHash: string,
-  body: string,
-) {
-  void slug;
-  void kind;
-  void id;
-  void baseHash;
-  void body;
-  return wikiMutationUnavailable();
-}
-
 /** One CAS keeps wiki body and visible metadata in sync for web and WebMCP edits. */
 export async function patchWikiPageAction(
   slug: string,
@@ -1025,12 +929,21 @@ export async function patchWikiPageAction(
   body: string,
   metadata: unknown,
 ) {
-  void slug;
-  void id;
-  void baseHash;
-  void body;
-  void metadata;
-  return wikiMutationUnavailable();
+  await requireProjectAccess(slug);
+  return withBrowserProjectWriteSession(projectContentDir(slug), () => {
+    const existing = getWikiPage(slug, id);
+    if (!existing) throw new Error(`Unknown wiki page: ${id}`);
+    const meta = (metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata : {}) as { title?: string; tags?: string[] };
+    saveWikiPage({
+      ...existing,
+      title: typeof meta.title === "string" && meta.title.trim() ? meta.title.trim() : existing.title,
+      tags: Array.isArray(meta.tags) ? meta.tags.map(String).filter(Boolean) : existing.tags,
+      body,
+      updatedAt: new Date().toISOString(),
+    }, baseHash);
+    bust(slug);
+    return getWikiPage(slug, id)!;
+  });
 }
 
 export async function renderPreviewAction(slug: string, kind: "wiki", id: string) {
@@ -1045,8 +958,15 @@ export async function renderPreviewAction(slug: string, kind: "wiki", id: string
 }
 
 export async function saveWikiAction(page: WikiPage): Promise<WikiPage> {
-  void page;
-  return wikiMutationUnavailable();
+  await requireProjectAccess(page.projectId);
+  return withBrowserProjectWriteSession(projectContentDir(page.projectId), () => {
+    saveWikiPage({
+      ...page,
+      format: page.format || "markdown",
+    });
+    bust(page.projectId);
+    return getWikiPage(page.projectId, page.slug) || page;
+  });
 }
 
 export async function persistPaperTodoAction(
@@ -1287,18 +1207,21 @@ export async function removePaperTodoAction(slug: string, todoId: string, expect
 }
 
 export async function deleteWikiPageAction(slug: string, pageSlug: string, expectedHash: string) {
-  void slug;
-  void pageSlug;
-  void expectedHash;
-  return wikiMutationUnavailable();
+  await requireProjectAccess(slug);
+  return withBrowserProjectWriteSession(projectContentDir(slug), () => {
+    deleteWikiPage(slug, pageSlug, expectedHash);
+    bust(slug);
+    return { ok: true };
+  });
 }
 
 export async function renameWikiPageAction(slug: string, fromSlug: string, toSlug: string, expectedHash: string): Promise<{ slug: string }> {
-  void slug;
-  void fromSlug;
-  void toSlug;
-  void expectedHash;
-  return wikiMutationUnavailable();
+  await requireProjectAccess(slug);
+  return withBrowserProjectWriteSession(projectContentDir(slug), () => {
+    const renamed = renameWikiPage(slug, fromSlug, toSlug, expectedHash);
+    bust(slug);
+    return { slug: renamed.slug };
+  });
 }
 
 export async function writeAgentsMdAction(slug: string, body: string, expectedHash?: string) {

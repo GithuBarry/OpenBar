@@ -209,7 +209,7 @@ function AgentInboxPanel({ project }: { project?: string }) {
         <summary className="cursor-pointer text-muted">Request history ({inbox.history!.length})</summary>
         <ul className="mt-2 max-h-60 space-y-2 overflow-y-auto" aria-label="Agent request history">
           {inbox.history!.map(item => <li key={`${item.project}:${item.id}`} className="rounded-md border border-line p-2">
-            <p className="mb-1 text-muted">{item.project} · {item.disposition.replaceAll("_", " ")}</p>
+            <p className="mb-1 text-muted">{item.project} — {item.disposition.replaceAll("_", " ")}</p>
             <p className="whitespace-pre-wrap break-words"><RichText text={item.question} /></p>
             <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-accent underline">
               <Link href={item.href}>Original card</Link>

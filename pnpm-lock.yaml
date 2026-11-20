@@ -32,9 +32,6 @@ importers:
       '@codemirror/language':
         specifier: ^6.11.0
         version: 6.12.4
-      '@codemirror/legacy-modes':
-        specifier: ^6.5.0
-        version: 6.5.3
       '@codemirror/merge':
         specifier: ^6.12.2
         version: 6.12.2
@@ -125,9 +122,6 @@ importers:
       hast-util-to-html:
         specifier: 8.0.4
         version: 8.0.4
-      hast-util-to-jsx-runtime:
-        specifier: 2.3.6
-        version: 2.3.6
       jose:
         specifier: 6.2.10
         version: 6.2.10
@@ -319,9 +313,6 @@ packages:
 
   '@codemirror/language@6.12.4':
     resolution: {integrity: sha512-1q4PaT+o6PbgpkJt4Q8Fv5XJxTy4FUZ4MWETtyiDw3J0Pyr9E2vqcKL+k9wcvjNTIsauxvE7OfmWj3FRPHQ76A==}
-
-  '@codemirror/legacy-modes@6.5.3':
-    resolution: {integrity: sha512-xCsmIzH78MyWkib9jlPaaun57XNkfbMIhagfaZVd0iLTqlpw3jXaIcbZm72MTmmn64eTZpBVNjbyYh+QXnxRsg==}
 
   '@codemirror/lint@6.9.7':
     resolution: {integrity: sha512-28/+iWLYxKxsvGYhSYL7zaCZqLz5+FFFDq9tVsvGv9kv8RY4fFAchJ5WX9M3YrrRlTIsECjsXPqeNgnSmNP2dg==}
@@ -2964,10 +2955,6 @@ snapshots:
       '@lezer/highlight': 1.2.3
       '@lezer/lr': 1.4.10
       style-mod: 4.1.3
-
-  '@codemirror/legacy-modes@6.5.3':
-    dependencies:
-      '@codemirror/language': 6.12.4
 
   '@codemirror/lint@6.9.7':
     dependencies:

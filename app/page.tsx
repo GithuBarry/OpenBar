@@ -16,6 +16,7 @@ import { WorkspaceMark } from "@/components/workspace-mark";
 import { AgentReadyIndicator } from "@/components/shell/agent-ready";
 import { WorkspaceWebMcp } from "@/features/use-workspace-webmcp";
 import { getWorkspaceSettings, getWorkspaceLayout } from "@/lib/workspace";
+import { isViewOnlyMode } from "@/lib/server/view-only";
 
 export const dynamic = "force-dynamic";
 
@@ -25,34 +26,34 @@ export default async function Home() {
   const layout = getWorkspaceLayout();
   const projects = layout.projects;
   const publicDemo = isPublicDemoMode();
+  const viewOnly = isViewOnlyMode()
   const rows = await Promise.all(projects.map(async (project) => {
     const paper = getEditableTexPaper(project.slug);
     const todos = paper ? analyzePaper(paper.source).todos.filter(paperTodoIsOpen).length : 0;
-    const destination = publicDemo ? undefined : await getProjectGitDestination(projectContentDir(project.slug));
+    const destination = publicDemo || viewOnly ? undefined : await getProjectGitDestination(projectContentDir(project.slug));
     return { project, todos, destination };
   }));
 
   return (
     <main id="main-content" tabIndex={-1} className="ob-main-brand min-h-screen bg-canvas">
-      <WorkspaceWebMcp />
+      {!viewOnly && <WorkspaceWebMcp />}
       <div className="flex h-dvh flex-col">
         <header className="ob-chrome-header ob-home-header shrink-0 sticky top-0 z-10">
           <div className="ob-home-header-inner mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-4">
             <div className="ob-home-header-brand flex min-w-0 items-center gap-4">
               <WorkspaceMark />
-              <WorkspaceIdentity workspace={workspace} />
+              {viewOnly ? <span className="text-sm font-semibold">{workspace.name}</span> : <WorkspaceIdentity workspace={workspace} />}
             </div>
             <div className="ob-home-header-actions flex items-center gap-4">
               <ThemeToggle />
-              <AgentReadyIndicator />
-              {publicDemo ? <ResetDemoButton slug={projects[0]?.slug || "private-project-a"} /> : <CreateProjectButton />}
+              {viewOnly ? <span className="text-xs text-muted" role="status">View only</span> : <><AgentReadyIndicator />{publicDemo ? <ResetDemoButton slug={projects[0]?.slug || "private-project-a"} /> : <CreateProjectButton />}</>}
             </div>
           </div>
         </header>
 
         {publicDemo && <PublicDemoNotice />}
 
-        <ProjectBoard rows={rows} initialHash={layout.hash} readOnly={publicDemo} />
+        <ProjectBoard rows={rows} initialHash={layout.hash} readOnly={publicDemo || viewOnly} />
       </div>
 
       <section id="about" className="pb-20 pt-20 sm:pb-28 sm:pt-28">

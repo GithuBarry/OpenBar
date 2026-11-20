@@ -1,9 +1,9 @@
 .control { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; }
-.control .trigger:global(.p-button) { --p-button-height: 34px; --p-button-padding-x: 10px; --p-button-radius: 12px; --p-button-font-size: 12px; --p-button-font-weight: 500; gap: 6px; color: rgb(var(--muted)); }
-.floating .trigger:global(.p-button) { border: 1px solid rgb(var(--line) / .75); border-radius: 14px; background: rgb(var(--surface) / .84); box-shadow: var(--shadow-float); backdrop-filter: blur(16px) saturate(1.2); }
+.control .trigger:global(.p-button) { --p-button-height: 34px; --p-button-padding-x: 10px; --p-button-radius: 999px; --p-button-font-size: 12px; --p-button-font-weight: 500; gap: 6px; color: rgb(var(--muted)); }
+.floating .trigger:global(.p-button) { border: 1px solid rgb(var(--line) / .75); border-radius: 999px; background: rgb(var(--surface) / .84); box-shadow: var(--shadow-float); backdrop-filter: blur(16px) saturate(1.2); }
 .control .trigger:global(.p-button):hover:enabled, .control .trigger:global(.p-button)[aria-expanded="true"] { color: rgb(var(--ink)); background: rgb(var(--surface-2) / .9); }
 .control .trigger:global(.p-button):focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }
 .control .trigger > svg:first-child { color: currentColor; }
 .trigger > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-@media (max-width: 1023px), (pointer: coarse) { .control .trigger:global(.p-button) { --p-button-height: 44px; } }
+@media (pointer: coarse) { .control .trigger:global(.p-button) { --p-button-height: 44px; } }
 @media (prefers-reduced-transparency: reduce) { .floating .trigger:global(.p-button) { background: rgb(var(--surface)); backdrop-filter: none; } }

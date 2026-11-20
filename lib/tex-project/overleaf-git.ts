@@ -912,6 +912,19 @@ export async function pushOverleafGit(
   projectDir: string,
   message = "OpenBar: update manuscript and structured records",
 ): Promise<OverleafGitPushResult> {
+  // Fetch and inspect remote BEFORE creating a local commit so clean pulls
+  // are never turned into diverged histories.
+  const preStatus = await refreshOverleafGitStatus(projectDir).catch(() => null);
+  if (preStatus?.isGitRepo && preStatus.isOverleafRemote && (preStatus.behind || 0) > 0) {
+    const diverged = (preStatus.ahead || 0) > 0;
+    return {
+      ok: false,
+      code: diverged ? "remote_conflict" : "remote_ahead",
+      message: diverged
+        ? "Git and this checkout have diverged. Reconcile both histories before pushing."
+        : "Git has newer commits. Pull and reconcile before pushing.",
+    };
+  }
   const local = await commitOverleafGit(projectDir, message);
   if (!local.ok) return { ok: false, code: local.code, message: local.message };
   const remote = await syncOverleafGit(projectDir, local.commitHash);

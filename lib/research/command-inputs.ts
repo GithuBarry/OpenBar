@@ -11,7 +11,7 @@ const revision = z.number().int().min(0).describe("Current map revision returned
 export const SHARED_INPUTS = {
   sync_project: z.strictObject({ action: z.enum(["inspect", "review_pull", "apply_pull", "cancel_pull"]).describe("inspect reads status. review_pull checkpoints saved local files and prepares an isolated merge. apply_pull applies reviewed whole-file resolutions. cancel_pull removes the review checkout."), refresh: z.boolean().describe("Fetch Git before inspecting status.").optional(), token: z.string().describe("Exact review token returned by review_pull.").optional(), resolutions: z.array(z.strictObject({ path: z.string(), choice: z.enum(["local", "remote", "merged"]), text: z.string().max(1000000).describe("Complete merged file contents when choice=merged.").optional() })).optional() }),
   get_project_state: z.strictObject({ detail: z.enum(["summary", "full"]).describe("summary is the default compact orientation. full includes AGENTS.md bodies and every TODO by default.").optional(), todoLimit: z.number().int().min(0).max(200).describe("Max TODO rows to include. Default 8 for summary; full includes all unless set.").optional() }),
-  navigate_project: z.strictObject({ id: z.string().describe("An id returned by get_project_state or search_project.").optional(), href: z.string().describe("A project href returned by get_project_state or search_project.").optional() }),
+  navigate_project: z.strictObject({ id: z.string().describe("An id returned by get_project_state.").optional(), href: z.string().describe("A project href returned by get_project_state.").optional() }),
   read_project_skill: z.strictObject({ id: z.string().describe("Skill id from get_project_state."), source: z.enum(["project", "workspace", "openbar"]).describe("Catalog scope for matching skill ids.").optional() }),
   update_project: z.strictObject({ expectedHash: z.string().describe("Project hash from get_project_state.project.hash."), title: z.string().optional(), venue: z.string().optional(), tagline: z.string().optional(), overview: z.string().optional(), researchKind: z.string().optional(), color: z.string().optional(), icon: z.string().optional(), label: z.string().optional(), links: z.array(z.strictObject({ label: z.string(), url: z.string(), kind: z.enum(["overleaf", "latex", "arxiv", "web", "repo"]) })).max(50).optional(), collaborators: z.array(z.string()).max(100).optional(), archivedAt: z.string().nullable().optional(), engine: z.enum(["pdflatex", "xelatex", "lualatex"]).optional(), mainFile: z.string().optional(), texliveVersion: z.string().optional() })
 };
@@ -20,7 +20,7 @@ export const WORKSPACE_INPUTS = {
   list_projects: z.strictObject({  }),
   get_workspace_layout: z.strictObject({}),
   move_project: z.strictObject({ slug: projectId, archived: z.boolean(), beforeSlug: projectId.optional(), afterSlug: projectId.optional(), expectedHash: diskHash }),
-  open_project: z.strictObject({ slug: z.string().describe("Project slug from list_projects or search_projects.") })
+  open_project: z.strictObject({ slug: z.string().describe("Project slug from list_projects.") })
 };
 
 export const INBOX_INPUTS = {
@@ -36,15 +36,78 @@ export const PAPER_INPUTS = {
   get_paper_compile: z.strictObject({ jobId: z.string().describe("Optional compile job id to compare with the live result.").optional() })
 };
 
+const mindmapRefInput = z.strictObject({
+  kind: z.enum(["project", "paper-section", "paper-todo", "paper-comment", "wiki-page", "mindmap-node", "figure", "file", "web", "external"]),
+  id: z.string(),
+  label: z.string().optional(),
+  relation: z.string().max(64).describe("Optional relation to target (e.g. supports, refutes, ablates, depends-on).").optional(),
+  url: z.string().optional(),
+  imageWidth: z.number().int().min(25).max(100).describe("Image width as a percentage of card content width.").optional(),
+  mapId: z.string().regex(new RegExp("^[A-Za-z0-9][A-Za-z0-9._-]*$")).describe("Map identity for mindmap-node references.").optional(),
+  sectionContext: z.strictObject({
+    file: z.string().optional(),
+    title: z.string().optional(),
+    level: z.number().int().min(1).max(6).optional(),
+    headingPath: z.array(z.string()).optional(),
+    bodyHash: z.string().optional(),
+    label: z.string().optional(),
+    sourceHash: z.string().optional(),
+    sourceRange: z.strictObject({ from: z.number().int().min(0), to: z.number().int().min(0) }).optional(),
+    order: z.number().int().min(0).optional(),
+  }).optional(),
+});
+
+const mindmapCautionInput = z.strictObject({
+  critical: z.string().optional(),
+  important: z.string().optional(),
+  background: z.string().optional(),
+}).describe("Legacy caution fields folded into collapsed Notes. Prefer caption.");
+
+const mindmapPresentationInput = z.strictObject({
+  contentFormat: z.enum(["plain", "markdown", "tex"]).optional(),
+  tableLayout: z.enum(["wide", "scroll"]).optional(),
+  cardWidth: z.number().int().min(MIN_CARD_WIDTH).max(MAX_CARD_WIDTH).nullable().describe("Card width in canvas CSS pixels. Leave unset (auto ~264px) for ordinary prose cards; only set wider for wide tables or figures. null restores automatic width.").optional(),
+  shape: z.enum(["branch", "leaf", "callout"]).optional(),
+  color: z.string().optional(),
+  progress: z.union([z.number().int().min(0).max(6), z.literal("ditched")]).nullable().describe("Map-local progress from 0 to 6, ditched for the yellow circle-slash status, or null to hide.").optional(),
+});
+
+const mindmapPriorityInput = z.enum(["P0", "P1", "P2", "P3"]).nullable();
+
 export const MINDMAP_INPUTS = {
   get_mindmap: z.strictObject({  }),
   focus_mindmap_node: z.strictObject({ id: z.string() }),
-  add_mindmap_node: z.strictObject({ parentId: z.string().describe("Existing parent card id from get_mindmap."), title: z.string().describe("Visible card title.").optional(), text: z.string().describe("Visible card body.").optional(), caption: z.string().describe("Collapsed Notes for reasoning, why an answer holds, methods, context, and supporting detail. Use this field for new notes and longer explanations.").optional(), caution: z.strictObject({ critical: z.string().describe("Existing note text displayed in the shared collapsed Notes. Prefer caption for new notes.").optional(), important: z.string().describe("Existing note text displayed in the shared collapsed Notes. Prefer caption for new notes.").optional(), background: z.string().describe("Existing supporting text displayed with caption in the shared collapsed Notes. Prefer caption for new notes. Keep consequential risks and factual uncertainty visible.").optional() }).describe("Replaces all caution fields. An empty object clears them.").optional(), expectedRevision: z.number().int().min(0).describe("Current map revision from get_mindmap.") }),
+  add_mindmap_node: z.strictObject({
+    parentId: z.string().describe("Existing parent card id from get_mindmap."),
+    title: z.string().describe("Visible card title (<=10 words).").optional(),
+    text: z.string().describe("Visible card body (<=80 words or compact Markdown table).").optional(),
+    caption: z.string().describe("Collapsed Notes for reasoning, methods, run configs, and supporting detail.").optional(),
+    caution: mindmapCautionInput.optional(),
+    labels: z.array(z.string()).max(50).optional(),
+    refs: z.array(mindmapRefInput).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+    presentation: mindmapPresentationInput.optional(),
+    priority: mindmapPriorityInput.optional(),
+    expectedRevision: z.number().int().min(0).describe("Current map revision from get_mindmap."),
+  }),
   move_mindmap_node: z.strictObject({ id: z.string(), parentId: z.string(), beforeId: z.string().optional(), afterId: z.string().optional(), expectedRevision: z.number().int().min(0) }),
   delete_mindmap_node: z.strictObject({ id: z.string(), expectedRevision: z.number().int().min(0) }),
   delete_mindmap_branch: z.strictObject({ id: z.string(), expectedRevision: z.number().int().min(0) }),
   set_mindmap_collapsed: z.strictObject({ id: z.string(), collapsed: z.boolean(), expectedRevision: z.number().int().min(0) }),
-  patch_mindmap_node: z.strictObject({ agentDraft: z.literal(true).describe("Mark this card for human review. Human Save clears Agent draft.").optional(), id: z.string().describe("Existing card id from get_mindmap."), expectedRevision: z.number().int().min(0).describe("Current map revision from get_mindmap."), title: z.string().describe("Visible title for an ordinary card.").optional(), text: z.string().describe("Visible card body.").optional(), caption: z.string().describe("Collapsed Notes for reasoning, why an answer holds, methods, context, and supporting detail. Use this field for new notes and longer explanations.").optional(), caution: z.strictObject({ critical: z.string().describe("Existing note text displayed in the shared collapsed Notes. Prefer caption for new notes.").optional(), important: z.string().describe("Existing note text displayed in the shared collapsed Notes. Prefer caption for new notes.").optional(), background: z.string().describe("Existing supporting text displayed with caption in the shared collapsed Notes. Prefer caption for new notes. Keep consequential risks and factual uncertainty visible.").optional() }).describe("Replaces all caution fields. An empty object clears them.").optional(), labels: z.array(z.string()).max(50).optional(), refs: z.array(z.strictObject({ kind: z.enum(["project", "paper-section", "paper-todo", "paper-comment", "wiki-page", "mindmap-node", "figure", "web", "external"]), id: z.string(), label: z.string().optional(), url: z.string().optional(), imageWidth: z.number().int().min(25).max(100).describe("Image width as a percentage of card content width.").optional(), mapId: z.string().regex(new RegExp("^[A-Za-z0-9][A-Za-z0-9._-]*$")).describe("Map identity for mindmap-node references.").optional(), sectionContext: z.strictObject({ file: z.string().optional(), title: z.string().optional(), level: z.number().int().min(1).max(6).optional(), headingPath: z.array(z.string()).optional(), bodyHash: z.string().optional(), label: z.string().optional(), sourceHash: z.string().optional(), sourceRange: z.strictObject({ from: z.number().int().min(0), to: z.number().int().min(0) }).optional(), order: z.number().int().min(0).optional() }).optional() })).optional(), metadata: z.record(z.string(), z.unknown()).nullable().describe("JSON object owned by this mindmap card. Pass an empty object or null to clear it.").optional(), presentation: z.strictObject({ contentFormat: z.enum(["plain", "markdown", "tex"]).optional(), tableLayout: z.enum(["wide", "scroll"]).optional(), cardWidth: z.number().int().min(MIN_CARD_WIDTH).max(MAX_CARD_WIDTH).nullable().describe("Card width in canvas CSS pixels. Height follows the content. null restores automatic width.").optional(), shape: z.enum(["branch", "leaf", "callout"]).optional(), color: z.string().optional(), progress: z.union([z.number().int().min(0).max(6), z.literal("ditched")]).nullable().describe("Map-local progress from 0 to 6, ditched for the yellow circle-slash status, or null to hide.").optional() }).optional(), priority: z.enum(["P0", "P1", "P2", "P3"]).nullable().optional() }),
+  patch_mindmap_node: z.strictObject({
+    agentDraft: z.literal(true).describe("Mark this card for human review. Human Save clears Agent draft.").optional(),
+    id: z.string().describe("Existing card id from get_mindmap."),
+    expectedRevision: z.number().int().min(0).describe("Current map revision from get_mindmap."),
+    title: z.string().describe("Visible title for an ordinary card.").optional(),
+    text: z.string().describe("Visible card body.").optional(),
+    caption: z.string().describe("Collapsed Notes for reasoning, methods, run configs, and supporting detail.").optional(),
+    caution: mindmapCautionInput.optional(),
+    labels: z.array(z.string()).max(50).optional(),
+    refs: z.array(mindmapRefInput).optional(),
+    metadata: z.record(z.string(), z.unknown()).nullable().describe("JSON object owned by this mindmap card. Pass an empty object or null to clear it.").optional(),
+    presentation: mindmapPresentationInput.optional(),
+    priority: mindmapPriorityInput.optional(),
+  }),
   attach_mindmap_image: z.strictObject({ id: z.string(), assetId: z.string().min(1).describe("Existing project image path from read_project_files."), label: z.string().optional(), expectedRevision: z.number().int().min(0) }),
   detach_mindmap_image: z.strictObject({ id: z.string(), assetId: z.string(), expectedRevision: z.number().int().min(0) }),
   caption_mindmap_image: z.strictObject({ id: z.string(), assetId: z.string(), label: z.string(), expectedRevision: z.number().int().min(0) }),
@@ -90,7 +153,15 @@ export const MCP_INPUTS = {
   check_inbox: INBOX_INPUTS.check_inbox.extend({ project: projectId.optional() }),
   acknowledge_inbox: INBOX_INPUTS.acknowledge_inbox.extend({ project: projectId.optional() }),
   read_project_skill: SHARED_INPUTS.read_project_skill.extend({ project: projectId }),
-  get_mindmap: MINDMAP_INPUTS.get_mindmap.extend({ project: projectId, mapId: mapId, offset: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(200).optional() }),
+  get_mindmap: MINDMAP_INPUTS.get_mindmap.extend({
+    project: projectId,
+    mapId: mapId,
+    offset: z.number().int().min(0).optional(),
+    limit: z.number().int().min(1).max(200).optional(),
+    detail: z.enum(["full", "outline"]).optional().describe("outline omits long body/caption/metadata (~85% smaller); full returns full cards (default)."),
+    nodeIds: z.array(z.string().min(1)).max(50).optional().describe("Return full cards only for these specific node IDs."),
+    ifRevision: z.number().int().min(0).optional().describe("Skip returning nodes if the map is still at this revision."),
+  }),
   update_project: SHARED_INPUTS.update_project.extend({ project: projectId, requestId: z.string().optional() }),
   sync_project: SHARED_INPUTS.sync_project.extend({ project: projectId }),
   compile_paper: PAPER_INPUTS.compile_paper.extend({ project: projectId }),
@@ -99,4 +170,12 @@ export const MCP_INPUTS = {
   read_project_files: READ_PROJECT_FILES_INPUT.extend({ project: projectId }),
   apply_project_edits: APPLY_PROJECT_EDITS_INPUT.extend({ project: projectId, requestId: z.string().optional() }),
   apply_mindmap_edits: MINDMAP_EDIT_INPUT.extend({ project: projectId, mapId }),
+  celebrate: z.strictObject({
+    project: projectId,
+    reason: z.string().min(1).max(140).describe("Short celebration message shown to the human (e.g. 'Llama-3.3 beat baseline by +4.8 F1!')."),
+    scope: z.enum(["screen", "card"]).optional().describe("screen for full-window confetti, or card to burst locally from nodeId."),
+    mapId: mapId.optional(),
+    nodeId: z.string().min(1).optional().describe("Mindmap card ID to burst from when scope='card'."),
+    emoji: z.string().max(8).optional().describe("Optional celebration emoji, default 🎉."),
+  }),
 };

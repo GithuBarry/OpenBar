@@ -1,7 +1,6 @@
 "use client";
 
 import { useProjectWriteSession } from "@/components/project-session/project-write-session";
-import { ResumeEditControl } from "@/components/project-session/resume-edit-control";
 import { BackendStatusNotice } from "@/components/backend-status-notice";
 import { isBackendTransportError } from "@/lib/backend-connection";
 import { selectEditorIssue, type EditorIssue } from "@/lib/editor-issue-priority";
@@ -45,12 +44,14 @@ import {
   ListTodo,
   Link2,
   LockKeyhole,
+  MessageSquare,
   Minus,
   MoreHorizontal,
   Pencil,
   Plus,
   Redo2,
   Search,
+  Sparkles,
   PanelRight,
   GitBranch,
   Undo2,
@@ -98,7 +99,7 @@ import {
 import { indentMindmapNode, mindmapMoveTargets, outdentMindmapNode, type MindmapDrop } from "@/lib/mindmap/drop-targets";
 import { DEFAULT_MINDMAP_FONT_SIZE, mindmapDiskHash } from "@/lib/mindmap/mindmap";
 import { createMindmapSaveQueue } from "@/lib/mindmap/save-queue";
-import { mergeSavedMindmap } from "@/lib/mindmap/merge-saved";
+import { mergeSavedMindmap, rebaseSavedMindmap } from "@/lib/mindmap/merge-saved";
 import { captureDeletedMindmapBranch, restoreDeletedMindmapBranch, type DeletedMindmapBranch } from "@/lib/mindmap/deleted-branch";
 import { isOutdatedMindmapPage, loadBrowserMindmap, saveBrowserMindmap } from "@/lib/mindmap/browser-save";
 import { hasMindmapCardRecoveryChanges, mindmapRecoveryKey, readMindmapRecovery, writeMindmapRecovery, type MindmapCardRecoveryDraft, type MindmapRecoveryDraft } from "@/lib/mindmap/browser-recovery";
@@ -143,7 +144,7 @@ import { CardScratchpad } from "./card-scratchpad";
 import { CautionEditor } from "./caution-editor";
 import { MindmapCanvas, type MindmapFocusRequest } from "./mindmap-canvas";
 import { MindmapChangesView } from "./mindmap-changes";
-import { CardLinkIndicator, CardLinks, CardProperties, hasCardLinks } from "./card-details";
+import { CardLinkIndicator, CardLinks, CardMetadataPills, CardProperties, hasCardLinks, type LinkPickerOptions } from "./card-details";
 import { TexCodeMirror, type TexCodeMirrorHandle } from "@/features/paper/tex-codemirror";
 import { MindmapFontSize, MindmapFontSizeSlider } from "./mindmap-font-size";
 import { useMindmapTitle } from "./mindmap-title-context";
@@ -628,7 +629,12 @@ export function MindmapEditor({
       ...(activeCard ? { activeCard } : {}),
     };
   }, [project]);
+  const recoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const preserveBrowserDraft = useCallback(() => {
+    if (recoveryTimerRef.current !== null) {
+      clearTimeout(recoveryTimerRef.current);
+      recoveryTimerRef.current = null;
+    }
     const draft = recoveryDraftRef.current || captureRecoveryDraft();
     let stored = false;
     try { stored = writeMindmapRecovery(window.sessionStorage, draft); }
@@ -637,7 +643,31 @@ export function MindmapEditor({
     setRecoveryStored(stored);
     return stored;
   }, [captureRecoveryDraft]);
+  const schedulePreserveBrowserDraft = useCallback(() => {
+    if (recoveryTimerRef.current !== null) clearTimeout(recoveryTimerRef.current);
+    recoveryTimerRef.current = setTimeout(() => {
+      recoveryTimerRef.current = null;
+      preserveBrowserDraft();
+    }, 400);
+  }, [preserveBrowserDraft]);
+  useEffect(() => {
+    const flush = () => {
+      if (recoveryTimerRef.current !== null) preserveBrowserDraft();
+    };
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      if (recoveryTimerRef.current !== null) {
+        clearTimeout(recoveryTimerRef.current);
+        recoveryTimerRef.current = null;
+      }
+    };
+  }, [preserveBrowserDraft]);
   const clearBrowserDraft = useCallback(() => {
+    if (recoveryTimerRef.current !== null) {
+      clearTimeout(recoveryTimerRef.current);
+      recoveryTimerRef.current = null;
+    }
     if (captureRecoveryDraft().activeCard) { preserveBrowserDraft(); return; }
     try { window.sessionStorage.removeItem(mindmapRecoveryKey(project, sessionRef.current.mindmap.id || "draft")); }
     catch { /* A saved map remains durable when browser storage is unavailable. */ }
@@ -655,12 +685,15 @@ export function MindmapEditor({
     setLocalSaveState("saving");
     preserveBrowserDraft();
     try {
-      const saved = await saveBrowserMindmap(project, snapshot, persistedDiskHashRef.current, actor);
+      const saved = await saveBrowserMindmap(project, snapshot, persistedDiskHashRef.current, actor, lastAcknowledgedMapRef.current);
       lastAcknowledgedMapRef.current = saved;
       persistedDiskHashRef.current = saved.diskHash ?? mindmapDiskHash(saved);
       const savedMapSignature = mapSignature(saved);
       savedSignatureRef.current = savedMapSignature;
       setSavedSignature(savedMapSignature);
+      if (!rebaseSavedMindmap(snapshot, saved, sessionRef.current.mindmap)) {
+        throw new Error("conflict: This card changed while saving. Your edits are preserved. Load the saved map to review both versions.");
+      }
       const latest = sessionRef.current;
       const acknowledgement = { type: "ack-save" as const, base: snapshot, saved };
       sessionRef.current = mindmapReducer(latest, acknowledgement);
@@ -984,7 +1017,7 @@ export function MindmapEditor({
     return () => window.clearTimeout(timeout);
   }, [cardMenuOpen]);
   useEffect(() => {
-    if (window.matchMedia("(max-width: 899px)").matches) {
+    if (window.matchMedia("(max-width: 1279px)").matches) {
       setCardMenuOpen(false);
       setUnplacedOpen(false);
     }
@@ -1019,6 +1052,7 @@ export function MindmapEditor({
   const [moveOpen, setMoveOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchIndex, setSearchIndex] = useState(0);
+  const [cardFilter, setCardFilter] = useState<"all" | "todos" | "drafts" | "active">("all");
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
   const searchPanelRef = useRef<HTMLDivElement>(null);
   const searchDismissedOutsideRef = useRef(false);
@@ -1061,7 +1095,7 @@ export function MindmapEditor({
   const [savedSignature, setSavedSignature] = useState(() => mapSignature(initialMindmap));
   const saveErrorRef = useRef<string | null>(null);
   saveErrorRef.current = saveError;
-  const savedSignatureRef = useRef(mapSignature(initialMindmap));
+  const savedSignatureRef = useRef(savedSignature);
   savedSignatureRef.current = savedSignature;
   // Keep the card locked through router.refresh so stale paper props cannot
   // expose a temporary missing-TODO card for editing.
@@ -1105,7 +1139,10 @@ export function MindmapEditor({
       return next;
     });
   };
-  const unplacedCount = availableTodoCandidates(paperState?.paper?.todos || [], mindmap.nodes).length;
+  const unplacedCount = useMemo(
+    () => availableTodoCandidates(paperState?.paper?.todos || [], mindmap.nodes).length,
+    [paperState?.paper?.todos, mindmap.nodes],
+  );
   const [labelDraft, setLabelDraft] = useState("");
   const [mapTitleDraft, setMapTitleDraft] = useState(initialMindmap.title || "");
   const mapTitleDirtyRef = useRef(false);
@@ -1340,6 +1377,7 @@ export function MindmapEditor({
         return result;
       }
       const saved = result.value.mindmap;
+      lastAcknowledgedMapRef.current = saved;
       persistedDiskHashRef.current = saved.diskHash ?? mindmapDiskHash(saved);
       recordPaperSourceHash(result.value.sourceHash);
       pendingConversionRefreshRef.current = { cardId: id, todoId: result.value.todoId };
@@ -1650,7 +1688,29 @@ export function MindmapEditor({
     }
   }
 
-  function addChild(parentId?: string) {
+  const agentDraftNodes = useMemo(
+    () => mindmap.nodes.filter((node) => node.agentDraft),
+    [mindmap.nodes],
+  );
+  const draftCursorRef = useRef(0);
+
+  function focusNextAgentDraft() {
+    if (!agentDraftNodes.length) return;
+    const currentIdx = agentDraftNodes.findIndex((node) => node.id === selected?.id);
+    const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % agentDraftNodes.length : draftCursorRef.current % agentDraftNodes.length;
+    draftCursorRef.current = nextIdx + 1;
+    const target = agentDraftNodes[nextIdx];
+    if (target) focusCard(target.id);
+  }
+
+  const linkPickerOptions = useMemo<LinkPickerOptions>(() => ({
+    sections: (paperState?.paper?.outline || []).map((s) => ({ id: s.id, label: s.title || s.id })),
+    todos: (paperState?.paper?.todos || []).map((t) => ({ id: t.id, label: (t.title || t.text).slice(0, 60) })),
+    nodes: mindmap.nodes.map((n) => ({ id: n.id, label: cardContentForNodeWithPaperState(n, paperState).title || n.id })),
+    wiki: (paperState?.wiki || []).map((w) => ({ id: w.slug, label: w.title || w.slug })),
+  }), [mindmap.nodes, paperState]);
+
+  function addChild(parentId?: string, initialTitle = "") {
     if (readOnly) return;
     const current = sessionRef.current.mindmap;
     const currentIndex = indexMindmap(current);
@@ -1661,9 +1721,13 @@ export function MindmapEditor({
     if (collapsedIdsRef.current.has(parent.id)) setLocalCollapsed(parent.id, false);
     const id = newNodeId();
     setSaveError(null);
-    dispatch({ type: "add-node", parentId: nextParentId, id, title: "" });
+    dispatch({ type: "add-node", parentId: nextParentId, id, title: initialTitle });
     setFocusRequest((current) => ({ id, sequence: (current?.sequence || 0) + 1 }));
     requestAnimationFrame(() => startEditing(id, true));
+  }
+
+  function reviseAgentDraft(id: string, fastTrack = false) {
+    addChild(id, fastTrack ? "@stat " : "@agent ");
   }
 
   function addSibling() {
@@ -1914,13 +1978,16 @@ export function MindmapEditor({
     && !applyingRemoteRef.current && !remoteOutOfSyncRef.current
     && !document.activeElement?.closest("input, textarea, [contenteditable=true]")
     && !document.querySelector(".react-flow__node.dragging");
+  const hydratedInboxRevisionRef = useRef(inboxRevision);
   useEffect(() => {
+    const changedInbox = Boolean(inboxRevision && inboxRevision !== hydratedInboxRevisionRef.current);
+    const changedSavedMap = Boolean(initialMindmap.diskHash && initialMindmap.diskHash !== persistedDiskHashRef.current);
     const changedReply = agentReplies.some(reply => {
       const node = mindmap.nodes.find(item => item.id === reply.nodeId);
       return unreadNodeIds.has(reply.nodeId) && (!node
         || agentReplyContentHash(node, paperTodoFor(node, paperState)) !== reply.contentHash);
     });
-    if (!changedReply || !replyHydrationAllowed.current()) return;
+    if ((!changedReply && !changedInbox && !changedSavedMap) || !replyHydrationAllowed.current()) return;
     let cancelled = false;
     const baseHash = persistedDiskHashRef.current;
     const basePaperHash = paperSourceHashRef.current;
@@ -1933,12 +2000,13 @@ export function MindmapEditor({
         recordPaperSourceHash(paper.bundle.bundleHash);
         hydrateSavedMap(saved);
       }
+      hydratedInboxRevisionRef.current = inboxRevision;
       router.refresh();
     }).catch(error => {
       if (!cancelled && !isBackendTransportError(error) && !isBackendUnavailable()) console.warn("OpenBar could not refresh the agent reply", error);
     });
     return () => { cancelled = true; };
-  }, [agentReplies, unreadNodeIds, replyReadRequest, mindmap, paperState, connectionState, dirty, editingId, isPending, recoveryDraft,
+  }, [agentReplies, unreadNodeIds, replyReadRequest, inboxRevision, initialMindmap.diskHash, mindmap, paperState, connectionState, dirty, editingId, isPending, recoveryDraft,
     applyingRemote, reviewingRemote, hydrationPending, remoteOutOfSync, localSaveState, remoteSaveState, imageUploads,
     hydrateSavedMap, loadSavedProjectView, recordPaperSourceHash, isBackendUnavailable, remoteQueue, router]);
   const setRemoteApplying = (applying: boolean) => {
@@ -2385,10 +2453,16 @@ export function MindmapEditor({
         dropPreviewLabel={dropPreview?.targetId === node.id ? dropPreviewLabel(dropPreview, layout.nodeById) : undefined}
         onToggleCollapse={immediateChildrenOnly => toggleCollapse(node.id, immediateChildrenOnly)}
         onDropTodo={(todoId) => placeUnplacedTodo(todoId, node.id)}
-        onDraftActivity={() => { remoteQueue.noteEdit(); preserveBrowserDraft(); }}
+        onDraftActivity={() => { remoteQueue.noteEdit(); schedulePreserveBrowserDraft(); }}
         onTextChange={(text, contentFormat) => updateNodeText(node.id, text, contentFormat)}
         onNoteChange={value => updateNodeNote(node.id, value)}
         onSaveDraft={() => saveAgentDraft(node.id)}
+        onReviseDraft={(fastTrack) => reviseAgentDraft(node.id, fastTrack)}
+        filteredOut={cardFilter !== "all" && node.id !== mindmap.rootId && (
+          cardFilter === "todos" ? !(node.todoId && !paperTodoFor(node, paperState)?.completed)
+            : cardFilter === "drafts" ? !node.agentDraft
+              : node.progress === "ditched" || Boolean(node.todoId && paperTodoFor(node, paperState)?.completed)
+        )}
         onDeleteDraft={node.id === mindmap.rootId ? undefined : () => void deleteCardBranch(node.id)}
         onTextFocus={() => beginTextTransaction(node.id)}
         onCommit={() => finishTextTransaction(true)}
@@ -2455,6 +2529,7 @@ export function MindmapEditor({
     reconciliation,
     recordPaperSourceHash,
     remoteQueue,
+    schedulePreserveBrowserDraft,
     router,
     runPaperMutation,
     scheduleRemote,
@@ -2468,6 +2543,7 @@ export function MindmapEditor({
     previewCardWidth,
     commitCardWidth,
     deleteCardBranch,
+    cardFilter,
     mindmap.rootId,
   ]);
 
@@ -2478,13 +2554,19 @@ export function MindmapEditor({
     return needle ? all.filter((item) => item.label.toLowerCase().includes(needle)) : all;
   }, [mindmap, moveQuery, selected]);
 
-  const searchResults = (moveOpen ? moveTargets : mindmap.nodes
-    .filter((node) => {
-      const content = cardContentForNodeWithPaperState(node, paperState);
-      return `${content.title} ${content.body} ${(node.tags || []).join(" ")}`.toLocaleLowerCase().includes(moveQuery.trim().toLocaleLowerCase());
-    })
-    .map((node) => ({ id: node.id, label: cardContentForNodeWithPaperState(node, paperState).title || "Untitled card" })))
-    .map((result) => {
+  const searchResults = useMemo(() => {
+    if (!searchOpen && !moveOpen) return [];
+    const needle = moveQuery.trim().toLocaleLowerCase();
+    const base = moveOpen ? moveTargets : mindmap.nodes
+      .filter((node) => {
+        if (!needle) return true;
+        const content = cardContentForNodeWithPaperState(node, paperState);
+        const cautionText = node.caution ? [node.caution.critical, node.caution.important, node.caution.background].filter(Boolean).join(" ") : "";
+        const metadataText = node.metadata ? Object.entries(node.metadata).map(([k, v]) => `${k} ${typeof v === "string" ? v : JSON.stringify(v)}`).join(" ") : "";
+        return `${content.title} ${content.body} ${node.caption || ""} ${cautionText} ${(node.tags || []).join(" ")} ${metadataText}`.toLocaleLowerCase().includes(needle);
+      })
+      .map((node) => ({ id: node.id, label: cardContentForNodeWithPaperState(node, paperState).title || "Untitled card" }));
+    return base.map((result) => {
       const node = layout.nodeById.get(result.id);
       const parent = node?.parentId ? layout.nodeById.get(node.parentId) : undefined;
       const depth = hierarchyDepths.get(result.id);
@@ -2493,9 +2575,10 @@ export function MindmapEditor({
         depth === 0 ? "Root" : depth === undefined ? "Outside root" : `Depth ${depth}`,
         below ? `${below} ${below === 1 ? "card" : "cards"} below` : layout.children.get(result.id)?.length ? "Branch" : "Leaf",
         parent ? `under ${cardContentForNodeWithPaperState(parent, paperState).title || "Untitled card"}` : undefined,
-      ].filter(Boolean).join(" · ");
+      ].filter(Boolean).join(", ");
       return { ...result, context };
     });
+  }, [searchOpen, moveOpen, moveTargets, mindmap.nodes, moveQuery, paperState, layout, hierarchyDepths, descendantCounts]);
   const visibleSearchResults = searchResults.slice(0, 60);
   const chooseSearchResult = (id: string) => {
     if (moveOpen) moveSelectedTo(id);
@@ -2675,31 +2758,47 @@ export function MindmapEditor({
 
       <div className={styles.resumeDock}>
         <BackendStatusNotice project={project} issues={editorIssues} diagnosticContext={getMindmapDiagnostics} openRequest={connectionDetailsOpenRequest} />
-        <ResumeEditControl suppressError={primaryIssue?.id !== "access"} attentionRequest={resumeEditAttentionRequest} />
       </div>
         </div>
         <div className={cn("p-glass-sm", paperStyles.toolbar, styles.canvasTools)} role="group" aria-label="Map view controls">
-          <button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.unplacedToggle)} aria-label={`Unplaced paper TODOs, ${unplacedCount} ready to place on the map`} aria-expanded={unplacedOpen && unplacedCount > 0} title={`${unplacedCount} paper TODOs are ready to place on your mindmap`} onClick={() => { setUnplacedOpen((open) => !open); setViewMode("map"); }}><ListTodo size={15} aria-hidden="true" /><span className={styles.unplacedLabel}>Unplaced</span>{unplacedCount > 0 && <sup className={styles.unplacedBadge} aria-hidden="true">{unplacedCount}</sup>}</button>
-          <div className={styles.canvasToolActions}>
-          {viewMode === "changes" && <button type="button" className="p-button p-button-glass ob-glass-button" onClick={() => setViewMode("map")}>Back to map</button>}
-          <div className={styles.depthControls}>
-          <FastTooltip label={expandAllFromToolbar ? "Expand all cards" : `Collapse cards at depth ${collapseDepth} and deeper`}>
-            <button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.depthCollapse)} aria-label={expandAllFromToolbar ? "Expand all cards" : `Collapse all cards at depth ${collapseDepth} and deeper`}
-              data-collapsed={depthCollapsed} aria-pressed={depthCollapsed} disabled={collapseTargetIds.length === 0 && collapsedIds.size === 0}
-              onClick={() => void toggleDepthCollapse()}>
-              {expandAllFromToolbar ? <ChevronsUpDown size={15} aria-hidden="true" /> : <ChevronsDownUp size={15} aria-hidden="true" />}
+          <FastTooltip label={`${unplacedCount} paper ${unplacedCount === 1 ? "TODO" : "TODOs"} ready to place on the map`}>
+            <button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.dockQueueButton)} aria-label={`Unplaced paper TODOs, ${unplacedCount} ready to place on the map`} aria-expanded={unplacedOpen && unplacedCount > 0} onClick={() => { setUnplacedOpen((open) => !open); setViewMode("map"); }}>
+              <ListTodo size={15} aria-hidden="true" />
+              <span className={styles.dockQueueLabel}>Unplaced</span>
+              {unplacedCount > 0 && <sup className={styles.unplacedBadge} aria-hidden="true">{unplacedCount}</sup>}
             </button>
           </FastTooltip>
-          <Select label="Collapse depth" value={String(collapseDepth)} onValueChange={value => setCollapseDepth(Number(value))}
-            className={cn("p-button p-button-glass ob-glass-button", styles.depthSelect)}
-            options={Array.from({ length: maxCollapseDepth - 1 }, (_, index) => ({ value: String(index + 2), label: `${index + 2}+` }))} />
-          </div>
-          <Popover.Root open={searchOpen || moveOpen} onOpenChange={(open) => { setSearchOpen(open); if (!open) setMoveOpen(false); }}>
-            <Popover.Trigger asChild>
-              <button ref={searchTriggerRef} type="button" className={cn("p-button p-button-glass ob-glass-button", styles.searchTrigger)} aria-label="Find a card" onClick={() => { setMoveQuery(""); setSearchIndex(0); }}>
-                <Search size={15} /><span>Find a card</span>
+          {agentDraftNodes.length > 0 && (
+            <FastTooltip label={`${agentDraftNodes.length} AI ${agentDraftNodes.length === 1 ? "draft" : "drafts"} awaiting review\nClick for next, ⌥-click to filter`}>
+              <button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.dockQueueButton)} aria-label={`Review next AI draft (${agentDraftNodes.length} remaining)`} aria-pressed={cardFilter === "drafts"} onClick={(event) => {
+                if (event.altKey) {
+                  setCardFilter((current) => current === "drafts" ? "all" : "drafts");
+                  return;
+                }
+                focusNextAgentDraft();
+              }}>
+                <Sparkles size={15} aria-hidden="true" />
+                <span className={styles.dockQueueLabel}>Review</span>
+                <sup className={cn(styles.unplacedBadge, styles.draftBadge)} aria-hidden="true">{agentDraftNodes.length}</sup>
               </button>
-            </Popover.Trigger>
+            </FastTooltip>
+          )}
+          <span className={styles.dockDivider} aria-hidden="true" />
+          <div className={styles.canvasToolActions}>
+          {viewMode === "changes" && <button type="button" className="p-button p-button-glass ob-glass-button" onClick={() => setViewMode("map")}>Back to map</button>}
+          <FastTooltip label={"Add child card (Tab)\n⌥-click adds sibling (Enter)"}><button type="button" aria-label="Add card" className={cn("p-button p-button-glass ob-glass-button", styles.iconButton)} disabled={readOnly} onClick={(event) => {
+            if (event.altKey && selected && selected.parentId) addChild(selected.parentId);
+            else addChild();
+          }}><Plus size={16} aria-hidden="true" /></button></FastTooltip>
+          <Popover.Root open={searchOpen || moveOpen} onOpenChange={(open) => { setSearchOpen(open); if (!open) setMoveOpen(false); }}>
+              <FastTooltip label={cardFilter === "all" ? "Find or filter cards (/)" : `Filtered: ${cardFilter === "todos" ? "Open TODOs" : cardFilter === "drafts" ? "Drafts" : "Active only"} — click to change (/)`}>
+                <Popover.Trigger asChild>
+                  <button ref={searchTriggerRef} type="button" className={cn("p-button p-button-glass ob-glass-button", styles.iconButton, cardFilter !== "all" && styles.searchFiltered)} aria-label="Find or filter cards" onClick={() => { setMoveQuery(""); setSearchIndex(0); }}>
+                    <Search size={15} aria-hidden="true" />
+                    {cardFilter !== "all" && <span className={styles.filterDot} aria-hidden="true" />}
+                  </button>
+                </Popover.Trigger>
+              </FastTooltip>
             <Popover.Portal>
               <Popover.Content ref={searchPanelRef} className={styles.searchPanel} side="top" sideOffset={10} align="end" collisionPadding={12} aria-label={moveOpen ? "Move card" : "Find a card"}
                 onCloseAutoFocus={(event) => { if (searchDismissedOutsideRef.current) event.preventDefault(); }}>
@@ -2715,6 +2814,21 @@ export function MindmapEditor({
                       if (event.key === "Enter" && visibleSearchResults[searchIndex]) { event.preventDefault(); chooseSearchResult(visibleSearchResults[searchIndex].id); }
                     }} />
                 </div>
+                {!moveOpen && (
+                  <div className={styles.filterRow}>
+                    <ChoiceButtons
+                      label="Filter canvas"
+                      value={cardFilter}
+                      options={[
+                        { value: "all", label: "All" },
+                        { value: "todos", label: "Open TODOs" },
+                        { value: "drafts", label: "Drafts" },
+                        { value: "active", label: "Hide ditched" },
+                      ]}
+                      onChange={(value) => setCardFilter(value as "all" | "todos" | "drafts" | "active")}
+                    />
+                  </div>
+                )}
                 <div id="mindmap-search-results" role="listbox" aria-label="Cards" className={styles.searchResults}>
                   {visibleSearchResults.map((result, index) => <button key={result.id} id={`mindmap-search-result-${index}`} type="button" role="option" aria-selected={index === searchIndex} onMouseEnter={() => setSearchIndex(index)} onClick={() => chooseSearchResult(result.id)}>
                     <span className={styles.searchResultContent}>
@@ -2725,11 +2839,23 @@ export function MindmapEditor({
                   </button>)}
                   {visibleSearchResults.length === 0 && <p>No matching cards.</p>}
                 </div>
-                <div className={styles.searchFooter}>{searchResults.length} cards · ↑ ↓ to choose · Enter to {moveOpen ? "move" : "jump"} · / to search</div>
+                <div className={styles.searchFooter}>{searchResults.length} cards, ↑ ↓ to choose, Enter to {moveOpen ? "move" : "jump"}, / to search</div>
               </Popover.Content>
             </Popover.Portal>
           </Popover.Root>
-          <FastTooltip label="Add a child to the selected card (Tab)"><button type="button" aria-label="Add card" className={cn("p-button p-button-glass ob-glass-button", styles.primaryButton)} disabled={readOnly} onClick={() => addChild()}><Plus size={16} /><span>Add card</span></button></FastTooltip>
+          <div className={styles.depthControls}>
+          <FastTooltip label={expandAllFromToolbar ? "Expand all cards" : `Collapse cards at depth ${collapseDepth} and deeper`}>
+            <button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.depthCollapse)} aria-label={expandAllFromToolbar ? "Expand all cards" : `Collapse cards at depth ${collapseDepth} and deeper`}
+              data-collapsed={depthCollapsed} aria-pressed={depthCollapsed} disabled={collapseTargetIds.length === 0 && collapsedIds.size === 0}
+              onClick={() => void toggleDepthCollapse()}>
+              {expandAllFromToolbar ? <ChevronsUpDown size={15} aria-hidden="true" /> : <ChevronsDownUp size={15} aria-hidden="true" />}
+            </button>
+          </FastTooltip>
+          <Select label="Collapse depth" value={String(collapseDepth)} onValueChange={value => setCollapseDepth(Number(value))}
+            className={cn("p-button p-button-glass ob-glass-button", styles.depthSelect)}
+            options={Array.from({ length: maxCollapseDepth - 1 }, (_, index) => ({ value: String(index + 2), label: `${index + 2}+` }))} />
+          </div>
+          <span className={styles.dockDivider} aria-hidden="true" />
           <div
             className={styles.saveStatus}
             role="status"
@@ -2739,6 +2865,9 @@ export function MindmapEditor({
           >
             <SaveSyncStatus iconOnly className={cn("p-button p-button-glass ob-glass-button", paperStyles.unifiedStatus)} saved={!dirty && localSaveState === "saved"} saving={localSaveState === "saving"}
               conflict={saveConflict || localSaveState === "conflict"} remote={remoteSaveState}
+              hasRecoveryDraft={Boolean(recoveryDraft)}
+              attentionRequest={resumeEditAttentionRequest}
+              onForceSync={sessionWritable ? () => { void pushRemote("OpenBar: force sync mindmap"); } : undefined}
               error={primaryIssue?.message} onConnectionIssue={() => setConnectionDetailsOpenRequest(value => value + 1)} onRetry={sessionWritable ? () => { void pushRemote("OpenBar: retry saved project sync"); } : undefined} />
           </div>
           </div>
@@ -2753,7 +2882,7 @@ export function MindmapEditor({
           aria-label={`Mindmap ${viewMode} view. Tab adds a child. Enter adds a sibling. E edits the selected card.`}
         >
           {viewMode === "map" ? (<div className={styles.canvasLayout}>
-          {unplacedOpen && unplacedCount > 0 && <MindmapUnplacedTray project={project} paperState={paperState} nodes={mindmap.nodes} selectedParentId={selected?.id || mindmap.rootId} onPlaceTodo={placeUnplacedTodo} />}
+          {unplacedOpen && unplacedCount > 0 && <MindmapUnplacedTray project={project} paperState={paperState} nodes={mindmap.nodes} selectedParentId={selected?.id || mindmap.rootId} onPlaceTodo={placeUnplacedTodo} onClose={() => setUnplacedOpen(false)} />}
           <div className={styles.canvasSurface}>
           <MindmapCanvas
             virtualize={mindmap.nodes.length > 80 && !editingId && flowNodes.every(node => measuredCards.has(node.id))}
@@ -2817,6 +2946,7 @@ export function MindmapEditor({
           : recoveryStored === false ? `${saveError} Keep this tab open or download the draft before refreshing.` : saveError}
         report={outdatedSave ? saveError : undefined} diagnosticContext={getMindmapDiagnostics} paused={saveConflict}>
         <button type="button" className="p-button p-button-default btn-outline" onClick={outdatedSave ? () => void refreshWithDraft() : saveConflict ? reloadSavedMap : retrySave}>{outdatedSave ? "Refresh and retry" : saveConflict ? "Load saved map" : "Retry save"}</button>
+        {saveConflict && !outdatedSave && <button type="button" className="p-button p-button-default btn-outline" onClick={retrySave}>Retry merge and save</button>}
         <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download draft</button>
       </EditorNotice>}
       {(hydrationPending || remoteSaveError || remoteOutOfSync || reviewingRemote) && <OverleafSyncNotice suppressed={primaryIssue?.id !== "git"} relatedIssues={relatedIssues} floating
@@ -3169,7 +3299,7 @@ export function MindmapEditor({
           <fieldset disabled={readOnly || convertingCardId === selected.id} className="mindmap-card-menu-fields">
           <CautionEditor key={selected.id} value={selected.caution} caption={selected.caption}
             onNotesChange={value => updateNodeNote(selected.id, value)} />
-          <CardLinks key={`links:${selected.id}`} project={project} refs={selectedRefs} onChange={refs => dispatch({ type: "patch-node", id: selected.id, patch: { refs } })} />
+          <CardLinks key={`links:${selected.id}`} project={project} refs={selectedRefs} pickerOptions={linkPickerOptions} onChange={refs => dispatch({ type: "patch-node", id: selected.id, patch: { refs } })} />
           <CardProperties key={`properties:${selected.id}`} value={selected.metadata} onChange={metadata => dispatch({ type: "patch-node", id: selected.id, patch: { metadata } })} />
           <div className="mindmap-card-menu-danger">
             {selected.id !== mindmap.rootId && <button type="button" className="mindmap-text-button" onClick={() => { setMoveQuery(""); setSearchIndex(0); setMoveOpen(true); }}>Move card…</button>}
@@ -3396,18 +3526,19 @@ function AccentPicker({ value, label, onChange }: {
     <div className="mindmap-color-palette" role="group" aria-label={`${label} palette`}>
       {CARD_PALETTE.map((option) => <FastTooltip key={option.value} label={option.label}><button type="button" className={cn("mindmap-color-swatch", value === option.value && "mindmap-color-swatch-selected")} style={{ backgroundColor: option.value }} aria-label={option.label + " accent"} aria-pressed={value === option.value} onClick={() => choose(option.value)} /></FastTooltip>)}
       <FastTooltip label="Use default accent"><button type="button" className={cn("mindmap-color-swatch mindmap-color-swatch-auto", value === "" && "mindmap-color-swatch-selected")} aria-label="Use default accent" aria-pressed={value === ""} onClick={() => choose()}>Auto</button></FastTooltip>
-      <FastTooltip label="Custom accent"><button type="button" className="mindmap-color-swatch mindmap-color-swatch-auto" aria-label={`Custom ${label.toLowerCase()}`} aria-expanded={customOpen} onClick={() => setCustomOpen((open) => !open)}><Pencil size={13} aria-hidden="true" /></button></FastTooltip>
+      <FastTooltip label="Custom accent"><button type="button" className="mindmap-color-swatch mindmap-color-swatch-auto mindmap-color-swatch-icon" aria-label={`Custom ${label.toLowerCase()}`} aria-expanded={customOpen} onClick={() => setCustomOpen((open) => !open)}><Pencil size={12} aria-hidden="true" /></button></FastTooltip>
     </div>
     {customOpen && <input autoFocus value={value ?? ""} onChange={(event) => onChange(event.target.value.trim() || undefined)} placeholder="#785ef0 or CSS color" aria-label={`Custom ${label.toLowerCase()} value`} />}
   </>;
 }
 
-function MindmapUnplacedTray({ project, paperState, nodes, selectedParentId, onPlaceTodo }: {
+function MindmapUnplacedTray({ project, paperState, nodes, selectedParentId, onPlaceTodo, onClose }: {
   project: string;
   paperState?: ProjectState | null;
   nodes: ReadonlyArray<Pick<MindmapNode, "id" | "todoId" | "title" | "text">>;
   selectedParentId: string;
   onPlaceTodo: (todoId: string, parentId: string) => void;
+  onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [ghost, setGhost] = useState<{ x: number; y: number; title: string } | null>(null);
@@ -3418,7 +3549,10 @@ function MindmapUnplacedTray({ project, paperState, nodes, selectedParentId, onP
   const destinationLabel = destination?.title || destination?.text.split("\n")[0] || "selected card";
   function clearTarget() { document.querySelectorAll("[data-todo-drop-target]").forEach((element) => element.removeAttribute("data-todo-drop-target")); }
   return <aside className={styles.unplacedTray} aria-label="Unplaced paper TODOs">
-    <header><strong>Unplaced TODOs</strong><span>{candidates.length}</span></header>
+    <header>
+      <div className={styles.unplacedHeaderTitle}><strong>Unplaced TODOs</strong><span>{candidates.length}</span></div>
+      <FastTooltip label="Close Unplaced TODOs"><button type="button" className={styles.unplacedClose} aria-label="Close Unplaced TODOs" onClick={onClose}><X size={14} aria-hidden="true" /></button></FastTooltip>
+    </header>
     <p>Drag a TODO onto any card.</p>
     <input aria-label="Search unplaced paper TODOs" placeholder="Find a TODO…" value={query} onChange={(event) => setQuery(event.target.value)} />
     <ul>{visible.map((todo) => <li key={todo.id} data-unplaced-todo={todo.id}
@@ -3499,6 +3633,8 @@ function CanvasNode({
   onNoteChange,
   onTextFocus,
   onSaveDraft,
+  onReviseDraft,
+  filteredOut = false,
   onDeleteDraft,
   onCommit,
   onCancel,
@@ -3545,6 +3681,8 @@ function CanvasNode({
   onNoteChange: (value: string) => void;
   onTextFocus: () => void;
   onSaveDraft: () => Promise<void>;
+  onReviseDraft?: (fastTrack: boolean) => void;
+  filteredOut?: boolean;
   onDeleteDraft?: () => void;
   onCommit: () => void;
   onCancel: () => void;
@@ -3739,6 +3877,8 @@ function CanvasNode({
       ref={cardRef}
       data-drop-kind={dropPreviewKind || undefined}
       data-mind-node={node.id}
+      data-progress={node.progress ?? undefined}
+      data-filtered-out={filteredOut || undefined}
       data-child-navigation={childNavigation.length > 0 || undefined}
       data-mind-editor={editing ? node.id : undefined}
       role="treeitem"
@@ -3797,7 +3937,24 @@ function CanvasNode({
         onDropTodo(todoId);
       }}
     >
-      {node.agentDraft && <div className={styles.draftHeading}>Agent draft</div>}
+      {node.agentDraft && (
+        <div className={cn(styles.draftActions, "nodrag nopan")} data-mind-editor={node.id} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
+          {!readOnly && <FastTooltip label="Keep draft"><button type="button" aria-label="Save card" onClick={() => void onSaveDraft()}><Check size={13} /></button></FastTooltip>}
+          <FastTooltip label={readOnly ? "AI draft" : "Ask AI to revise (@agent)\n⌥-click to fast-track (@stat)"}>
+            <button
+              type="button"
+              className={styles.draftRevise}
+              aria-label="Ask AI to revise this draft"
+              disabled={readOnly}
+              onClick={(event) => onReviseDraft?.(event.altKey)}
+            >
+              <span className={styles.draftSparkle} aria-hidden="true"><Sparkles size={12} strokeWidth={2.3} /></span>
+              {!readOnly && <span className={styles.draftBubble} aria-hidden="true"><MessageSquare size={12} strokeWidth={2.2} /></span>}
+            </button>
+          </FastTooltip>
+          {!readOnly && onDeleteDraft && <FastTooltip label="Discard draft"><button type="button" aria-label="Delete draft" onClick={onDeleteDraft}><X size={13} /></button></FastTooltip>}
+        </div>
+      )}
       {unreadReply && <span className={styles.unreadReply} role="img" aria-label="Unread agent reply" title="Unread agent reply" />}
       {activityDescription && <FastTooltip label={activityDescription}><span className={styles.activityBadge} role="img" tabIndex={0} aria-label={activityDescription} /></FastTooltip>}
       {node.todoId && (
@@ -3864,10 +4021,6 @@ function CanvasNode({
             <CardImages project={project} refs={node.refs || []} readOnly={readOnly} uploading={uploading}
               onChange={onImageChange} />
           )}
-          {node.agentDraft && !readOnly && <div className={cn(styles.draftActions, "nodrag nopan")} data-mind-editor={node.id} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
-            <FastTooltip label="Save card"><button type="button" aria-label="Save card" onClick={() => void onSaveDraft()}><Check size={13} /></button></FastTooltip>
-            {onDeleteDraft && <FastTooltip label="Delete draft"><button type="button" aria-label="Delete draft" onClick={onDeleteDraft}><X size={13} /></button></FastTooltip>}
-          </div>}
           {coverage && coverage.total > 0 && (
             <div className="mindmap-coverage">
               <span className="tabular-nums">{coverage.complete} / {coverage.total} TODOs</span>
@@ -3880,6 +4033,7 @@ function CanvasNode({
             {node.priority && <span className="mindmap-node-priority" data-priority={node.priority} aria-label={`Priority ${node.priority}`}>{node.priority}</span>}
             {tags.slice(0, 2).map((tag) => <span className="mindmap-node-tag" key={tag}>{tag}</span>)}
             {tags.length > 2 && <span className="mindmap-node-tag">+{tags.length - 2}</span>}
+            <CardMetadataPills metadata={node.metadata} />
           </div>
           <CardScratchpad text={node.caption} caution={node.caution} editing={editing} readOnly={readOnly}
             onChange={onNoteChange} onCommit={() => void commit()} onCancel={cancel}
@@ -3889,7 +4043,7 @@ function CanvasNode({
       {!readOnly && <CardResizeGrip width={dimensions.width} onPreview={onResizePreview} onCommit={onResizeCommit} />}
       {collapsedDescendantCount > 0 && (
         <TooltipProvider delayDuration={650} skipDelayDuration={0}>
-        <FastTooltip label={collapsed ? shiftExpandHeld ? `${expandChildLabel}. Keep deeper branches collapsed.` : "Expand child cards. Shift-click to expand immediate children." : "Collapse all child cards"}><button
+        <FastTooltip label={collapsed ? shiftExpandHeld ? `${expandChildLabel}. Keep deeper branches collapsed.` : "Expand child cards\nShift or ⌥-click expands immediate children only" : "Collapse all child cards"}><button
           type="button"
           className={cn("mindmap-collapse-toggle", collapsed && "mindmap-collapse-toggle-visible")}
           aria-label={collapsed ? expandChildLabel : `Collapse ${collapsedDescendantCount} child cards`}
@@ -3901,7 +4055,7 @@ function CanvasNode({
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            onToggleCollapse(event.shiftKey);
+            onToggleCollapse(event.shiftKey || event.altKey);
           }}
           onKeyDown={(event) => {
             if (event.shiftKey && (event.key === "Enter" || event.key === " ")) {

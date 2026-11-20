@@ -535,7 +535,7 @@ export function mindmapReducer(state: MindmapSession, action: MindmapSessionActi
         selectedId: retainSelection(previous, state.selectedId),
         selectedIds: retainSelections(previous, state.selectedIds, state.selectedId),
         past: state.past.slice(0, -1),
-        future: [cloneMindmap(state.mindmap), ...state.future].slice(0, HISTORY_LIMIT),
+        future: [state.mindmap, ...state.future].slice(0, HISTORY_LIMIT),
         revision: state.revision + 1,
       };
     }
@@ -596,7 +596,7 @@ function sameSelection(left: string[], right: string[]): boolean {
 }
 
 function pushHistory(past: Mindmap[], snapshot: Mindmap): Mindmap[] {
-  return [...past.slice(-(HISTORY_LIMIT - 1)), cloneMindmap(snapshot)];
+  return [...past.slice(-(HISTORY_LIMIT - 1)), snapshot];
 }
 
 function withHistory(state: MindmapSession, next: Mindmap, selectedId?: string): MindmapSession {

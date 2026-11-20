@@ -221,7 +221,7 @@ const TOOL_META: Record<PaperWebMcpToolName, { title: string; description: strin
   },
   navigate_paper_section: {
     title: "Navigate to a paper section",
-    description: "Move the live document and editor to a current section id from get_paper_outline. The paper page must already be open.",
+    description: "Move the live document and editor to a current section id from get_paper_state.outline. The paper page must already be open.",
     readOnly: true,
   },
   set_paper_reader_mode: {

@@ -55,7 +55,7 @@ const TOOL_META: Record<WorkspaceToolName, { title: string; description: string 
   },
   open_project: {
     title: "Open a project",
-    description: "Open a project on its paper page. Use a slug returned by list_projects or search_projects.",
+    description: "Open a project on its paper page. Use a slug returned by list_projects.",
   }
 };
 

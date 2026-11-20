@@ -8,9 +8,7 @@ import path from "node:path";
 import { failResult, okResult, type OperationResult } from "@/lib/research/operation-result";
 import type { SourcePatch } from "@/lib/research/operations";
 import { sha256, writeTextAtomic } from "./codec";
-import { withProjectWriteLock, withProjectWriteLockAsync } from "@/lib/research/project-lock";
-import { expandProjectForConversion } from "./latexpand";
-import { conversionSourceHash, manuscriptFilePath } from "./pandoc";
+import { withProjectWriteLock } from "@/lib/research/project-lock";
 import { buildSourceBundle, mapVirtualRange, type SourceBundle } from "./source-bundle";
 import { clearSourceTransactionJournal, recoverSourceTransaction, writeSourceTransactionJournal } from "./source-transaction";
 import { bannerRanges, fileBanner, fileBytesUnchanged, splitBundleSource } from "./source-bundle-format";
@@ -216,76 +214,5 @@ export function persistSourceBundle(input: {
       { bundleHash: after.bundleHash, written: writes.map((item) => item.filePath), ...(input.includeBundle ? { bundle: after, graphChanged } : {}) },
       { diskHash: after.bundleHash, revision: after.revision },
     );
-  });
-}
-
-export async function applyConversionWrite(input: {
-  manuscriptDir: string;
-  filePath: string;
-  output: string;
-  loss: "none" | "partial" | "unsupported";
-  acknowledgeLoss: boolean;
-  expectedSourceFileHash?: string;
-  expectedSourceBundleHash?: string;
-  expectedExpandedSourceHash?: string;
-  expandProject?: boolean;
-  dryRun?: boolean;
-}): Promise<OperationResult<{ written: string; dryRun?: boolean }>> {
-  if (input.loss !== "none" && !input.acknowledgeLoss) {
-    return failResult("conversion_loss", "Conversion reported loss. Pass acknowledgeLoss=true to apply.", false);
-  }
-  const rel = input.filePath.replace(/\\/g, "/");
-  const source = manuscriptFilePath(input.manuscriptDir, rel);
-  if (!source.ok) return failResult("invalid_path", source.message, false);
-  const output = manuscriptFilePath(input.manuscriptDir, `${rel}.converted.html`);
-  if (!output.ok) return failResult("invalid_path", output.message, false);
-  const root = fs.realpathSync.native(path.resolve(input.manuscriptDir));
-  return withProjectWriteLockAsync(input.manuscriptDir, async () => {
-    const sourceAtLock = manuscriptFilePath(input.manuscriptDir, rel);
-    if (!sourceAtLock.ok) return failResult("invalid_path", sourceAtLock.message, false);
-    const outputAtLock = manuscriptFilePath(input.manuscriptDir, `${rel}.converted.html`);
-    if (!outputAtLock.ok) return failResult("invalid_path", outputAtLock.message, false);
-    if (!fs.existsSync(sourceAtLock.abs)) {
-      return failResult("stale_disk_state", `Conversion source "${rel}" is missing.`, { retryable: true });
-    }
-    const written = path.relative(root, outputAtLock.abs).split(path.sep).join("/");
-    if (input.expectedSourceFileHash) {
-      let currentHash: string;
-      try {
-        currentHash = sha256(fs.readFileSync(sourceAtLock.abs));
-      } catch {
-        return failResult("stale_disk_state", `Conversion source "${rel}" is missing.`, { retryable: true });
-      }
-      if (currentHash !== input.expectedSourceFileHash) {
-        return failResult("stale_disk_state", `Conversion source "${rel}" changed after preview.`, {
-          retryable: true,
-          currentHash,
-        });
-      }
-    }
-    if (input.expectedSourceBundleHash) {
-      const currentHash = buildSourceBundle(input.manuscriptDir, undefined, 0, true).bundleHash;
-      if (currentHash !== input.expectedSourceBundleHash) {
-        return failResult("stale_disk_state", "The source bundle changed after preview.", {
-          retryable: true,
-          currentHash,
-        });
-      }
-    }
-    if (input.expandProject && input.expectedExpandedSourceHash) {
-      const expansion = await expandProjectForConversion(input.manuscriptDir);
-      const currentHash = conversionSourceHash(expansion.source);
-      if (currentHash !== input.expectedExpandedSourceHash) {
-        return failResult("stale_disk_state", "The expanded manuscript changed after preview.", {
-          retryable: true,
-          currentHash,
-          diagnostics: expansion.diagnostics,
-        });
-      }
-    }
-    if (input.dryRun) return okResult({ written, dryRun: true });
-    fs.mkdirSync(path.dirname(outputAtLock.abs), { recursive: true });
-    writeTextAtomic(outputAtLock.abs, input.output);
-    return okResult({ written });
   });
 }

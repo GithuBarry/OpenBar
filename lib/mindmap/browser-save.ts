@@ -1,13 +1,33 @@
 import type { Mindmap } from "@/lib/types"
+import { mindmapDiskHash } from "./mindmap"
+import { rebaseSavedMindmap } from "./merge-saved"
 
 /** Map writes use a stable URL so an open editor survives application updates. */
-export async function saveBrowserMindmap(project: string, mindmap: Mindmap, expectedDiskHash: string, actor: "human" | "webmcp" = "human"): Promise<Mindmap> {
-  const response = await fetch(`/api/p/${encodeURIComponent(project)}/mindmap`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mindmap, expectedDiskHash, actor }),
-  })
-  return readMapResponse(response)
+export async function saveBrowserMindmap(project: string, mindmap: Mindmap, expectedDiskHash: string, actor: "human" | "webmcp" = "human", base?: Mindmap): Promise<Mindmap> {
+  let pending = mindmap
+  let expected = expectedDiskHash
+  let baseline = base
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await fetch(`/api/p/${encodeURIComponent(project)}/mindmap`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mindmap: pending, expectedDiskHash: expected, actor }),
+    })
+    if (response.status === 409 && baseline && attempt < 2
+      && (baseline.diskHash || mindmapDiskHash(baseline)) === expected) {
+      const saved = await loadBrowserMindmap(project, pending.id || "draft")
+      const rebased = rebaseSavedMindmap(baseline, saved, pending)
+      if (rebased) {
+        if (rebased === saved) return saved
+        pending = rebased
+        baseline = saved
+        expected = saved.diskHash || mindmapDiskHash(saved)
+        continue
+      }
+    }
+    return readMapResponse(response)
+  }
+  throw new Error("The saved map keeps changing. Your draft remains in this tab.")
 }
 
 export async function loadBrowserMindmap(project: string, mapId: string): Promise<Mindmap> {

@@ -273,20 +273,31 @@ function lockAcquisitionError(file: string, error: unknown): unknown {
   return error;
 }
 
+const SYNC_LOCK_SLEEP = new Int32Array(new SharedArrayBuffer(4));
+
 export function withWriteLock<T>(file: string, operation: () => T): T {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  let release: () => void;
-  try {
-    release = lockfile.lockSync(file, {
-      lockfilePath: `${file}.ob-lock`,
-      realpath: false,
-      stale: WRITE_LOCK_STALE_MS,
-      update: WRITE_LOCK_UPDATE_MS,
-      retries: 0,
-    });
-  } catch (error) {
-    throw lockAcquisitionError(file, error);
+  let release: (() => void) | undefined;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      release = lockfile.lockSync(file, {
+        lockfilePath: `${file}.ob-lock`,
+        realpath: false,
+        stale: WRITE_LOCK_STALE_MS,
+        update: WRITE_LOCK_UPDATE_MS,
+        retries: 0,
+      });
+      break;
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof Error && "code" in error && error.code === "ELOCKED") || attempt === 19) {
+        throw lockAcquisitionError(file, error);
+      }
+      Atomics.wait(SYNC_LOCK_SLEEP, 0, 0, 25);
+    }
   }
+  if (!release) throw lockAcquisitionError(file, lastError);
   try {
     return operation();
   } finally {

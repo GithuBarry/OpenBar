@@ -111,3 +111,59 @@ export function mergeSavedMindmap(base: Mindmap, saved: Mindmap, latest: Mindmap
   merged.diskHash = saved.diskHash;
   return merged;
 }
+
+/** Rebase independent edits onto a newer saved map, preserving real conflicts. */
+export function rebaseSavedMindmap(base: Mindmap, saved: Mindmap, latest: Mindmap): Mindmap | null {
+  if (base.projectId !== saved.projectId || base.projectId !== latest.projectId
+    || (base.id || "draft") !== (saved.id || "draft") || (base.id || "draft") !== (latest.id || "draft")) return null;
+  const nodeFields = MINDMAP_NODE_FIELDS.filter(field => field !== "createdAt" && field !== "updatedAt" && field !== "order");
+  const mapFields = MINDMAP_FIELDS.filter(field => field !== "createdAt" && field !== "updatedAt");
+  const conflicts = <T,>(original: T, remote: T, local: T, fields: ReadonlyArray<keyof T>) => fields.some(field =>
+    !valuesEqual(local[field], original[field]) && !valuesEqual(remote[field], original[field])
+    && !valuesEqual(local[field], remote[field]));
+  const same = <T,>(left: T, right: T, fields: ReadonlyArray<keyof T>) => fields.every(field => valuesEqual(left[field], right[field]));
+  if (conflicts(base, saved, latest, mapFields)) return null;
+  const baseNodes = new Map(base.nodes.map(node => [node.id, node]));
+  const savedNodes = new Map(saved.nodes.map(node => [node.id, node]));
+  const latestNodes = new Map(latest.nodes.map(node => [node.id, node]));
+  for (const id of new Set([...baseNodes.keys(), ...savedNodes.keys(), ...latestNodes.keys()])) {
+    const original = baseNodes.get(id), remote = savedNodes.get(id), local = latestNodes.get(id);
+    if (!original) {
+      if (remote && local && !same(remote, local, nodeFields)) return null;
+    } else if (!remote) {
+      if (local && !same(original, local, nodeFields)) return null;
+    } else if (!local) {
+      if (!same(original, remote, nodeFields)) return null;
+    } else {
+      if (conflicts(original, remote, local, nodeFields)) return null;
+      // A concurrent TODO binding can clear ordinary title/text. Preserve a
+      // human edit for review instead of discarding it during canonicalization.
+      if (remote.todoId !== original.todoId && remote.todoId
+        && (!valuesEqual(local.title, original.title) || !valuesEqual(local.text, original.text))) return null;
+      if (local.todoId !== original.todoId && local.todoId
+        && (!valuesEqual(remote.title, original.title) || !valuesEqual(remote.text, original.text))) return null;
+    }
+  }
+  const merged = mergeSavedMindmap(base, saved, latest);
+  const mergedNodes = new Map(merged.nodes.map(node => [node.id, node]));
+  if (mergedNodes.size !== merged.nodes.length || !mergedNodes.has(merged.rootId)) return null;
+  // Independent moves or deletions can combine into a cycle or missing parent.
+  for (const node of merged.nodes) {
+    let current = node;
+    const seen = new Set<string>();
+    while (current.parentId !== null) {
+      if (seen.has(current.id)) return null;
+      seen.add(current.id);
+      const parent = mergedNodes.get(current.parentId);
+      if (!parent) return null;
+      current = parent;
+    }
+    if (current.id !== merged.rootId) return null;
+  }
+  const matchesSaved = same(merged, saved, mapFields) && mergedNodes.size === savedNodes.size
+    && merged.nodes.every(node => {
+      const remote = savedNodes.get(node.id);
+      return remote && same(node, remote, nodeFields);
+    });
+  return matchesSaved ? saved : merged;
+}

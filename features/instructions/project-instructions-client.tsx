@@ -143,74 +143,80 @@ export function ProjectInstructionsClient({
         </nav>
         <p className="text-xs leading-5 text-muted">Project → user/workspace → system shows the scope of each layer. The connected agent controls instruction precedence and supplies its own system prompt. OpenBar provides the built-in guidance shown below through its agent connection.</p>
       </section>
-      <EditorBlock
-        id="project-instructions"
-        title="Project instructions (AGENTS.md)"
-        hint={`${agentsPath} — included automatically in get_project_state.`}
-        value={body}
-        pending={pending}
-        onChange={setBody}
-        onSave={() => saveAgents(false)}
-        onReload={hash !== agentsHash ? () => { setBody(agentsBody); setHash(agentsHash); setError(null); } : undefined}
-      />
+      <div className="grid gap-8 lg:grid-cols-2 lg:items-start">
+        <div className="space-y-8">
+          <EditorBlock
+            id="project-instructions"
+            title="Project instructions (AGENTS.md)"
+            hint={`${agentsPath} — included automatically in get_project_state.`}
+            value={body}
+            pending={pending}
+            onChange={setBody}
+            onSave={() => saveAgents(false)}
+            onReload={hash !== agentsHash ? () => { setBody(agentsBody); setHash(agentsHash); setError(null); } : undefined}
+          />
 
-      <SkillList
-        title="Project skills"
-        hint="Listed in project state. Agents read a skill when it is relevant."
-        skills={skills}
-        pending={pending}
-        onEdit={editSkill}
-        onDelete={(skill) => {
-          if (!window.confirm(`Delete skill ${skill.id}?`)) return;
-          startTransition(async () => {
-            try {
-              if (!skill.hash) throw new Error("Reload the skill before deleting it.");
-              await deleteProjectSkillAction(slug, skill.id, skill.hash);
-              router.refresh();
-            } catch (reason) {
-              setError(reason instanceof Error ? reason.message : "Could not delete the skill.");
-            }
-          });
-        }}
-      />
+          <SkillList
+            title="Project skills"
+            hint="Listed in project state. Agents read a skill when it is relevant."
+            skills={skills}
+            pending={pending}
+            onEdit={editSkill}
+            onDelete={(skill) => {
+              if (!window.confirm(`Delete skill ${skill.id}?`)) return;
+              startTransition(async () => {
+                try {
+                  if (!skill.hash) throw new Error("Reload the skill before deleting it.");
+                  await deleteProjectSkillAction(slug, skill.id, skill.hash);
+                  router.refresh();
+                } catch (reason) {
+                  setError(reason instanceof Error ? reason.message : "Could not delete the skill.");
+                }
+              });
+            }}
+          />
 
-      <SkillForm
-        draft={draft}
-        pending={pending}
-        onChange={setDraft}
-        onSave={saveSkill}
-      />
+          <SkillForm
+            draft={draft}
+            pending={pending}
+            onChange={setDraft}
+            onSave={saveSkill}
+          />
+        </div>
 
-      <EditorBlock
-        id="user-instructions"
-        title="User / workspace instructions"
-        hint={`${workspaceAgentsPath} — workspace AGENTS.md for every project.`}
-        value={workspaceBody}
-        pending={pending}
-        onChange={setWorkspaceBody}
-        onSave={() => saveAgents(true)}
-        onReload={workspaceHash !== workspaceAgentsHash ? () => { setWorkspaceBody(workspaceAgentsBody); setWorkspaceHash(workspaceAgentsHash); setError(null); } : undefined}
-      />
+        <div className="space-y-8">
+          <EditorBlock
+            id="user-instructions"
+            title="User / workspace instructions"
+            hint={`${workspaceAgentsPath} — workspace AGENTS.md for every project.`}
+            value={workspaceBody}
+            pending={pending}
+            onChange={setWorkspaceBody}
+            onSave={() => saveAgents(true)}
+            onReload={workspaceHash !== workspaceAgentsHash ? () => { setWorkspaceBody(workspaceAgentsBody); setWorkspaceHash(workspaceAgentsHash); setError(null); } : undefined}
+          />
 
-      <SkillList
-        title="Workspace skills"
-        hint="Shared SKILL.md files under the workspace content directory."
-        skills={workspaceSkills}
-        pending={pending}
-        onEdit={editSkill}
-        onDelete={(skill) => {
-          if (!window.confirm(`Delete workspace skill ${skill.id}?`)) return;
-          startTransition(async () => {
-            try {
-              if (!skill.hash) throw new Error("Reload the skill before deleting it.");
-              await deleteWorkspaceSkillAction(skill.id, skill.hash);
-              router.refresh();
-            } catch (reason) {
-              setError(reason instanceof Error ? reason.message : "Could not delete the skill.");
-            }
-          });
-        }}
-      />
+          <SkillList
+            title="Workspace skills"
+            hint="Shared SKILL.md files under the workspace content directory."
+            skills={workspaceSkills}
+            pending={pending}
+            onEdit={editSkill}
+            onDelete={(skill) => {
+              if (!window.confirm(`Delete workspace skill ${skill.id}?`)) return;
+              startTransition(async () => {
+                try {
+                  if (!skill.hash) throw new Error("Reload the skill before deleting it.");
+                  await deleteWorkspaceSkillAction(skill.id, skill.hash);
+                  router.refresh();
+                } catch (reason) {
+                  setError(reason instanceof Error ? reason.message : "Could not delete the skill.");
+                }
+              });
+            }}
+          />
+        </div>
+      </div>
 
       <section id="system-instructions" className="space-y-3 scroll-mt-6" aria-label="System guidance">
         <div className="flex items-center justify-between gap-3"><h2 className="text-sm font-semibold">OpenBar system guidance</h2><span className="text-xs text-muted">Read only</span></div>

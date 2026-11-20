@@ -1,5 +1,7 @@
 # Disposable public demo deployment
 
+For direct campus access to actual papers, see [Campus viewing](campus/README.md).
+
 This package runs OpenBar in disposable public-demo mode in one Cloudflare
 Container behind a small Worker. Cloudflare Access protects the hostname. The
 image contains the real published `Command-V` and `NoveltyBench` projects from

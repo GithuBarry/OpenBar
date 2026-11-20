@@ -5,9 +5,10 @@
 .tick:hover::before, .tick:focus-visible::before, .tick[data-state="delayed-open"]::before, .tick[data-state="instant-open"]::before { width: 17px; background: rgb(var(--accent)); opacity: 1; }
 :global([data-mind-node]:has(> .mindmap-collapse-toggle:is(:hover, :focus-visible))) > .rail .tick::before { width: 17px; background: rgb(var(--accent)); opacity: 1; }
 .tick:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; }
-.preview { z-index: 130; width: min(245px, calc(100vw - 24px)); padding: 11px 13px; border: 1px solid rgb(var(--line)); border-radius: 9px; background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); font-family: var(--font-sans); }
-.preview > strong { display: block; font-size: 12px; line-height: 1.4; }
-.body { display: -webkit-box; margin-top: 5px; overflow: hidden; -webkit-line-clamp: 5; -webkit-box-orient: vertical; color: rgb(var(--muted)); font-size: 11px; line-height: 1.5; white-space: pre-wrap; }
-.preview .hint { display: block; margin-top: 9px; color: rgb(var(--faint)); font-size: 10px; }
+.previewWrap { z-index: 130; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; pointer-events: none; font-family: var(--font-sans); }
+.preview { width: min(280px, calc(100vw - 24px)); padding: 12px 14px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-card); background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); }
+.preview > strong { display: block; font-size: 13px; line-height: 1.4; }
+.body { display: -webkit-box; margin-top: 6px; overflow: hidden; -webkit-line-clamp: 6; -webkit-box-orient: vertical; color: rgb(var(--muted)); font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+.hint { display: inline-block; padding: 2px 8px; border-radius: 999px; background: rgb(var(--surface) / .72); backdrop-filter: blur(8px); color: rgb(var(--faint)); font-size: 11px; line-height: 1.35; }
 @media (pointer: coarse) { .tick { width: 28px; } }
 @media (prefers-reduced-motion: reduce) { .rail, .tick::before { transition: none; } }

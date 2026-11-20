@@ -116,6 +116,7 @@ export type ArtifactKind =
   | "wiki-page"
   | "mindmap-node"
   | "figure"
+  | "file"
   | "web"
   | "external";
 
@@ -144,6 +145,8 @@ export interface ArtifactRef {
   kind: ArtifactKind;
   id: string;
   label?: string;
+  /** Optional free-form relation to the target (e.g. supports, refutes, ablates, depends-on). */
+  relation?: string;
   url?: string;
   /** Explicit map identity for mindmap-node references. */
   mapId?: string;

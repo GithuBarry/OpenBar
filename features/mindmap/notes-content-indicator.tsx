@@ -4,7 +4,7 @@ const CONTENT_THRESHOLDS = [128, 512, 2048, 4096];
 
 export function notesContentDescription(text: string): string {
   const bars = CONTENT_THRESHOLDS.reduce((total, threshold) => total + Number(text.length > threshold), 0);
-  return `${hasNoteText(text) ? "Has content" : "Empty"} · ${text.length} characters · ${bars} of 4 bars`;
+  return `${hasNoteText(text) ? "Has content" : "Empty"}, ${text.length} characters, ${bars} of 4 bars`;
 }
 
 export function NotesContentIndicator({ text, className }: { text: string; className?: string }) {

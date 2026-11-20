@@ -14,7 +14,7 @@ function sectionExcerpt(pane: HTMLElement | null, heading: HTMLElement | null | 
     if (element.hasAttribute("data-ob-heading-key")) break;
     if (heading.contains(element) || element.closest("table, pre, .katex")) continue;
     const text = (element.textContent || "").replace(/\s+/g, " ").trim();
-    if (text.length >= 24) return text.slice(0, 180);
+    if (text.length >= 24) return text.slice(0, 340);
   }
   return "";
 }
@@ -94,11 +94,13 @@ export function PaperOutlineRail({ bookmarks, activeSlug, onJump, previewRef }: 
             <span aria-hidden="true" />
           </button>
           </Tooltip.Trigger>
-          <Tooltip.Portal><Tooltip.Content className={styles.preview} side="right" align="start" sideOffset={6} alignOffset={-12} collisionPadding={12}>
-            {preview?.parent && <span className={styles.parent}>{preview.parent}</span>}
-            <strong>{bookmark.title}</strong>
-            {preview?.excerpt && <p>{preview.excerpt}</p>}
-            <span className={styles.hint}>Click to jump or use ↑ ↓ to explore</span>
+          <Tooltip.Portal><Tooltip.Content className={styles.previewWrap} side="right" align="start" sideOffset={6} alignOffset={-12} collisionPadding={12}>
+            <div className={styles.preview}>
+              {preview?.parent && <span className={styles.parent}>{preview.parent}</span>}
+              <strong>{bookmark.title}</strong>
+              {preview?.excerpt && <p>{preview.excerpt}</p>}
+            </div>
+            <span className={styles.hint}>Click to jump, ↑ ↓ to explore</span>
           </Tooltip.Content></Tooltip.Portal>
           </Tooltip.Root>
         ))}

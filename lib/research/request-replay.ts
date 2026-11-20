@@ -191,7 +191,7 @@ export function recordRequestReplay(
       }
       if (existing) return;
       const entries = [...current.entries, normalized];
-      writeTextAtomic(file, JSON.stringify({ version: VERSION, entries: entries.slice(-MAX_ENTRIES) }, null, 2) + "\n");
+      writeTextAtomic(file, JSON.stringify({ version: VERSION, entries: entries.slice(-MAX_ENTRIES) }) + "\n");
     });
   } catch (error) {
     if (error instanceof RequestReplayStoreError || error instanceof RequestReplayConflictError) throw error;

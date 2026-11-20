@@ -48,7 +48,9 @@ async function prefixBrowserInbox(result: unknown, signal?: AbortSignal): Promis
     const inbox = await response.json() as { ok: boolean; value?: AgentInbox };
     if (!response.ok || !inbox.ok || !inbox.value) throw new Error("Inbox unavailable");
     const prefix = formatInboxPrefix(inbox.value);
-    return prefix ? { notifications: { prefix, ...inbox.value }, ...result } : result;
+    if (!prefix) return result;
+    const { replies: _replies, ...compactInbox } = inbox.value;
+    return { notifications: { prefix, ...compactInbox }, ...result };
   } catch {
     return { notifications: { error: "OpenBar inbox could not be checked. Call check_inbox to retry." }, ...result };
   }

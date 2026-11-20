@@ -5,12 +5,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect,useState,useTransition } from "react";
 
+import { useProjectWriteSession } from "@/components/project-session/project-write-session";
 import { deleteWikiPageAction,patchWikiPageAction,renameWikiPageAction } from "@/app/actions";
 import type { WikiPage } from "@/lib/types";
 import { WikiView,wikiBacklinks } from "./wiki-view";
 
 export function WikiPageClient({ page, pages = [] }: { page: WikiPage; pages?: WikiPage[] }) {
   const router = useRouter();
+  const { writable } = useProjectWriteSession();
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(page.body);
   const [title, setTitle] = useState(page.title);
@@ -95,7 +97,7 @@ export function WikiPageClient({ page, pages = [] }: { page: WikiPage; pages?: W
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <span className="text-xs text-muted" role="status">Read-only supporting notes</span>
+        {!writable && <span className="text-xs text-muted" role="status">View only</span>}
         {saved && <span className="text-xs text-ok">Saved</span>}
         {editing ? (
           <>
@@ -109,11 +111,11 @@ export function WikiPageClient({ page, pages = [] }: { page: WikiPage; pages?: W
           </>
         ) : (
           <>
-            <button type="button" className="p-button p-button-default btn-outline text-xs" onClick={rename} disabled title="Wiki editing is currently unavailable">Rename</button>
-            <button type="button" className="p-button p-button-default btn-outline text-xs" onClick={remove} disabled title="Wiki editing is currently unavailable">
+            <button type="button" className="p-button p-button-default btn-outline text-xs" onClick={rename} disabled={!writable || pending}>Rename</button>
+            <button type="button" className="p-button p-button-default btn-outline text-xs" onClick={remove} disabled={!writable || pending}>
               <Trash2 size={13} /> Delete
             </button>
-            <button type="button" className="p-button p-button-default btn-outline text-xs" onClick={() => setEditing(true)} disabled title="Wiki editing is currently unavailable">
+            <button type="button" className="p-button p-button-default btn-outline text-xs" onClick={() => setEditing(true)} disabled={!writable || pending}>
               <Edit3 size={13} /> Edit
             </button>
           </>

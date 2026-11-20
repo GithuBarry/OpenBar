@@ -1,6 +1,6 @@
-export const PROJECT_WRITE_SESSION_TTL_MS = 45_000;
+export const PROJECT_WRITE_SESSION_TTL_MS = 180_000;
 export const PROJECT_WRITE_SESSION_HEARTBEAT_MS = 10_000;
-export const PROJECT_WRITE_SESSION_IDLE_MS = 120_000;
+export const PROJECT_WRITE_SESSION_IDLE_MS = 60_000;
 export const PROJECT_WRITE_SESSION_HEADER = "X-OpenBar-Write-Session";
 
 export type ProjectWriteSessionCredential = {

@@ -182,6 +182,14 @@ export interface EditorComment {
   section: string;
 }
 
+export interface EditorMarker {
+  kind: string;
+  text: string;
+  from: number;
+  to: number;
+  section: string;
+}
+
 function sectionAt(source: string, index: number): string {
   const before = source.slice(0, index);
   const matches = [...before.matchAll(/^\\(?:section|subsection|subsubsection)\*?\{(.+)\}\s*$/gm)];
@@ -227,6 +235,18 @@ export function collectEditorComments(source: string): EditorComment[] {
       from: note.start,
       to: note.end,
       section: note.section || sectionAt(source, note.start),
+    }))
+    .sort((a, b) => a.from - b.from);
+}
+
+export function collectEditorMarkers(source: string): EditorMarker[] {
+  return analyzePaper(source).markers
+    .map((marker) => ({
+      kind: marker.kind || "marker",
+      text: marker.text,
+      from: marker.start,
+      to: marker.end,
+      section: marker.section || sectionAt(source, marker.start),
     }))
     .sort((a, b) => a.from - b.from);
 }
