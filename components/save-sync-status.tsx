@@ -220,32 +220,38 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
       if (session.sleeping && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
         const rect = button.getBoundingClientRect();
         const burst = ++zBurstIdRef.current;
-        const specs = [
-          { frac: 0.18, dx: -10, drop: 78, rot: -18, size: 14, delay: 0, duration: 960, glyph: "Z" as const, warm: false },
-          { frac: 0.42, dx: 6, drop: 92, rot: 14, size: 11, delay: 95, duration: 1060, glyph: "z" as const, warm: true },
-          { frac: 0.68, dx: -6, drop: 84, rot: -12, size: 15, delay: 185, duration: 1020, glyph: "Z" as const, warm: false },
-          { frac: 0.3, dx: 9, drop: 72, rot: 20, size: 12, delay: 270, duration: 920, glyph: "z" as const, warm: true },
-          { frac: 0.82, dx: 4, drop: 88, rot: -16, size: 13, delay: 340, duration: 1040, glyph: "Z" as const, warm: false },
-        ];
-        const batch: FallingZ[] = specs.map((spec, index) => ({
-          id: burst * 100 + index,
-          x: rect.left + rect.width * spec.frac,
-          y: rect.bottom - 4,
-          dx: spec.dx,
-          drop: spec.drop,
-          rot: spec.rot,
-          size: spec.size,
-          delay: spec.delay,
-          duration: spec.duration,
-          glyph: spec.glyph,
-          warm: spec.warm,
-        }));
+        const count = Math.min(24, 5 + (attentionRequest - 3) * 4);
+        const maxDrop = Math.max(130, Math.min(240, window.innerHeight - rect.bottom + 42));
+        const batch: FallingZ[] = Array.from({ length: count }, (_, index) => {
+          const seed = (burst * 31 + index * 17) % 100;
+          const frac = 0.08 + ((index + 0.5) / count) * 0.84 + ((seed % 11) - 5) * 0.012;
+          const dx = (((seed * 7) % 36) - 18);
+          const drop = Math.round(maxDrop * (0.78 + (seed % 25) / 100));
+          const rot = (((seed * 13) % 44) - 22);
+          const size = 11 + (seed % 6);
+          const delay = Math.round(index * Math.max(36, 90 - (attentionRequest - 3) * 8) + (seed % 40));
+          const duration = 1550 + (seed % 7) * 105;
+          return {
+            id: burst * 100 + index,
+            x: rect.left + rect.width * Math.max(0.05, Math.min(0.95, frac)),
+            y: rect.bottom - 4,
+            dx,
+            drop,
+            rot,
+            size,
+            delay,
+            duration,
+            glyph: index % 2 === 0 ? "Z" : "z",
+            warm: index % 3 === 1,
+          };
+        });
         const ids = new Set(batch.map(item => item.id));
-        setFallingZs(current => [...current.slice(-15), ...batch]);
+        const cleanupMs = Math.max(...batch.map(item => item.delay + item.duration)) + 150;
+        setFallingZs(current => [...current.slice(-Math.max(0, 80 - batch.length)), ...batch]);
         const timer = window.setTimeout(() => {
           setFallingZs(current => current.filter(item => !ids.has(item.id)));
           zCleanupTimersRef.current = zCleanupTimersRef.current.filter(id => id !== timer);
-        }, 1550);
+        }, cleanupMs);
         zCleanupTimersRef.current.push(timer);
       }
     }
