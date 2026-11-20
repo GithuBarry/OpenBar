@@ -447,7 +447,6 @@ export function MindmapEditor({
       setCheckingRemote(false);
       if (event.phase === "pending") {
         setRemoteSaveState("pending");
-        setRemoteSaveError(null);
         remoteSyncRef.current = {
           status: "pending",
           code: "remote_sync_queued",
@@ -458,7 +457,6 @@ export function MindmapEditor({
       }
       if (event.phase === "syncing") {
         setRemoteSaveState("syncing");
-        setRemoteSaveError(null);
         remoteSyncRef.current = {
           status: "pending",
           code: "push_in_progress",
@@ -589,8 +587,9 @@ export function MindmapEditor({
       quickPullErrorRef.current = null;
       remoteOutOfSyncRef.current = applyingRemoteRef.current;
       setRemoteOutOfSync(false);
-      setRemoteSaveError(null);
-      setRemoteSaveState(current => (status.ahead || 0) > 0 || !status.isClean ? "pending" : refreshRemote || current === "synced" ? "synced" : "local");
+      const hasUnpushed = (status.ahead || 0) > 0 || !status.isClean;
+      if (!hasUnpushed) setRemoteSaveError(null);
+      setRemoteSaveState(current => hasUnpushed ? (current === "failed" || current === "blocked" ? current : "pending") : refreshRemote || current === "synced" ? "synced" : "local");
       return status;
     } catch (error) {
       if (requestId !== remoteStatusRequestRef.current || activityGeneration !== remoteQueue.activityGeneration) return;
@@ -1198,6 +1197,8 @@ export function MindmapEditor({
   }, [mindmap, reconciliation]);
 
   const [cardWidthPreviews, setCardWidthPreviews] = useState<Map<string, number>>(() => new Map());
+  const [previewFontSize, setPreviewFontSize] = useState<number | null>(null);
+  const effectiveFontSize = previewFontSize ?? (mindmap.fontSize || DEFAULT_MINDMAP_FONT_SIZE);
   useEffect(() => { if (readOnly) setCardWidthPreviews(new Map()); }, [readOnly]);
   const previewCardWidth = useCallback((id: string, width: number | undefined) => {
     setCardWidthPreviews(current => {
@@ -1213,7 +1214,7 @@ export function MindmapEditor({
     dispatch({ type: "patch-node", id, patch: { cardWidth: width } });
   }, [dispatch, previewCardWidth, readOnly]);
   const [measuredCards, setMeasuredCards] = useState<Map<string, Dimensions>>(() => new Map());
-  useEffect(() => { setMeasuredCards(new Map()); }, [mindmap.fontSize]);
+  useEffect(() => { setMeasuredCards(new Map()); }, [effectiveFontSize]);
   const pendingMeasurements = useRef(new Map<string, Dimensions>());
   const measurementFrame = useRef<number | null>(null);
   const measureCard = useCallback((id: string, size: Dimensions) => {
@@ -2515,10 +2516,10 @@ export function MindmapEditor({
         width: dimensions.width,
         height: dimensions.height,
         selected: selectedIdSet.has(node.id),
-        renderVersion: `${editingId || ""}:${mindmap.fontSize || DEFAULT_MINDMAP_FONT_SIZE}:${shiftExpandHeld}`,
+        renderVersion: `${editingId || ""}:${effectiveFontSize}:${shiftExpandHeld}`,
       }];
     })
-  ), [editingId, layout, selectedIdSet, mindmap.fontSize, shiftExpandHeld]);
+  ), [editingId, layout, selectedIdSet, effectiveFontSize, shiftExpandHeld]);
 
   const renderCard = useCallback((id: string) => {
     const node = layout.nodeById.get(id);
@@ -2529,7 +2530,7 @@ export function MindmapEditor({
     return (
       <CanvasNode
         project={project}
-        fontSize={mindmap.fontSize || DEFAULT_MINDMAP_FONT_SIZE}
+        fontSize={effectiveFontSize}
         readOnly={readOnly}
         uploading={imageUploads[node.id] || 0}
         onImageChange={update => updateCardImages(node.id, update)}
@@ -2629,7 +2630,7 @@ export function MindmapEditor({
       />
     );
   }, [
-    mindmap.fontSize,
+    effectiveFontSize,
     focusCard,
     activityNodeIds,
     activitySince,
@@ -2795,7 +2796,8 @@ export function MindmapEditor({
       <div className={styles.toolbar} role="group" aria-label="Mindmap controls">
         <div className={cn("p-glass-sm", paperStyles.toolbar, styles.projectBar)} role="group" aria-label="Map settings">
           {header}
-          <div className={styles.fontTools}><MindmapFontSize value={mindmap.fontSize || DEFAULT_MINDMAP_FONT_SIZE} disabled={readOnly}
+          <div className={styles.fontTools}><MindmapFontSize value={effectiveFontSize} disabled={readOnly}
+            onPreview={setPreviewFontSize}
             onChange={fontSize => dispatch({ type: "set-font-size", fontSize })} /></div>
           <div className={styles.toolbarActions}>
           {selectMultiple && <button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.iconButton)} aria-label="Finish selecting cards" aria-pressed="true" onClick={() => { setSelectMultiple(false); setCardMenuOpen(true); }}><CheckSquare size={18} /></button>}
@@ -2829,7 +2831,8 @@ export function MindmapEditor({
                       aria-label="Mindmap title"
                     />
                   </label>
-              <MindmapFontSizeSlider value={mindmap.fontSize || DEFAULT_MINDMAP_FONT_SIZE} disabled={readOnly}
+              <MindmapFontSizeSlider value={effectiveFontSize} disabled={readOnly}
+                onPreview={setPreviewFontSize}
                 onChange={fontSize => dispatch({ type: "set-font-size", fontSize })} />
               <button type="button" className={styles.optionRow} aria-pressed={selectMultiple} onClick={() => { setSelectMultiple((value) => !value); setMapSettingsOpen(false); setCardMenuOpen(false); }}><CheckSquare size={15} />Select multiple{selectMultiple && <Check size={14} />}</button>
               <button type="button" className={styles.optionRow} onClick={() => { setViewMode("changes"); setMapSettingsOpen(false); }}><GitBranch size={15} />Change history</button>

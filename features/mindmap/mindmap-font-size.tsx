@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AArrowDown, AArrowUp, RotateCcw, SlidersHorizontal } from "lucide-react";
 
 import { ChoiceButtons } from "@/components/choice-buttons";
@@ -18,10 +18,10 @@ const PRESETS = [
   { value: 16, label: "Large" },
 ] as const;
 
-type SizeControlProps = { value: number; disabled?: boolean; onChange: (value: number) => void };
+type SizeControlProps = { value: number; disabled?: boolean; onChange: (value: number) => void; onPreview?: (value: number | null) => void };
 const clampSize = (value: number) => Math.max(MIN_SIZE, Math.min(MAX_SIZE, Math.round(value)));
 
-export function MindmapFontSize({ value, disabled = false, onChange }: SizeControlProps) {
+export function MindmapFontSize({ value, disabled = false, onChange, onPreview }: SizeControlProps) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   return <div className={styles.control}>
@@ -30,13 +30,13 @@ export function MindmapFontSize({ value, disabled = false, onChange }: SizeContr
         <SlidersHorizontal size={15} /><span>{value} px</span>
       </button>
     </FastTooltip>
-    <AnchoredPop open={open} anchorRef={anchor} onDismiss={() => setOpen(false)} className={styles.popover}>
-      <MindmapFontSizeSlider value={value} disabled={disabled} onChange={onChange} />
+    <AnchoredPop open={open} anchorRef={anchor} onDismiss={() => { onPreview?.(null); setOpen(false); }} className={styles.popover}>
+      <MindmapFontSizeSlider value={value} disabled={disabled} onChange={onChange} onPreview={onPreview} />
     </AnchoredPop>
   </div>;
 }
 
-export function MindmapFontSizeSlider({ value, disabled = false, onChange }: SizeControlProps) {
+export function MindmapFontSizeSlider({ value, disabled = false, onChange, onPreview }: SizeControlProps) {
   const [draft, setDraft] = useState(String(value));
   const currentValue = useRef(value);
   useEffect(() => {
@@ -48,6 +48,7 @@ export function MindmapFontSizeSlider({ value, disabled = false, onChange }: Siz
     if (disabled || !Number.isFinite(next)) return;
     const size = clampSize(next);
     setDraft(String(size));
+    onPreview?.(null);
     if (size !== currentValue.current) {
       currentValue.current = size;
       onChange(size);
@@ -93,17 +94,16 @@ export function MindmapFontSizeSlider({ value, disabled = false, onChange }: Siz
       </label>
       <button type="button" disabled={disabled || size >= MAX_SIZE} aria-label="Increase card text size" onClick={() => step(1)}><AArrowUp size={17} /></button>
       <input className={styles.slider} type="range" min={MIN_SIZE} max={MAX_SIZE} step={1} value={size} disabled={disabled} aria-label="Card text size" aria-valuetext={`${size} pixels`}
-        onChange={event => setDraft(event.currentTarget.value)}
+        onChange={event => {
+          const next = clampSize(Number(event.currentTarget.value));
+          setDraft(String(next));
+          onPreview?.(next);
+        }}
         onPointerUp={event => update(Number(event.currentTarget.value))}
-        onPointerCancel={event => { event.currentTarget.value = String(currentValue.current); setDraft(String(currentValue.current)); }}
+        onPointerCancel={event => { event.currentTarget.value = String(currentValue.current); setDraft(String(currentValue.current)); onPreview?.(null); }}
         onBlur={event => update(Number(event.currentTarget.value))}
         onKeyUp={event => { if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"].includes(event.key)) update(Number(event.currentTarget.value)); }} />
     </div>
     <ChoiceButtons label="Card text size presets" value={size} options={PRESETS} onChange={update} disabled={disabled} />
-    <div className={styles.preview} aria-label="Card text preview" style={{ "--card-body-size": `${size}px`, "--card-body-line": `${size * 17 / 12}px`, "--card-title-size": `${size * 14 / 12}px` } as CSSProperties}>
-      <strong>Research idea</strong>
-      <p>Text and notes share one scale.</p>
-      <p>Supporting context stays in Notes.</p>
-    </div>
   </section>;
 }

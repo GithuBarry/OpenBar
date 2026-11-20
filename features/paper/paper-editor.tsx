@@ -666,7 +666,6 @@ export function PaperEditor({
       if (event.phase === "pending" || event.phase === "syncing") {
         remoteSavePendingRef.current = true;
         setRemoteSaveState(event.phase === "syncing" ? "saving" : "local");
-        setRemoteSaveError(null);
         remoteSyncRef.current = {
           status: "pending",
           code: event.phase === "syncing" ? "push_in_progress" : "remote_sync_queued",
@@ -765,14 +764,15 @@ export function PaperEditor({
       quickPullErrorRef.current = null;
       remoteOutOfSyncRef.current = applyingRemoteRef.current;
       setRemoteOutOfSync(false);
-      setRemoteSaveError(null);
       if ((status.ahead || 0) > 0 || !status.isClean) {
         remoteSavePendingRef.current = true;
-        setRemoteSaveState("local");
+        setRemoteSaveState(current => current === "error" || current === "blocked" ? current : "local");
       } else if (refreshRemote) {
         remoteSavePendingRef.current = false;
+        setRemoteSaveError(null);
         setRemoteSaveState("saved");
       } else {
+        setRemoteSaveError(null);
         setRemoteSaveState(current => current === "saved" ? current : "unverified");
       }
       return status;

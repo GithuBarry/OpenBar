@@ -5,7 +5,7 @@ import Link from "next/link";
 import * as Dialog from "@radix-ui/react-dialog";
 import { FastTooltip } from "@/components/fast-tooltip";
 import styles from "./sidebar.module.css";
-import { PanelLeft, PanelLeftClose, LockKeyhole, LockKeyholeOpen } from "lucide-react";
+import { Home, PanelLeft, PanelLeftClose, LockKeyhole, LockKeyholeOpen } from "lucide-react";
 
 import { Project } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -187,7 +187,7 @@ export function Sidebar({
     <Dialog.Root open={narrow && open} onOpenChange={changeOpen}>
       {(!open || narrow) && (
         <nav className={cn("p-glass-sm", styles.collapsedRail)} aria-label="Project navigation">
-          <FastTooltip label="All projects"><Link href="/" aria-label={`${workspaceName} home`} data-sidebar-flip="logo" className={styles.collapsedLogo}><WorkspaceMark compact /></Link></FastTooltip>
+          <FastTooltip label="All projects"><Link href="/" aria-label={`${workspaceName} home`} data-sidebar-flip="logo" className={styles.collapsedLogo}><span className={styles.collapsedLogoMark}><WorkspaceMark compact /></span><span className={styles.collapsedLogoHome} aria-hidden="true"><Home size={18} /></span></Link></FastTooltip>
           {active && <ProjectSwitcher projects={projects} activeSlug={activeSlug} allowCreate={!publicDemo && !viewOnly} compact />}
           <FastTooltip label="Show sidebar"><Dialog.Trigger asChild><button type="button" data-sidebar-flip="toggle" aria-label="Show sidebar" onClick={() => changeOpen(true)}><PanelLeft size={18} aria-hidden="true" /></button></Dialog.Trigger></FastTooltip>
           {active && <SidebarNav items={nav} compact />}
