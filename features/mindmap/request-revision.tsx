@@ -52,7 +52,7 @@ export function RequestRevision({ nodeId, disabled = false, onRequest }: {
         onClick={event => { if (event.altKey) setFastTrack(true); else setFastTrack(false); }}
       >
         <span className={styles.draftSparkle} aria-hidden="true"><Sparkles size={12} strokeWidth={2.3} /></span>
-        {!disabled && <span className={styles.draftBubble} aria-hidden="true"><MessageSquare size={12} strokeWidth={2.2} /></span>}
+        {!disabled && <span className={styles.draftBubble} aria-hidden="true"><MessageSquare size={12} strokeWidth={2.2} /><span className={styles.draftStatMark}>!</span></span>}
       </button>
     </Popover.Trigger></FastTooltip>
     <PopoverSurface side="bottom" align="end" aria-label="Request a draft revision" data-mind-editor={nodeId}

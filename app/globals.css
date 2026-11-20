@@ -725,6 +725,44 @@ button, a, [role="button"] { touch-action: manipulation; }
 @media (prefers-reduced-motion: reduce) {
   .ob-status-label-track { transition: none; }
 }
+.ob-mod-swap {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+}
+.ob-mod-primary,
+.ob-mod-alt,
+.ob-mod-shift {
+  grid-area: 1 / 1;
+  display: inline-grid;
+  place-items: center;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.ob-mod-alt,
+.ob-mod-shift {
+  opacity: 0;
+  transform: scale(0.8);
+  pointer-events: none;
+}
+html[data-alt-key="true"] .ob-mod-swap:has(> .ob-mod-alt) > .ob-mod-primary {
+  opacity: 0;
+  transform: scale(0.8);
+}
+html[data-alt-key="true"] .ob-mod-swap > .ob-mod-alt {
+  opacity: 1;
+  transform: scale(1);
+}
+html[data-shift-key="true"]:not([data-alt-key="true"]) .ob-mod-swap:has(> .ob-mod-shift) > .ob-mod-primary {
+  opacity: 0;
+  transform: scale(0.8);
+}
+html[data-shift-key="true"]:not([data-alt-key="true"]) .ob-mod-swap > .ob-mod-shift {
+  opacity: 1;
+  transform: scale(1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ob-mod-primary, .ob-mod-alt, .ob-mod-shift { transition: none; }
+}
 .ob-glass-button[aria-pressed="true"] {
   --p-glass-tint: rgb(var(--ink) / .10);
   --p-button-glass-label: rgb(var(--ink));

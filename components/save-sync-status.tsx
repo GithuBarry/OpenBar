@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CircleAlert, CloudOff, Gauge, History, LoaderCircle, LockKeyhole, LockKeyholeOpen } from "lucide-react";
+import { CircleAlert, CloudOff, Gauge, History, LoaderCircle, LockKeyhole, LockKeyholeOpen, RefreshCw } from "lucide-react";
 import { FastTooltip } from "./fast-tooltip";
 import { cn } from "@/lib/utils";
 import { useProjectWriteSession } from "./project-session/project-write-session";
@@ -161,7 +161,11 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
       data-attention={attentionRequest > 0 ? attentionRequest : undefined}
       data-save-stage={synced ? "remote" : saved ? remote === "pending" || remote === "syncing" ? "queued" : "local" : "unsaved"}
       className={cn("inline-flex min-w-0 items-center text-[11px] text-muted", !iconOnly && "gap-1.5", interactive ? "cursor-pointer hover:text-ink" : "cursor-default", className)}>
-      {customIcon || <SaveStatusIcon saved={saved} saving={saving} conflict={conflict} attention={Boolean(error)} remote={remote} connectionUnavailable={reconnecting} hostBusy={Boolean(host)} />}
+      <span className="ob-mod-swap" aria-hidden="true">
+        <span className="ob-mod-primary">{customIcon || <SaveStatusIcon saved={saved} saving={saving} conflict={conflict} attention={Boolean(error)} remote={remote} connectionUnavailable={reconnecting} hostBusy={Boolean(host)} />}</span>
+        {onForceSync && <span className="ob-mod-alt"><RefreshCw size={15} /></span>}
+        {session.canRelease && <span className="ob-mod-shift"><LockKeyhole size={15} /></span>}
+      </span>
       {iconOnly ? (
         <span className="ob-status-label-track" data-open={pillCue ? "true" : "false"} aria-hidden={!pillCue}>
           <span className="ob-status-label-inner">{displayCue}</span>

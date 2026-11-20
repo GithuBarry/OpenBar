@@ -48,6 +48,8 @@ import {
   Bold,
   Italic,
   Keyboard,
+  ListFilter,
+  ListPlus,
   ListTodo,
   Link2,
   LockKeyhole,
@@ -2897,7 +2899,10 @@ export function MindmapEditor({
                 }
                 focusNextAgentDraft();
               }}>
-                <Sparkles size={15} aria-hidden="true" />
+                <span className="ob-mod-swap" aria-hidden="true">
+                  <span className="ob-mod-primary"><Sparkles size={15} /></span>
+                  <span className="ob-mod-alt"><ListFilter size={15} /></span>
+                </span>
                 <span className={styles.dockQueueLabel}>Review</span>
                 <span className={cn(styles.unplacedBadge, styles.draftBadge)} aria-hidden="true">{agentDraftNodes.length}</span>
               </button>
@@ -2909,7 +2914,7 @@ export function MindmapEditor({
           <FastTooltip label={"Add child card (Tab)\n⌥-click adds sibling (Enter)"}><button type="button" aria-label="Add card" className={cn("p-button p-button-glass ob-glass-button", styles.iconButton)} disabled={readOnly} onClick={(event) => {
             if (event.altKey && selected && selected.parentId) addChild(selected.parentId);
             else addChild();
-          }}><Plus size={16} aria-hidden="true" /></button></FastTooltip>
+          }}><span className="ob-mod-swap" aria-hidden="true"><span className="ob-mod-primary"><Plus size={16} /></span>{!readOnly && <span className="ob-mod-alt"><ListPlus size={16} /></span>}</span></button></FastTooltip>
           <Popover.Root open={searchOpen} onOpenChange={setSearchOpen}>
               <FastTooltip label={cardFilter === "all" ? "Find or filter cards (/)" : `Filtered: ${cardFilter === "todos" ? "Open TODOs" : cardFilter === "drafts" ? "Drafts" : "Active only"} — click to change (/)`}>
                 <Popover.Trigger asChild>

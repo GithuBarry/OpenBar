@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Cog } from "lucide-react";
+import { Cog, LockKeyhole, RefreshCw } from "lucide-react";
 import { FastTooltip } from "@/components/fast-tooltip";
 import { SaveStatusIcon, type SaveRemoteState, type StatusPillTone } from "@/components/save-sync-status";
 import { cn } from "@/lib/utils";
@@ -84,14 +84,18 @@ export function PaperStatusControl({
         if (event.altKey && onForceSync) { event.preventDefault(); onForceSync(); return; }
         handleClick?.();
       }} disabled={!reconnecting && compiling && !gitIssue && !localIssue && !compileDelayed && !onForceSync && !session.canRelease} aria-disabled={host ? true : undefined} data-editor-notice={reconnecting || undefined} aria-label={label}>
-      <span className={styles.statusIcon} aria-hidden="true">
-        {reconnecting || host || gitIssue || localIssue ? saveIcon
-          : compiling ? <Cog size={16} className={cn(styles.compileGear, styles.compileRunning)} />
-            : compileError ? <><Cog size={16} /><span className={styles.statusBadge}>!</span></>
-              : <>
-                  <span className={styles.statusChecks}>{saveIcon}</span>
-                  <Cog size={16} className={styles.statusHoverGear} />
-                </>}
+      <span className={cn(styles.statusIcon, "ob-mod-swap")} aria-hidden="true">
+        <span className="ob-mod-primary">
+          {reconnecting || host || gitIssue || localIssue ? saveIcon
+            : compiling ? <Cog size={16} className={cn(styles.compileGear, styles.compileRunning)} />
+              : compileError ? <><Cog size={16} /><span className={styles.statusBadge}>!</span></>
+                : <>
+                    <span className={styles.statusChecks}>{saveIcon}</span>
+                    <Cog size={16} className={styles.statusHoverGear} />
+                  </>}
+        </span>
+        {onForceSync && <span className="ob-mod-alt"><RefreshCw size={15} /></span>}
+        {session.canRelease && <span className="ob-mod-shift"><LockKeyhole size={15} /></span>}
       </span>
       <span className="ob-status-label-track" data-open={pillCue ? "true" : "false"} aria-hidden={!pillCue}>
         <span className="ob-status-label-inner">{displayCue}</span>
