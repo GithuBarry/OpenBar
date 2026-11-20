@@ -319,7 +319,12 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
     finally { if (mounted.current) setWorking(false); }
   }, [inspect, requestError]);
 
+  const claiming = useRef(false);
+  const reloading = useRef(false);
+
   const claim = useCallback(async (resume?: Credential, refresh = true) => {
+    if (claiming.current || reloading.current) return;
+    claiming.current = true;
     setWorking(true);
     setMessage(null);
     setAccessError(null);
@@ -341,15 +346,15 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
         record(result.credential);
         setWritable(true);
         if (refresh && pendingKeys.current.size === 0) router.refresh();
-      } else {
+      } else if (!credential.current) {
         record(null);
         setWritable(false);
         if (result.message) setMessage(result.message);
       }
     } catch (error) {
-      setWritable(false);
+      if (!credential.current) setWritable(false);
       requestError("Resume edit failed.", error);
-    } finally { setWorking(false); }
+    } finally { claiming.current = false; setWorking(false); }
   }, [record, request, router, requestError]);
 
   const release = useCallback(async (idle = false) => {
@@ -398,7 +403,8 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
     let retryTimer: number | null = null;
     let lastPollStarted = -Infinity;
     const poll = async () => {
-      if (stopped || polling || releasing.current) return;
+      if (stopped || polling || releasing.current || claiming.current || reloading.current) return;
+      if (!credential.current && document.visibilityState === "hidden") return;
       const wait = backendUnavailable.current ? RETRY_MS - (performance.now() - lastPollStarted) : 0;
       if (wait > 0) {
         if (retryTimer === null) retryTimer = window.setTimeout(() => { retryTimer = null; void poll(); }, wait);
@@ -506,6 +512,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
       record(result.credential);
       setIdleYielded(false);
       lastActivity.current = Date.now();
+      reloading.current = true;
       setWritable(false);
       setMessage("Opening the latest saved project…");
       // A full reload reads the saved project before this document can edit it.

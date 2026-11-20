@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 
 import { consumeCelebrations, listPendingCelebrations, queueCelebration } from "@/lib/research/celebration";
+import { assertAdministrativeWriteAllowed } from "@/lib/server/demo-mode";
 import { ProjectAccessError, requireProjectAccess } from "@/lib/server/project-access";
+import { requestIsSameOrigin } from "@/lib/server/request-origin";
 import { projectContentDir } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
+
+const MAX_CELEBRATION_BODY_BYTES = 4096;
 
 function handleError(error: unknown) {
   if (error instanceof ProjectAccessError) {
@@ -32,8 +36,17 @@ export async function POST(
 ) {
   const { slug } = await context.params;
   try {
+    if (!requestIsSameOrigin(request)) {
+      return NextResponse.json({ ok: false, error: "Cross-origin celebration requests are not allowed." }, { status: 403 });
+    }
     await requireProjectAccess(slug);
-    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    assertAdministrativeWriteAllowed("Celebration actions");
+    const raw = await request.text();
+    if (Buffer.byteLength(raw, "utf8") > MAX_CELEBRATION_BODY_BYTES) {
+      return NextResponse.json({ ok: false, error: "Celebration payload is too large." }, { status: 413 });
+    }
+    let body: Record<string, unknown> | null = null;
+    try { body = JSON.parse(raw) as Record<string, unknown>; } catch { body = null; }
     if (!body || typeof body !== "object") {
       return NextResponse.json({ ok: false, error: "Invalid celebration payload." }, { status: 400 });
     }

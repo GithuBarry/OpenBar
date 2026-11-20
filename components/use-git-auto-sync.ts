@@ -31,8 +31,8 @@ export function useGitAutoSync(options: Options) {
     const visible = () => document.visibilityState === "visible"
     const reviewing = () => Boolean(document.querySelector("[data-ob-modal]"))
     const schedule = (delay = Math.min(120_000, 30_000 * 2 ** failures)) => {
-      if (timer) clearTimeout(timer)
-      if (!stopped && visible()) timer = setTimeout(() => void tick(), delay)
+      if (timer) { clearTimeout(timer); timer = undefined }
+      if (!stopped && visible()) timer = setTimeout(() => { timer = undefined; void tick() }, delay)
     }
     const tick = async () => {
       if (stopped || running || !visible()) return
@@ -85,14 +85,16 @@ export function useGitAutoSync(options: Options) {
     }
     const onVisibility = () => {
       if (!visible()) {
-        if (timer) clearTimeout(timer)
+        if (timer) { clearTimeout(timer); timer = undefined }
         return
       }
       if (failures > 0) {
         if (!timer) schedule()
         return
       }
-      if (Date.now() - lastTickAt >= 15_000) schedule(500)
+      const elapsed = Date.now() - lastTickAt
+      if (elapsed >= 15_000) schedule(500)
+      else if (!timer) schedule(Math.max(500, 30_000 - elapsed))
     }
     schedule()
     document.addEventListener("visibilitychange", onVisibility)

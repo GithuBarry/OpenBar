@@ -18,6 +18,6 @@ export function detachMindmapImage(refs: ArtifactRef[], id: string): ArtifactRef
 
 export function captionMindmapImage(refs: ArtifactRef[], id: string, label: string): ArtifactRef[] {
   return refs.map((ref) => ref.kind === "figure" && ref.id === id
-    ? { ...ref, ...(label.trim() ? { label: label.trim() } : { label: undefined }) }
+    ? { ...ref, ...(label.trim() ? { label } : { label: undefined }) }
     : ref);
 }

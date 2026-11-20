@@ -115,14 +115,15 @@ export function RecoveryCardReview({ draft, saved, todos, defaultOpen = false }:
           savedText: cardSnapshot(sNode, savedOverride),
         })
       } else if (bNode && sNode) {
-        const fields = changedFields(bNode, sNode, activeText)
+        const effectiveDraftText = activeText !== undefined ? activeText : savedOverride
+        const fields = changedFields(bNode, sNode, activeText !== undefined && activeText !== savedOverride ? activeText : undefined)
         if (fields.length > 0) {
           items.push({
             id,
             kind: "edited",
             label: (bNode.title || sNode.title || bNode.text || sNode.text || sNode.todoId || id).split("\n")[0]!.slice(0, 72),
             fields,
-            draftText: cardSnapshot(bNode, activeText),
+            draftText: cardSnapshot(bNode, effectiveDraftText),
             savedText: cardSnapshot(sNode, savedOverride),
           })
         }

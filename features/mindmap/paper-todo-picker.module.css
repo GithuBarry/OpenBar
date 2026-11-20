@@ -20,7 +20,7 @@
 .panel p { margin: 0; overflow-wrap: anywhere; }
 .context { font-size: 11px; }
 .excerpt { max-height: 5lh; overflow: auto; white-space: pre-wrap; color: rgb(var(--ink)); }
-.submit { justify-self: start; color: rgb(var(--accent)); background: rgb(var(--accent) / 0.09); }
+.submit { justify-self: start; color: rgb(var(--accent-text)); background: rgb(var(--accent) / 0.11); }
 .submit:disabled { opacity: 0.5; }
 @media (pointer: coarse) {
   .panel button, .panel select { min-height: 44px; }

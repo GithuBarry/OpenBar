@@ -15,11 +15,13 @@ export function htmlFrameSandbox(mode: HtmlMode): string {
   return mode === "interactive" ? "allow-scripts" : "";
 }
 
+let cachedPurifier: ReturnType<typeof createDOMPurify> | null = null;
+
 /** Synchronous sanitizer for SSR and parent-document fragments. */
 export function sanitizeHtmlFragmentSync(html: string): string {
   if (typeof window !== "undefined" && typeof document !== "undefined") {
-    const purifier = createDOMPurify(window);
-    return purifier.sanitize(html, {
+    cachedPurifier ??= createDOMPurify(window);
+    return cachedPurifier.sanitize(html, {
       ALLOW_DATA_ATTR: true,
       ADD_TAGS: ["math", "mi", "mn", "mo", "mrow", "ms", "mspace", "msup", "msub", "mover", "munder", "munderover", "annotation", "semantics"],
       ADD_ATTR: ["data-ob-heading-key", "data-cite-keys", "aria-label", "aria-hidden"],

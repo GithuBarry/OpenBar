@@ -6,7 +6,7 @@ export function agentOriginAllowed(request: Request): boolean {
   if (!origin) return true
   const url = new URL(request.url)
   const protocol = request.headers.get("x-forwarded-proto")?.split(",")[0].trim() || url.protocol.slice(0, -1)
-  const host = request.headers.get("host") || url.host
+  const host = request.headers.get("x-forwarded-host")?.split(",")[0].trim() || request.headers.get("host") || url.host
   return origin === `${protocol}://${host}` || origin === url.origin || agentOrigins().includes(origin)
 }
 

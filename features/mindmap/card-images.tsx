@@ -76,6 +76,7 @@ function CardImage({ project, image, readOnly, onView, onResize, onRemove }: {
     {!readOnly && <FastTooltip label="Drag to resize or use arrow keys"><button type="button" className={styles.resize} role="slider" aria-label={"Image width: " + caption}
       aria-valuemin={25} aria-valuemax={100} aria-valuenow={Math.round(width)} aria-valuetext={Math.round(width) + "% of card width"}
       onPointerDown={event => {
+        if (event.button !== 0) return
         const parentWidth = figure.current?.parentElement?.getBoundingClientRect().width
         if (!parentWidth) return
         event.preventDefault()
@@ -92,15 +93,16 @@ function CardImage({ project, image, readOnly, onView, onResize, onRemove }: {
         const next = Math.round(Math.max(25, Math.min(100, start.width + (event.clientX - start.x) / start.parentWidth * 100)))
         drag.current = null
         setPreviewWidth(null)
-        onResize(next)
-        event.currentTarget.releasePointerCapture(event.pointerId)
+        if (next !== start.width) onResize(next)
+        try { event.currentTarget.releasePointerCapture(event.pointerId) } catch {}
       }}
       onPointerCancel={() => { drag.current = null; setPreviewWidth(null) }}
+      onLostPointerCapture={() => { drag.current = null; setPreviewWidth(null) }}
       onKeyDown={event => {
         const next = event.key === "Home" ? 25 : event.key === "End" ? 100
           : ["ArrowLeft", "ArrowDown"].includes(event.key) ? Math.max(25, width - 5)
           : ["ArrowRight", "ArrowUp"].includes(event.key) ? Math.min(100, width + 5) : null
-        if (next !== null) { event.preventDefault(); onResize(next) }
+        if (next !== null) { event.preventDefault(); if (next !== width) onResize(next) }
       }}><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M12.91 8.04A6 6 0 0 1 8.04 12.91" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" /></svg></button></FastTooltip>}
     </div>
     {image.label && <figcaption title={image.label}>{image.label}</figcaption>}

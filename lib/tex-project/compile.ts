@@ -12,7 +12,7 @@ import { paperSourceHash, readProjectRecord, texPaths } from "./project";
 import { locateTexRoot } from "./source-graph";
 import { parseTexFileLines, type TexFileLine } from "./tex-diagnostics";
 import { discoverTexBinDirs } from "./latexpand";
-import { withWriteLock } from "./codec";
+import { withProjectWriteLock } from "@/lib/research/project-lock";
 
 export type { TexFileLine };
 export { parseTexFileLines };
@@ -215,7 +215,7 @@ function hashBuildInputRecords(input: Omit<BuildInputHashInput, "files"> & { fil
 function currentBuildInput(projectDir: string): BuildInputSnapshot {
   const paths = texPaths(projectDir);
   const sourceRoot = path.resolve(paths.manuscriptDir);
-  return withWriteLock(path.resolve(paths.paperFile), () => {
+  return withProjectWriteLock(projectDir, () => {
     const config = readCompilerConfig(projectDir);
     const sourceHash = paperSourceHash(projectDir);
     const rootFile = normalizeBuildPath(path.relative(sourceRoot, locateTexRoot(sourceRoot, config.mainFile)));
@@ -265,7 +265,7 @@ export function getPaperCompileStatus(projectDir: string): PaperCompileStatus {
     const pdfAvailable = Boolean(artifact && fs.existsSync(compiledPdfFile(projectDir, artifact.artifactId)));
     let stale = status.stale;
     const expectedBuildInputHash = status.buildInputHash || artifact?.buildInputHash;
-    if (expectedBuildInputHash) {
+    if (expectedBuildInputHash && status.state !== "running") {
       try {
         stale = currentBuildInput(projectDir).buildInputHash !== (artifact?.buildInputHash || expectedBuildInputHash);
       } catch {
@@ -474,6 +474,7 @@ function shouldIncludeSnapshotPath(relative: string): boolean {
   if (!relative) return true;
   const parts = relative.split(path.sep);
   if (parts[0] === ".git" || parts[0] === "node_modules") return false;
+  if (parts.some((part) => part.endsWith(".ob-lock"))) return false;
   if (parts[0] === "wiki") return false;
   if (parts[0] === ".OpenBar" || parts[0] === ".openbarry" || parts[0] === "openbarry") {
     // OpenBar records describe the workspace and maps. Compiler options have
@@ -639,7 +640,8 @@ async function runLatexmk(projectDir: string, target: BuildInputSnapshot, jobId:
       parsedDiagnostics: [],
     });
   }
-  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openbar-tex-"));
+  const tmpBase = (() => { try { return fs.realpathSync(os.tmpdir()); } catch { return os.tmpdir(); } })();
+  const temporaryRoot = fs.mkdtempSync(path.join(tmpBase, "openbar-tex-"));
   const snapshotRoot = path.join(temporaryRoot, "source");
   const buildDir = path.join(temporaryRoot, "build");
   const sourceRoot = path.resolve(paths.manuscriptDir);
@@ -648,7 +650,7 @@ async function runLatexmk(projectDir: string, target: BuildInputSnapshot, jobId:
     // Capture the complete compiler input set while the same lock used by
     // source writes is held. A second hash catches an external writer that
     // raced the filesystem copy; mixed snapshots are rejected explicitly.
-    const capture = withWriteLock(path.resolve(paths.paperFile), () => {
+    const capture = withProjectWriteLock(projectDir, () => {
       const before = paperSourceHash(projectDir);
       const currentConfig = readCompilerConfig(projectDir);
       const sourceRootFile = locateTexRoot(sourceRoot, currentConfig.mainFile);

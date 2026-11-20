@@ -3,6 +3,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -52,10 +53,13 @@ function probe(name: string, bin: string, args: string[]): ToolCapability {
   }
 }
 
+const CAPABILITIES_CACHE_TTL_MS = 60_000;
+const capabilitiesCache = new Map<string, { at: number; value: RuntimeCapabilities }>();
+
 function writableDir(dir: string): ToolCapability {
   try {
     fs.mkdirSync(dir, { recursive: true });
-    const probeFile = path.join(dir, `.ob-write-probe-${process.pid}`);
+    const probeFile = path.join(dir, `.ob-write-probe-${process.pid}-${randomUUID()}`);
     fs.writeFileSync(probeFile, "ok");
     fs.unlinkSync(probeFile);
     return { name: "writableContent", available: true, detail: dir };
@@ -69,7 +73,13 @@ function writableDir(dir: string): ToolCapability {
 }
 
 export function getRuntimeCapabilities(contentRoot = process.env.OPENBARRY_CONTENT || path.join(process.cwd(), "content")): RuntimeCapabilities {
-  return {
+  const key = path.resolve(contentRoot);
+  const cached = capabilitiesCache.get(key);
+  const now = Date.now();
+  if (cached && now - cached.at < CAPABILITIES_CACHE_TTL_MS) {
+    return cached.value;
+  }
+  const value: RuntimeCapabilities = {
     git: probe("git", "git", ["--version"]),
     pandoc: probe("pandoc", "pandoc", ["--version"]),
     latexmk: probe("latexmk", "latexmk", ["-v"]),
@@ -80,4 +90,6 @@ export function getRuntimeCapabilities(contentRoot = process.env.OPENBARRY_CONTE
     documentModes: ["tex", "markdown", "html-static", "html-interactive"],
     cloudflareAccess: Boolean(process.env.CLOUDFLARE_ACCESS_TEAM_DOMAIN && process.env.CLOUDFLARE_ACCESS_AUD),
   };
+  capabilitiesCache.set(key, { at: now, value });
+  return value;
 }

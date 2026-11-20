@@ -32,7 +32,7 @@ export default async function ProjectLayout({
   return (
     <ProjectAgentShell project={slug} publicDemo={publicDemo} viewOnly={viewOnly} wishlistAvailable={platformWishlistAvailable()}>
       {!viewOnly && <meta name="openbar-agent-requests" content={JSON.stringify(getProjectAgentMentions(slug))} />}
-      <div className="flex h-screen overflow-hidden">
+      <div className="flex h-dvh overflow-hidden">
         <Sidebar
           projects={projects}
           activeSlug={slug}

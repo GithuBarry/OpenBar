@@ -17,7 +17,7 @@
 .key code { font-size: 11px; }
 .empty { display: flex; align-items: center; gap: 7px; margin: 16px 0; color: rgb(var(--muted)); font-size: 12px; }
 .saved { margin: 0 0 8px; color: rgb(var(--muted)); font-size: 11px; }
-.error { color: rgb(var(--danger)); font-size: 12px; }
+.error { color: rgb(var(--danger-text)); font-size: 12px; }
 .error p { margin: 0; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

@@ -67,7 +67,7 @@ export type MindmapTreeAction =
   | { type: "add-node"; parentId: string; id: string; title?: string; text?: string; caption?: string; caution?: MindmapCaution; todoId?: string; agentDraft?: boolean; presentation?: MindmapNodePatch }
   | { type: "move-sibling"; id: string; direction: -1 | 1 }
   | { type: "edit-text"; id: string; text: string }
-  | { type: "edit-card"; id: string; title: string; text: string; contentFormat?: MindmapNode["contentFormat"] }
+  | { type: "edit-card"; id: string; title?: string; text: string; contentFormat?: MindmapNode["contentFormat"] }
   | { type: "delete-subtree"; id: string }
   | { type: "delete-node-keep-children"; id: string }
   | { type: "patch-node"; id: string; patch: MindmapNodePatch; transient?: boolean }

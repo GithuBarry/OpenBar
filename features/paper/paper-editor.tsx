@@ -1157,17 +1157,16 @@ export function PaperEditor({
     setLocalDirty(true);
     if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
     let saveText = text;
+    let rebasedFromDisk: { hash: string; source: string } | null = null;
     let result = await saveBrowserPaperSource(project, saveText, bundleHashRef.current, { signal });
     if (!result.ok && result.code === "stale_disk_state") {
       // Attempt conservative line-level 3-way rebase against the latest disk bundle.
+      // Do not mutate bundleHashRef/savedSourceRef until the retry save actually succeeds.
       const diskPaper = await getBrowserEditablePaper(project).catch(() => null);
       if (diskPaper?.bundle.bundleHash && diskPaper.bundle.bundleHash !== bundleHashRef.current) {
         const merged = rebaseBundleSource(baseline, saveText, diskPaper.bundle.source);
         if (merged.ok) {
-          bundleHashRef.current = diskPaper.bundle.bundleHash;
-          setBundleHash(diskPaper.bundle.bundleHash);
-          savedSourceRef.current = diskPaper.bundle.source;
-          setSavedSource(diskPaper.bundle.source);
+          rebasedFromDisk = { hash: diskPaper.bundle.bundleHash, source: diskPaper.bundle.source };
           saveText = merged.source;
           result = await saveBrowserPaperSource(project, saveText, diskPaper.bundle.bundleHash, { signal });
         }
@@ -1182,6 +1181,7 @@ export function PaperEditor({
       setSaveConflict(result.code === "stale_disk_state");
       throw new Error(result.message);
     }
+    void rebasedFromDisk;
     saveFailureRef.current = null;
     bundleHashRef.current = result.value.bundleHash;
     setBundleHash(result.value.bundleHash);
@@ -1501,7 +1501,7 @@ export function PaperEditor({
     enabled: !isBackendUnavailable() && !compileStarting && (compile.state !== "running" || Boolean(compile.observationDelayed)),
     staleTime: 0,
     refetchInterval: PAGE_BUDGET_REFRESH_MS,
-    refetchIntervalInBackground: true,
+    refetchIntervalInBackground: false,
     queryFn: async ({ signal }) => {
       if (isBackendUnavailable() || compileStartingRef.current || (compileRef.current.state === "running" && !compileRef.current.observationDelayed)) return null;
       const observation = captureCompileObservation();
@@ -1696,10 +1696,12 @@ export function PaperEditor({
     try {
       if (signal?.aborted) throw new Error("Compilation cancelled.");
       const live = editorRef.current?.getLiveSource() ?? sourceRef.current;
-      const saved = await doSave(live, signal);
-      if (!saved) {
-        if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
-        return null;
+      if (live !== savedSourceRef.current) {
+        const saved = await doSave(live, signal);
+        if (!saved) {
+          if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
+          return null;
+        }
       }
       if (signal?.aborted) throw new Error("Compilation cancelled.");
       observation = captureCompileObservation(requestId);
@@ -1772,7 +1774,7 @@ export function PaperEditor({
   }, [applyObservedCompileStatus, captureCompileObservation, compile.observationDelayed, compile.state, isBackendUnavailable, project, showCompileFinished]);
 
   useEffect(() => {
-    if (connectionState === "reconnecting" || compileStarting || compile.state === "running" || saving || localDirty || source !== savedSource
+    if (!sessionWritable || connectionState === "reconnecting" || compileStarting || compile.state === "running" || saving || localDirty || source !== savedSource
       || saveError || saveConflict || recoveryDraft || hydrationPending || reconciliationPending || uploading
       || applyingRemote || reviewingRemote) return;
     if (compile.state === "success" && !compile.stale && compile.pdfAvailable !== false) return;
@@ -1797,7 +1799,7 @@ export function PaperEditor({
     timer = window.setTimeout(attempt, delay);
     return () => window.clearTimeout(timer);
   }, [applyingRemote, compile.state, compile.stale, compile.pdfAvailable, compileStarting, connectionState, hydrationPending, isBackendUnavailable, localDirty,
-    reconciliationPending, recoveryDraft, requestCompile, reviewingRemote, saveConflict, saveError, savedSource, saving, source, uploading]);
+    reconciliationPending, recoveryDraft, requestCompile, reviewingRemote, saveConflict, saveError, savedSource, saving, sessionWritable, source, uploading]);
 
   const surround = useCallback((open: string, close: string, placeholder = "") => {
     editorRef.current?.surround(open, close, placeholder);

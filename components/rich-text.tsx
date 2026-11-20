@@ -1,15 +1,17 @@
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import katex from "katex";
 import { HtmlCardBody } from "./html-card-body";
 import type { MindmapNode } from "@/lib/types";
 import remarkGfm from "remark-gfm";
 import styles from "./rich-text.module.css";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import { ExternalLink } from "lucide-react";
 import { texClosingBrace } from "@/lib/mindmap/text-formatting";
 import { AGENT_MENTION_PATTERN } from "@/lib/research/agent-mentions";
 import { CardDestinationLink } from "@/features/mindmap/linked-card";
 import { safeUrl } from "@/lib/safe-url";
+
+const MENTION_SPLIT_RE = new RegExp(`(${AGENT_MENTION_PATTERN.source})`, "gi");
 
 function RichTextLink({ href, children }: { href: string; children: ReactNode }) {
   return <CardDestinationLink className={styles.link} href={href} title={`${href} — opens in a new tab`}
@@ -17,7 +19,7 @@ function RichTextLink({ href, children }: { href: string; children: ReactNode })
 }
 
 function mentionParts(text: string): string[] {
-  return text.split(new RegExp(`(${AGENT_MENTION_PATTERN.source})`, "gi"));
+  return text.split(MENTION_SPLIT_RE);
 }
 
 function mentionProperties(mention: string) {
@@ -75,31 +77,40 @@ function linkedPlainText(text: string, keyPrefix: string): ReactNode[] {
   return nodes;
 }
 
-export function RichText({ text, format = "plain", tableLayout = "wide" }: { text: string; format?: MindmapNode["contentFormat"]; tableLayout?: "wide" | "scroll" }) {
+const REMARK_PLUGINS = [remarkGfm, remarkAgentMentions];
+
+function markdownComponents(tableLayout: "wide" | "scroll"): Components {
+  return {
+    table: ({ children }) => <div
+      className={`${styles.tableScroll} ${tableLayout === "scroll" ? `${styles.tableCompact} nowheel nodrag nopan` : styles.tableWide}`}
+      tabIndex={0}
+      role="region"
+      aria-label="Table"
+      onPointerDown={(event) => event.stopPropagation()}
+      onWheelCapture={(event) => {
+        if (tableLayout !== "scroll") return;
+        event.stopPropagation();
+        if (!event.shiftKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+        event.preventDefault();
+        event.currentTarget.scrollLeft += event.deltaY;
+      }}
+    ><table>{children}</table></div>,
+    a: ({ href, children }) => {
+      const target = href && (safeUrl(href) || (/^(?:#[^\s]+|\/p\/[^/\\?#]+\/mindmap(?:\/[^/\\?#]+)?#[^\s]+)$/.test(href) ? href : undefined));
+      return target ? <RichTextLink href={target}>{children}</RichTextLink> : <span>{children}</span>;
+    },
+  };
+}
+
+const MARKDOWN_COMPONENTS_WIDE = markdownComponents("wide");
+const MARKDOWN_COMPONENTS_SCROLL = markdownComponents("scroll");
+
+export const RichText = memo(function RichText({ text, format = "plain", tableLayout = "wide" }: { text: string; format?: MindmapNode["contentFormat"]; tableLayout?: "wide" | "scroll" }) {
   if (format === "html") return <HtmlCardBody text={text} />;
   if (format === "plain") return <>{linkedPlainText(text, "text")}{text.endsWith("\n") && <span aria-hidden="true">{"\u200b"}</span>}</>;
   if (format === "markdown") return (
     <div className={`mindmap-rich-text ${styles.markdown}`}>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkAgentMentions]} components={{
-        table: ({ children }) => <div
-          className={`${styles.tableScroll} ${tableLayout === "scroll" ? `${styles.tableCompact} nowheel nodrag nopan` : styles.tableWide}`}
-          tabIndex={0}
-          role="region"
-          aria-label="Table"
-          onPointerDown={(event) => event.stopPropagation()}
-          onWheelCapture={(event) => {
-            if (tableLayout !== "scroll") return;
-            event.stopPropagation();
-            if (!event.shiftKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
-            event.preventDefault();
-            event.currentTarget.scrollLeft += event.deltaY;
-          }}
-        ><table>{children}</table></div>,
-        a: ({ href, children }) => {
-          const target = href && (safeUrl(href) || (/^(?:#[^\s]+|\/p\/[^/\\?#]+\/mindmap(?:\/[^/\\?#]+)?#[^\s]+)$/.test(href) ? href : undefined));
-          return target ? <RichTextLink href={target}>{children}</RichTextLink> : <span>{children}</span>;
-        },
-      }}>{text}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={tableLayout === "scroll" ? MARKDOWN_COMPONENTS_SCROLL : MARKDOWN_COMPONENTS_WIDE}>{text}</ReactMarkdown>
     </div>
   );
   const parts: ReactNode[] = [];
@@ -130,4 +141,4 @@ export function RichText({ text, format = "plain", tableLayout = "wide" }: { tex
     ? parts.flatMap((part, index) => typeof part === "string" ? linkedPlainText(part, `part-${index}`) : [part])
     : linkedPlainText(text, "text");
   return <>{rendered}{text.endsWith("\n") && <span aria-hidden="true">{"\u200b"}</span>}</>;
-}
+});

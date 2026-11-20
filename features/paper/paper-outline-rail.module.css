@@ -55,8 +55,8 @@
 .appearanceAction :global(.ob-glass-button.p-button) { width: 34px; padding-inline: 0; }
 .toolbar :global(.p-button).unifiedStatus { display: inline-flex; flex: 0 0 auto; min-width: 34px; height: 34px; padding: 0 8px; gap: 0; border-radius: 999px; --p-button-radius: 999px; align-items: center; justify-content: center; transition: background 280ms var(--ease-out), color 220ms ease, padding 300ms var(--ease-out); }
 .toolbar :global(.p-button).unifiedStatus[data-status-tone] { padding: 0 12px; }
-.toolbar :global(.p-button).unifiedStatus[data-status-tone="danger"] { background: color-mix(in srgb, rgb(var(--danger)) 16%, rgb(var(--surface))); box-shadow: none; color: rgb(var(--danger)); }
-.toolbar :global(.p-button).unifiedStatus[data-status-tone="warn"] { background: color-mix(in srgb, rgb(var(--warn)) 15%, rgb(var(--surface))); box-shadow: none; color: rgb(var(--warn)); }
+.toolbar :global(.p-button).unifiedStatus[data-status-tone="danger"] { background: color-mix(in srgb, rgb(var(--danger)) 16%, rgb(var(--surface))); box-shadow: none; color: rgb(var(--danger-text)); }
+.toolbar :global(.p-button).unifiedStatus[data-status-tone="warn"] { background: color-mix(in srgb, rgb(var(--warn)) 15%, rgb(var(--surface))); box-shadow: none; color: rgb(var(--warn-text)); }
 .toolbar :global(.p-button).unifiedStatus[data-status-tone="accent"] { background: color-mix(in srgb, rgb(var(--accent)) 16%, rgb(var(--surface))); box-shadow: none; color: rgb(var(--accent-text)); }
 .toolbar :global(.p-button).unifiedStatus[data-status-tone]:hover:enabled { filter: brightness(0.96); }
 .toolbar :global(.p-button).unifiedStatus:disabled { opacity: 1; color: rgb(var(--muted)); }

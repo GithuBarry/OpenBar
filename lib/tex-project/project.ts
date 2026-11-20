@@ -644,15 +644,19 @@ export function nativeBodyRel(kind: "wiki", id: string, format: "markdown" | "ht
 export function resolveNativeBodyAbs(projectDir: string, bodyPath: unknown): string | null {
   if (typeof bodyPath !== "string" || !bodyPath || bodyPath.includes("\0") || bodyPath.includes("\\")) return null;
   if (path.posix.isAbsolute(bodyPath) || /^[A-Za-z]:[\\/]/.test(bodyPath)) return null;
-  if (bodyPath.split("/").some((segment) => segment === "..")) return null;
+  const normalized = path.posix.normalize(bodyPath);
+  const segments = normalized.split("/");
+  if (segments.some((segment) => segment === "..") || segments[0] !== "wiki" || segments.length < 2) return null;
+  if (segments.some((segment) => segment === ".git" || segment === ".OpenBar" || segment === "openbarry")) return null;
   let root: string;
   try {
     root = fs.realpathSync.native(path.resolve(/*turbopackIgnore: true*/ texPaths(projectDir).manuscriptDir));
   } catch {
     return null;
   }
-  const abs = path.resolve(/*turbopackIgnore: true*/ root, bodyPath);
-  if (abs !== root && !abs.startsWith(root + path.sep)) return null;
+  const abs = path.resolve(/*turbopackIgnore: true*/ root, normalized);
+  const wikiRoot = path.join(root, "wiki");
+  if (!abs.startsWith(wikiRoot + path.sep)) return null;
   try {
     if (fs.existsSync(abs)) {
       if (!fs.statSync(abs).isFile()) return null;
@@ -1074,6 +1078,14 @@ function safeUrl(value: string): string {
   return value.replace(/[{}]/g, "").replace(/\s/g, "");
 }
 
+function safeCitationKey(key: string): string {
+  const trimmed = key.trim();
+  if (!trimmed || !/^[^\s,{}\\%#$&^~]+$/.test(trimmed)) {
+    throw new TexEnvelopeError(`Unsafe citation key: ${key}`);
+  }
+  return trimmed;
+}
+
 function bibliographyTex(raw: string): string {
   const entries = parseBibtexCitationJs(raw) ?? [];
   if (!entries.length) return "% No cited bibliography entries yet.\n";
@@ -1090,7 +1102,7 @@ function bibliographyTex(raw: string): string {
       [venue, year].filter(Boolean).join(", ") && `${escapeBibliographyText([venue, year].filter(Boolean).join(", "))}.`,
       url && `\\url{${safeUrl(url)}}`,
     ].filter(Boolean).join(" ");
-    return `\\bibitem{${safeFileSegment(entry.key, "citation key")}} ${text}`;
+    return `\\bibitem{${safeCitationKey(entry.key)}} ${text}`;
   });
   return ["\\begin{thebibliography}{99}", ...items, "\\end{thebibliography}", ""].join("\n");
 }

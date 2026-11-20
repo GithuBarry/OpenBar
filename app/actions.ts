@@ -966,12 +966,13 @@ export async function renderPreviewAction(slug: string, kind: "wiki", id: string
 export async function saveWikiAction(page: WikiPage): Promise<WikiPage> {
   await requireProjectAccess(page.projectId);
   return withBrowserProjectWriteSession(projectContentDir(page.projectId), () => {
+    const { bodyPath: _ignoredBodyPath, ...safePage } = page;
     saveWikiPage({
-      ...page,
-      format: page.format || "markdown",
+      ...safePage,
+      format: safePage.format || "markdown",
     });
     bust(page.projectId);
-    return getWikiPage(page.projectId, page.slug) || page;
+    return getWikiPage(page.projectId, page.slug) || safePage;
   });
 }
 

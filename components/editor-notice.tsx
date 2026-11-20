@@ -164,7 +164,7 @@ export function EditorNotice({ project, title, label, message, report, diagnosti
         </button>
       </Popover.Trigger>
       <PopoverSurface ref={panelRef} data-editor-notice forceMount={preserveContent || undefined} style={suppressed || (preserveContent && !open) ? { display: "none" } : undefined} aria-hidden={suppressed || (preserveContent && !open) || undefined} onMouseEnter={keepOpen} onMouseLeave={closeSoon} onOpenAutoFocus={event => event.preventDefault()} onFocusOutside={event => {
-        if (copyingRef.current || (event.target instanceof HTMLElement && event.target.getAttribute("aria-label") === "Diagnostic report clipboard transfer")) event.preventDefault()
+        if (copyingRef.current || document.querySelector("[data-ob-modal]") || (event.target instanceof HTMLElement && (event.target.closest("[data-ob-modal]") || event.target.getAttribute("aria-label") === "Diagnostic report clipboard transfer"))) event.preventDefault()
       }} className={styles.panel} side="bottom" align="center" sideOffset={8} collisionPadding={12} aria-label={title}>
         <header><strong>{title}</strong><Popover.Close aria-label="Close error details"><X size={15} /></Popover.Close></header>
         <p className={styles.message} role="status">{message}</p>

@@ -744,19 +744,21 @@ button, a, [role="button"] { touch-action: manipulation; }
   transform: scale(0.8);
   pointer-events: none;
 }
-html[data-alt-key="true"] .ob-mod-swap:has(> .ob-mod-alt) > .ob-mod-primary {
+html[data-shift-key="true"] .ob-mod-swap:has(> .ob-mod-shift) > .ob-mod-primary {
   opacity: 0;
   transform: scale(0.8);
 }
-html[data-alt-key="true"] .ob-mod-swap > .ob-mod-alt {
+html[data-shift-key="true"] .ob-mod-swap > .ob-mod-shift {
   opacity: 1;
   transform: scale(1);
 }
-html[data-shift-key="true"]:not([data-alt-key="true"]) .ob-mod-swap:has(> .ob-mod-shift) > .ob-mod-primary {
+html[data-alt-key="true"]:not([data-shift-key="true"]) .ob-mod-swap:has(> .ob-mod-alt) > .ob-mod-primary,
+html[data-alt-key="true"] .ob-mod-swap:not(:has(> .ob-mod-shift)):has(> .ob-mod-alt) > .ob-mod-primary {
   opacity: 0;
   transform: scale(0.8);
 }
-html[data-shift-key="true"]:not([data-alt-key="true"]) .ob-mod-swap > .ob-mod-shift {
+html[data-alt-key="true"]:not([data-shift-key="true"]) .ob-mod-swap > .ob-mod-alt,
+html[data-alt-key="true"] .ob-mod-swap:not(:has(> .ob-mod-shift)) > .ob-mod-alt {
   opacity: 1;
   transform: scale(1);
 }
@@ -796,15 +798,15 @@ html[data-shift-key="true"]:not([data-alt-key="true"]) .ob-mod-swap > .ob-mod-sh
   transform: scale(0.8);
   pointer-events: none;
 }
-:is(button:is(:hover, :focus-visible), .ob-sleep-wake:hover) .ob-sleep-wake-zzz {
+button:enabled:is(:hover, :focus-visible) .ob-sleep-wake-zzz {
   opacity: 0;
   transform: scale(0.8);
 }
-:is(button:is(:hover, :focus-visible), .ob-sleep-wake:hover) .ob-sleep-wake-alarm {
+button:enabled:is(:hover, :focus-visible) .ob-sleep-wake-alarm {
   opacity: 1;
   transform: scale(1);
 }
-:is(button:is(:hover, :focus-visible), .ob-sleep-wake:hover) .ob-sleep-wake-alarm > svg {
+button:enabled:is(:hover, :focus-visible) .ob-sleep-wake-alarm > svg {
   transform-origin: center 55%;
   animation: ob-alarm-ring 0.65s ease-in-out infinite;
 }
@@ -893,7 +895,7 @@ html[data-shift-key="true"]:not([data-alt-key="true"]) .ob-mod-swap > .ob-mod-sh
   .ob-mod-primary, .ob-mod-alt, .ob-mod-shift, .ob-sleep-wake-zzz, .ob-sleep-wake-alarm { transition: none; }
   .ob-sleep-zzz .ob-sleep-z1, .ob-sleep-zzz .ob-sleep-z2 { animation: none; }
   .ob-sleep-zzz .ob-sleep-z2 { opacity: 0.65; }
-  :is(button:is(:hover, :focus-visible), .ob-sleep-wake:hover) .ob-sleep-wake-alarm > svg { animation: none; }
+  button:enabled:is(:hover, :focus-visible) .ob-sleep-wake-alarm > svg { animation: none; }
   .ob-sleep-bubble, .ob-sleep-bubble-text { animation: none; }
 }
 .ob-glass-button[aria-pressed="true"] {
@@ -1548,7 +1550,7 @@ select.input { appearance: auto; cursor: pointer; }
 .ob-agent-ready-on .ob-agent-ready-dot { background: rgb(var(--ok)); }
 .ob-agent-ready-issue .ob-agent-ready-dot { background: rgb(var(--warn)); }
 .ob-agent-ready-panel {
-  z-index: 40;
+  z-index: 110;
   width: min(340px, calc(100vw - 24px));
   max-height: min(var(--radix-popover-content-available-height, 70vh), 32rem);
   overflow: auto;
@@ -1661,7 +1663,10 @@ select.input { appearance: auto; cursor: pointer; }
   transform: scale(0.3333333333333333);
   transform-origin: 0 0;
 }
-.mindmap-rf[data-sharp-cards="true"] .mindmap-node-card { will-change: transform; }
+@media (hover: none), (pointer: coarse) {
+  .ob-project-edit { opacity: 1; }
+  .mindmap-collapse-toggle { opacity: 0.92; }
+}
 .mindmap-card-menu-header {
   display: flex;
   align-items: flex-start;
@@ -1869,14 +1874,14 @@ select.input { appearance: auto; cursor: pointer; }
     padding-inline: 0.75rem;
   }
   .ob-chrome-header > div:nth-child(2) { min-width: 5rem; }
-  .ob-chrome-header > div:last-child {
+  .ob-chrome-header > div:last-child:not(:first-child) {
     min-width: 0;
     max-width: 52%;
     flex: 0 1 auto;
     overflow-x: auto;
     scrollbar-width: none;
   }
-  .ob-chrome-header > div:last-child::-webkit-scrollbar { display: none; }
+  .ob-chrome-header > div:last-child:not(:first-child)::-webkit-scrollbar { display: none; }
   .ob-chrome-header .ob-agent-ready {
     height: 1.8rem;
   }

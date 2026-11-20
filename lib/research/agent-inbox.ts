@@ -114,7 +114,7 @@ export async function acknowledgeAgentInbox(input: { project?: string, ids: stri
         }
         if (result.disposition === 'already_resolved') acknowledged.add(requestId)
         if (result.disposition === 'stale') rejected.add(id)
-        if (history) { history.disposition = result.disposition; history.updatedAt = new Date().toISOString() }
+        if (history && result.disposition !== 'stale') { history.disposition = result.disposition; history.updatedAt = new Date().toISOString() }
         results.set(id, result)
       }
       state.acknowledged = [...handled]

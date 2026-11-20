@@ -41,7 +41,7 @@ export function RequestRevision({ nodeId, disabled = false, mode = "draft", onRe
   }
 
   return <Popover.Root open={open} onOpenChange={next => {
-    if (pending.current || disabled) return;
+    if (next && (pending.current || disabled)) return;
     setOpen(next);
   }}>
     <FastTooltip label={disabled ? "AI draft" : mode === "draft" ? "Ask AI to revise (@agent)\n⌥-click to fast-track (@stat)" : "Ask AI to revise (@agent)\n⌥-click to fast-track (@stat)"}><Popover.Trigger asChild>
@@ -75,7 +75,7 @@ export function RequestRevision({ nodeId, disabled = false, mode = "draft", onRe
           }
         }}>
         <label className="grid gap-2 text-sm font-semibold">Add {handle} revision note
-          <textarea className="w-full rounded-[10px] border p-2 text-sm font-normal" rows={3} value={comment}
+          <textarea className="w-full rounded-[10px] border border-line bg-surface p-2 text-sm font-normal text-ink" rows={3} value={comment}
             placeholder="Tell AI what to adjust…"
             readOnly={saving} onChange={event => setComment(event.target.value)} />
         </label>
@@ -86,8 +86,8 @@ export function RequestRevision({ nodeId, disabled = false, mode = "draft", onRe
             <span>Fast-track (@stat)</span>
           </label>
           <div className="flex gap-1.5">
-            <Popover.Close asChild><button type="button" className="p-button p-button-borderless" disabled={saving}>Cancel</button></Popover.Close>
-            <button type="submit" className="p-button p-button-primary" disabled={saving || !text}>{saving ? "Saving…" : "Send"}</button>
+            <Popover.Close asChild><button type="button" className="p-button p-button-borderless btn-ghost" disabled={saving}>Cancel</button></Popover.Close>
+            <button type="submit" className="p-button p-button-primary btn-primary" disabled={saving || !text}>{saving ? "Saving…" : "Send"}</button>
           </div>
         </div>
       </form>

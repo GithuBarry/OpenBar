@@ -47,10 +47,11 @@ export function PageHeader({
   }, [editing, saving, setPendingWork]);
 
   useEffect(() => {
+    if (editing) return;
     setProjectTitle(project?.title || "");
     setProjectTagline(project?.tagline || "");
     setSaveError(null);
-  }, [project]);
+  }, [editing, project]);
 
   const saveChanges = useCallback(async () => {
     if (!project) return;

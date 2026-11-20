@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import lockfile from "proper-lockfile";
@@ -330,7 +330,7 @@ export async function withWriteLockAsync<T>(file: string, operation: () => Promi
 export function writeTextAtomic(file: string, text: string | Buffer, mode?: number): void {
   const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true });
-  const tmp = path.join(dir, `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
+  const tmp = path.join(dir, `.${path.basename(file)}.${process.pid}.${Date.now()}.${randomUUID().slice(0, 8)}.tmp`);
   let descriptor: number | undefined;
   try {
     try { mode ??= fs.statSync(file).mode & 0o777; }

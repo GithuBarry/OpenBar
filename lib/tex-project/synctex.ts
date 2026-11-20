@@ -3,10 +3,12 @@
  */
 
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { compiledPdfFile, currentArtifactId, getCompiledPdf } from "./compile";
+import { compiledPdfFile, currentArtifactId } from "./compile";
+import { discoverTexBinDirs } from "./latexpand";
 import { texPaths } from "./project";
 
 const execFileAsync = promisify(execFile);
@@ -14,9 +16,14 @@ const execFileAsync = promisify(execFile);
 export type SyncTexView = { page: number; x: number; y: number; width?: number; height?: number };
 export type SyncTexEdit = { file: string; line: number; column: number };
 
+function synctexEnv(): NodeJS.ProcessEnv {
+  const dirs = discoverTexBinDirs();
+  return dirs.length ? { ...process.env, PATH: [...dirs, process.env.PATH || ""].filter(Boolean).join(path.delimiter) } : process.env;
+}
+
 async function runSynctex(args: string[]): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync("synctex", args, { timeout: 4_000, maxBuffer: 256_000 });
+    const { stdout } = await execFileAsync("synctex", args, { timeout: 4_000, maxBuffer: 256_000, env: synctexEnv() });
     return stdout;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
@@ -61,8 +68,8 @@ export async function synctexView(projectDir: string, file: string, line: number
   | { ok: false; code: "capability_unavailable" | "compile_failed"; message: string }
 > {
   const requestedArtifactId = artifactId || currentArtifactId(projectDir);
-  if (!getCompiledPdf(projectDir, requestedArtifactId)) return { ok: false, code: "compile_failed", message: "The requested PDF artifact is no longer available for SyncTeX." };
   const pdf = compiledPdfFile(projectDir, requestedArtifactId);
+  if (!fs.existsSync(pdf)) return { ok: false, code: "compile_failed", message: "The requested PDF artifact is no longer available for SyncTeX." };
   const root = path.resolve(texPaths(projectDir).manuscriptDir);
   const absolute = path.resolve(root, file);
   const relative = path.relative(root, absolute);
@@ -83,12 +90,12 @@ export async function synctexEdit(projectDir: string, page: number, x: number, y
   const paths = texPaths(projectDir);
   const requestedArtifactId = artifactId || currentArtifactId(projectDir);
   const pdf = compiledPdfFile(projectDir, requestedArtifactId);
-  if (!getCompiledPdf(projectDir, requestedArtifactId)) return { ok: false, code: "compile_failed", message: "The requested PDF artifact is no longer available for SyncTeX." };
+  if (!fs.existsSync(pdf)) return { ok: false, code: "compile_failed", message: "The requested PDF artifact is no longer available for SyncTeX." };
   const output = await runSynctex(["edit", "-o", `${page}:${x}:${y}:${pdf}`]);
   if (output === null) {
     return { ok: false, code: "capability_unavailable", message: "synctex is not installed. Install TeX Live to enable PDF source navigation." };
   }
-  const edit = parseEdit(output, paths.manuscriptDir);
+  const edit = parseEdit(output, path.resolve(paths.manuscriptDir));
   if (!edit) return { ok: false, code: "compile_failed", message: "SyncTeX did not find a source location for that PDF position." };
   return { ok: true, edit };
 }

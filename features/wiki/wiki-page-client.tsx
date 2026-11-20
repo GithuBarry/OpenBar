@@ -12,7 +12,7 @@ import { WikiView,wikiBacklinks } from "./wiki-view";
 
 export function WikiPageClient({ page, pages = [] }: { page: WikiPage; pages?: WikiPage[] }) {
   const router = useRouter();
-  const { writable } = useProjectWriteSession();
+  const { writable, setPendingWork } = useProjectWriteSession();
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(page.body);
   const [title, setTitle] = useState(page.title);
@@ -22,6 +22,11 @@ export function WikiPageClient({ page, pages = [] }: { page: WikiPage; pages?: W
   const [saved, setSaved] = useState(false);
   const [pending, startTransition] = useTransition();
   const backlinks = wikiBacklinks(pages, page.slug);
+
+  useEffect(() => {
+    setPendingWork("wiki", editing || pending);
+    return () => setPendingWork("wiki", false);
+  }, [editing, pending, setPendingWork]);
 
   useEffect(() => {
     if (editing) return;
@@ -104,7 +109,7 @@ export function WikiPageClient({ page, pages = [] }: { page: WikiPage; pages?: W
             <button type="button" className="p-button p-button-default btn-outline text-xs" onClick={cancel} disabled={pending}>
               <X size={13} /> Cancel
             </button>
-            <button type="button" className="p-button p-button-primary btn-primary text-xs" onClick={save} disabled={pending}>
+            <button type="button" className="p-button p-button-primary btn-primary text-xs" onClick={save} disabled={pending || !writable}>
               {pending ? <LoaderCircle size={13} className="animate-spin" /> : <Save size={13} />}
               Save
             </button>

@@ -50,6 +50,7 @@ export function HtmlCardBody({ text }: { text: string }) {
     if (!element || oversized) return;
     const fragment = DOMPurify.sanitize(text, {
       ALLOWED_TAGS: tags, ALLOWED_ATTR: attributes, ALLOW_DATA_ATTR: false, ALLOW_ARIA_ATTR: false,
+      ADD_URI_SAFE_ATTR: ["aria-label"],
       RETURN_DOM_FRAGMENT: true,
     });
     for (const shape of fragment.querySelectorAll("[fill], [stroke]")) {

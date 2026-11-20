@@ -172,6 +172,7 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
   const buttonRef = useRef<HTMLButtonElement>(null);
   const bounceRef = useRef<Animation | null>(null);
   const complaintTimerRef = useRef<number | null>(null);
+  const lastAttentionRequestRef = useRef(0);
   const zBurstIdRef = useRef(0);
   const zCleanupTimersRef = useRef<number[]>([]);
   useEffect(() => {
@@ -193,6 +194,8 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
     zCleanupTimersRef.current = [];
   }, []);
   useEffect(() => {
+    if (attentionRequest === lastAttentionRequestRef.current) return;
+    lastAttentionRequestRef.current = attentionRequest;
     const button = buttonRef.current;
     if (!attentionRequest || !button) return;
     bounceRef.current?.cancel();
@@ -278,19 +281,21 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
   }, [attentionRequest, session.sleeping, readOnlyRestorable, manualViewOnly, review]);
   const displayCue = pillCue || retainedCue;
 
-  const canRetry = !reconnecting && !host && saved && !saving && !conflict && ["pending", "blocked", "unavailable", "failed"].includes(remote) && !!onRetry;
+  const canRetry = !reconnecting && !host && saved && !saving && !conflict && ["pending", "changed", "blocked", "unavailable", "failed"].includes(remote) && !!onRetry;
   const canOpenConnection = reconnecting && Boolean(onConnectionIssue);
   const handleClick = canOpenConnection
     ? onConnectionIssue
     : hasRecoveryDraft && onRecoveryDraft
       ? onRecoveryDraft
-      : readOnlyRestorable
-        ? () => void session.restore()
-        : manualViewOnly && onExitReadOnly
-          ? onExitReadOnly
-          : canRetry
-            ? onRetry
-            : undefined;
+      : (review || remoteError) && canRetry
+        ? onRetry
+        : !conflict && !review && !remoteError && readOnlyRestorable
+          ? () => void session.restore()
+          : manualViewOnly && onExitReadOnly
+            ? onExitReadOnly
+            : canRetry
+              ? onRetry
+              : undefined;
   const interactive = Boolean(handleClick || onForceSync || session.canRelease);
   const altHint = onForceSync ? "\n⌥-click: Sync Git now" : "";
   const shiftHint = session.canRelease ? "\n⇧-click: Release edit access" : "";

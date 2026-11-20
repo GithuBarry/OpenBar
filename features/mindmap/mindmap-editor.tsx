@@ -1641,7 +1641,7 @@ export function MindmapEditor({
       // Cancel only this card's active fields. Other cards may have changed
       // while the editor was open and must remain in the live map.
       if (baselineNode && currentNode && !currentNode.todoId) {
-        const action = { type: "edit-card" as const, id: before.nodeId, title: baselineNode.title || "", text: baselineNode.text, contentFormat: baselineNode.contentFormat };
+        const action = { type: "edit-card" as const, id: before.nodeId, title: baselineNode.title, text: baselineNode.text, contentFormat: baselineNode.contentFormat };
         sessionRef.current = mindmapReducer(sessionRef.current, action);
         dispatch(action);
       }
@@ -1762,20 +1762,27 @@ export function MindmapEditor({
     }, undefined, "human");
   }
 
+  const noteEditBurstRef = useRef<{ id: string; at: number } | null>(null);
+
   function updateNodeNote(id: string, value: string) {
     if (readOnly) return;
     const before = editBaselineRef.current;
     const node = indexMindmap(sessionRef.current.mindmap).nodeById.get(id);
     if (!node) return;
-    const transient = before?.nodeId === id;
-    if (transient) {
+    const now = Date.now();
+    const inCardEdit = before?.nodeId === id;
+    const inNoteBurst = Boolean(noteEditBurstRef.current && noteEditBurstRef.current.id === id && now - noteEditBurstRef.current.at < 1500);
+    const transient = inCardEdit || inNoteBurst;
+    if (inCardEdit) {
       for (const field of CARD_NOTE_FIELDS) before.noteFields.add(field);
+    } else {
+      noteEditBurstRef.current = { id, at: now };
     }
     const action: MindmapTreeAction = { type: "patch-node", id, transient,
       patch: { caption: value, caution: undefined } };
     sessionRef.current = mindmapReducer(sessionRef.current, action);
     dispatch(action);
-    preserveBrowserDraft();
+    schedulePreserveBrowserDraft();
   }
 
   async function requestDraftRevision(id: string, note: string) {
@@ -1979,8 +1986,14 @@ export function MindmapEditor({
     });
   }
 
-  const undo = useCallback(() => dispatch({ type: "undo" }), []);
-  const redo = useCallback(() => dispatch({ type: "redo" }), []);
+  const undo = useCallback(() => {
+    if (readOnly) { notifyBlockedEdit(); return; }
+    dispatch({ type: "undo" });
+  }, [notifyBlockedEdit, readOnly]);
+  const redo = useCallback(() => {
+    if (readOnly) { notifyBlockedEdit(); return; }
+    dispatch({ type: "redo" });
+  }, [notifyBlockedEdit, readOnly]);
 
   const save = useCallback((): Promise<void> => {
     const job = localSaveQueue.enqueue(persistCurrentSnapshot).then(() => undefined, () => undefined);
@@ -2380,6 +2393,7 @@ export function MindmapEditor({
           ["backspace", "delete", "e", "tab", "enter"].includes(key)
           || (event.altKey && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key))
         )) {
+          if (recoveryDraftRef.current && event.key === "Tab") return;
           if (event.key !== "Tab") event.preventDefault();
           notifyBlockedEdit();
           return;
@@ -2439,7 +2453,8 @@ export function MindmapEditor({
       setCardMenuOpen(false);
       return;
     }
-    if (target.closest("#mindmap-card-menu, button, a, input, textarea, select, .cm-editor")) return;
+    if (target.closest("#mindmap-card-menu, button, a, input, textarea, select, summary, .cm-editor, [data-radix-popper-content-wrapper]")) return;
+    if (viewMode !== "map") return;
     if ((event.metaKey || event.ctrlKey) && !event.altKey && key === "a" && viewMode === "map" && target.closest(".mindmap-viewport")) {
       event.preventDefault();
       event.stopPropagation();
@@ -3094,7 +3109,7 @@ export function MindmapEditor({
             ? `${deletedBranchNotice.branch.nodes.length - 1} child card${deletedBranchNotice.branch.nodes.length === 2 ? "" : "s"} also deleted`
             : "Card deleted")}</span>
           <button type="button" aria-label="Revert deletion" disabled={readOnly} onClick={revertDeletedBranch}>Revert↩</button>
-        </div> : moveNotice && <div className={styles.moveNotice} role="status"><Check size={14} /><span>{moveNotice}</span><button type="button" onClick={() => { undo(); setMoveNotice(""); }}>Undo</button></div>}
+        </div> : moveNotice && <div className={styles.moveNotice} role="status"><Check size={14} /><span>{moveNotice}</span><button type="button" disabled={readOnly} onClick={() => { undo(); setMoveNotice(""); }}>Undo</button></div>}
 
       </div>
 
@@ -3171,14 +3186,8 @@ export function MindmapEditor({
           onPatch={(patch) => {
             setSaveError(null);
             if (patch.contentFormat) {
-              const nextPatches = selectedCards.map(card => ({ id: card.id, next: { ...patch, ...cardFormatPatch(card, patch.contentFormat) } }));
-              const error = nextPatches.map(({ id, next }) => {
-                const card = selectedCards.find(c => c.id === id)!;
-                return htmlCardValidationError({ ...card, ...next });
-              }).find(Boolean);
+              const error = selectedCards.map(card => htmlCardValidationError({ ...card, ...patch, ...cardFormatPatch(card, patch.contentFormat) })).find(Boolean);
               if (error) { setSaveError(error); return; }
-              for (const { id, next } of nextPatches) dispatch({ type: "patch-node", id, patch: next });
-              return;
             }
             dispatch({ type: "patch-nodes", ids: selectedCards.map((card) => card.id), patch });
           }}
@@ -3310,6 +3319,7 @@ export function MindmapEditor({
                 {selected.id !== mindmap.rootId && <button
                   type="button"
                   className="p-button p-button-default btn-outline text-danger"
+                  disabled={readOnly}
                   onClick={() => {
                     setCardMenuOpen(false);
                     void deleteCardBranch(selected.id);
@@ -3321,9 +3331,9 @@ export function MindmapEditor({
               {availableTodoCandidates(paperState?.paper?.todos || [], mindmap.nodes, selected.id).length > 0 && (
                 <label className="mindmap-field">
                   <span>Relink to paper TODO</span>
-                  <Select label="Relink to paper TODO" placeholder="Choose an available TODO…"
+                  <Select label="Relink to paper TODO" placeholder="Choose an available TODO…" disabled={readOnly}
                     options={availableTodoCandidates(paperState?.paper?.todos || [], mindmap.nodes, selected.id).map(todo => ({ value: todo.id, label: todo.text }))}
-                    onValueChange={todoId => dispatch({ type: "bind-todo", id: selected.id, todoId })}
+                    onValueChange={todoId => { if (!readOnly) dispatch({ type: "bind-todo", id: selected.id, todoId }); }}
                   />
                 </label>
               )}
@@ -3712,7 +3722,7 @@ function AccentPicker({ value, label, onChange }: {
       <button type="button" className={cn("mindmap-color-swatch mindmap-color-swatch-auto", value === "" && "mindmap-color-swatch-selected")} aria-label="Use default accent" aria-pressed={value === ""} onClick={() => choose()}>Auto</button>
       <FastTooltip label="Custom accent"><button type="button" className="mindmap-color-swatch mindmap-color-swatch-auto mindmap-color-swatch-icon" aria-label={`Custom ${label.toLowerCase()}`} aria-expanded={customOpen} onClick={() => setCustomOpen((open) => !open)}><Pencil size={12} aria-hidden="true" /></button></FastTooltip>
     </div>
-    {customOpen && <input autoFocus value={value ?? ""} onChange={(event) => onChange(event.target.value.trim() || undefined)} placeholder="#785ef0 or CSS color" aria-label={`Custom ${label.toLowerCase()} value`} />}
+    {customOpen && <input autoFocus value={value ?? ""} onChange={(event) => onChange(event.target.value || undefined)} onBlur={(event) => onChange(event.target.value.trim() || undefined)} placeholder="#785ef0 or CSS color" aria-label={`Custom ${label.toLowerCase()} value`} />}
   </>;
 }
 
@@ -4004,6 +4014,7 @@ function CanvasNode({
         target.getAttribute("data-mind-editor") === node.id
         || target.matches('[role="toolbar"][aria-label="Card formatting"]')
         || target.matches("[data-editor-notice]")
+        || target.matches("[data-ob-modal]")
       ));
       if (belongsToEditor) return;
       void commit();
@@ -4086,8 +4097,8 @@ function CanvasNode({
   const underlineNotes = showDraftDiff && Boolean(draftChanges?.notesChanged);
   return (
     <>
-    <NodeToolbar
-      isVisible={editing && !readOnly}
+    {editing && !readOnly && <NodeToolbar
+      isVisible
       position={Position.Top}
       align="start"
       offset={8}
@@ -4111,7 +4122,7 @@ function CanvasNode({
       <FastTooltip label="Done (⌘Enter / Ctrl+Enter)"><button type="button" className={styles.editToolbarButton} aria-label="Finish editing card" onClick={() => void commit()}><Check size={15} /><span>{node.agentDraft ? "Keep draft" : "Done"}</span></button></FastTooltip>
       {formatHint && <span className="mindmap-format-hint" role="status">{formatHint}</span>}
       </>}
-    </NodeToolbar>
+    </NodeToolbar>}
     <article
       ref={cardRef}
       data-drop-kind={dropPreviewKind || undefined}

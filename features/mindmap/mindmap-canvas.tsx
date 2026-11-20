@@ -386,6 +386,7 @@ function FlowCanvas({
         const card = target.closest<HTMLElement>("[data-mind-node]");
         if (!card || (event.detail < 2 && copyCardRef.current !== card)) return;
         // The browser selects the word on the second mousedown, before dblclick.
+        blockedDragRef.current = null;
         card.classList.add("mindmap-copy-card", "nopan");
         copyCardRef.current = card;
       }}

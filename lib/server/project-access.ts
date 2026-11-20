@@ -65,6 +65,7 @@ export async function requireProjectAccess(slug: string): Promise<void> {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(slug)) {
     throw new ProjectAccessError("Invalid project slug.", 400);
   }
+  await requireWorkbenchAccess();
   try {
     assertPublicDemoProject(slug);
   } catch {
@@ -73,7 +74,6 @@ export async function requireProjectAccess(slug: string): Promise<void> {
   if (!getProjectMetadata(slug)) {
     throw new ProjectAccessError(`Unknown project: ${slug}`, 404);
   }
-  await requireWorkbenchAccess();
 }
 
 /** RSC project pages return the right status UI for both access and existence errors. */

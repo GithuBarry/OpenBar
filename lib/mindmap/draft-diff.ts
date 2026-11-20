@@ -45,13 +45,14 @@ export function draftChangesByNode(
 
       for (const change of item.changes) {
         const field = change.field;
-        if (field === "title" || field === `node:${nodeId}.title`) {
+        const mapSave = item.operation === "save_mindmap";
+        if ((!mapSave && field === "title") || field === `node:${nodeId}.title`) {
           titleChanged = true;
           beforeTitle = stringVal(change.before);
-        } else if (field === "text" || field === `node:${nodeId}.text`) {
+        } else if ((!mapSave && field === "text") || field === `node:${nodeId}.text`) {
           bodyChanged = true;
           beforeText = stringVal(change.before);
-        } else if (field === "caption" || field === "caution" || field === `node:${nodeId}.caption` || field === `node:${nodeId}.caution`) {
+        } else if ((!mapSave && (field === "caption" || field === "caution")) || field === `node:${nodeId}.caption` || field === `node:${nodeId}.caution`) {
           notesChanged = true;
         } else if (field === `node:${nodeId}` && change.after && typeof change.after === "object") {
           if (!change.before) {
@@ -88,7 +89,7 @@ export function diffChangedWordSpans(
   before: string | undefined,
   after: string,
 ): Array<{ text: string; changed: boolean }> | null {
-  if (!before || !after || before.endsWith("…")) return null;
+  if (!before || !after || before.endsWith("…") || before.length >= 600) return null;
   const aTokens = before.match(/\S+|\s+/g) || [];
   const bTokens = after.match(/\S+|\s+/g) || [];
   if (aTokens.length > 400 || bTokens.length > 400) return null;

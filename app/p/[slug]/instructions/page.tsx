@@ -15,6 +15,7 @@ import {
 import { getProjectMetadata, projectContentDir } from "@/lib/store";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
 import { requireProjectPage } from "@/lib/server/project-access";
+import { isViewOnlyMode } from "@/lib/server/view-only";
 
 export default async function InstructionsPage({
   params,
@@ -23,7 +24,7 @@ export default async function InstructionsPage({
 }) {
   const { slug } = await params;
   await requireProjectPage(slug);
-  if (isPublicDemoMode()) notFound();
+  if (isPublicDemoMode() || isViewOnlyMode()) notFound();
   const project = getProjectMetadata(slug);
   if (!project) notFound();
   const root = projectContentDir(slug);

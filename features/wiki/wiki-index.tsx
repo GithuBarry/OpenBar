@@ -28,7 +28,13 @@ export function WikiIndex({ slug, pages }: { slug: string; pages: WikiPage[] }) 
     event.preventDefault();
     setSaving(true);
     setError(null);
-    const pageSlug = title.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "page";
+    const baseSlug = title.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "page";
+    const existingSlugs = new Set(pages.map((page) => page.slug));
+    let pageSlug = baseSlug;
+    let suffix = 2;
+    while (existingSlugs.has(pageSlug)) {
+      pageSlug = `${baseSlug}-${suffix++}`;
+    }
     try {
       await saveWikiAction({
         projectId: slug,

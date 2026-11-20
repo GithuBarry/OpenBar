@@ -661,6 +661,12 @@ export async function pullOverleafGit(projectDir: string, operationId: string): 
         const currentBranch = (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
         if (currentBranch !== branch) return { ok: false, message: "The Git branch changed. Check updates and try again." };
         const currentHead = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
+        if (currentHead !== fetchedCommit) {
+          const isAncestor = await runGit(cwd, ["merge-base", "--is-ancestor", currentHead, fetchedCommit]).then(() => true, () => false);
+          if (!isAncestor) {
+            return { ok: false, message: "Local and remote Git branches have diverged. Review and reconcile Git updates before pulling." };
+          }
+        }
         const blockers = await findGitUpdateBlockers(cwd, currentHead, fetchedCommit);
         if (blockers.length) return { ok: false, message: formatGitUpdateBlockers(blockers) };
         saveDirectPullReceipt(file, { version: 1, projectKey, state: "applying", branch, targetHead: fetchedCommit });
@@ -835,6 +841,7 @@ export async function commitOverleafGit(
             ownsOrdinaryLock = false;
           } catch (error) {
             await runGit(cwd, head ? ["update-ref", `refs/heads/${branch}`, head, commitHash] : ["update-ref", "-d", `refs/heads/${branch}`, commitHash]);
+            await clearCheckpointJournal(cwd).catch(() => undefined);
             throw error;
           }
           await clearCheckpointJournal(cwd).catch(() => undefined);
@@ -915,15 +922,20 @@ export async function pushOverleafGit(
   // Fetch and inspect remote BEFORE creating a local commit so clean pulls
   // are never turned into diverged histories.
   const preStatus = await refreshOverleafGitStatus(projectDir).catch(() => null);
-  if (preStatus?.isGitRepo && preStatus.isOverleafRemote && (preStatus.behind || 0) > 0) {
-    const diverged = (preStatus.ahead || 0) > 0;
-    return {
-      ok: false,
-      code: diverged ? "remote_conflict" : "remote_ahead",
-      message: diverged
-        ? "Git and this checkout have diverged. Reconcile both histories before pushing."
-        : "Git has newer commits. Pull and reconcile before pushing.",
-    };
+  if (preStatus?.isGitRepo && preStatus.isOverleafRemote) {
+    if (preStatus.error) {
+      return { ok: false, code: "remote_unavailable", message: preStatus.error };
+    }
+    if ((preStatus.behind || 0) > 0) {
+      const diverged = (preStatus.ahead || 0) > 0;
+      return {
+        ok: false,
+        code: diverged ? "remote_conflict" : "remote_ahead",
+        message: diverged
+          ? "Git and this checkout have diverged. Reconcile both histories before pushing."
+          : "Git has newer commits. Pull and reconcile before pushing.",
+      };
+    }
   }
   const local = await commitOverleafGit(projectDir, message);
   if (!local.ok) return { ok: false, code: local.code, message: local.message };

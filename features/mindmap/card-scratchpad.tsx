@@ -54,7 +54,7 @@ export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, e
 
   const showRendered = hasNotes && !editing && !editingInline && (isMarkdown || !editable);
 
-  if (!showNotes && !footer) return null;
+  if (!showNotes && !footer && !viewerOpen) return null;
   return <div className={`${styles.scratchpads} ${showNotes ? styles.withNotes : ""} nodrag nopan nowheel`}
     onPointerDown={event => event.stopPropagation()}
     onClick={event => event.stopPropagation()}
@@ -93,7 +93,7 @@ export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, e
           <NotesContentIndicator text={notes} className={styles.amount} />
         </span>
       </summary>
-      <div className={styles.body}>
+      {open && <div className={styles.body}>
         <div className={styles.bodyHeader}>
           <button type="button" className={styles.heading} aria-label="Hide notes" onClick={() => onOpenChange(false)}><ChevronDown className={styles.headingChevron} size={12} aria-hidden="true" />Notes</button>
           <div className={styles.bodyActions}>
@@ -148,12 +148,13 @@ export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, e
             value={notes}
             readOnly={!editable}
             rows={2}
+            onFocus={() => { if (editable && !editing) setEditingInline(true); }}
             onBlur={() => { if (editingInline && isMarkdown) setEditingInline(false); }}
             onInput={event => fitEditor(event.currentTarget)}
             onChange={value => onChange?.(value)}
           />
         )}
-      </div>
+      </div>}
     </details>}
     {footer && <div className={styles.footer}>{footer}</div>}
     {viewerOpen && (

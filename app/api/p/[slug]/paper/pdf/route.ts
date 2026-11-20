@@ -17,7 +17,9 @@ export async function GET(
     const resolvedArtifactId = artifactId || currentArtifactId(projectDir);
     const pdf = getCompiledPdf(projectDir, resolvedArtifactId);
     if (!pdf) return new Response("No compiled PDF is available yet.", { status: 404 });
-    if (resolvedArtifactId && !isViewOnlyMode()) markDisplayedArtifact(projectDir, resolvedArtifactId);
+    if (resolvedArtifactId && !isViewOnlyMode()) {
+      try { markDisplayedArtifact(projectDir, resolvedArtifactId); } catch {}
+    }
     return new Response(new Uint8Array(pdf), {
       headers: {
         "Cache-Control": "no-store",

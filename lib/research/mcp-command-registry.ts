@@ -25,7 +25,7 @@ import { syncProjectCommand } from "./sync-project-command";
 import { applyMindmapAction,newNodeId } from "@/features/mindmap/mindmap-state";
 import { mindmapDiskHash,normalizeMindmap } from "@/lib/mindmap/mindmap";
 import { htmlCardValidationError, HtmlCardValidationError } from "@/lib/mindmap/html-card";
-import { assertAdministrativeWriteAllowed } from "@/lib/server/demo-mode";
+import { assertAdministrativeWriteAllowed, assertPublicDemoProject } from "@/lib/server/demo-mode";
 import {
 readSavedPaperTodos,
 PaperTodoBindingError,
@@ -126,6 +126,8 @@ function integerArg(args: JsonObject, key: string, required = true): number | un
 function projectArg(args: JsonObject): string {
   const project = stringArg(args, "project");
   if (!project || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(project)) throw new McpCommandError("invalid_arguments", "project must be a safe project slug.", false);
+  try { assertPublicDemoProject(project); }
+  catch { throw new McpCommandError("invalid_path", `Unknown project "${project}".`, false); }
   if (!getProject(project)) throw new McpCommandError("invalid_path", `Unknown project "${project}".`, false);
   return project;
 }
@@ -768,6 +770,7 @@ async function executeAddMindmapNode(args: unknown, context: McpCommandContext):
       if (caution && !caution.ok) return caution;
       if (record.caption !== undefined && typeof record.caption !== "string") return failResult("invalid_arguments", "caption must be a string.", false);
       const id = typeof record.id === "string" && record.id.trim() ? record.id.trim() : newNodeId();
+      if (map.nodes.some((node) => node.id === id)) throw new McpCommandError("conflict", `Card "${id}" already exists. Use patch to update it or omit id to generate a new card.`, false);
       const presentation = record.presentation === undefined ? undefined : parsePresentationArg(record.presentation, map.rootId, id);
       if (presentation && !presentation.ok) return presentation;
       const htmlError = htmlCardValidationError({ text: typeof record.text === "string" ? record.text : "", contentFormat: presentation?.value?.contentFormat });
@@ -1016,9 +1019,10 @@ async function executeProjectFileEdits(raw: unknown, context: McpCommandContext)
 
 const executeConvertCardToTodo: McpToolDefinition["execute"] = async (raw, context) => {
   const args = NATIVE_MINDMAP_INPUTS.convert_card_to_todo.parse(raw);
-  const projectDir = projectContentDir(args.project);
+  const project = projectArg(args);
+  const projectDir = projectContentDir(project);
   assertAdministrativeWriteAllowed("MCP paper TODO conversion");
-  return idempotentWrite(args.project, "convert_card_to_todo", args, context, async (requestId, fingerprint) => {
+  return idempotentWrite(project, "convert_card_to_todo", args, context, async (requestId, fingerprint) => {
     const map = mapRequired(args.project, args.mapId);
     assertRevision(map, args.expectedRevision);
     assertDiskHash(map, args.expectedDiskHash);
@@ -1057,20 +1061,21 @@ const executeConvertCardToTodo: McpToolDefinition["execute"] = async (raw, conte
 
 const executeLinkTodoCard: McpToolDefinition["execute"] = async (raw, context) => {
   const args = NATIVE_MINDMAP_INPUTS.link_todo_card.parse(raw);
-  return idempotentWrite(args.project, "link_todo_card", args, context, requestId => {
-    const map = mapRequired(args.project, args.mapId);
+  const project = projectArg(args);
+  return idempotentWrite(project, "link_todo_card", args, context, requestId => {
+    const map = mapRequired(project, args.mapId);
     assertRevision(map, args.expectedRevision);
     assertDiskHash(map, args.expectedDiskHash);
     let next: Mindmap;
     try {
-      const todo = readSavedPaperTodos(args.project, new Set([args.todoId])).get(args.todoId)!;
+      const todo = readSavedPaperTodos(project, new Set([args.todoId])).get(args.todoId)!;
       next = applyMindmapAction(map, { type: "link-existing-todo", id: args.id, todoId: args.todoId, todoTitle: todo.title, todoText: todo.text, agentDraft: true }).mindmap;
     } catch (error) {
       if (error instanceof PaperTodoBindingError) return mutationFailure(error, map);
       return failResult("invalid_arguments", error instanceof Error ? error.message : "Check the selected card and TODO.", false);
     }
     if (next === map) return okResult({ id: args.id, todoId: args.todoId, shared: true }, { revision: map.revision, diskHash: map.diskHash });
-    return writeMap(args.project, map, next, requestId, "link_todo_card", [{ kind: "mindmap_node", id: args.id, mapId: map.id }]);
+    return writeMap(project, map, next, requestId, "link_todo_card", [{ kind: "mindmap-node", id: args.id, mapId: map.id }]);
   });
 };
 
@@ -1143,9 +1148,10 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
   tool("get_activity", "Read activity", "Read durable authored operation history after applying the selected day filter and before pagination.", executeActivity, { readOnlyHint: true }),
   tool("read_project_files", "Read project files", "List directories or read authored project files with exact byte SHA256 and bounded UTF-8/base64 content. Paths are relative to the project root. OpenBar managed state and Git metadata are protected.", executeReadProjectFiles, { readOnlyHint: true }),
   tool("apply_project_edits", "Apply project file edits", "Atomically create, replace, or delete authored project files using exact prior hashes. Batch a destination create and source delete to move a file. dryRun previews the complete batch. OpenBar managed state and Git metadata are protected.", executeProjectFileEdits, { destructiveHint: true }),
-  tool("apply_mindmap_edits", "Edit managed mindmap state", `Apply one revision-checked map operation. edit.operation: add, patch, move, preview-batch, apply-batch, place-todo, link-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, activity-window. args: add {parentId,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,id?}, patch {id,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, batch {selectedIds,changes?,deleteMode?,move?,previewToken?}, place-todo {todoId,parentId}, link-todo {id,todoId}, convert-to-todo {id,sectionId?,expectedBundleHash}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, activity-window {days}. labels read back as tags. refs[]: {kind: file|paper-section|paper-todo|paper-comment|wiki-page|mindmap-node|figure|web|external, id, label?, relation?, url?, mapId?}. presentation: {shape?:leaf|callout, contentFormat?:plain|markdown|tex|html, tableLayout?:wide|scroll, color?, progress?:0..6|"ditched"|null, cardWidth?:180..1200|null}. Preview batches before apply-batch. deleteMode cards promotes children; branches removes descendants. Agent writes stay Agent draft until human Save/Delete. ${MINDMAP_EDIT_GUIDANCE}`, executeManagedMindmapEdit, { destructiveHint: true }),
+  tool("apply_mindmap_edits", "Edit managed mindmap state", `Apply one revision-checked map operation. edit.operation: add, patch, move, preview-batch, apply-batch, place-todo, link-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, activity-window. args: add {parentId,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,id?}, patch {id,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, batch {selectedIds,changes?,deleteMode?,move?,previewToken?}, place-todo {todoId,parentId}, link-todo {id,todoId}, convert-to-todo {id,sectionId?,expectedBundleHash}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, activity-window {days}. labels read back as tags. refs[]: {kind: paper-section|paper-todo|paper-comment|wiki-page|mindmap-node|figure|web|external, id, label?, relation?, url?, mapId?} (do not attach local code/JSON/CSV files as refs; put local paths in caption). presentation: {shape?:leaf|callout, contentFormat?:plain|markdown|tex|html, tableLayout?:wide|scroll, color?, progress?:0..6|"ditched"|null, cardWidth?:180..1200|null}. Preview batches before apply-batch. deleteMode cards promotes children; branches removes descendants. Agent writes stay Agent draft until human Save/Delete. ${MINDMAP_EDIT_GUIDANCE}`, executeManagedMindmapEdit, { destructiveHint: true }),
   tool("celebrate", "Queue a celebration animation", "Queue a non-blocking celebration animation (full-screen or bursting from a specific mindmap card) with a short reason shown the next time the human focuses OpenBar. Use sparingly for genuine milestones (passing evals, beating baselines, clean paper compile, finishing a major branch).", async (raw) => {
     const args = MCP_INPUTS.celebrate.parse(raw);
+    assertAdministrativeWriteAllowed("Celebration actions");
     const event = queueCelebration(projectContentDir(projectArg(args)), args);
     return okResult(event);
   }, { destructiveHint: false, idempotentHint: false }),

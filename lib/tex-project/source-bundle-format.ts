@@ -173,9 +173,11 @@ export function rebaseBundleSource(saved: string, live: string, canonical: strin
   if (conflicts.size) return { ok: false, files: [...conflicts] };
   return {
     ok: true,
-    source: canonicalParts.map((part) => {
+    source: canonicalParts.map((part, index) => {
       const merged = mergedByFile.get(part.filePath);
-      return `${fileBanner(part.filePath)}${merged !== undefined ? merged : part.body}`;
+      const body = merged !== undefined ? merged : part.body;
+      const sep = index < canonicalParts.length - 1 && body.length > 0 && !body.endsWith("\n") ? "\n" : "";
+      return `${fileBanner(part.filePath)}${body}${sep}`;
     }).join(""),
   };
 }
