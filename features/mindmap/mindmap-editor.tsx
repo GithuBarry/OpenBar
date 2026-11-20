@@ -3451,9 +3451,12 @@ export function MindmapEditor({
           </section>
 
           <InspectorSection id="more" open={Boolean(inspectorSections.more)} onToggle={() => toggleInspectorSection("more")}>
-          <fieldset disabled={readOnly || convertingCardId === selected.id} className="mindmap-card-menu-fields">
+          <div className="mindmap-card-menu-fields">
           <CautionEditor key={selected.id} value={selected.caution} caption={selected.caption}
+            cardTitle={selected.title || selectedTodo?.text || undefined}
+            readOnly={readOnly || convertingCardId === selected.id}
             onNotesChange={value => updateNodeNote(selected.id, value)} />
+          <fieldset disabled={readOnly || convertingCardId === selected.id} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
           <CardLinks key={`links:${selected.id}`} sourceId={selected.id} project={project} refs={selectedRefs} pickerOptions={linkPickerOptions} onChange={refs => dispatch({ type: "patch-node", id: selected.id, patch: { refs } })} />
           <CardProperties key={`properties:${selected.id}`} value={selected.metadata} onChange={metadata => dispatch({ type: "patch-node", id: selected.id, patch: { metadata } })} />
           {selected.todoId && selectedTodo && !selectedMissing && paperSourceHash && (
@@ -3486,6 +3489,7 @@ export function MindmapEditor({
             </div>
           )}
           </fieldset>
+          </div>
           </InspectorSection>
         </aside>
       )}
@@ -4244,7 +4248,7 @@ function CanvasNode({
             {tags.length > 2 && <span className="mindmap-node-tag">+{tags.length - 2}</span>}
             <CardMetadataPills metadata={node.metadata} />
           </div>
-          <CardScratchpad open={notesOpen} onOpenChange={setNotesOpen} text={node.caption} caution={node.caution} editing={editing} readOnly={readOnly}
+          <CardScratchpad open={notesOpen} onOpenChange={setNotesOpen} text={node.caption} caution={node.caution} cardTitle={title || undefined} editing={editing} readOnly={readOnly}
             onChange={onNoteChange} onCommit={() => void commit()} onCancel={cancel}
             footer={hasCardLinks(node.refs) ? <CardLinkIndicator sourceId={node.id} project={project} refs={node.refs || []} /> : undefined} />
       {!editing && <ParentNavigation cardTitle={title || "Untitled card"} item={parentNavigation} onJump={onJumpToCard} />}
