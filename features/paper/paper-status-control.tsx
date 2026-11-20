@@ -95,7 +95,7 @@ export function PaperStatusControl({
                   </>}
         </span>
         {onForceSync && <span className="ob-mod-alt"><RefreshCw size={15} /></span>}
-        {session.canRelease && <span className="ob-mod-shift"><SleepZzz size={16} /></span>}
+        {session.canRelease && <span className="ob-mod-shift"><SleepZzz size={16} animated={false} /></span>}
       </span>
       <span className="ob-status-label-track" data-open={pillCue ? "true" : "false"} aria-hidden={!pillCue}>
         <span className="ob-status-label-inner">{displayCue}</span>

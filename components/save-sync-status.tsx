@@ -10,10 +10,10 @@ import { hostBusyDetail } from "@/lib/editor-issue-priority";
 export type SaveRemoteState = "checking" | "local" | "pending" | "syncing" | "synced" | "changed" | "blocked" | "unconfigured" | "unavailable" | "failed";
 export type StatusPillTone = "danger" | "warn" | "accent";
 
-export function SleepZzz({ size = 16 }: { size?: number }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
-    <path d="M3 12h8l-8 8h8" />
-    <path d="M14 4h6l-6 6h6" />
+export function SleepZzz({ size = 16, animated = true }: { size?: number; animated?: boolean }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round" className={cn("shrink-0", animated && "ob-sleep-zzz")} aria-hidden="true">
+    <path className="ob-sleep-z1" d="M3 12h8l-8 8h8" />
+    <path className="ob-sleep-z2" d="M14 4h6l-6 6h6" />
   </svg>;
 }
 
@@ -171,7 +171,7 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
       <span className="ob-mod-swap" aria-hidden="true">
         <span className="ob-mod-primary">{customIcon || <SaveStatusIcon saved={saved} saving={saving} conflict={conflict} attention={Boolean(error)} remote={remote} connectionUnavailable={reconnecting} hostBusy={Boolean(host)} />}</span>
         {onForceSync && <span className="ob-mod-alt"><RefreshCw size={15} /></span>}
-        {session.canRelease && <span className="ob-mod-shift"><SleepZzz size={16} /></span>}
+        {session.canRelease && <span className="ob-mod-shift"><SleepZzz size={16} animated={false} /></span>}
       </span>
       {iconOnly ? (
         <span className="ob-status-label-track" data-open={pillCue ? "true" : "false"} aria-hidden={!pillCue}>

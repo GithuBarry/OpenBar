@@ -760,8 +760,20 @@ html[data-shift-key="true"]:not([data-alt-key="true"]) .ob-mod-swap > .ob-mod-sh
   opacity: 1;
   transform: scale(1);
 }
+@keyframes ob-sleep-z-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.28; }
+}
+.ob-sleep-zzz .ob-sleep-z1 {
+  animation: ob-sleep-z-pulse 2.8s ease-in-out infinite;
+}
+.ob-sleep-zzz .ob-sleep-z2 {
+  animation: ob-sleep-z-pulse 2.8s ease-in-out -1.4s infinite;
+}
 @media (prefers-reduced-motion: reduce) {
   .ob-mod-primary, .ob-mod-alt, .ob-mod-shift { transition: none; }
+  .ob-sleep-zzz .ob-sleep-z1, .ob-sleep-zzz .ob-sleep-z2 { animation: none; }
+  .ob-sleep-zzz .ob-sleep-z2 { opacity: 0.65; }
 }
 .ob-glass-button[aria-pressed="true"] {
   --p-glass-tint: rgb(var(--ink) / .10);
