@@ -81,7 +81,7 @@ export function SaveStatusIcon({ saved, saving, conflict = false, attention = fa
   return <SaveChecks stage={remote === "synced" ? "remote" : remote === "pending" ? "queued" : "local"} size={size} />;
 }
 
-export function SaveSyncStatus({ saved, saving, conflict = false, error, remote, onRetry, onForceSync, compact = false, iconOnly = false, className, onConnectionIssue, hasRecoveryDraft = false, onRecoveryDraft, attentionRequest = 0 }: {
+export function SaveSyncStatus({ saved, saving, conflict = false, error, remote, onRetry, onForceSync, compact = false, iconOnly = false, className, onConnectionIssue, hasRecoveryDraft = false, onRecoveryDraft, attentionRequest = 0, manualReadOnly = false, onExitReadOnly }: {
   saved: boolean;
   saving: boolean;
   conflict?: boolean;
@@ -96,6 +96,8 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
   hasRecoveryDraft?: boolean;
   onRecoveryDraft?: () => void;
   attentionRequest?: number;
+  manualReadOnly?: boolean;
+  onExitReadOnly?: () => void;
 }) {
   const session = useProjectWriteSession();
   const reconnecting = session.connectionState === "reconnecting";
@@ -106,6 +108,7 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
   const remoteError = remote === "unavailable" || remote === "failed";
   const readOnlyRestorable = !reconnecting && !session.writable && session.canRestore;
   const readOnlyLocked = !reconnecting && !session.writable && !session.canRestore;
+  const manualViewOnly = !reconnecting && session.writable && manualReadOnly;
 
   // Morph into an unmistakable tinted glass pill on attention states; stay compact 34x34 when calm.
   let pillCue: string | null = null;
@@ -128,6 +131,10 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
     pillCue = "Resume";
     pillTone = "accent";
     customIcon = session.sleeping ? <SleepZzz size={16} /> : <LockKeyholeOpen size={15} className="shrink-0" />;
+  } else if (manualViewOnly) {
+    pillCue = "View only";
+    pillTone = "accent";
+    customIcon = <LockKeyhole size={15} className="shrink-0" />;
   } else if (readOnlyLocked) {
     pillCue = "View only";
     pillTone = "warn";
@@ -147,7 +154,7 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
                 : "Saved locally");
   const detail = [
     reconnecting ? "Reconnecting to OpenBar. Your edits remain in this tab." : host,
-    readOnlyRestorable ? "Click Resume to continue editing in this tab." : readOnlyLocked ? "Viewing read-only." : null,
+    readOnlyRestorable ? "Click Resume to continue editing in this tab." : manualViewOnly ? "Read-only mode is on. Click to resume editing." : readOnlyLocked ? "Viewing read-only." : null,
     saved ? "Saved to project files." : saving ? "Saving your latest edits to project files." : "Your latest edits are waiting to be saved.",
     synced ? "The saved changes are confirmed on the Git remote."
       : remote === "unconfigured" ? "Connect an Overleaf repository to enable Git synchronization."
@@ -171,14 +178,14 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
     if (pillCue) setRetainedCue(pillCue);
   }, [pillCue]);
   useEffect(() => {
-    if (session.writable || !attentionRequest) {
+    if ((session.writable && !manualReadOnly && !review) || !attentionRequest) {
       setComplaint(null);
       if (complaintTimerRef.current) {
         window.clearTimeout(complaintTimerRef.current);
         complaintTimerRef.current = null;
       }
     }
-  }, [session.writable, attentionRequest]);
+  }, [session.writable, manualReadOnly, review, attentionRequest]);
   useEffect(() => () => {
     bounceRef.current?.cancel();
     if (complaintTimerRef.current) window.clearTimeout(complaintTimerRef.current);
@@ -216,9 +223,13 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
     if (attentionRequest >= 3) {
       const message = session.sleeping
         ? SLEEP_COMPLAINTS[(attentionRequest - 3) % SLEEP_COMPLAINTS.length]!
-        : readOnlyRestorable
-          ? "Editing in another tab — click to take over"
-          : "Read-only right now";
+        : manualViewOnly
+          ? "Read-only mode is on — click to edit"
+          : review
+            ? "Pull remote Git updates first to edit"
+            : readOnlyRestorable
+              ? "Editing in another tab — click to take over"
+              : "Read-only right now";
       setComplaint(message);
       if (complaintTimerRef.current) window.clearTimeout(complaintTimerRef.current);
       complaintTimerRef.current = window.setTimeout(() => {
@@ -264,7 +275,7 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
         zCleanupTimersRef.current.push(timer);
       }
     }
-  }, [attentionRequest, session.sleeping, readOnlyRestorable]);
+  }, [attentionRequest, session.sleeping, readOnlyRestorable, manualViewOnly, review]);
   const displayCue = pillCue || retainedCue;
 
   const canRetry = !reconnecting && !host && saved && !saving && !conflict && ["pending", "blocked", "unavailable", "failed"].includes(remote) && !!onRetry;
@@ -275,9 +286,11 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
       ? onRecoveryDraft
       : readOnlyRestorable
         ? () => void session.restore()
-        : canRetry
-          ? onRetry
-          : undefined;
+        : manualViewOnly && onExitReadOnly
+          ? onExitReadOnly
+          : canRetry
+            ? onRetry
+            : undefined;
   const interactive = Boolean(handleClick || onForceSync || session.canRelease);
   const altHint = onForceSync ? "\n⌥-click: Sync Git now" : "";
   const shiftHint = session.canRelease ? "\n⇧-click: Release edit access" : "";

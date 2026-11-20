@@ -115,6 +115,7 @@ function FlowCanvas({
   onDoubleClick,
   onReparent,
   onDropPreview,
+  onBlockedDrag,
   onPaneClick,
   focusRequest,
 }: {
@@ -128,6 +129,7 @@ function FlowCanvas({
   onDoubleClick: (id: string) => void;
   onReparent: (id: string, parentId: string, beforeId?: string, afterId?: string) => void;
   onDropPreview: (drop: MindmapDrop | null) => void;
+  onBlockedDrag?: () => void;
   onPaneClick?: () => void;
   focusRequest?: MindmapFocusRequest | null;
 }) {
@@ -181,6 +183,7 @@ function FlowCanvas({
   }, []);
   const lastFocusRef = useRef<number | null>(null);
   const draggingIdRef = useRef<string | null>(null);
+  const blockedDragRef = useRef<{ x: number; y: number; warned: boolean } | null>(null);
   const collapseAnchorRef = useRef<{ id: string; right: number; middle: number; visibleCount: number; viewport: Viewport; active: boolean } | null>(null);
   const collapseSettleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearCollapseAnchor = useCallback(() => {
@@ -360,7 +363,22 @@ function FlowCanvas({
         if (!card || (copyCardRef.current && card !== copyCardRef.current)) clearCanvasTextSelection();
         if (card && card === copyCardRef.current && target.closest(CARD_PROSE)) return;
         if (card?.dataset.mindNode) onSelect(card.dataset.mindNode, event.shiftKey);
+        if (readOnly && event.button === 0 && card?.dataset.mindNode && card.dataset.mindNode !== mindmap.rootId && card !== copyCardRef.current) {
+          blockedDragRef.current = { x: event.clientX, y: event.clientY, warned: false };
+        } else {
+          blockedDragRef.current = null;
+        }
       }}
+      onPointerMoveCapture={event => {
+        const pending = blockedDragRef.current;
+        if (!pending || pending.warned || !(event.buttons & 1)) return;
+        if (Math.hypot(event.clientX - pending.x, event.clientY - pending.y) >= 8) {
+          pending.warned = true;
+          onBlockedDrag?.();
+        }
+      }}
+      onPointerUpCapture={() => { blockedDragRef.current = null; }}
+      onPointerCancelCapture={() => { blockedDragRef.current = null; }}
       onMouseDownCapture={event => {
         if (!readOnly || event.button !== 0) return;
         const target = event.target as Element;
@@ -484,6 +502,7 @@ export function MindmapCanvas(props: {
   onDoubleClick: (id: string) => void;
   onReparent: (id: string, parentId: string, beforeId?: string, afterId?: string) => void;
   onDropPreview: (drop: MindmapDrop | null) => void;
+  onBlockedDrag?: () => void;
   onPaneClick?: () => void;
   focusRequest?: MindmapFocusRequest | null;
   className?: string;

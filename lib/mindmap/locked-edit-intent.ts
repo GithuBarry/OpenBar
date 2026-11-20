@@ -2,27 +2,52 @@ type EditIntentEvent = {
   type: string;
   currentTarget: Element;
   target: EventTarget | null;
+  clientX?: number;
+  clientY?: number;
   key?: string;
   metaKey?: boolean;
   ctrlKey?: boolean;
   altKey?: boolean;
   clipboardData?: { types: readonly string[] };
+  dataTransfer?: { files?: { length: number } };
 };
+
+const DISABLED_EDIT_CONTROL = "button:disabled, input:disabled, textarea:disabled, select:disabled, [aria-disabled=true]";
+const IGNORED_CONTROLS = "[data-resume-edit], [data-backend-connection], [data-ob-modal], .react-flow__controls, [data-nav-only]";
+
+function isDisabledEditElement(el: Element): boolean {
+  if (el.closest(IGNORED_CONTROLS)) return false;
+  if (el.closest('button[aria-label^="Collapse"], button[aria-label^="Expand"]')) return false;
+  if (el.closest(DISABLED_EDIT_CONTROL)) return true;
+  return Boolean(el.closest("fieldset:disabled") && el.closest("button, input, textarea, select, label, [role=button], [role=slider]"));
+}
 
 /** Recognize write gestures while keeping map navigation and text selection available. */
 export function isLockedMindmapEditIntent(event: EditIntentEvent): boolean {
   const target = event.target;
-  if (!(target instanceof Element) || !event.currentTarget.contains(target)
-    || target.closest("[data-resume-edit], [data-backend-connection], [data-ob-modal]")) return false;
+  if (!(target instanceof Element) || target.closest("[data-resume-edit], [data-backend-connection], [data-ob-modal]")) return false;
 
   if (event.type === "pointerdown") {
-    if (target.closest(".react-flow__controls")) return false;
-    return Boolean(target.closest("button:disabled, input:disabled, textarea:disabled, select:disabled, [aria-disabled=true]")
-      || (target.closest("fieldset:disabled") && target.closest("button, input, textarea, select, label, [role=button], [role=slider]")));
+    if (isDisabledEditElement(target)) return true;
+    // Browsers often retarget pointerdown on disabled controls to their parent container; inspect elements under the pointer.
+    if (typeof document !== "undefined" && typeof event.clientX === "number" && typeof event.clientY === "number") {
+      const hit = document.elementsFromPoint(event.clientX, event.clientY);
+      for (const el of hit) {
+        if (el === event.currentTarget) break;
+        if (isDisabledEditElement(el)) return true;
+      }
+    }
+    return false;
   }
+
+  if (!event.currentTarget.contains(target)) return false;
+
   if (event.type === "dblclick") {
     return Boolean(target.closest("[data-mind-node]")
       && !target.closest("button, a, input, textarea, select, summary, nav, [data-card-images], .cm-editor"));
+  }
+  if (event.type === "drop") {
+    return Boolean(event.dataTransfer?.files?.length);
   }
 
   const textControl = target.closest("input, textarea, select, [contenteditable], .cm-editor");

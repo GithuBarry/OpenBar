@@ -17,7 +17,7 @@ function fitEditor(editor: HTMLTextAreaElement | null) {
   editor.style.height = `${editor.scrollHeight}px`;
 }
 
-export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, editing = false, readOnly = false, onChange, onCommit, onCancel, footer }: {
+export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, editing = false, readOnly = false, onChange, onCommit, onCancel, onBlockedEdit, footer }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   text?: string;
@@ -28,6 +28,7 @@ export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, e
   onChange?: (value: string) => void;
   onCommit?: () => void;
   onCancel?: () => void;
+  onBlockedEdit?: () => void;
   footer?: ReactNode;
 }) {
   const notes = useMemo(() => cardNotesText(text, caution), [text, caution]);
@@ -134,7 +135,7 @@ export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, e
         {showRendered ? (
           <div
             className={isMarkdown ? styles.renderedMarkdown : styles.renderedPlain}
-            onDoubleClick={editable ? () => setEditingInline(true) : undefined}
+            onDoubleClick={editable ? () => setEditingInline(true) : readOnly ? () => onBlockedEdit?.() : undefined}
           >
             <RichText text={notes} format={isMarkdown ? "markdown" : "plain"} tableLayout="scroll" />
           </div>

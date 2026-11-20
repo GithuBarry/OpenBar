@@ -220,9 +220,7 @@ export function MindmapEditor({
   const [connectionDetailsOpenRequest, setConnectionDetailsOpenRequest] = useState(0);
   const [saveConflictAttention, setSaveConflictAttention] = useState(0);
   const [resumeEditAttentionRequest, setResumeEditAttentionRequest] = useState(0);
-  useEffect(() => {
-    if (sessionWritable) setResumeEditAttentionRequest(0);
-  }, [sessionWritable]);
+  const lastBlockedSignalAtRef = useRef(0);
   const manualReadOnlyRef = useRef(false);
   const sessionWritableRef = useRef(sessionWritable);
   sessionWritableRef.current = sessionWritable;
@@ -1136,6 +1134,21 @@ export function MindmapEditor({
   const saveConflict = Boolean(saveError && /conflict|changed.*reload|stale/i.test(saveError));
   const outdatedSave = Boolean(saveError && isOutdatedMindmapPage(saveError));
   const readOnly = !sessionWritable || manualReadOnly || remoteOutOfSync || applyingRemote || saveConflict || Boolean(recoveryDraft);
+  useEffect(() => {
+    if (!readOnly) setResumeEditAttentionRequest(0);
+  }, [readOnly]);
+
+  const notifyBlockedEdit = useCallback(() => {
+    const now = Date.now();
+    if (now - lastBlockedSignalAtRef.current < 120) return;
+    lastBlockedSignalAtRef.current = now;
+    if (recoveryDraftRef.current) {
+      setRecoveryReviewOpen(true);
+      return;
+    }
+    if (saveConflict) setSaveConflictAttention(current => current + 1);
+    else setResumeEditAttentionRequest(current => current + 1);
+  }, [saveConflict]);
   const titleContext = useMindmapTitle();
   const setTitleEditor = titleContext?.setEditor;
   const renameFromSwitcher = useCallback(async (title: string) => {
@@ -1909,7 +1922,7 @@ export function MindmapEditor({
   }
 
   function placeUnplacedTodo(todoId: string, parentId = selected?.id || mindmap.rootId) {
-    if (readOnly) return;
+    if (readOnly) { notifyBlockedEdit(); return; }
     const existing = sessionRef.current.mindmap.nodes.find((node) => node.todoId === todoId);
     if (existing) {
       dispatch({ type: "select", id: existing.id });
@@ -2343,7 +2356,8 @@ export function MindmapEditor({
   // Global key navigation and canvas shortcuts
   useEffect(() => {
     const onGlobalKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (isEditableTarget(event.target)) return;
+      if (event.defaultPrevented || isEditableTarget(event.target)) return;
+      if (document.querySelector("[data-ob-modal]")) return;
 
       if (event.key === "/") {
         event.preventDefault();
@@ -2353,9 +2367,27 @@ export function MindmapEditor({
         return;
       }
       const mod = event.metaKey || event.ctrlKey;
+      const key = event.key.toLowerCase();
+      if (readOnly) {
+        const targetEl = event.target instanceof Element ? event.target : null;
+        const onInteractive = Boolean(targetEl?.closest("button, a, input, textarea, select, summary, nav"));
+        if (mod && !event.altKey && ["s", "z", "y"].includes(key)) {
+          event.preventDefault();
+          notifyBlockedEdit();
+          return;
+        }
+        if (!mod && !onInteractive && (
+          ["backspace", "delete", "e", "tab", "enter"].includes(key)
+          || (event.altKey && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key))
+        )) {
+          if (event.key !== "Tab") event.preventDefault();
+          notifyBlockedEdit();
+          return;
+        }
+        return;
+      }
       if (!mod) return;
 
-      const key = event.key.toLowerCase();
       if (key === "s") {
         event.preventDefault();
         if (dirty && !isPending) save();
@@ -2372,7 +2404,7 @@ export function MindmapEditor({
     return () => {
       window.removeEventListener("keydown", onGlobalKeyDown);
     };
-  }, [dirty, isPending, redo, save, undo]);
+  }, [dirty, isPending, notifyBlockedEdit, readOnly, redo, save, undo]);
 
   function selectDirection(direction: "parent" | "child" | "previous" | "next") {
     const node = layout.nodeById.get(selected?.id || "");
@@ -2589,6 +2621,7 @@ export function MindmapEditor({
         onUseHtml={text => setCardContentFormat(node.id, "html", text)}
         onPasteHtml={text => pasteHtmlCard(node.id, text)}
         onNoteChange={value => updateNodeNote(node.id, value)}
+        onBlockedEdit={notifyBlockedEdit}
         onRequestRevision={note => requestDraftRevision(node.id, note)}
         onSaveDraft={() => saveAgentDraft(node.id)}
         filteredOut={cardFilter !== "all" && node.id !== mindmap.rootId && (
@@ -2770,14 +2803,9 @@ export function MindmapEditor({
   };
 
   function signalBlockedEdit(event: Parameters<typeof isLockedMindmapEditIntent>[0]) {
-    if ((sessionWritable && !saveConflict && !recoveryDraft) || !isLockedMindmapEditIntent(event)) return false;
-    if (recoveryDraft) {
-      if (event.key === "Tab") return false;
-      setRecoveryReviewOpen(true);
-      return true;
-    }
-    if (saveConflict) setSaveConflictAttention(current => current + 1);
-    else setResumeEditAttentionRequest(current => current + 1);
+    if (!readOnly || !isLockedMindmapEditIntent(event)) return false;
+    if (recoveryDraft && event.key === "Tab") return false;
+    notifyBlockedEdit();
     return true;
   }
 
@@ -2788,6 +2816,12 @@ export function MindmapEditor({
       data-mindmap-editor
       onPointerDownCapture={signalBlockedEdit}
       onDoubleClickCapture={signalBlockedEdit}
+      onDropCapture={event => {
+        if (signalBlockedEdit(event)) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
       onKeyDownCapture={event => {
         if (signalBlockedEdit(event) && event.key !== "Tab") {
           event.preventDefault();
@@ -3001,6 +3035,8 @@ export function MindmapEditor({
               hasRecoveryDraft={Boolean(recoveryDraft)}
               onRecoveryDraft={() => setRecoveryReviewOpen(true)}
               attentionRequest={resumeEditAttentionRequest}
+              manualReadOnly={manualReadOnly}
+              onExitReadOnly={manualReadOnly ? toggleReadOnly : undefined}
               onForceSync={sessionWritable ? () => { void pushRemote("OpenBar: force sync mindmap"); } : undefined}
               error={primaryIssue?.message} onConnectionIssue={() => setConnectionDetailsOpenRequest(value => value + 1)} onRetry={sessionWritable ? () => { void pushRemote("OpenBar: retry saved project sync"); } : undefined} />
           </div>
@@ -3016,7 +3052,7 @@ export function MindmapEditor({
           aria-label={`Mindmap ${viewMode} view. Tab adds a child. Enter adds a sibling. E edits the selected card.`}
         >
           {viewMode === "map" ? (<div className={styles.canvasLayout}>
-          {unplacedOpen && unplacedCount > 0 && <MindmapUnplacedTray project={project} paperState={paperState} nodes={mindmap.nodes} selectedParentId={selected?.id || mindmap.rootId} onPlaceTodo={placeUnplacedTodo} onClose={() => setUnplacedOpen(false)} />}
+          {unplacedOpen && unplacedCount > 0 && <MindmapUnplacedTray project={project} paperState={paperState} nodes={mindmap.nodes} selectedParentId={selected?.id || mindmap.rootId} readOnly={readOnly} onBlockedEdit={notifyBlockedEdit} onPlaceTodo={placeUnplacedTodo} onClose={() => setUnplacedOpen(false)} />}
           <div className={styles.canvasSurface}>
           <MindmapCanvas
             virtualize={mindmap.nodes.length > 80 && !editingId && flowNodes.every(node => measuredCards.has(node.id))}
@@ -3028,6 +3064,7 @@ export function MindmapEditor({
             focusRequest={focusRequest}
             onSelect={selectCard}
             onDoubleClick={onNodeDoubleClick}
+            onBlockedDrag={notifyBlockedEdit}
             onPaneClick={() => {
               setMapSettingsOpen(false);
               dispatch({ type: "clear-selection" });
@@ -3679,11 +3716,13 @@ function AccentPicker({ value, label, onChange }: {
   </>;
 }
 
-function MindmapUnplacedTray({ project, paperState, nodes, selectedParentId, onPlaceTodo, onClose }: {
+function MindmapUnplacedTray({ project, paperState, nodes, selectedParentId, readOnly, onBlockedEdit, onPlaceTodo, onClose }: {
   project: string;
   paperState?: ProjectState | null;
   nodes: ReadonlyArray<Pick<MindmapNode, "id" | "todoId" | "title" | "text" | "contentFormat">>;
   selectedParentId: string;
+  readOnly: boolean;
+  onBlockedEdit: () => void;
   onPlaceTodo: (todoId: string, parentId: string) => void;
   onClose: () => void;
 }) {
@@ -3709,6 +3748,11 @@ function MindmapUnplacedTray({ project, paperState, nodes, selectedParentId, onP
         const target = event.target as HTMLElement;
         if (event.button !== 0 || target.closest("[data-place-todo], a")) return;
         if (event.pointerType === "touch" && !target.closest("[data-todo-drag-handle]")) return;
+        if (readOnly) {
+          event.preventDefault();
+          onBlockedEdit();
+          return;
+        }
         drag.current = { todoId: todo.id, title: todo.title || "Paper TODO", x: event.clientX, y: event.clientY, active: false };
         event.currentTarget.setPointerCapture(event.pointerId);
         event.preventDefault();
@@ -3782,6 +3826,7 @@ function CanvasNode({
   onUseHtml,
   onPasteHtml,
   onNoteChange,
+  onBlockedEdit,
   onTextFocus,
   onRequestRevision,
   onSaveDraft,
@@ -3833,6 +3878,7 @@ function CanvasNode({
   onUseHtml: (source: string) => Promise<void>;
   onPasteHtml: (html: string) => Promise<void>;
   onNoteChange: (value: string) => void;
+  onBlockedEdit?: () => void;
   onTextFocus: () => void;
   onRequestRevision: (note: string) => Promise<void>;
   onSaveDraft: () => Promise<void>;
@@ -4252,7 +4298,7 @@ function CanvasNode({
             <CardMetadataPills metadata={node.metadata} />
           </div>
           <CardScratchpad open={notesOpen} onOpenChange={setNotesOpen} text={node.caption} caution={node.caution} cardTitle={title || undefined} editing={editing} readOnly={readOnly}
-            onChange={onNoteChange} onCommit={() => void commit()} onCancel={cancel}
+            onChange={onNoteChange} onCommit={() => void commit()} onCancel={cancel} onBlockedEdit={onBlockedEdit}
             footer={hasCardLinks(node.refs) ? <CardLinkIndicator sourceId={node.id} project={project} refs={node.refs || []} /> : undefined} />
       {!editing && <ParentNavigation cardTitle={title || "Untitled card"} item={parentNavigation} onJump={onJumpToCard} />}
       {!editing && <ChildNavigation parentTitle={title || "Untitled card"} items={childNavigation} height={dimensions.height} onJump={onJumpToCard} />}
