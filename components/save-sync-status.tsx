@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CircleAlert, CloudOff, Gauge, History, LoaderCircle, LockKeyhole, LockKeyholeOpen, RefreshCw } from "lucide-react";
+import { AlarmClock, CircleAlert, CloudOff, Gauge, History, LoaderCircle, LockKeyhole, LockKeyholeOpen, RefreshCw } from "lucide-react";
 import { FastTooltip } from "./fast-tooltip";
 import { cn } from "@/lib/utils";
 import { useProjectWriteSession } from "./project-session/project-write-session";
@@ -11,10 +11,15 @@ export type SaveRemoteState = "checking" | "local" | "pending" | "syncing" | "sy
 export type StatusPillTone = "danger" | "warn" | "accent";
 
 export function SleepZzz({ size = 16, animated = true }: { size?: number; animated?: boolean }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round" className={cn("shrink-0", animated && "ob-sleep-zzz")} aria-hidden="true">
+  const zSvg = <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round" className={cn("shrink-0", animated && "ob-sleep-zzz")} aria-hidden="true">
     <path className="ob-sleep-z1" d="M3 12h8l-8 8h8" />
     <path className="ob-sleep-z2" d="M14 4h6l-6 6h6" />
   </svg>;
+  if (!animated) return zSvg;
+  return <span className="ob-sleep-wake" aria-hidden="true">
+    <span className="ob-sleep-wake-zzz">{zSvg}</span>
+    <span className="ob-sleep-wake-alarm"><AlarmClock size={size} strokeWidth={2} /></span>
+  </span>;
 }
 
 export function SaveChecks({ stage, size = 14 }: { stage: "local" | "queued" | "remote"; size?: number }) {

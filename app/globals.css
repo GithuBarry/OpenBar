@@ -764,16 +764,55 @@ html[data-shift-key="true"]:not([data-alt-key="true"]) .ob-mod-swap > .ob-mod-sh
   0%, 100% { opacity: 1; }
   50% { opacity: 0.28; }
 }
+@keyframes ob-alarm-ring {
+  0%, 100% { transform: rotate(0deg) translateX(0); }
+  12% { transform: rotate(-10deg) translateX(-0.6px); }
+  24% { transform: rotate(10deg) translateX(0.6px); }
+  36% { transform: rotate(-8deg) translateX(-0.5px); }
+  48% { transform: rotate(8deg) translateX(0.5px); }
+  60% { transform: rotate(-4deg); }
+  72% { transform: rotate(0deg); }
+}
 .ob-sleep-zzz .ob-sleep-z1 {
   animation: ob-sleep-z-pulse 2.8s ease-in-out infinite;
 }
 .ob-sleep-zzz .ob-sleep-z2 {
   animation: ob-sleep-z-pulse 2.8s ease-in-out -1.4s infinite;
 }
+.ob-sleep-wake {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.ob-sleep-wake-zzz,
+.ob-sleep-wake-alarm {
+  grid-area: 1 / 1;
+  display: inline-grid;
+  place-items: center;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+.ob-sleep-wake-alarm {
+  opacity: 0;
+  transform: scale(0.8);
+  pointer-events: none;
+}
+:is(button:is(:hover, :focus-visible), .ob-sleep-wake:hover) .ob-sleep-wake-zzz {
+  opacity: 0;
+  transform: scale(0.8);
+}
+:is(button:is(:hover, :focus-visible), .ob-sleep-wake:hover) .ob-sleep-wake-alarm {
+  opacity: 1;
+  transform: scale(1);
+}
+:is(button:is(:hover, :focus-visible), .ob-sleep-wake:hover) .ob-sleep-wake-alarm > svg {
+  transform-origin: center 55%;
+  animation: ob-alarm-ring 0.65s ease-in-out infinite;
+}
 @media (prefers-reduced-motion: reduce) {
-  .ob-mod-primary, .ob-mod-alt, .ob-mod-shift { transition: none; }
+  .ob-mod-primary, .ob-mod-alt, .ob-mod-shift, .ob-sleep-wake-zzz, .ob-sleep-wake-alarm { transition: none; }
   .ob-sleep-zzz .ob-sleep-z1, .ob-sleep-zzz .ob-sleep-z2 { animation: none; }
   .ob-sleep-zzz .ob-sleep-z2 { opacity: 0.65; }
+  :is(button:is(:hover, :focus-visible), .ob-sleep-wake:hover) .ob-sleep-wake-alarm > svg { animation: none; }
 }
 .ob-glass-button[aria-pressed="true"] {
   --p-glass-tint: rgb(var(--ink) / .10);
