@@ -4,9 +4,10 @@ import { usePathname } from "next/navigation";
 
 import { useSharedProjectWebMcp } from "@/features/use-shared-webmcp";
 import type { CurrentLocation } from "@/lib/research/webmcp-shared-contract";
-import { ProjectWriteSession } from "@/components/project-session/project-write-session";
+import { ProjectWriteSession, ViewOnlyProjectSession } from "@/components/project-session/project-write-session";
 import { SessionWebMcp } from "@/features/use-session-webmcp";
 import { useInboxWebMcp } from "@/features/use-inbox-webmcp";
+import { CelebrationOverlay } from "@/components/celebration-overlay";
 
 function locationFromPath(project: string, pathname: string): CurrentLocation {
   const href = pathname;
@@ -23,7 +24,17 @@ function locationFromPath(project: string, pathname: string): CurrentLocation {
   return { kind: "paper", href };
 }
 
-export function ProjectAgentShell({
+export function ProjectAgentShell({ viewOnly = false, ...props }: {
+  project: string
+  children: React.ReactNode
+  publicDemo?: boolean
+  viewOnly?: boolean
+  wishlistAvailable: boolean
+}) {
+  return viewOnly ? <ViewOnlyProjectSession>{props.children}</ViewOnlyProjectSession> : <EditableProjectAgentShell {...props} />
+}
+
+function EditableProjectAgentShell({
   project,
   children,
   publicDemo = false,
@@ -50,5 +61,5 @@ export function ProjectAgentShell({
       return { ...loc, href: `${pathname}${window.location.hash}` };
     },
   });
-  return <ProjectWriteSession key={project} project={project} publicDemo={publicDemo}><SessionWebMcp disabled={publicDemo} />{children}</ProjectWriteSession>;
+  return <ProjectWriteSession key={project} project={project} publicDemo={publicDemo}><SessionWebMcp disabled={publicDemo} />{!publicDemo && <CelebrationOverlay project={project} />}{children}</ProjectWriteSession>;
 }

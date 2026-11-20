@@ -24,9 +24,9 @@ export default async function WishlistPage() {
         {wishes.map(wish => <li key={wish.id} className="py-4">
           <p className="whitespace-pre-wrap break-words text-sm leading-6">{wish.text}</p>
           <div className="mt-1 flex flex-wrap gap-x-2 text-xs text-muted">
-            <span>{wish.author === "agent" ? "Agent" : "Human"}</span><span aria-hidden="true">·</span>
+            <span>{wish.author === "agent" ? "Agent" : "Human"}</span><span aria-hidden="true">/</span>
             <time dateTime={wish.createdAt}>{dateFormat.format(new Date(wish.createdAt))}</time>
-            <span aria-hidden="true">·</span><span>OpenBar {wish.version}</span>
+            <span aria-hidden="true">/</span><span>OpenBar {wish.version}</span>
           </div>
         </li>)}
       </ol> : <p className="mt-6 text-sm text-muted">Feedback will appear here as it arrives.</p>}

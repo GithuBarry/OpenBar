@@ -6,7 +6,6 @@ import { Check, Edit3, LoaderCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { saveProjectAction } from "@/app/actions";
 import type { Project } from "@/lib/types";
-import { AgentReadyIndicator } from "@/components/shell/agent-ready";
 import { useProjectWriteSession } from "@/components/project-session/project-write-session";
 
 export function PageHeader({
@@ -212,10 +211,11 @@ export function PageHeader({
         )}
       </div>
 
-      <div className="flex shrink-0 items-center gap-2">
-        {!compact && <AgentReadyIndicator />}
-        {actions}
-      </div>
+      {actions && (
+        <div className="flex shrink-0 items-center gap-2">
+          {actions}
+        </div>
+      )}
     </header>
   );
 }

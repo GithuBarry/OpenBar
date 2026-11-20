@@ -7,7 +7,7 @@ import { attachMindmapImage,captionMindmapImage,detachMindmapImage } from "@/lib
 import { safeUrl } from "@/lib/safe-url";
 import type { ArtifactRef,Mindmap,MindmapNode,MindmapNodeShape } from "@/lib/types";
 import { coercePaperSectionRefContext,isArtifactKind } from "./artifact-link";
-import { MINDMAP_EDIT_GUIDANCE } from "./agent-guidance";
+import { MINDMAP_CARD_SHORT_REMINDER, MINDMAP_EDIT_GUIDANCE, mindmapAttentionWarnings } from "./agent-guidance";
 import { MIN_CARD_WIDTH, MAX_CARD_WIDTH } from "@/lib/mindmap/card-width";
 import { htmlCardValidationError, HtmlCardValidationError } from "@/lib/mindmap/html-card";
 import { MINDMAP_EDIT_INPUT,MINDMAP_INPUTS } from "./command-inputs";
@@ -228,6 +228,7 @@ function parseRefsArg(value: unknown): OperationResult<ArtifactRef[]> {
       return failResult("invalid_arguments", "Each ref needs a valid kind and id.", false);
     }
     if (rec.label !== undefined && typeof rec.label !== "string") return failResult("invalid_arguments", "ref label must be a string.", false);
+    if (rec.relation !== undefined && (typeof rec.relation !== "string" || rec.relation.trim().length > 64)) return failResult("invalid_arguments", "ref relation must be a string up to 64 characters.", false);
     const url = typeof rec.url === "string" ? rec.url : undefined;
     if (url !== undefined && (!/^https?:\/\//i.test(url.trim()) || !safeUrl(url))) {
       return failResult("invalid_arguments", "ref url must be an http(s) URL.", false);
@@ -245,6 +246,7 @@ function parseRefsArg(value: unknown): OperationResult<ArtifactRef[]> {
       id: rec.id.trim(),
       ...(typeof rec.imageWidth === "number" ? { imageWidth: rec.imageWidth } : {}),
       ...(typeof rec.label === "string" && rec.label.trim() ? { label: rec.label.trim() } : {}),
+      ...(typeof rec.relation === "string" && rec.relation.trim() ? { relation: rec.relation.trim() } : {}),
       ...(url ? { url } : {}),
       ...(typeof rec.mapId === "string" && rec.mapId.trim() ? { mapId: rec.mapId.trim() } : {}),
       ...(sectionContext ? { sectionContext } : {}),
@@ -372,7 +374,21 @@ export async function executeMindmapWebMcpTool(
         typeof args.caption === "string" ? args.caption : undefined,
         presentation,
       ));
-      return result.ok ? okResult({ id: result.value }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
+      if (!result.ok) return result;
+      const addedNode = {
+        id: result.value,
+        parentId: String(args.parentId ?? ""),
+        title: typeof args.title === "string" ? args.title : undefined,
+        text: typeof args.text === "string" ? args.text : "",
+        caption: typeof args.caption === "string" ? args.caption : undefined,
+        contentFormat: presentation?.contentFormat,
+        agentDraft: true,
+        order: 0,
+        createdAt: "",
+        updatedAt: "",
+      };
+      const warnings = mindmapAttentionWarnings([addedNode], [...snapshot.nodes, addedNode], { checkDraftCount: true });
+      return okResult({ id: result.value }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}), ...(warnings ? { warnings } : {}) });
     }
     case "move_mindmap_node": {
       const rev = assertRevision(args.expectedRevision, snapshot.revision);
@@ -450,12 +466,12 @@ export async function executeMindmapWebMcpTool(
       if (args.agentDraft === true) patch.agentDraft = true;
       if (args.title !== undefined) {
         if (typeof args.title !== "string") return failResult("invalid_arguments", "title must be a string.", false);
-        if (node.todoId) return failResult("invalid_arguments", "Edit this TODO title in the manuscript with read_project_files and apply_project_edits.", false);
+        if (node.todoId) return failResult("invalid_arguments", "TODO card title is TeX-owned. Edit it in the manuscript with read_project_files and apply_project_edits.", false);
         patch.title = args.title;
       }
       if (args.text !== undefined) {
         if (typeof args.text !== "string") return failResult("invalid_arguments", "text must be a string.", false);
-        if (node.todoId) return failResult("invalid_arguments", "Edit this TODO text in the manuscript with read_project_files and apply_project_edits.", false);
+        if (node.todoId) return failResult("invalid_arguments", "TODO card text is TeX-owned. Edit it in the manuscript with read_project_files and apply_project_edits.", false);
         patch.text = args.text;
       }
       if (args.caption !== undefined) {
@@ -491,7 +507,10 @@ export async function executeMindmapWebMcpTool(
       const htmlError = htmlCardValidationError({ ...node, ...patch.presentation, text: patch.text ?? node.text });
       if (htmlError) return failResult("invalid_arguments", htmlError, false);
       const result = await runPersistedMutation(host, () => host.patchNode(String(args.id ?? ""), patch, snapshot.revision));
-      return result.ok ? okResult({ id: args.id, patch }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}) }) : result;
+      if (!result.ok) return result;
+      const updatedNode = { ...node, ...patch, ...(patch.presentation || {}) };
+      const warnings = mindmapAttentionWarnings([updatedNode], snapshot.nodes.map((item) => item.id === node.id ? updatedNode : item));
+      return okResult({ id: args.id, patch }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}), ...(warnings ? { warnings } : {}) });
     }
     case "attach_mindmap_image": {
       const rev = assertRevision(args.expectedRevision, snapshot.revision);
@@ -684,7 +703,7 @@ export function buildMindmapWebMcpTools(host: MindmapWebMcpHost) {
   return [...tools, {
     name: "apply_mindmap_edits",
     title: "Edit live mindmap state",
-    description: `Apply a live revision-checked operation. edit.operation: add, patch, move, delete-card, delete-branch, place-todo, link-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, view-preferences. args: add {parentId,title?,text?,caption?,caution?,presentation?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, delete {id}, place-todo {todoId,parentId}, link-todo {id,todoId}, conversion {id,sectionId?}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, view-preferences {centerOnEdit}. View preferences are stored in this browser per project and map. Cards delete promotes children, branch delete includes descendants. New cards and agent-authored content changes remain Agent draft until human Save or Delete. Contribute through the current writing tab. While a human edits one card, add Agent draft children or edit other cards. Edit TODO text/completion through project files. Set presentation.cardWidth to 180–1200 canvas pixels, or null for automatic width. ${MINDMAP_EDIT_GUIDANCE}`,
+    description: `Apply a live revision-checked operation. edit.operation: add, patch, move, delete-card, delete-branch, place-todo, link-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, view-preferences. args: add {parentId,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, delete {id}, place-todo {todoId,parentId}, link-todo {id,todoId}, conversion {id,sectionId?}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, view-preferences {centerOnEdit}. View preferences are stored in this browser per project and map. Cards delete promotes children, branch delete includes descendants. New cards and agent-authored content changes remain Agent draft until human Save or Delete. Contribute through the current writing tab. While a human edits one card, add Agent draft children or edit other cards. Edit TODO text/completion through project files. Leave presentation.cardWidth unset (auto ~264px) for prose cards; set 360–900 only for wide tables/figures, or null for auto. ${MINDMAP_EDIT_GUIDANCE} ${MINDMAP_CARD_SHORT_REMINDER}`,
     inputSchema: commandJsonSchema(MINDMAP_EDIT_INPUT),
     annotations: { readOnlyHint: false, destructiveHint: true, untrustedContentHint: true },
     execute: (args?: unknown) => executeManagedMapEdit(host, args),
@@ -699,7 +718,7 @@ export function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Select a saved mindmap card on the open map. Use navigate_project first if the mindmap page is not open.";
   }
   if (name === "add_mindmap_node") {
-    return `Create an Agent draft under the given parent at the current map revision. Supply a visible title and body and optional collapsed Notes in caption.`;
+    return `Create an Agent draft under the given parent at the current map revision. ${MINDMAP_CARD_SHORT_REMINDER}`;
   }
   if (name === "move_mindmap_node") {
     return "Move a saved mindmap card to a new parent or sibling position on this map only. Does not change TeX or other maps.";
@@ -714,7 +733,7 @@ export function mindmapToolDescription(name: MindmapWebMcpToolName): string {
     return "Visually highlight cards whose meaningful content changed since a date. Omit since for the past seven days. Pan, zoom, and collapse do not count.";
   }
   if (name === "patch_mindmap_node") {
-    return `Edit supplied fields at the current card revision. Use caption for Notes. Edit paper TODO wording through apply_project_edits.`;
+    return `Edit supplied fields on one card using its current revision. ${MINDMAP_CARD_SHORT_REMINDER} Edit TODO wording through apply_project_edits.`;
   }
   if (name === "attach_mindmap_image") return "Attach one existing project image asset to an empty card. For an occupied card, use apply_mindmap_edits with operation add to create a child and attach there. Use read_project_files to inspect the asset; this changes only this map's reference list.";
   if (name === "detach_mindmap_image") return "Detach one image reference from this card without deleting the shared project asset.";

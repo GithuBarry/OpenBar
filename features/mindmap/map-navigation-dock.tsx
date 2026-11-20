@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import * as Popover from "@radix-ui/react-popover";
 import { ChevronDown, Move } from "lucide-react";
 import styles from "./map-navigation-dock.module.css";
 
@@ -44,12 +43,18 @@ export function MapNavigationDock({ children }: { children: ReactNode }) {
     root?.addEventListener("pointerleave", leave);
     return () => { root?.removeEventListener("pointerenter", enter); root?.removeEventListener("pointerleave", leave); clearTimeout(closeTimer.current); };
   }, [show, closeSoon]);
-  return <Popover.Root open={expanded} onOpenChange={next => {
-    clearTimeout(closeTimer.current);
-    transientOpen.current = false;
-    if (compact) setOpen(next);
-  }}>
-    <Popover.Anchor asChild>
+  useEffect(() => {
+    if (!compact || !open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (rootRef.current?.contains(event.target as Node)) return;
+      clearTimeout(closeTimer.current);
+      transientOpen.current = false;
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [compact, open]);
+  return (
     <div ref={rootRef} className={styles.widget} data-map-navigation data-compact={compact || undefined} role="group" aria-label="Map navigation and history"
       onPointerDownCapture={event => { pointerType.current = event.pointerType; }}
       onFocusCapture={() => {
@@ -59,26 +64,27 @@ export function MapNavigationDock({ children }: { children: ReactNode }) {
         show();
       }}
       onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closeSoon(); }}
-      onKeyDown={event => event.stopPropagation()}>
-      <Popover.Trigger asChild><button ref={triggerRef} type="button" className={styles.toggle} hidden={!compact} aria-label="Map navigation and history controls" title="Map navigation and history"
-        onClick={event => {
-          if (transientOpen.current) { event.preventDefault(); transientOpen.current = false; setOpen(true); }
+      onKeyDown={event => {
+        event.stopPropagation();
+        if (event.key === "Escape" && compact && open) {
+          clearTimeout(closeTimer.current);
+          transientOpen.current = false;
+          setOpen(false);
+          if (document.activeElement !== triggerRef.current) { suppressFocus.current = true; triggerRef.current?.focus(); }
+        }
+      }}>
+      <button ref={triggerRef} type="button" className={styles.toggle} hidden={!compact} aria-expanded={compact ? open : undefined} aria-label="Map navigation and history controls" title="Map navigation and history"
+        onClick={() => {
+          clearTimeout(closeTimer.current);
+          if (transientOpen.current) { transientOpen.current = false; setOpen(true); return; }
+          setOpen(current => !current);
         }}>
         {open ? <ChevronDown size={16} aria-hidden="true" /> : <Move size={16} aria-hidden="true" />}
-      </button></Popover.Trigger>
-      <Popover.Content forceMount className={styles.panel} hidden={!expanded} inert={!expanded} role={compact ? "dialog" : "group"} aria-label="Map navigation and history actions" side="top" align="start" sideOffset={compact ? 6 : 0} collisionPadding={12}
-        onOpenAutoFocus={event => event.preventDefault()}
-        onCloseAutoFocus={event => event.preventDefault()}
-        onInteractOutside={event => { if (!compact || !open || rootRef.current?.contains(event.target as Node)) event.preventDefault(); }}
-        onEscapeKeyDown={event => {
-          if (!compact || !open) { event.preventDefault(); return; }
-          event.stopPropagation();
-          if (document.activeElement !== triggerRef.current) { suppressFocus.current = true; triggerRef.current?.focus(); }
-        }}>
+      </button>
+      <div className={styles.panel} hidden={!expanded} inert={!expanded} role={compact ? "dialog" : "group"} aria-label="Map navigation and history actions">
         <div className={styles.zoom} data-mindmap-zoom-controls role="group" aria-label="Zoom and pan" />
         <div className={styles.history}>{children}</div>
-      </Popover.Content>
+      </div>
     </div>
-    </Popover.Anchor>
-  </Popover.Root>;
+  );
 }

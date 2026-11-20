@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { useProjectWriteSession } from "@/components/project-session/project-write-session";
 import { saveWikiAction } from "@/app/actions";
 import { WikiPage } from "@/lib/types";
 import { relativeTime } from "@/lib/utils";
@@ -16,6 +17,7 @@ function snippet(body: string): string {
 
 export function WikiIndex({ slug, pages }: { slug: string; pages: WikiPage[] }) {
   const router = useRouter();
+  const { writable } = useProjectWriteSession();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [query, setQuery] = useState("");
@@ -61,7 +63,7 @@ export function WikiIndex({ slug, pages }: { slug: string; pages: WikiPage[] }) 
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search pages"
-            className="p-field input h-8 w-48 text-sm"
+            className="p-field input h-8 min-w-0 !w-full flex-1 sm:!w-56 sm:flex-none text-sm"
             aria-label="Search wiki pages"
           />
         )}
@@ -80,13 +82,13 @@ export function WikiIndex({ slug, pages }: { slug: string; pages: WikiPage[] }) 
             <button type="button" className="p-button p-button-borderless btn-ghost text-xs" onClick={() => setOpen(false)}>Cancel</button>
           </form>
         ) : (
-          <button type="button" className="p-button p-button-default btn-outline text-xs" disabled title="Wiki editing is currently unavailable">
+          <button type="button" className="p-button p-button-default btn-outline text-xs" disabled={!writable} onClick={() => setOpen(true)} title={writable ? "Create a wiki note or experiment log" : "Resume editing to create a wiki page"}>
             <Plus size={12} /> New page
           </button>
         )}
       </div>
       <p className="text-xs text-muted" role="status">
-        Wiki pages are readable supporting notes. Editing is currently unavailable. Use paper TODOs for actionable work.
+        Supporting lab notes, experiment logs, and protocols. Actionable manuscript work belongs in paper TODOs.
       </p>
       {error && <p className="text-xs text-danger">{error}</p>}
       {!pages.length && !open && (

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Archive, Check, ChevronDown, ChevronsUpDown } from "lucide-react";
 
@@ -16,16 +16,51 @@ export function ProjectSwitcher({
   activeSlug,
   allowCreate = true,
   compact = false,
+  expanded = false,
 }: {
   projects: Project[];
   activeSlug?: string;
   allowCreate?: boolean;
   compact?: boolean;
+  expanded?: boolean;
 }) {
   const active = projects.find((p) => p.slug === activeSlug);
+  const fullTitle = active ? active.title : "All projects";
   const activeProjects = projects.filter((project) => !project.archivedAt);
   const archivedProjects = projects.filter((project) => project.archivedAt);
   const [archiveExpanded, setArchiveExpanded] = useState(false);
+  const [typedLength, setTypedLength] = useState<number | null>(null);
+  const prevExpandedRef = useRef(expanded);
+
+  useEffect(() => {
+    const wasExpanded = prevExpandedRef.current;
+    prevExpandedRef.current = expanded;
+    if (compact || !expanded || wasExpanded) {
+      setTypedLength(null);
+      return;
+    }
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setTypedLength(null);
+      return;
+    }
+    const chars = Array.from(fullTitle);
+    if (chars.length <= 1) return;
+    setTypedLength(0);
+    const stepMs = Math.max(16, Math.min(34, Math.round(280 / chars.length)));
+    let current = 0;
+    const timer = window.setInterval(() => {
+      current += 1;
+      if (current >= chars.length) {
+        window.clearInterval(timer);
+        setTypedLength(null);
+      } else {
+        setTypedLength(current);
+      }
+    }, stepMs);
+    return () => window.clearInterval(timer);
+  }, [compact, expanded, fullTitle]);
+
+  const visibleTitle = typedLength === null ? fullTitle : Array.from(fullTitle).slice(0, typedLength).join("");
   const trigger = (
     <DropdownMenu.Trigger asChild>
       <button
@@ -33,12 +68,13 @@ export function ProjectSwitcher({
         aria-label={compact ? `Switch project: ${active?.title ?? "All projects"}` : "Choose project"}
         className={compact ? "ob-press text-base" : "ob-press flex w-full items-center gap-2 rounded-lg border border-line bg-surface-2 px-2.5 py-2 text-left text-sm transition-colors hover:bg-surface-3"}
       >
-        <span aria-hidden="true" className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-surface text-base">
+        <span data-sidebar-flip="project" aria-hidden="true" className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-surface text-base">
           {active?.icon ?? "🧪"}
         </span>
         {!compact && <>
-          <span className="flex-1 truncate font-semibold">
-            {active ? active.title : "All projects"}
+          <span className="flex-1 truncate font-semibold" aria-label={fullTitle}>
+            {visibleTitle}
+            {typedLength !== null && <span aria-hidden="true" className="ml-0.5 inline-block h-3.5 w-[1.5px] translate-y-[2px] bg-accent/80" />}
           </span>
           <ChevronsUpDown size={14} className="shrink-0 text-faint" />
         </>}
@@ -48,7 +84,7 @@ export function ProjectSwitcher({
 
   return (
     <DropdownMenu.Root onOpenChange={(open) => { if (!open) setArchiveExpanded(false); }}>
-      {compact ? <FastTooltip label={`Switch project · ${active?.title ?? "All projects"}`}>{trigger}</FastTooltip> : trigger}
+      {compact ? <FastTooltip label={`Switch project: ${active?.title ?? "All projects"}`}>{trigger}</FastTooltip> : trigger}
 
       <MenuSurface side={compact ? "right" : "bottom"} align="start" className="max-h-[var(--radix-dropdown-menu-content-available-height)] w-64 max-w-[var(--radix-dropdown-menu-content-available-width)] overflow-y-auto p-1.5">
         {activeProjects.map((project) => <ProjectItem key={project.slug} project={project} activeSlug={activeSlug} />)}

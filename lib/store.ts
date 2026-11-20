@@ -519,7 +519,7 @@ export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: s
       }
     }
     const normalized = normalizeMindmap({ ...mindmap, projectId: slug, id: identity.id, role: identity.role });
-    const sections = paperSectionRefTargets(slug);
+    const sections = hasPaperSectionRefs(normalized) ? paperSectionRefTargets(slug) : [];
     const previousNodes = new Map(current?.nodes.map(node => [node.id, node]));
     const canonicalized = {
       ...normalized,

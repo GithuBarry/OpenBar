@@ -1,10 +1,12 @@
 import { getRuntimeCapabilities } from "@/lib/research/capabilities";
 import { accessHealthStatus } from "@/lib/server/cloudflare-access";
 import { isPublicDemoMode, publicDemoSlugs } from "@/lib/server/demo-mode";
+import { isViewOnlyMode } from "@/lib/server/view-only";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  if (isViewOnlyMode()) return Response.json({ ok: true, mode: "view-only", writableContent: false })
   const capabilities = getRuntimeCapabilities();
   const access = accessHealthStatus();
   return Response.json({

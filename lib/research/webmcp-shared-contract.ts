@@ -172,7 +172,7 @@ async function executeSharedWebMcpTool(
         const id = typeof args.id === "string" ? args.id.trim() : undefined;
         const hrefArg = typeof args.href === "string" ? args.href.trim() : undefined;
         if (!id && !hrefArg) {
-          return failResult("invalid_arguments", "Provide id or href from get_project_state or search_project.", { retryable: false });
+          return failResult("invalid_arguments", "Provide id or href from get_project_state.", { retryable: false });
         }
         const target = await host.actions.resolveNavigation(host.project, { id, href: hrefArg });
         if (!target?.href) return failResult("invalid_arguments", "Could not resolve that project location.", { retryable: false });

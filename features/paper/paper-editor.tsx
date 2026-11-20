@@ -124,6 +124,7 @@ import {
 } from "@/lib/research/editor-operation-races";
 import {
   collectEditorComments,
+  collectEditorMarkers,
   collectEditorTodos,
   findEditorTodo,
   listBookmarks,
@@ -800,7 +801,9 @@ export function PaperEditor({
   }, [refreshRemoteStatus]);
 
   const bookmarks = useMemo(() => listBookmarks(inlineBundleIncludes(source)), [source]);
-  const commentKinds = useMemo(() => collectEditorComments(source).flatMap((comment) => comment.kind ? [comment.kind] : []), [source]);
+  const comments = useMemo(() => collectEditorComments(source), [source]);
+  const markers = useMemo(() => collectEditorMarkers(source), [source]);
+  const commentKinds = useMemo(() => comments.flatMap((comment) => comment.kind ? [comment.kind] : []), [comments]);
   const todos = useMemo(() => collectEditorTodos(source), [source]);
   const wordCount = previewResult?.wordCount ?? 0;
   const percentFixes = useMemo(() => lintProsePercentages(source), [source]);
@@ -1153,7 +1156,23 @@ export function PaperEditor({
     setSaving(true);
     setLocalDirty(true);
     if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
-    const result = await saveBrowserPaperSource(project, text, bundleHashRef.current, { signal });
+    let saveText = text;
+    let result = await saveBrowserPaperSource(project, saveText, bundleHashRef.current, { signal });
+    if (!result.ok && result.code === "stale_disk_state") {
+      // Attempt conservative line-level 3-way rebase against the latest disk bundle.
+      const diskPaper = await getBrowserEditablePaper(project).catch(() => null);
+      if (diskPaper?.bundle.bundleHash && diskPaper.bundle.bundleHash !== bundleHashRef.current) {
+        const merged = rebaseBundleSource(baseline, saveText, diskPaper.bundle.source);
+        if (merged.ok) {
+          bundleHashRef.current = diskPaper.bundle.bundleHash;
+          setBundleHash(diskPaper.bundle.bundleHash);
+          savedSourceRef.current = diskPaper.bundle.source;
+          setSavedSource(diskPaper.bundle.source);
+          saveText = merged.source;
+          result = await saveBrowserPaperSource(project, saveText, diskPaper.bundle.bundleHash, { signal });
+        }
+      }
+    }
     if (!result.ok) {
       saveFailureRef.current = {
         code: result.code,
@@ -1167,7 +1186,7 @@ export function PaperEditor({
     bundleHashRef.current = result.value.bundleHash;
     setBundleHash(result.value.bundleHash);
     const bundle = result.value.bundle;
-    const canonical = bundle?.source ?? text;
+    const canonical = bundle?.source ?? saveText;
     if (bundle) {
       sourceSegmentsRef.current = bundle.segments.map(({ filePath, editable }) => ({ filePath, editable }));
       setBundleDiagnostics(bundle.diagnostics);
@@ -1317,8 +1336,7 @@ export function PaperEditor({
     && !uploading && !saveErrorRef.current && !saveConflictRef.current && !recoveryDraft
     && (!remoteQueue.isBusy || (reviewingRemoteRef.current && !remoteQueue.isRunning))
     && liveSource() === savedSourceRef.current;
-  const canAutoPull = () => sessionWritableRef.current && canHydratePaper() && !reviewingRemoteRef.current && !hydrationPendingRef.current
-    && !document.activeElement?.closest("input, textarea, [contenteditable=true]");
+    const canAutoPull = () => sessionWritableRef.current && canHydratePaper() && !reviewingRemoteRef.current && !hydrationPendingRef.current;
   const canAutoPush = () => sessionWritableRef.current && !saving && !saveBusyRef.current && !todoRemovalBusyRef.current && !pendingSaveRef.current
     && !uploading && !saveErrorRef.current && !saveConflictRef.current && !recoveryDraft
     && !reviewingRemoteRef.current && !applyingRemoteRef.current && !remoteOutOfSyncRef.current
@@ -2734,6 +2752,7 @@ export function PaperEditor({
                   onGitIssue={() => setGitDetailsOpenRequest((current) => current + 1)}
                   onLocalIssue={() => setSaveDetailsOpenRequest((current) => current + 1)}
                   onConnectionIssue={() => setConnectionDetailsOpenRequest(value => value + 1)}
+                  onForceSync={sessionWritable ? () => { void pushRemote("OpenBar: force sync paper", true); } : undefined}
                 />
                 <span className="sr-only" role="status">{showCompileStatus ? compileStarting || compile.state === "running" ? "Compiling PDF" : compileFinished ? "PDF compiled" : "" : ""}</span>
                 <div className={paperStyles.metricsGroup}>
@@ -2950,23 +2969,20 @@ export function PaperEditor({
               </div>
               </div>
             )}
-              <div
-                className={paperStyles.pdfPane}
-                style={layout === "pdf" ? undefined : { visibility: "hidden" }}
-                aria-hidden={layout !== "pdf"}
-                inert={layout !== "pdf"}
-              >
+            {layout === "pdf" && (
+              <div className={paperStyles.pdfPane}>
                 <PdfPreview
                   project={project}
                   compile={{ ...compile, stale: compile.stale || !isSaved }}
                   suppressStatus={!showCompileStatus}
-                  sourceTarget={layout === "pdf" ? pdfSourceTarget : null}
-                  scrollSync={layout === "pdf" ? pdfScrollSyncRef.current : undefined}
+                  sourceTarget={pdfSourceTarget}
+                  scrollSync={pdfScrollSyncRef.current}
                   onScrollProgress={handlePdfScroll}
                   onScrollStart={() => claimScrollSource("pdf")}
                   onJumpToSource={jumpToSourceLine}
                 />
               </div>
+            )}
           </Panel>
 
           <Separator
@@ -3060,7 +3076,7 @@ export function PaperEditor({
                   ? <span role="progressbar" aria-label="Opening source sections" aria-valuemin={0} aria-valuemax={editorProgress.total} aria-valuenow={editorProgress.ready} className={cn(paperStyles.loadingTrack, paperStyles.loadingTrackDeterminate)}><span style={{ width: `${100 * editorProgress.ready / editorProgress.total}%` }} /></span>
                   : <span role="progressbar" aria-label="Opening source sections" className={paperStyles.loadingTrack} />}
                 {editorProgress.total > 0 && <span className={paperStyles.loadingDetail}>
-                  {editorProgress.filePath ? `Opened ${editorProgress.filePath} · ` : ""}{editorProgress.ready} of {editorProgress.total} sections ready
+                  {editorProgress.filePath ? `Opened ${editorProgress.filePath} — ` : ""}{editorProgress.ready} of {editorProgress.total} sections ready
                 </span>}
               </div>
             </div>}
@@ -3247,6 +3263,8 @@ export function PaperEditor({
           <Panel id="todo-content" panelRef={todoPanelRef} defaultSize={todoPanelHeight - 32} minSize={TODO_PANEL_MIN - 32} maxSize={568} groupResizeBehavior="preserve-pixel-size" className={paperStyles.todoSurface}>
           <TodoPanel
             todos={todos}
+            comments={comments}
+            markers={markers}
             onClose={() => {
               setTodoOpen(false);
               window.requestAnimationFrame(() => todoTriggerRef.current?.focus());
@@ -3258,6 +3276,16 @@ export function PaperEditor({
                 setTodoOpen(false);
                 window.requestAnimationFrame(() => jumpToTodo(todo));
               } else jumpToTodo(todo);
+            }}
+            onJumpOffset={(from, to) => {
+              const jump = () => {
+                editorRef.current?.setSelection(from, to);
+                editorRef.current?.focus();
+              };
+              if (phone) {
+                setTodoOpen(false);
+                window.requestAnimationFrame(jump);
+              } else jump();
             }}
             onResolve={resolveTodo}
             onPatch={patchTodo}

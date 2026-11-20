@@ -30,8 +30,14 @@ type SessionContext = {
   inboxRevision?: string;
 };
 
-const WriteSessionContext = createContext<SessionContext>({ writable: true, setPendingWork: () => {}, release: async () => {}, canRelease: false, restore: () => {}, canRestore: false, check: async () => {}, checking: false, accessMessage: "", accessError: null, inspect: async () => { throw new Error("Open a project to check editing access."); }, resumeEdit: async () => { throw new Error("Open a project to resume editing."); }, pendingLocalWork: false, getDiagnostics: () => ({ state: "unavailable" }), connectionState: "connected", connectionError: null, lastSuccessfulConnection: null, isBackendUnavailable: () => false, hostResources: null });
+const defaultSession: SessionContext = { writable: true, setPendingWork: () => {}, release: async () => {}, canRelease: false, restore: () => {}, canRestore: false, check: async () => {}, checking: false, accessMessage: "", accessError: null, inspect: async () => { throw new Error("Open a project to check editing access."); }, resumeEdit: async () => { throw new Error("Open a project to resume editing."); }, pendingLocalWork: false, getDiagnostics: () => ({ state: "unavailable" }), connectionState: "connected", connectionError: null, lastSuccessfulConnection: null, isBackendUnavailable: () => false, hostResources: null }
+const WriteSessionContext = createContext<SessionContext>(defaultSession)
+const viewOnlySession: SessionContext = { ...defaultSession, writable: false, accessMessage: "View only", getDiagnostics: () => ({ state: "view-only", writable: false }) }
 export function useProjectWriteSession() { return useContext(WriteSessionContext); }
+
+export function ViewOnlyProjectSession({ children }: { children: React.ReactNode }) {
+  return <WriteSessionContext.Provider value={viewOnlySession}>{children}</WriteSessionContext.Provider>
+}
 
 type SessionResponse = { ok: boolean; status?: Status; credential?: Credential; code?: string; message?: string; hostResources?: HostResources | null; inboxRevision?: string };
 type AccessOperation = { action: string; startedAt: number; finishedAt: number | null; httpStatus: number | null; code: string | null; outcome: "pending" | "ok" | "denied" | "error"; message?: string };
@@ -91,6 +97,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
   const pendingKeys = useRef(new Set<string>());
   const pendingRequests = useRef(0);
   const releasing = useRef(false);
+  const manuallyReleased = useRef(false);
   const mounted = useRef(false);
   const credential = useRef<Credential | null>(null);
   const heldWriterLease = useRef(false);
@@ -325,6 +332,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
       if (result.status) setStatus(result.status);
       if (result.ok && result.credential) {
         lastActivity.current = Date.now();
+        manuallyReleased.current = false;
         setIdleYielded(false);
         heldWriterLease.current = true;
         record(result.credential);
@@ -353,6 +361,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
       if (!result.ok) { record(null); setWritable(false); setMessage(result.message || "Editing access changed. Your open draft stays in this tab."); return; }
       record(null);
       setWritable(false);
+      manuallyReleased.current = !idle;
       setIdleYielded(idle);
       setMessage(null);
     } catch (error) { requestError("Release failed.", error); }
@@ -408,7 +417,13 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
           else { setWritable(true); setMessage(null); setAccessError(null); }
         } else {
           const next = await readStatus();
-          if (!stopped && credential.current === current) { setStatus(next); setAccessError(null); }
+          if (!stopped && credential.current === current) {
+            setStatus(next);
+            setAccessError(null);
+            if (!manuallyReleased.current && next.state === "available" && document.visibilityState === "visible" && Date.now() - lastActivity.current < PROJECT_WRITE_SESSION_IDLE_MS) {
+              await claim(undefined, false);
+            }
+          }
         }
       } catch (error) {
         if (!stopped && credential.current === current) {

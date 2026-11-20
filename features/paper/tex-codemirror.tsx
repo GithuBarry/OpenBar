@@ -766,6 +766,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
               return blocked ? [] : tr;
             }),
             compact ? obCompactTheme : obEditorTheme,
+            ...(!compact ? [EditorView.scrollMargins.of(() => ({ top: 72, bottom: 56 }))] : []),
             EditorView.editorAttributes.of({
               class: compact ? "ob-cm-editor ob-cm-compact" : "ob-cm-editor",
             }),

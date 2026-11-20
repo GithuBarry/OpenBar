@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { isLoopbackHost } from "@/lib/server/access-policy";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
+import { isViewOnlyMode, viewOnlyPathAllowed } from "@/lib/server/view-only";
 
 /**
  * Next.js 16 proxy (replaces deprecated middleware.ts). When Cloudflare Access
@@ -10,9 +11,20 @@ import { isPublicDemoMode } from "@/lib/server/demo-mode";
  * JWT verification still happens in requireWorkbenchAccess.
  */
 function checkAccess(request: NextRequest) {
+  if (isViewOnlyMode()) {
+    const headers = { "Cache-Control": "no-store", "Allow": "GET, HEAD" }
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return NextResponse.json({ error: "This OpenBar link provides view-only access." }, { status: 405, headers })
+    }
+    if (!viewOnlyPathAllowed(request.nextUrl.pathname) || request.headers.has("next-action")) {
+      return NextResponse.json({ error: "This link provides access to the paper viewer." }, { status: 403, headers })
+    }
+    return NextResponse.next()
+  }
   if (isPublicDemoMode()) return NextResponse.next();
   // Authenticated agent routes verify their own bearer or Access identity.
   const pathname = request.nextUrl.pathname;
+  if (pathname === "/api/health") return NextResponse.next()
   if (pathname === "/api/mcp" || pathname === "/api/projects" || pathname === "/api/tools" || pathname.startsWith("/api/tools/")) return NextResponse.next();
   const configured = Boolean(process.env.CLOUDFLARE_ACCESS_TEAM_DOMAIN && process.env.CLOUDFLARE_ACCESS_AUD);
   if (!configured || process.env.NODE_ENV !== "production") {
@@ -42,5 +54,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/health).*)"],
+  matcher: ["/((?!_next/static|favicon.ico).*)"],
 };

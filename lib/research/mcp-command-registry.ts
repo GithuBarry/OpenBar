@@ -3,10 +3,11 @@ import { artifactRefSchema } from "@/lib/schemas";
 import { resolveFigureAsset } from "@/lib/tex-project/project";
 import "server-only";
 import { acknowledgeAgentInbox,readAgentInbox } from "./agent-inbox";
+import { queueCelebration } from "./celebration";
 import { INBOX_TOOL_DESCRIPTIONS,type AgentInbox } from "./agent-inbox-contract";
 import { platformWishlistAvailable, runPlatformWishlist } from "./platform-wishlist";
 import { WISHLIST_DESCRIPTION } from "./platform-wishlist-contract";
-import { MINDMAP_EDIT_GUIDANCE } from "./agent-guidance";
+import { MINDMAP_CARD_SHORT_REMINDER, MINDMAP_EDIT_GUIDANCE, mindmapAttentionWarnings } from "./agent-guidance";
 import { MCP_INPUTS, MINDMAP_LABELS_INPUT, NATIVE_MINDMAP_INPUTS } from "./command-inputs";
 import { commandJsonSchema,parseCommandInput } from "./command-schema";
 import { applyProjectEdits,readProjectFiles } from "./project-files";
@@ -130,7 +131,8 @@ function projectArg(args: JsonObject): string {
 }
 
 function mapArg(args: JsonObject): string {
-  const mapId = stringArg(args, "mapId", false) || DRAFT_MINDMAP_ID;
+  const raw = stringArg(args, "mapId", false) || DRAFT_MINDMAP_ID;
+  const mapId = raw === "primary" ? DRAFT_MINDMAP_ID : raw;
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(mapId)) throw new McpCommandError("invalid_arguments", "mapId must be a safe persisted map id.", false);
   return mapId;
 }
@@ -406,12 +408,16 @@ async function writeMap(
     const beforeNodes = new Map(map.nodes.map((node) => [node.id, JSON.stringify(node)]));
     const savedIds = new Set(saved.nodes.map((node) => node.id));
     const { nodes, ...mapState } = saved;
+    const updatedNodes = nodes.filter((node) => beforeNodes.get(node.id) !== JSON.stringify(node));
     const value = receipt({ requestId, operation, resources, revision: saved.revision ?? 0, diskHash: saved.diskHash, value: {
       ...mapState,
-      updatedNodes: nodes.filter((node) => beforeNodes.get(node.id) !== JSON.stringify(node)),
+      updatedNodes,
       removedNodeIds: map.nodes.filter((node) => !savedIds.has(node.id)).map((node) => node.id),
     } });
-    return okResult(value, { revision: saved.revision, diskHash: saved.diskHash, remote: pendingRemote() });
+    const warnings = operation === "add_mindmap_node" || operation === "patch_mindmap_node"
+      ? mindmapAttentionWarnings(updatedNodes, nodes, { checkDraftCount: operation === "add_mindmap_node" })
+      : undefined;
+    return okResult(value, { revision: saved.revision, diskHash: saved.diskHash, remote: pendingRemote(), ...(warnings ? { warnings } : {}) });
   } catch (error) {
     return mutationFailure(error, map);
   }
@@ -598,9 +604,47 @@ async function executeGetMindmap(args: unknown): Promise<OperationResult<unknown
     const project = projectArg(record);
     const mapId = mapArg(record);
     const map = mapRequired(project, mapId);
+    const currentRevision = map.revision ?? 0;
+    const ifRevision = record.ifRevision === undefined ? undefined : integerArg(record, "ifRevision", false);
+    if (ifRevision !== undefined && ifRevision === currentRevision) {
+      return okResult({
+        project,
+        mapId: map.id || DRAFT_MINDMAP_ID,
+        role: map.role,
+        primary: map.role === "draft" || map.id === DRAFT_MINDMAP_ID,
+        rootId: map.rootId,
+        title: map.title,
+        revision: currentRevision,
+        diskHash: map.diskHash,
+        totalNodes: map.nodes.length,
+        unchanged: true,
+      }, { revision: currentRevision, diskHash: map.diskHash });
+    }
+    const detail = record.detail === "outline" ? "outline" : "full";
+    const nodeIdFilter = Array.isArray(record.nodeIds)
+      ? new Set(record.nodeIds.filter((item): item is string => typeof item === "string" && item.trim().length > 0))
+      : null;
     const offset = Math.max(0, integerArg(record, "offset", false) || 0);
     const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, integerArg(record, "limit", false) || MAX_PAGE_SIZE));
-    const nodes = map.nodes.slice(offset, offset + limit);
+    const filtered = nodeIdFilter ? map.nodes.filter((node) => nodeIdFilter.has(node.id)) : map.nodes;
+    const slice = filtered.slice(offset, offset + limit);
+    const nodes = detail === "outline" && !nodeIdFilter
+      ? slice.map((node) => ({
+        id: node.id,
+        parentId: node.parentId,
+        order: node.order,
+        title: node.title,
+        ...(node.todoId ? { todoId: node.todoId } : {}),
+        ...(node.contentFormat ? { contentFormat: node.contentFormat } : {}),
+        ...(node.tags?.length ? { tags: node.tags } : {}),
+        ...(node.priority ? { priority: node.priority } : {}),
+        ...(node.progress !== undefined ? { progress: node.progress } : {}),
+        ...(node.agentDraft ? { agentDraft: true } : {}),
+        textWords: node.contentFormat === "html" ? undefined : (node.text.trim() ? node.text.trim().split(/\s+/).length : 0),
+        noteChars: (node.caption?.length || 0) + (node.caution ? Object.values(node.caution).join("").length : 0),
+        refCount: node.refs?.length || 0,
+      }))
+      : slice;
     return okResult({
       project,
       mapId: map.id || DRAFT_MINDMAP_ID,
@@ -608,14 +652,15 @@ async function executeGetMindmap(args: unknown): Promise<OperationResult<unknown
       primary: map.role === "draft" || map.id === DRAFT_MINDMAP_ID,
       rootId: map.rootId,
       title: map.title,
-      revision: map.revision ?? 0,
+      revision: currentRevision,
       diskHash: map.diskHash,
+      detail: nodeIdFilter ? "full" : detail,
       offset,
       limit,
       totalNodes: map.nodes.length,
-      hasMore: offset + nodes.length < map.nodes.length,
+      hasMore: offset + nodes.length < filtered.length,
       nodes,
-    }, { revision: map.revision, diskHash: map.diskHash });
+    }, { revision: currentRevision, diskHash: map.diskHash });
   } catch (error) { return caught(error); }
 }
 
@@ -695,7 +740,7 @@ async function executePatchMindmapNode(args: unknown, context: McpCommandContext
         if (record.priority !== null && !["P0", "P1", "P2", "P3"].includes(String(record.priority))) throw new McpCommandError("invalid_arguments", "priority must be P0–P3 or null.", false);
         patch.priority = record.priority || undefined;
       }
-      if (current.todoId && (patch.title !== undefined || patch.text !== undefined)) throw new McpCommandError("invalid_arguments", "Edit this TODO in the manuscript with read_project_files and apply_project_edits.", false);
+      if (current.todoId && (patch.title !== undefined || patch.text !== undefined)) throw new McpCommandError("invalid_arguments", "TODO title and text are TeX-owned. Edit them in the manuscript with read_project_files and apply_project_edits.", false);
       if (!Object.keys(patch).length) throw new McpCommandError("invalid_arguments", "Provide at least one card field.", false);
       const htmlError = htmlCardValidationError({ ...current, ...patch } as MindmapNode);
       if (htmlError) return failResult("invalid_arguments", htmlError, false);
@@ -728,7 +773,22 @@ async function executeAddMindmapNode(args: unknown, context: McpCommandContext):
       const htmlError = htmlCardValidationError({ text: typeof record.text === "string" ? record.text : "", contentFormat: presentation?.value?.contentFormat });
       if (htmlError) return failResult("invalid_arguments", htmlError, false);
       const appearance = presentation?.value ? { ...presentation.value, cardWidth: presentation.value.cardWidth ?? undefined, progress: presentation.value.progress ?? undefined } : undefined;
-      const next = applyMindmapAction(map, { type: "add-node", agentDraft: true, id, parentId: parentId!, title: typeof record.title === "string" ? record.title : appearance?.contentFormat === "html" ? "" : undefined, text: typeof record.text === "string" ? record.text : "", caption: typeof record.caption === "string" ? record.caption : undefined, caution: caution?.ok ? caution.value : undefined, presentation: appearance }).mindmap;
+      let next = applyMindmapAction(map, { type: "add-node", agentDraft: true, id, parentId: parentId!, title: typeof record.title === "string" ? record.title : appearance?.contentFormat === "html" ? "" : undefined, text: typeof record.text === "string" ? record.text : "", caption: typeof record.caption === "string" ? record.caption : undefined, caution: caution?.ok ? caution.value : undefined, presentation: appearance }).mindmap;
+      const extraPatch: Record<string, unknown> = {};
+      if (record.refs !== undefined) {
+        const refs = artifactRefSchema.array().safeParse(record.refs);
+        if (!refs.success || refs.data.filter(ref => ref.kind === "figure").length > 1) return failResult("invalid_arguments", "Use valid references with one image per card and imageWidth from 25 to 100. Add child cards for additional images.", false);
+        extraPatch.refs = refs.data;
+      }
+      if (record.labels !== undefined) extraPatch.tags = MINDMAP_LABELS_INPUT.parse(record.labels);
+      if (record.metadata !== undefined) extraPatch.metadata = record.metadata === null ? undefined : record.metadata;
+      if (record.priority !== undefined) {
+        if (record.priority !== null && !["P0", "P1", "P2", "P3"].includes(String(record.priority))) throw new McpCommandError("invalid_arguments", "priority must be P0–P3 or null.", false);
+        extraPatch.priority = record.priority || undefined;
+      }
+      if (Object.keys(extraPatch).length) {
+        next = applyMindmapAction(next, { type: "patch-node", id, patch: extraPatch as never }).mindmap;
+      }
       const result = await writeMap(project, map, next, requestId, "add_mindmap_node", [{ kind: "mindmap-node", id, mapId }], [{ field: "added", after: id }]);
       return result;
     });
@@ -1083,7 +1143,12 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
   tool("get_activity", "Read activity", "Read durable authored operation history after applying the selected day filter and before pagination.", executeActivity, { readOnlyHint: true }),
   tool("read_project_files", "Read project files", "List directories or read authored project files with exact byte SHA256 and bounded UTF-8/base64 content. Paths are relative to the project root. OpenBar managed state and Git metadata are protected.", executeReadProjectFiles, { readOnlyHint: true }),
   tool("apply_project_edits", "Apply project file edits", "Atomically create, replace, or delete authored project files using exact prior hashes. Batch a destination create and source delete to move a file. dryRun previews the complete batch. OpenBar managed state and Git metadata are protected.", executeProjectFileEdits, { destructiveHint: true }),
-  tool("apply_mindmap_edits", "Edit managed mindmap state", `Apply one revision-checked map operation. edit.operation: add, patch, move, preview-batch, apply-batch, place-todo, link-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, activity-window. args: add {parentId,title?,text?,caption?,caution?,presentation?,id?}, patch {id,title?,text?,caption?,caution?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, batch {selectedIds,changes?,deleteMode?,move?,previewToken?}, place-todo {todoId,parentId}, link-todo {id,todoId}, convert-to-todo {id,sectionId?,expectedBundleHash} creates a paper TODO and binds its card atomically. Read paper.sourceHash and the current section id from get_project_state. HTML visual cards stay on the map. Use the browser editor while another writing session is active. rename {title}, font-size {fontSize}, images {id,assetId,label?}, activity-window {days}. Preview batches first and pass their token to apply-batch. deleteMode cards promotes children, branches removes descendants. New cards and agent-authored content changes remain Agent draft until human Save or Delete. Native MCP contributes through revision and disk-hash checks while browser editing access stays with its current owner. TODO text/completion belongs to TeX files. Set presentation.cardWidth to 180–1200 canvas pixels, or null for automatic width. ${MINDMAP_EDIT_GUIDANCE}`, executeManagedMindmapEdit, { destructiveHint: true }),
+  tool("apply_mindmap_edits", "Edit managed mindmap state", `Apply one revision-checked map operation. edit.operation: add, patch, move, preview-batch, apply-batch, place-todo, link-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, activity-window. args: add {parentId,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,id?}, patch {id,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, batch {selectedIds,changes?,deleteMode?,move?,previewToken?}, place-todo {todoId,parentId}, link-todo {id,todoId}, convert-to-todo {id,sectionId?,expectedBundleHash} creates a paper TODO and binds its card atomically (read paper.sourceHash from get_project_state; HTML visual cards stay on the map), rename {title}, font-size {fontSize}, images {id,assetId,label?}, activity-window {days}. labels are stored as tags on read. refs[]: {kind: file|paper-section|paper-todo|paper-comment|wiki-page|mindmap-node|figure|web|external, id, label?, relation?, url?, mapId?}. presentation: {shape?:leaf|callout, contentFormat?:plain|markdown|tex|html, tableLayout?:wide|scroll, color?, progress?:0..6|"ditched"|null, cardWidth?:180..1200|null (leave unset for prose; wide tables/figures only)}. Preview batches first and pass previewToken to apply-batch. deleteMode cards promotes children, branches removes descendants. New cards and agent-authored content changes remain Agent draft until human Save or Delete. TODO text/completion belongs to TeX files. ${MINDMAP_EDIT_GUIDANCE} ${MINDMAP_CARD_SHORT_REMINDER}`, executeManagedMindmapEdit, { destructiveHint: true }),
+  tool("celebrate", "Queue a celebration animation", "Queue a non-blocking celebration animation (full-screen or bursting from a specific mindmap card) with a short reason shown the next time the human focuses OpenBar. Use sparingly for genuine milestones (passing evals, beating baselines, clean paper compile, finishing a major branch).", async (raw) => {
+    const args = MCP_INPUTS.celebrate.parse(raw);
+    const event = queueCelebration(projectContentDir(projectArg(args)), args);
+    return okResult(event);
+  }, { destructiveHint: false, idempotentHint: false }),
 ];
 
 const REGISTRY_BY_NAME = new Map(MCP_TOOL_REGISTRY.map((entry) => [entry.name, entry]));

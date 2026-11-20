@@ -29,7 +29,7 @@ export function useGitAutoSync(options: Options) {
     let timer: ReturnType<typeof setTimeout> | undefined
     const visible = () => document.visibilityState === "visible"
     const reviewing = () => Boolean(document.querySelector("[data-ob-modal]"))
-    const schedule = (delay = Math.min(60_000, 5_000 * 2 ** failures)) => {
+    const schedule = (delay = Math.min(120_000, 30_000 * 2 ** failures)) => {
       if (timer) clearTimeout(timer)
       if (!stopped && visible()) timer = setTimeout(() => void tick(), delay)
     }

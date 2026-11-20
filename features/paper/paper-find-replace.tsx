@@ -168,9 +168,9 @@ export function PaperFindReplace({
         <span>Search in</span>
         <select aria-label="Search in" value={scope} onChange={event => { setScope(event.target.value); resetMatch(); }}>
           <option value="">All manuscript files ({files.length})</option>
-          {scope && !scopedFile && <option value={scope}>{scope} · unavailable</option>}
+          {scope && !scopedFile && <option value={scope}>{scope} (unavailable)</option>}
           {files.map(file => <option key={file.filePath} value={file.filePath}>
-            {file.filePath === openedFile ? `Current file · ${file.filePath}` : file.filePath}
+            {file.filePath === openedFile ? `Current file: ${file.filePath}` : file.filePath}
           </option>)}
         </select>
       </label>
@@ -198,7 +198,7 @@ export function PaperFindReplace({
     <div className={styles.findStatus}>
       <span role="status">
         {message || resultLabel}
-        {where && <> · <code title={where}>{where}</code></>}
+        {where && <> — <code title={where}>{where}</code></>}
       </span>
       {undoAvailable && <button type="button" className={button} onClick={() => {
         if (!onEdit(undo.after, undo.before)) return;

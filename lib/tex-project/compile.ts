@@ -706,10 +706,12 @@ async function runLatexmk(projectDir: string, target: BuildInputSnapshot, jobId:
   });
   let output = "";
   let killTimer: ReturnType<typeof setTimeout> | undefined;
+  let statusFlushTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastStatusWriteAt = 0;
   let timedOut = false;
-  const onChunk = (chunk: Buffer) => {
-    output += chunk.toString();
-    output = boundedLog(output);
+  const flushRunningStatus = () => {
+    if (statusFlushTimer) { clearTimeout(statusFlushTimer); statusFlushTimer = undefined; }
+    lastStatusWriteAt = Date.now();
     persistStatus(projectDir, {
       state: "running",
       ...context,
@@ -718,9 +720,20 @@ async function runLatexmk(projectDir: string, target: BuildInputSnapshot, jobId:
       lastLines: tail(output, 5),
     });
   };
+  const onChunk = (chunk: Buffer) => {
+    output += chunk.toString();
+    output = boundedLog(output);
+    const elapsed = Date.now() - lastStatusWriteAt;
+    if (elapsed >= 500) {
+      flushRunningStatus();
+    } else if (!statusFlushTimer) {
+      statusFlushTimer = setTimeout(flushRunningStatus, 500 - elapsed);
+    }
+  };
   child.all!.on("data", onChunk);
   const timeout = setTimeout(() => {
     timedOut = true;
+    if (statusFlushTimer) { clearTimeout(statusFlushTimer); statusFlushTimer = undefined; }
     persistStatus(projectDir, {
       state: "running",
       ...context,
@@ -734,6 +747,7 @@ async function runLatexmk(projectDir: string, target: BuildInputSnapshot, jobId:
   }, 300_000);
   const result = await child;
   clearTimeout(timeout);
+  if (statusFlushTimer) clearTimeout(statusFlushTimer);
   if (killTimer) clearTimeout(killTimer);
   if (timedOut) killCompiler(child, "SIGKILL");
   const finish = (status: PaperCompileStatus) => {

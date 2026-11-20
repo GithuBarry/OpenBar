@@ -1,3 +1,5 @@
+import type { MindmapNode } from "@/lib/types";
+import type { OperationDiagnostic } from "./operation-result";
 import { INBOX_GUIDANCE } from "./agent-inbox-contract";
 import { MAX_HTML_CARD_LENGTH } from "@/lib/mindmap/html-card";
 
@@ -29,15 +31,64 @@ An empty cell keeps an evidence gap open. [PENDING] identifies planned work awai
 
 Sentence placeholder example: "On [DATASET], [METHOD] achieves [RESULT PENDING], measured by [METRIC]."`;
 
-export const MINDMAP_CARD_GUIDANCE = `${PROJECT_DELIVERY_GUIDANCE} ${HTML_CARD_GUIDANCE} Prefer concise visible card titles and bodies. Write replies as ordinary cards with a short subject title and direct answer text when useful. Keep useful existing card wording. Aim for 80 words or fewer of visible card prose. Use caption, the existing collapsed Notes section, for reasoning, why an answer holds, methods, context, and supporting detail. Keep each research fact in one useful card. Extend an existing relevant card with new detail about the same fact. Use child cards for distinct subtopics or independently useful results. Prefer Agent draft cards for new answers, explanations, and supporting material. For manuscript work, read the saved paper TODOs and current map first. Use link-todo {id,todoId} to connect an existing card to its canonical paper TODO. Use place-todo {todoId,parentId} to place an unplaced TODO as a child. Repeat placement returns the existing card and its current parent. Use move to relocate it. Read back the card and TODO IDs after saving. Keep card prose focused on the subject. Let hierarchy, labels, and disclosures communicate organization. Add navigation directions only when they help locate a specific item the reader needs. Keep key findings, consequential risks, and factual uncertainty visible. Card length is a flexible preference, and longer cards are welcome when useful. Apply this quietly. Offer card-length advice only when the user asks.`;
+export const MINDMAP_CARD_SHORT_REMINDER = `Keep visible card titles short (<=10 words) and bodies concise (<=80 words, a compact comparison table, or a readable inline HTML/SVG visual). Put reasoning, derivations, run configs, caveats, and long context in caption (collapsed Notes). Attach provenance links via refs[] instead of pasting raw paths/URLs into prose. For Markdown tables set presentation.contentFormat="markdown". Mark abandoned ideas or failed runs with presentation.progress="ditched" and record why in caption.`;
+
+export const MINDMAP_CARD_GUIDANCE = `${PROJECT_DELIVERY_GUIDANCE} ${HTML_CARD_GUIDANCE}
+
+Card attention budget: Keep visible card titles short (<=10 words) and visible body prose <=80 words (1–3 crisp sentences, a compact comparison table, or a readable inline HTML/SVG visual). Put reasoning, why an answer holds, methods, run configs, caveats, and supporting detail in caption (the collapsed Notes section). Keep each research fact in one useful card: extend an existing relevant card rather than duplicating, and use child cards for distinct subtopics or independently useful results. Attach provenance via refs[] (paper-section, paper-comment, figure, wiki-page, file, web) instead of pasting raw paths or URLs into prose. For manuscript work, read the saved paper TODOs and current map first: use link-todo {id,todoId} to connect an existing card to its canonical paper TODO, place-todo {todoId,parentId} to place an unplaced TODO as a child (repeat placement returns the existing card), move to relocate it, and verify saved IDs. Mark failed ablations or abandoned ideas with presentation.progress="ditched" and note why in caption instead of silently deleting them. Prefer Agent draft cards for new answers, explanations, and supporting material. Keep key findings, consequential risks, and factual uncertainty visible. Apply this quietly without lecturing the user about card length.`;
 
 export const MINDMAP_WRITING_SKILL_ID = "mindmap-writing";
 export const MINDMAP_WRITING_REFERENCE = `For card writing, comparison tables, and HTML/SVG examples, use read_project_skill with source "openbar" and id "${MINDMAP_WRITING_SKILL_ID}".`;
 
-export const MINDMAP_EDIT_GUIDANCE = `Choose link-todo to bind an existing card or place-todo to place a task under a parent. Repeat placement returns its current card. Use move to relocate it. Verify the saved card and TODO IDs. For pipe tables use Markdown. ${MINDMAP_WRITING_REFERENCE}`;
+export const MINDMAP_EDIT_GUIDANCE = `Choose link-todo to bind an existing card or place-todo to place a task under a parent. Repeat placement returns its current card. Use move to relocate it. Verify the saved card and TODO IDs. ${MINDMAP_WRITING_REFERENCE}`;
 
 export const AGENT_GUIDANCE = `${INBOX_GUIDANCE}
 
-get_project_state includes project context, human decisions, shared user instructions and available skills. Use read_project_files and apply_project_edits with current hashes for authored files. Use get_mindmap and apply_mindmap_edits with the current revision for managed cards. Keep visible prose concise (about 80 words), use Agent draft children for distinct contributions, and put supporting detail in caption (collapsed Notes). Preserve human-removed cards as project decisions and ask before recreating similar content unless the current request calls for it. ${MINDMAP_WRITING_REFERENCE}
+get_project_state includes project context, humanDecisions, shared user instructions, and available skills. Use read_project_files and apply_project_edits with current hashes for authored files. Use get_mindmap (pass detail="outline", nodeIds, or ifRevision to avoid re-reading unchanged cards) and apply_mindmap_edits with the current revision for managed cards. Keep visible prose concise (<=80 words), use Agent draft children for distinct contributions, put supporting detail in caption (collapsed Notes), attach provenance in refs[], and mark failed/abandoned work progress="ditched". Preserve human-removed cards as project decisions and ask before recreating similar content unless the current request calls for it. ${MINDMAP_WRITING_REFERENCE}
 
 In the browser, get_editing_session shows writing access before a handoff. Resume edit transfers access at the human's request. release_edit yields it after local work is saved. Native MCP can contribute through revision checks. Make the smallest requested change, preserve other work, and report changed locations. Browser requests also appear in openbar-agent-requests metadata. Connection setup is at /agents.`;
+
+const MAX_VISIBLE_CARD_WORDS = 80;
+const UNREVIEWED_DRAFT_WARNING_THRESHOLD = 10;
+
+function countWords(text: string): number {
+  const trimmed = text.trim();
+  return trimmed ? trimmed.split(/\s+/).length : 0;
+}
+
+function looksLikeMarkdownTable(text: string): boolean {
+  return /^\s*\|.+\|\s*$/m.test(text) && /^\s*\|[\s:|-]+\|\s*$/m.test(text);
+}
+
+/** Non-blocking attention warnings returned to agents after mindmap writes. */
+export function mindmapAttentionWarnings(
+  updatedNodes: Array<Pick<MindmapNode, "id" | "todoId" | "title" | "text" | "agentDraft" | "contentFormat">>,
+  allNodes: Array<Pick<MindmapNode, "agentDraft">>,
+  options: { checkDraftCount?: boolean } = {},
+): OperationDiagnostic[] | undefined {
+  const warnings: OperationDiagnostic[] = [];
+  for (const node of updatedNodes) {
+    if (node.todoId || node.contentFormat === "html") continue;
+    const body = node.text || "";
+    if (!body.trim() || looksLikeMarkdownTable(body)) continue;
+    const words = countWords(body);
+    if (words > MAX_VISIBLE_CARD_WORDS) {
+      warnings.push({
+        severity: "warning",
+        code: "verbose_card_body",
+        message: `Card "${node.title || node.id}" has ${words} visible words (budget: <=${MAX_VISIBLE_CARD_WORDS}). Move supporting reasoning, methods, or configs into caption (collapsed Notes) or split into child cards.`,
+      });
+    }
+  }
+  if (options.checkDraftCount) {
+    const unreviewedDrafts = allNodes.filter((node) => node.agentDraft).length;
+    if (unreviewedDrafts >= UNREVIEWED_DRAFT_WARNING_THRESHOLD) {
+      warnings.push({
+        severity: "warning",
+        code: "unreviewed_agent_drafts",
+        message: `${unreviewedDrafts} Agent draft cards await human review on this map. Prefer extending or consolidating existing cards before adding more.`,
+      });
+    }
+  }
+  return warnings.length ? warnings : undefined;
+}

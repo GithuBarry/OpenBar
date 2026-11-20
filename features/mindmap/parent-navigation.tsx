@@ -29,11 +29,13 @@ export function ParentNavigation({ cardTitle, item, onJump }: {
           onClick={() => { setOpen(false); onJump(item.id); }} />
       </Tooltip.Trigger>
       <Tooltip.Portal>
-        <Tooltip.Content className={previewStyles.preview} side="left" sideOffset={10} align="center" collisionPadding={12}
+        <Tooltip.Content className={previewStyles.previewWrap} side="left" sideOffset={10} align="center" collisionPadding={12}
           onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
-          <strong><RichText text={item.title || (item.format === "html" ? "HTML card" : "Untitled card")} format={item.format === "html" ? "plain" : item.format} /></strong>
-          {item.body.trim() && <div className={previewStyles.body}><RichText text={item.body} format={item.format} /></div>}
-          <span className={previewStyles.hint}>Enter to jump to parent</span>
+          <div className={previewStyles.preview}>
+            <strong><RichText text={item.title || (item.format === "html" ? "HTML card" : "Untitled card")} format={item.format === "html" ? "plain" : item.format} /></strong>
+            {item.body.trim() && <div className={previewStyles.body}><RichText text={item.body} format={item.format} /></div>}
+          </div>
+          <span className={previewStyles.hint}>Click or Enter to jump to parent</span>
         </Tooltip.Content>
       </Tooltip.Portal>
     </Tooltip.Root>

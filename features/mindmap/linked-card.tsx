@@ -65,11 +65,13 @@ export function CardDestinationLink({ href, children, className = "", sourceId, 
   if (!destination) return anchor;
   return <Tooltip.Root open={open} onOpenChange={setOpen} delayDuration={100}>
     <Tooltip.Trigger asChild>{anchor}</Tooltip.Trigger>
-    <Tooltip.Portal><Tooltip.Content className={previewStyles.preview} side="top" sideOffset={8} collisionPadding={12}>
-      <Navigation.Provider value={null}>
-        <strong><RichText text={destination.title || "Untitled card"} format={destination.format === "html" ? "plain" : destination.format} /></strong>
-        {destination.body.trim() && <div className={previewStyles.body}><RichText text={destination.body} format={destination.format} /></div>}
-      </Navigation.Provider>
+    <Tooltip.Portal><Tooltip.Content className={previewStyles.previewWrap} side="top" sideOffset={8} collisionPadding={12}>
+      <div className={previewStyles.preview}>
+        <Navigation.Provider value={null}>
+          <strong><RichText text={destination.title || "Untitled card"} format={destination.format === "html" ? "plain" : destination.format} /></strong>
+          {destination.body.trim() && <div className={previewStyles.body}><RichText text={destination.body} format={destination.format} /></div>}
+        </Navigation.Provider>
+      </div>
     </Tooltip.Content></Tooltip.Portal>
   </Tooltip.Root>;
 }

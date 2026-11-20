@@ -54,11 +54,13 @@ export function ChildNavigation({ parentTitle, items, height, onJump }: {
           onClick={() => { setActiveId(null); onJump(item.id); }} />
       </Tooltip.Trigger>
       <Tooltip.Portal>
-        <Tooltip.Content className={styles.preview} side="right" sideOffset={10} align="start" collisionPadding={12}
+        <Tooltip.Content className={styles.previewWrap} side="right" sideOffset={10} align="start" collisionPadding={12}
           onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
-          <strong><RichText text={item.title || (item.format === "html" ? "HTML card" : "Untitled card")} format={item.format === "html" ? "plain" : item.format} /></strong>
-          {item.body.trim() && <div className={styles.body}><RichText text={item.body} format={item.format} /></div>}
-          <span className={styles.hint}>↑ ↓ preview · Enter to jump</span>
+          <div className={styles.preview}>
+            <strong><RichText text={item.title || (item.format === "html" ? "HTML card" : "Untitled card")} format={item.format === "html" ? "plain" : item.format} /></strong>
+            {item.body.trim() && <div className={styles.body}><RichText text={item.body} format={item.format} /></div>}
+          </div>
+          <span className={styles.hint}>Click to jump, ↑ ↓ to explore</span>
         </Tooltip.Content>
       </Tooltip.Portal>
     </Tooltip.Root>)}

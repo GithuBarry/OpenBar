@@ -6,15 +6,17 @@
   margin: 2px 0 0;
   padding: 8px;
   border: 1px solid rgb(var(--line));
-  border-radius: 9px;
+  border-radius: var(--radius-control);
   color: rgb(var(--muted));
   font-size: 12px;
 }
 .modes { display: flex; flex-wrap: wrap; gap: 2px; }
-.modes button, .submit { border-radius: 6px; padding: 5px 8px; }
-.modes button[aria-pressed="true"] { background: rgb(var(--surface-2)); color: rgb(var(--ink)); }
+.modes button, .submit { border-radius: 999px; padding: 5px 10px; cursor: pointer; }
+.modes button:hover { background: rgb(var(--surface-2)); color: rgb(var(--ink)); }
+.modes button[aria-pressed="true"] { background: var(--surface-selected); color: rgb(var(--ink)); }
+.modes button:focus-visible, .submit:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }
 .panel label { display: grid; gap: 3px; }
-.panel select { width: 100%; min-width: 0; padding: 5px; border: 1px solid rgb(var(--line)); border-radius: 6px; background: rgb(var(--surface)); }
+.panel select { width: 100%; min-width: 0; padding: 5px 8px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-control); background: rgb(var(--surface)); }
 .panel p { margin: 0; overflow-wrap: anywhere; }
 .context { font-size: 11px; }
 .excerpt { max-height: 5lh; overflow: auto; white-space: pre-wrap; color: rgb(var(--ink)); }

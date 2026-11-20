@@ -11,6 +11,7 @@ import {
   type ProjectWriteSessionCredential,
 } from "@/lib/research/project-write-session";
 import { withProjectWriteLockAsync } from "@/lib/research/project-lock";
+import { isViewOnlyMode } from "./view-only";
 
 export function projectWriteSessionCredentialFromHeaders(
   input: Pick<Headers, "get">,
@@ -36,6 +37,7 @@ export async function withBrowserProjectWriteSession<T>(
   operation: () => Promise<T> | T,
   request?: Request,
 ): Promise<T> {
+  if (isViewOnlyMode()) throw new ProjectWriteSessionError("write_session_required", "This OpenBar link provides view-only access.", 403)
   const requestHeaders = request?.headers ?? await headers();
   const credential = projectWriteSessionCredentialFromHeaders(requestHeaders);
   await withProjectWriteLockAsync(projectPath, () => assertProjectWriteSession(projectPath, credential));

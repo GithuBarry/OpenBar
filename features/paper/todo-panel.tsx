@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { ChoiceButtons } from "@/components/choice-buttons";
 import { Select } from "@/components/select";
 import { AnchoredPop } from "@/components/pop";
 import { RichText } from "@/components/rich-text";
 import { ArrowUpRight, MoreHorizontal, Pencil, Plus, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import type { EditorTodo } from "@/features/paper/tex-source";
+import type { EditorComment, EditorMarker, EditorTodo } from "@/features/paper/tex-source";
 import { composeObtodo, generateTodoId, type TodoAttrPatch } from "@/lib/todo-meta";
 import { cn } from "@/lib/utils";
 import paperStyles from "./paper-outline-rail.module.css";
@@ -16,7 +17,7 @@ import { TexCodeMirror } from "./tex-codemirror";
 
 export type PlacementTarget = { id: string; label: string; todoId?: string };
 
-type TodoFilter = "open" | "completed";
+type TodoFilter = "open" | "completed" | "notes";
 export type TodoUndoSnapshot = {
   tex: string;
   before: string;
@@ -32,9 +33,12 @@ type UndoAction =
 
 export function TodoPanel({
   todos,
+  comments = [],
+  markers = [],
   placementTargets = [],
   mapHref,
   onJump,
+  onJumpOffset,
   onResolve,
   onPatch,
   onInsert,
@@ -44,9 +48,12 @@ export function TodoPanel({
   onRestore,
 }: {
   todos: EditorTodo[];
+  comments?: EditorComment[];
+  markers?: EditorMarker[];
   placementTargets?: PlacementTarget[];
   mapHref: string;
   onJump: (todo: EditorTodo) => void;
+  onJumpOffset?: (from: number, to: number) => void;
   onResolve: (todo: EditorTodo) => Promise<boolean>;
   onPatch: (todo: EditorTodo, patch: TodoAttrPatch) => Promise<boolean>;
   onInsert: (tex: string) => void;
@@ -82,6 +89,31 @@ export function TodoPanel({
   }, [needle, todos]);
   const visible = searched.filter((todo) => (filter === "completed" ? todo.completed : !todo.completed));
   const openCount = todos.filter((todo) => !todo.completed).length;
+  const notesCount = comments.length + markers.length;
+  const visibleNotes = useMemo(() => {
+    const items = [
+      ...comments.map((comment) => ({
+        key: `comment:${comment.id || comment.from}`,
+        badge: comment.kind || "comment",
+        isMarker: false,
+        text: comment.text,
+        section: comment.section,
+        from: comment.from,
+        to: comment.to,
+      })),
+      ...markers.map((marker, idx) => ({
+        key: `marker:${marker.from}:${idx}`,
+        badge: `marker:${marker.kind}`,
+        isMarker: true,
+        text: marker.text || marker.kind,
+        section: marker.section,
+        from: marker.from,
+        to: marker.to,
+      })),
+    ].sort((a, b) => a.from - b.from);
+    if (!needle) return items;
+    return items.filter((item) => `${item.badge} ${item.text} ${item.section}`.toLowerCase().includes(needle));
+  }, [comments, markers, needle]);
   const emptyCopy = !todos.length
     ? "No TODOs in this paper."
     : !searched.length
@@ -103,24 +135,16 @@ export function TodoPanel({
             className="p-field input todo-search-input h-7 w-full text-xs"
           />
         </label>
-        <div className="flex rounded-md border border-line p-0.5 text-xs">
-          <button
-            type="button"
-            className={cn("rounded px-2 py-0.5", filter === "open" ? "bg-accent/15 text-ink ring-1 ring-inset ring-accent/40" : "text-muted")}
-            aria-pressed={filter === "open"}
-            onClick={() => setFilter("open")}
-          >
-            Open {openCount}
-          </button>
-          <button
-            type="button"
-            className={cn("rounded px-2 py-0.5", filter === "completed" ? "bg-accent/15 text-ink ring-1 ring-inset ring-accent/40" : "text-muted")}
-            aria-pressed={filter === "completed"}
-            onClick={() => setFilter("completed")}
-          >
-            Completed
-          </button>
-        </div>
+        <ChoiceButtons
+          label="Open items filter"
+          value={filter}
+          options={[
+            { value: "open", label: `Open ${openCount}` },
+            { value: "completed", label: "Completed" },
+            { value: "notes", label: notesCount > 0 ? `Claims & holes ${notesCount}` : "Claims & holes" },
+          ]}
+          onChange={(value) => setFilter(value as TodoFilter)}
+        />
         <button
           type="button"
           className="ob-press inline-flex h-7 items-center gap-1 rounded-md border border-line px-2 text-xs font-medium text-accent hover:border-accent/50 hover:bg-accent/10 hover:text-ink"
@@ -215,7 +239,31 @@ export function TodoPanel({
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {visible.length === 0 ? (
+        {filter === "notes" ? (
+          visibleNotes.length === 0 ? (
+            <p className="text-xs text-faint">{notesCount === 0 ? "No \\obcomment claims/notes or \\obmarker holes in this paper." : "No matching claims, notes, or markers."}</p>
+          ) : (
+            <ul className="space-y-1">
+              {visibleNotes.map((item) => (
+                <li key={item.key}>
+                  <button
+                    type="button"
+                    onClick={() => onJumpOffset?.(item.from, item.to)}
+                    className="flex w-full items-start justify-between gap-2 rounded-lg border border-line/70 px-2.5 py-1.5 text-left text-xs transition-colors hover:border-accent/40 hover:bg-surface-2"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className={cn("mr-1.5 inline-block rounded px-1.5 py-0.5 font-mono text-[10px] font-medium", item.isMarker ? "bg-warn/15 text-warn" : "bg-accent/15 text-accent")}>
+                        {item.badge}
+                      </span>
+                      <span className="text-ink">{item.text}</span>
+                    </span>
+                    <span className="shrink-0 truncate max-w-[140px] text-[10px] text-faint">{item.section}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )
+        ) : visible.length === 0 ? (
           <p className="text-xs text-faint">{emptyCopy}</p>
         ) : (
           <ul className="space-y-1">

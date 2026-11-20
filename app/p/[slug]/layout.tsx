@@ -9,6 +9,7 @@ import { Sidebar } from "@/components/shell/sidebar";
 import { ProjectAgentShell } from "@/components/shell/project-agent-shell";
 import { getWorkspaceLayout, getWorkspaceSettings } from "@/lib/workspace";
 import { getProjectAgentMentions } from "@/lib/research/project-state";
+import { isViewOnlyMode } from "@/lib/server/view-only";
 
 export const dynamic = "force-dynamic";
 
@@ -26,10 +27,11 @@ export default async function ProjectLayout({
   const projects = getWorkspaceLayout().projects;
   const workspace = getWorkspaceSettings();
   const publicDemo = isPublicDemoMode();
+  const viewOnly = isViewOnlyMode()
 
   return (
-    <ProjectAgentShell project={slug} publicDemo={publicDemo} wishlistAvailable={platformWishlistAvailable()}>
-      <meta name="openbar-agent-requests" content={JSON.stringify(getProjectAgentMentions(slug))} />
+    <ProjectAgentShell project={slug} publicDemo={publicDemo} viewOnly={viewOnly} wishlistAvailable={platformWishlistAvailable()}>
+      {!viewOnly && <meta name="openbar-agent-requests" content={JSON.stringify(getProjectAgentMentions(slug))} />}
       <div className="flex h-screen overflow-hidden">
         <Sidebar
           projects={projects}
@@ -37,9 +39,10 @@ export default async function ProjectLayout({
           workspaceName={workspace.name}
           workspaceTagline={workspace.tagline}
           publicDemo={publicDemo}
+          viewOnly={viewOnly}
         />
         <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 overflow-y-auto bg-canvas">
-          {workspaceInstructionsAvailable() && (
+          {!viewOnly && workspaceInstructionsAvailable() && (
             <link rel="help" title="Project agent instructions" href={`/p/${encodeURIComponent(slug)}/instructions`} />
           )}
           {children}

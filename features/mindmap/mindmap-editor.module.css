@@ -1,6 +1,6 @@
 .editor { --mindmap-dock-height: 46px; --mindmap-resume-height: var(--mindmap-dock-height); --mindmap-zoom-size: 34px; --mindmap-dock-bottom: 10px; --mindmap-controls-bottom: calc(var(--mindmap-dock-height) + 16px); --mindmap-bottom-clearance: calc(var(--mindmap-dock-bottom) + var(--mindmap-dock-height) + 8px); --mindmap-notice-height: 36px; --mindmap-panel-top: var(--mindmap-controls-bottom); --overleaf-notice-top: var(--mindmap-controls-bottom); position: relative; height: 100%; min-height: 0; overflow: hidden; background: rgb(var(--canvas)); container-type: size; }
 .editor:has(> .noticeRow:not([hidden])) { --mindmap-panel-top: calc(var(--mindmap-controls-bottom) + var(--mindmap-notice-height) + 8px); }
-.inspector { backdrop-filter: blur(16px) saturate(1.25); corner-shape: squircle; position: absolute; top: var(--mindmap-panel-top); right: 8px; z-index: 26; display: flex; min-height: 0; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; background: rgb(var(--surface) / .88); color: rgb(var(--ink)); padding: 0; font-family: var(--font-sans); width: 304px; max-height: calc(100% - var(--mindmap-panel-top) - var(--mindmap-panel-bottom-clearance, var(--mindmap-bottom-clearance))); border: 1px solid rgb(var(--line) / .75); border-radius: 24px; margin: 0; box-shadow: var(--shadow-pop), inset 0 1px 0 rgb(255 255 255 / .2); }
+.inspector { backdrop-filter: blur(16px) saturate(1.25); position: absolute; top: var(--mindmap-panel-top); right: 8px; z-index: 26; display: flex; min-height: 0; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; background: rgb(var(--surface) / .88); color: rgb(var(--ink)); padding: 0; font-family: var(--font-sans); width: 304px; max-height: calc(100% - var(--mindmap-panel-top) - var(--mindmap-panel-bottom-clearance, var(--mindmap-bottom-clearance))); border: 1px solid rgb(var(--line) / .75); border-radius: var(--radius-glass); margin: 0; box-shadow: var(--shadow-pop), inset 0 1px 0 rgb(255 255 255 / .2); }
 .inspector > * { flex-shrink: 0; }
 .inspector:focus { outline: none; }
 .inspectorHandle { position: fixed; right: 0; top: 50%; z-index: 26; display: inline-flex; align-items: center; gap: 5px; min-width: 38px; height: 48px; padding: 0 9px; transform: translateY(-50%); border: 1px solid rgb(var(--line)); border-right: 0; border-radius: 10px 0 0 10px; background: var(--surface-floating); color: rgb(var(--accent-text)); box-shadow: var(--shadow-float); cursor: pointer; }
@@ -12,7 +12,8 @@
 
 .inspector :global(.btn-outline) { font-size: 0.75rem; padding: 0.4rem 0.6rem; }
 .inspector :global(.mindmap-field > span) ,
-.inspector :global(.mindmap-field-heading > span) { letter-spacing: 0; text-transform: none; margin-bottom: 0.4rem; }
+.inspector :global(.mindmap-field-heading > span),
+.inspector :global(.mindmap-field-label) { letter-spacing: 0; text-transform: none; margin-bottom: 0.4rem; font-size: 11px; font-weight: 500; }
 .inspector :global(.mindmap-field small) { line-height: 1.5; }
 .inspector :global(input) ,
 .inspector :global(select) ,
@@ -28,13 +29,14 @@
 .inspectorGroup :global(.mindmap-card-menu-fields) { border: 0; padding: 10px 14px; }
 .inspectorGroup :global(.mindmap-card-menu-section-body) { gap: 10px; }
 .inspectorGroup :global(.mindmap-field) { display: grid; grid-template-columns: 54px minmax(0, 1fr); align-items: center; gap: 6px 8px; }
-.inspectorGroup :global(.mindmap-field > :first-child) { grid-column: 1; align-self: start; margin: 7px 0 0; font-size: 11px; }
+.inspectorGroup :global(.mindmap-field > :first-child) { grid-column: 1; align-self: center; margin: 0; font-size: 11px; line-height: 1.3; }
+.inspectorGroup :global(.mindmap-field:has(.mindmap-chip-list) > :first-child) { align-self: start; margin-top: 7px; }
 .inspectorGroup :global(.mindmap-field > :not(:first-child)) { grid-column: 2; min-width: 0; }
 .inspector .inspectorGroup :global(.mindmap-field input) { width: 100%; min-height: 30px; font-size: 11px; }
 .inspectorGroup :global(.mindmap-chip-list) { margin: 0; }
 .inspectorGroup .progressField { display: block; }
 .inspectorGroup .progressField > span:first-child { display: block; margin: 0 0 6px; }
-.inspectorGroup :global(.mindmap-color-palette) { margin-bottom: 0; gap: 4px; }
+.inspectorGroup :global(.mindmap-color-palette) { margin-bottom: 0; gap: 7px; }
 .inspectorGroup :global(.mindmap-card-assets) { border-top: 0; padding-top: 0; }
 
 .inspectorSection { border-top: 1px solid rgb(var(--line)); }
@@ -64,7 +66,7 @@
 .recoveryNotice > button { display: inline-flex; align-items: center; flex-shrink: 0; gap: 3px; min-height: 26px; padding: 0 6px; border-radius: 5px; color: rgb(var(--accent-text)); font-weight: 600; cursor: pointer; }
 .recoveryNotice > button:hover { background: rgb(var(--accent) / .1); }
 .recoveryNotice > button:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: -2px; }
-.recoveryPanel { z-index: 70; width: min(380px, calc(100vw - 24px)); max-height: min(480px, calc(100dvh - 32px)); overflow-y: auto; overscroll-behavior: contain; padding: 16px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); font-family: var(--font-sans); }
+.recoveryPanel { z-index: 70; width: min(380px, calc(100vw - 24px)); max-height: min(480px, calc(100dvh - 32px)); overflow-y: auto; overscroll-behavior: contain; padding: 16px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-glass); background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); font-family: var(--font-sans); }
 .recoveryPanel > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; line-height: 1.4; }
 .recoveryPanel > header > button { display: grid; place-items: center; flex-shrink: 0; width: 26px; height: 26px; border-radius: 5px; color: rgb(var(--muted)); cursor: pointer; }
 .recoveryPanel > p { margin: 10px 0; font-size: 12px; line-height: 1.55; color: rgb(var(--muted)); overflow-wrap: anywhere; }
@@ -74,15 +76,16 @@
 .resumeDock { pointer-events: auto; position: absolute; z-index: 30; bottom: var(--mindmap-bottom-clearance); left: 50%; width: max-content; max-width: calc(100% - 24px); transform: translateX(-50%); }
 .resumeDock:empty { display: none; }
 .toolbarActions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-.toolbar .iconButton { width: 34px; padding: 0; }
+.toolbar .iconButton { position: relative; width: 34px; padding: 0; }
+.searchFiltered { background: color-mix(in srgb, rgb(var(--accent)) 14%, rgb(var(--surface))); color: rgb(var(--accent-text)); }
 .searchTrigger { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 9px; color: rgb(var(--muted)); font-size: 12px; cursor: pointer; }
 .saveStatus { display: flex; align-items: center; flex-shrink: 0; }
 .saveStatus > button > svg { width: 18px; height: 18px; }
-.searchPanel, .optionsPanel { z-index: 90; border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); font-family: var(--font-sans); width: min(420px, calc(100vw - 24px)); overflow: hidden; }
+.searchPanel, .optionsPanel { z-index: 90; border: 1px solid rgb(var(--line)); border-radius: var(--radius-glass); background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); font-family: var(--font-sans); width: min(420px, calc(100vw - 24px)); overflow: hidden; }
 .searchField { display: flex; align-items: center; gap: 10px; padding: 14px; border-bottom: 1px solid rgb(var(--line)); color: rgb(var(--muted)); }
 .searchField > input { flex: 1; min-width: 0; background: transparent; outline: none; font-size: 13px; color: rgb(var(--ink)); }
 .searchResults { max-height: min(380px, 55vh); overflow-y: auto; padding: 6px; }
-.searchResults > button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 44px; text-align: left; font-size: 12px; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.searchResults > button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 44px; text-align: left; font-size: 12px; padding: 8px 10px; border-radius: var(--radius-control); cursor: pointer; }
 .searchResultContent { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
 .searchResultTitle, .searchResultContext { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .searchResultTitle { line-height: 1.4; }
@@ -97,7 +100,7 @@
 .activityFilter { display: grid; gap: 10px; padding: 10px 0; }
 .optionRow { display: flex; align-items: center; gap: 9px; padding: 10px 0; width: 100%; text-align: left; font-size: 12px; color: rgb(var(--muted)); cursor: pointer; }
 .optionRow:hover { color: rgb(var(--ink)); }
-.shortcutList { padding: 10px; border-radius: 6px; background: rgb(var(--surface-2)); font-size: 12px; color: rgb(var(--muted)); }
+.shortcutList { padding: 10px; border-radius: var(--radius-control); background: rgb(var(--surface-2)); font-size: 12px; color: rgb(var(--muted)); }
 .shortcutList > div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; }
 .shortcutList dd { color: rgb(var(--ink)); }
 .inspectorKickerRow { display: flex; align-items: center; gap: 4px; margin-bottom: 3px; }
@@ -107,27 +110,35 @@
 .inspector :global(.mindmap-card-menu-header) { padding: 14px 14px 10px; align-items: flex-start; }
 .inspector :global(.mindmap-card-menu-title) { font-size: 14px; line-height: 1.45; font-weight: 600; white-space: normal; display: block; }
 .inspector :global(.mindmap-card-menu-kicker) { font-size: 10px; letter-spacing: .02em; margin-bottom: 3px; }
-.inspector :global(.mindmap-card-menu-list) { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 14px 10px; }
-.inspector :global(.mindmap-card-menu-list > .mindmap-card-menu-row) { width: auto; min-height: 30px; gap: 6px; border: 1px solid rgb(var(--line)); }
-.inspector :global(.mindmap-card-menu-list kbd) { margin-left: 4px; }
-.inspector :global(.mindmap-card-menu-row) { min-height: 36px; font-size: 12px; border-radius: 6px; padding-inline: 8px; }
+.inspector :global(.mindmap-card-menu-list) { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 10px; }
+.inspector :global(.mindmap-card-menu-list > .mindmap-card-menu-row) { width: auto; min-height: 32px; gap: 6px; border: 0; border-radius: 999px; background: rgb(var(--surface-2)); color: rgb(var(--ink)); padding: 0 12px; font-size: 12px; font-weight: 500; }
+.inspector :global(.mindmap-card-menu-list > .mindmap-card-menu-row:hover),
+.inspector :global(.mindmap-card-menu-list > .mindmap-card-menu-row:focus-visible) { border-color: transparent; background: rgb(var(--line) / .55); color: rgb(var(--ink)); }
+.inspector :global(.mindmap-card-menu-list kbd) { margin-left: 2px; }
+.inspector :global(.mindmap-card-menu-row) { min-height: 36px; font-size: 12px; border-radius: var(--radius-control); padding-inline: 8px; }
 .inspector :global(.mindmap-card-menu-danger) { border: 0; padding: 4px 0 0; gap: 2px; }
 .inspector :global(.mindmap-card-menu-danger > .mindmap-text-button) { display: flex; align-items: center; min-height: 30px; margin: 0; padding: 4px 0; font-size: 12px; line-height: 20px; }
 @media (pointer: coarse) { .inspector :global(.mindmap-card-menu-danger > .mindmap-text-button) { min-height: 44px; } }
 .inspector :global(.mindmap-field > span), .inspector :global(.mindmap-field-heading > span) { font-size: 12px; color: rgb(var(--muted)); font-weight: 500; }
-.inspector :global(.mindmap-field input), .inspector :global(.mindmap-field select) { min-height: 34px; border-radius: 6px; font-size: 12px; }
-.moveNotice { position: absolute; left: 50%; bottom: var(--mindmap-control-clearance, var(--mindmap-bottom-clearance)); transform: translateX(-50%); z-index: 25; display: flex; align-items: center; gap: 9px; max-width: calc(100% - 32px); padding: 10px 14px; border: 1px solid rgb(var(--line)); border-radius: 9px; background: var(--surface-floating); box-shadow: var(--shadow-float); font-size: 12px; }
+.inspector :global(.mindmap-field input), .inspector :global(.mindmap-field select), .inspector :global(.mindmap-field textarea) { min-height: 34px; border-radius: var(--radius-control); font-size: 12px; }
+.moveNotice { position: absolute; left: 50%; bottom: var(--mindmap-control-clearance, var(--mindmap-bottom-clearance)); transform: translateX(-50%); z-index: 25; display: flex; align-items: center; gap: 9px; max-width: calc(100% - 32px); padding: 8px 14px; border: 1px solid rgb(var(--line)); border-radius: 999px; background: var(--surface-floating); box-shadow: var(--shadow-float); font-size: 12px; }
 .moveNotice > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .moveNotice > button { color: rgb(var(--accent-text)); font-weight: 600; cursor: pointer; }
 .editor :global(.mindmap-viewport) { background: rgb(var(--canvas)); }
-.card { border-radius: 12px; box-shadow: 0 1px 3px rgb(0 0 0 / .035); }
+.card { border-radius: var(--radius-card); box-shadow: 0 1px 3px rgb(0 0 0 / .035); transition: opacity 160ms ease; }
+.card[data-progress="ditched"] { opacity: 0.56; }
+.card[data-progress="ditched"]:hover, .card[data-progress="ditched"]:global(.mindmap-node-selected) { opacity: 0.96; }
+.card[data-filtered-out="true"] { opacity: 0.22; }
+.card[data-filtered-out="true"]:hover, .card[data-filtered-out="true"]:global(.mindmap-node-selected) { opacity: 0.9; }
+.dockDivider { width: 1px; height: 18px; margin-inline: 2px; background: rgb(var(--line) / .75); flex-shrink: 0; }
+.filterDot { position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 999px; background: rgb(var(--accent)); flex-shrink: 0; }
+.filterRow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid rgb(var(--line)); }
 .card:global(.mindmap-node-selected) { border-color: var(--mind-node-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--mind-node-accent) 62%, transparent), 0 5px 16px rgb(0 0 0 / .08); }
 .card:global(.mindmap-node-root) { --mind-card-surface: rgb(var(--surface)); --mind-card-border-left: 1px; border-width: 1px; background: var(--mind-card-surface); }
 .editor :global(.mindmap-save-error) { font-size: 12px; line-height: 1.5; padding: 8px 16px; }
 .toolbar button:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: -2px; }
 @media (max-width: 899px) { .inspector { width: min(304px, calc(100% - 16px)); } }
 @media (min-width: 1024px) { .editor { --mindmap-dock-bottom: 10cqh; } }
-@media (max-width: 1023px) { .editor { --mindmap-dock-height: 56px; --mindmap-resume-height: 56px; } }
 
 .card:global(.mindmap-node-card) { --card-title-size: calc(14px * var(--map-font-scale, 1)); --card-title-line: calc(19px * var(--map-font-scale, 1)); --card-title-weight: 600; --card-body-size: calc(12px * var(--map-font-scale, 1)); --card-body-line: calc(17px * var(--map-font-scale, 1)); padding: 12px 14px; min-height: 45px; }
 .card:global(.mindmap-node-root) { --card-title-size: calc(17px * var(--map-font-scale, 1)); --card-title-line: calc(21px * var(--map-font-scale, 1)); --card-title-weight: 650; }
@@ -143,7 +154,7 @@
 .card :global(.mindmap-inline-editor .cm-line:first-child) { font-size: var(--card-title-size); line-height: var(--card-title-line); font-weight: var(--card-title-weight); }
 .card :global(.mindmap-node-detail), .card :global(.mindmap-inline-editor .cm-content) { font-size: var(--card-body-size); line-height: var(--card-body-line); }
 .card :global(.mindmap-node-detail), .card :global(.mindmap-inline-editor .cm-line:nth-child(2)) { margin-top: 6px; }
-.card .dropPreview { bottom: calc(100% + 12px); right: auto; left: 0; width: max-content; max-width: 300px; padding: 6px 9px; border: 1px solid rgb(var(--accent) / .2); border-radius: 6px; background: var(--surface-floating); box-shadow: var(--shadow-float); font-family: var(--font-sans); font-size: 12px; letter-spacing: 0; }
+.card .dropPreview { bottom: calc(100% + 12px); right: auto; left: 0; width: max-content; max-width: 300px; padding: 6px 9px; border: 1px solid rgb(var(--accent) / .2); border-radius: var(--radius-control); background: var(--surface-floating); box-shadow: var(--shadow-float); font-family: var(--font-sans); font-size: 12px; letter-spacing: 0; }
 .card :global(.mindmap-node-meta:empty) { display: none; }
 .editor :global(.react-flow__node.dragging) .card { opacity: .78; cursor: grabbing; box-shadow: 0 8px 24px rgb(0 0 0 / .12); }
 .syncExplanation { font-size: 12px; line-height: 1.6; color: rgb(var(--muted)); margin-bottom: 8px; }
@@ -152,12 +163,12 @@
 .editor :global(.mindmap-peer-view-heading h2) { font-family: var(--font-sans); font-size: 20px; font-weight: 600; letter-spacing: -.02em; }
 .editor :global(.mindmap-peer-view-heading) { border-bottom: 0; margin-bottom: 22px; }
 .editor :global(.mindmap-unplaced-view > .mindmap-field) { max-width: 58rem; margin: 0 auto 20px; }
-.editor :global(.mindmap-unplaced-item) { padding: 16px; border-radius: 10px; }
+.editor :global(.mindmap-unplaced-item) { padding: 16px; border-radius: var(--radius-control); }
 .unplacedCopy { margin: 6px 0; font-size: 12px; line-height: 1.6; color: rgb(var(--muted)); white-space: pre-wrap; }
 .outlineList, .outlineItem > ul { list-style: none; padding: 0; margin: 0; }
 .outlineList { max-width: 58rem; margin-inline: auto; }
 .outlineItem > ul { margin-left: 20px; border-left: 1px solid rgb(var(--line)); padding-left: 4px; }
-.outlineRow { display: flex; align-items: center; gap: 2px; border-radius: 7px; padding: 3px; margin-block: 2px; }
+.outlineRow { display: flex; align-items: center; gap: 2px; border-radius: var(--radius-control); padding: 3px; margin-block: 2px; }
 .outlineRow:hover { background: rgb(var(--surface)); }
 .outlineRow[data-selected="true"] { background: var(--surface-selected); }
 .outlineToggle { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex-shrink: 0; color: rgb(var(--muted)); cursor: pointer; }
@@ -183,7 +194,7 @@
 .todoMissing { color: rgb(var(--warn-text)); }
 .todoMissing > svg { color: rgb(var(--warn)); }
 .progressChoices { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
-.progressChoices > button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid transparent; border-radius: 6px; color: rgb(var(--ok)); }
+.progressChoices > button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid transparent; border-radius: var(--radius-control); color: rgb(var(--ok)); }
 .progressChoices > button[aria-pressed="true"] { background: var(--surface-selected); border-color: var(--border-selected); color: rgb(var(--ink)); }
 .progressChoices > button:focus-visible { outline: 2px solid rgb(var(--ok)); outline-offset: 1px; }
 .progressChoices > button:disabled { opacity: .5; }
@@ -196,32 +207,38 @@
 .card:has(> .cardProgress) :global(.mindmap-node-title), .card:has(> .cardProgress) :global(.mindmap-inline-editor .cm-line:first-child) { padding-right: 24px; }
 .toolbar > .canvasTools { z-index: 24; display: flex; align-items: center; gap: 4px; overflow: visible; }
 .canvasTools > .canvasToolActions { flex: 0 1 auto; display: flex; align-items: center; align-self: stretch; gap: 4px; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
-.depthControls { display: flex; align-items: center; flex-shrink: 0; border-radius: 12px; }
-.depthControls:is(:hover, :focus-within), .depthControls:has([data-state="open"]) { background: rgb(var(--surface-2)); }
-.depthControls:has([aria-pressed="true"]) { background: var(--surface-selected); box-shadow: inset 0 0 0 1px var(--border-selected); }
-.toolbar .canvasTools .depthControls > :global(button.ob-glass-button.p-button) { --p-button-overlay-hover: 0; --p-button-overlay-pressed: 0; background: transparent; box-shadow: none; }
+.depthControls { display: flex; align-items: center; flex-shrink: 0; border-radius: 999px; transition: background 140ms ease; }
+.depthControls:is(:hover, :focus-within), .depthControls:has([data-state="open"]) { background: rgb(var(--ink) / .08); }
+.depthControls:has([aria-pressed="true"]) { background: var(--surface-selected); }
+.toolbar .canvasTools .depthControls > :global(button.ob-glass-button.p-button) { background: transparent; box-shadow: none; }
+.toolbar .canvasTools .depthControls > :global(button.ob-glass-button.p-button:hover:enabled) { background: transparent; color: rgb(var(--ink)); }
 .depthControls > .depthCollapse { width: 30px; min-width: 30px; padding: 0; justify-content: center; cursor: pointer; }
 .depthControls > .depthCollapse:disabled { opacity: .45; cursor: default; }
 .toolbar .depthSelect:global(.ob-select) { width: 48px; min-width: 48px; gap: 4px; padding-inline: 6px; border: 0; border-radius: var(--p-button-radius); font-size: 12px; }
 .canvasLayout { position: absolute; inset: 0; min-width: 0; min-height: 0; }
 .canvasSurface { position: absolute; inset: 0; min-width: 0; }
-.unplacedTray { position: absolute; top: var(--mindmap-panel-top); bottom: var(--mindmap-panel-bottom-clearance, var(--mindmap-bottom-clearance)); left: 8px; z-index: 20; width: min(244px, calc(100% - 16px)); overflow-y: auto; padding: 12px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-overlay); background: var(--surface-overlay); box-shadow: var(--shadow-float); }
-.canvasTools > .unplacedToggle { position: relative; justify-content: center; gap: 5px; padding-inline: var(--p-button-padding-x); margin-right: 0; overflow: visible; }
-.canvasTools > .unplacedToggle:has(.unplacedBadge) { margin-right: 14px; }
-.unplacedBadge { position: absolute; top: 0; right: 0; display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; margin: 0; padding: 0 5px; border-radius: 999px; background: #d93025; color: #fff; box-shadow: 0 0 0 2px rgb(var(--surface)); font-family: var(--font-sans); font-size: 11px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; transform: translate(50%, -50%); pointer-events: none; }
+.unplacedTray { position: absolute; top: var(--mindmap-panel-top); bottom: var(--mindmap-panel-bottom-clearance, var(--mindmap-bottom-clearance)); left: 8px; z-index: 20; width: min(244px, calc(100% - 16px)); overflow-y: auto; padding: 12px; border: 1px solid rgb(var(--line) / .75); border-radius: var(--radius-glass); background: rgb(var(--surface) / .88); backdrop-filter: blur(16px) saturate(1.25); box-shadow: var(--shadow-pop), inset 0 1px 0 rgb(255 255 255 / .2); }
+.canvasTools > .dockQueueButton { position: relative; justify-content: center; gap: 5px; padding-inline: var(--p-button-padding-x); margin-right: 0; overflow: visible; }
+.canvasTools > .dockQueueButton:has(.unplacedBadge) { margin-right: 10px; }
+.unplacedBadge { position: absolute; top: 0; right: 0; display: inline-flex; align-items: center; justify-content: center; min-width: 19px; height: 19px; margin: 0; padding: 0 3px 0.5px; border-radius: 999px; background: #d93025; color: #fff; box-shadow: 0 0 0 2px rgb(var(--surface)); font-family: var(--font-sans); font-size: 10px; font-weight: 600; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: proportional-nums; vertical-align: middle; transform: translate(45%, -42%); pointer-events: none; }
+.draftBadge { background: rgb(var(--accent)); }
 .unplacedTray header { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.unplacedHeaderTitle { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.unplacedHeaderTitle > span { color: rgb(var(--muted)); font-variant-numeric: tabular-nums; }
+.unplacedClose { display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--radius-control); color: rgb(var(--muted)); cursor: pointer; }
+.unplacedClose:hover { background: rgb(var(--surface-2)); color: rgb(var(--ink)); }
 .unplacedTray p { margin: 8px 0; font-size: 12px; color: rgb(var(--muted)); }
-.unplacedTray input { width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid rgb(var(--line)); border-radius: 6px; background: rgb(var(--surface)); font-size: 12px; }
+.unplacedTray input { width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-control); background: rgb(var(--surface)); font-size: 12px; }
 .unplacedTray ul { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
-.unplacedTray li { padding: 10px; border: 1px solid rgb(var(--line)); border-radius: 8px; background: rgb(var(--surface)); cursor: grab; }
+.unplacedTray li { padding: 10px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-control); background: rgb(var(--surface)); cursor: grab; }
 .unplacedTitle { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; }
 .unplacedTitle button { flex-shrink: 0; touch-action: none; font-size: 20px; line-height: 20px; color: rgb(var(--muted)); cursor: grab; }
 .unplacedTitle strong { flex: 1; }
-.unplacedOpen { display: grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; margin-top: -2px; border-radius: 5px; color: rgb(var(--accent-text)); }
+.unplacedOpen { display: grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; margin-top: -2px; border-radius: var(--radius-control); color: rgb(var(--accent-text)); }
 .unplacedOpen:hover { background: var(--surface-selected); }
 .unplacedOpen:focus-visible { outline: 2px solid rgb(var(--accent)); }
 .unplacedTray [data-place-todo] { padding-top: 6px; color: rgb(var(--accent-text)); font-size: 12px; text-align: left; }
-.todoDragGhost { position: fixed; z-index: 1000; max-width: 220px; padding: 10px 14px; border: 1px solid rgb(var(--accent)); border-radius: 9px; box-shadow: 0 8px 24px rgb(0 0 0 / .15); background: rgb(var(--surface)); font-size: 12px; pointer-events: none; }
+.todoDragGhost { position: fixed; z-index: 1000; max-width: 220px; padding: 10px 14px; border: 1px solid rgb(var(--accent)); border-radius: var(--radius-card); box-shadow: 0 8px 24px rgb(0 0 0 / .15); background: rgb(var(--surface)); font-size: 12px; pointer-events: none; }
 .card[data-todo-drop-target="true"] { outline: 3px solid rgb(var(--accent)); outline-offset: 4px; }
 @container (max-width: 1100px) {
   .searchTrigger { width: 34px; justify-content: center; border-color: transparent; padding: 0; }
@@ -232,12 +249,14 @@
   .fontTools button { width: 34px; padding: 0; }
   .unplacedTray { width: min(300px, calc(100% - 16px)); }
 }
-@container (max-width: 520px) {
-  .canvasTools .unplacedLabel, .primaryButton > span { display: none; }
+@container (max-width: 560px) {
+  .canvasTools .dockQueueLabel, .primaryButton > span, .canvasTools .dockDivider { display: none; }
+  .canvasTools > .dockQueueButton { width: 34px; padding-inline: 0; }
+  .canvasTools > .dockQueueButton:has(.unplacedBadge) { margin-right: 6px; }
   .primaryButton:global(.p-button) { width: 34px; padding-inline: 0; }
 }
 .editToolbar:global(.p-glass-sm) { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 7px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-glass); color: rgb(var(--ink)); max-width: calc(100vw - 60px); }
-.editToolbarButton { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 34px; min-height: 34px; padding: 4px 6px; border-radius: 6px; color: rgb(var(--ink)); font-size: 12px; }
+.editToolbarButton { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 34px; min-height: 34px; padding: 4px 6px; border-radius: var(--radius-control); color: rgb(var(--ink)); font-size: 12px; }
 .editToolbarButton:hover { background: rgb(var(--surface-2)); }
 .editToolbarButton:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; }
 .canvasSurface { overflow: hidden; }
@@ -245,15 +264,21 @@
 .cardPlaceholder { color: rgb(var(--faint)); font-size: 14px; line-height: 20px; }
 .card.agentDraft { --mind-card-surface: rgb(var(--surface)); --mind-card-border-left: 2px; --mind-card-border-right: 1.5px; border: 1.5px dashed rgb(var(--accent) / .72); border-left-width: 2px; background: var(--mind-card-surface); box-shadow: 0 2px 7px rgb(0 0 0 / .10); }
 .card.agentDraft:global(.mindmap-node-selected) { box-shadow: 0 0 0 1px rgb(var(--accent) / .2), 0 0 14px rgb(var(--accent) / .16), 0 3px 10px rgb(0 0 0 / .08); }
-.draftHeading { position: absolute; top: -8px; left: 12px; padding: 0 4px; background: rgb(var(--surface)); color: rgb(var(--accent-text)); font-size: 12px; line-height: 16px; font-weight: 600; }
 .activityBadge { position: absolute; top: -3px; right: 12px; width: 7px; height: 7px; border-radius: 50%; background: rgb(var(--accent)); cursor: help; }
 .unreadReply { position: absolute; top: 9px; right: -4px; width: 7px; height: 7px; border-radius: 50%; background: var(--p-sys-red, #ef4444); box-shadow: 0 0 0 2px rgb(var(--surface)); pointer-events: none; }
 .activityBadge:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 3px; }
-.agentDraft .activityBadge { right: 64px; }
-.draftActions { position: absolute; top: -12px; right: 8px; display: flex; gap: 2px; padding: 1px 3px; border: 1px solid rgb(var(--line)); border-radius: 7px; background: rgb(var(--surface)); box-shadow: 0 1px 4px rgb(0 0 0 / .10); }
-.draftActions button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 5px; color: rgb(var(--muted)); cursor: pointer; }
-.draftActions button:hover { color: rgb(var(--ink)); background: rgb(var(--line) / .6); }
+.agentDraft .activityBadge { right: 94px; }
+.agentDraft > .cardProgress { top: 19px; }
+.draftActions { position: absolute; top: -15px; right: 10px; display: inline-flex; align-items: center; gap: 2px; padding: 2px 3px; border: 1px solid rgb(var(--accent) / .35); border-radius: 999px; background: rgb(var(--surface)); box-shadow: 0 1px 4px rgb(0 0 0 / .10); }
+.draftActions button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 999px; color: rgb(var(--muted)); cursor: pointer; transition: background 140ms ease, color 140ms ease; }
+.draftActions button:hover:enabled { color: rgb(var(--ink)); background: rgb(var(--line) / .55); }
 .draftActions button:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; }
+.draftRevise { position: relative; display: grid !important; place-items: center; color: rgb(var(--accent-text)) !important; }
+.draftRevise:hover:enabled { background: rgb(var(--accent) / .14) !important; color: rgb(var(--accent-text)) !important; }
+.draftSparkle, .draftBubble { grid-area: 1 / 1; display: grid; place-items: center; transition: opacity 140ms ease, transform 140ms ease; }
+.draftBubble { opacity: 0; transform: scale(.78); }
+.draftRevise:hover:enabled .draftSparkle, .draftRevise:focus-visible:enabled .draftSparkle { opacity: 0; transform: scale(.78); }
+.draftRevise:hover:enabled .draftBubble, .draftRevise:focus-visible:enabled .draftBubble { opacity: 1; transform: scale(1); }
 
 @media (pointer: coarse) {
   .editor { --mindmap-dock-height: 56px; --mindmap-zoom-size: 44px; --mindmap-notice-height: 46px; }
@@ -266,9 +291,13 @@
   .searchResults > button, .optionRow, .outlineToggle, .outlineOpen, .progressChoices > button,
   .editToolbarButton { min-height: 44px; }
   .iconButton, .outlineToggle, .outlineOpen, .progressChoices > button,
-  .editor :global(.react-flow__controls-button), .inspector :global(.mindmap-color-swatch) { min-width: 44px; }
-  .inspector :global(.mindmap-color-swatch) { height: 44px; }
+  .editor :global(.react-flow__controls-button) { min-width: 44px; }
+  .inspector :global(.mindmap-color-swatch) { min-width: 32px; width: 32px; height: 32px; min-height: 32px; }
   .unplacedOpen { width: 44px; height: 44px; }
+  .draftActions button { width: 32px; height: 32px; }
+}
+@container (max-width: 600px) {
+  .editor:has(.inspector[data-state="open"]) :global([data-map-navigation]) { opacity: 0; pointer-events: none; }
 }
 
 
@@ -284,11 +313,12 @@
 .controlDock, .dockUtility { display: contents; }
 .inspector, .unplacedTray { --mindmap-panel-bottom-clearance: var(--mindmap-control-clearance, var(--mindmap-bottom-clearance)); }
 @container (max-width: 1100px) {
-  .toolbar.controlDock { position: absolute; inset: auto; bottom: 10px; left: 50%; z-index: 30; display: flex; flex-direction: column; width: max-content; max-width: calc(100% - 16px); gap: 4px; padding: 6px; transform: translateX(-50%); border: 1px solid rgb(var(--line) / .75); border-radius: 22px; background: rgb(var(--surface) / .86); box-shadow: var(--shadow-float); backdrop-filter: blur(18px) saturate(1.2); pointer-events: auto; }
+  .toolbar.controlDock { position: absolute; inset: auto; bottom: 10px; left: 50%; z-index: 30; display: flex; flex-direction: column; width: max-content; max-width: calc(100% - 16px); gap: 4px; padding: 5px 6px; transform: translateX(-50%); border: 1px solid rgb(var(--line) / .75); border-radius: 999px; background: rgb(var(--surface) / .86); box-shadow: var(--shadow-float); backdrop-filter: blur(18px) saturate(1.2); pointer-events: auto; }
+  .toolbar.controlDock:has(:global([data-resume-edit])) { border-radius: var(--radius-glass); padding: 6px; }
   .dockUtility { display: flex; align-items: center; justify-content: center; width: 100%; min-width: 0; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid rgb(var(--line) / .65); }
   .controlDock .resumeDock { position: static; inset: auto; width: max-content; max-width: 100%; transform: none; pointer-events: auto; }
   .controlDock .resumeDock :global([data-resume-edit]) { padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
-  .controlDock > .canvasTools { position: relative; inset: auto; width: 100%; max-width: 100%; height: var(--mindmap-dock-height); padding: 0; transform: none; border: 0; border-radius: 14px; background: transparent; box-shadow: none; backdrop-filter: none; }
+  .controlDock > .canvasTools { position: relative; inset: auto; width: 100%; max-width: 100%; height: auto; min-height: 34px; padding: 0; transform: none; border: 0; border-radius: 999px; background: transparent; box-shadow: none; backdrop-filter: none; }
   .controlDock:not(:has(:global([data-resume-edit]))) .dockUtility { display: none; }
   .controlDock:not(:has(:global([data-resume-edit]))) > .canvasTools { padding-left: 0; }
 }

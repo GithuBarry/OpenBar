@@ -62,12 +62,12 @@ export function PaperTodoPicker({ card, todos, sections, disabled, onLink, onCre
           <select value={chosen?.id || ""} onChange={event => { setTodoId(event.target.value); setError(""); }}>
             <option value="">{todos.length ? "Choose a TODO…" : "No available TODOs"}</option>
             {todos.map(todo => <option key={todo.id} value={todo.id}>
-              {todo.title || todo.text.split("\n")[0]}{todo.sectionTitle ? ` · ${todo.sectionTitle}` : ""}
+              {todo.title || todo.text.split("\n")[0]}{todo.sectionTitle ? ` (${todo.sectionTitle})` : ""}
             </option>)}
           </select>
         </label>
         {chosen && preview && <>
-          <p className={styles.context}>{[chosen.headingPath?.join(" › ") || chosen.sectionTitle, chosen.file].filter(Boolean).join(" · ")}</p>
+          <p className={styles.context}>{[chosen.headingPath?.join(" › ") || chosen.sectionTitle, chosen.file].filter(Boolean).join(" — ")}</p>
           {preview.body && <p className={styles.excerpt}>{preview.body}</p>}
           {visual ? <p>The visual stays on this card. The task appears beneath it.</p>
             : linkedTodoCaption(card, chosen) !== card.caption && <p>Linking shows the paper’s wording and keeps this card’s other text in Notes.</p>}

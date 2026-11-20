@@ -294,6 +294,7 @@ export function artifactHref(projectId: string, ref: Pick<ArtifactRef, "kind" | 
         return `${base}/mindmap${mapPath}#${encodeURIComponent(ref.id)}`;
       }
     case "figure":
+    case "file":
       return `/api/p/${encodeURIComponent(projectId)}/asset/${ref.id.split("/").map(encodeURIComponent).join("/")}`;
     default:
       return `${base}/paper`;
@@ -308,6 +309,7 @@ export const ARTIFACT_KINDS: ArtifactKind[] = [
   "wiki-page",
   "mindmap-node",
   "figure",
+  "file",
   "web",
   "external",
 ];
@@ -316,14 +318,16 @@ export function coerceArtifactKind(value: string): ArtifactKind | undefined {
   return ARTIFACT_KINDS.includes(value as ArtifactKind) ? value as ArtifactKind : undefined;
 }
 
-export function coerceArtifactRef(ref: { kind: string; id: string; label?: string; url?: string; imageWidth?: number; mapId?: string; sectionContext?: unknown }): ArtifactRef | undefined {
+export function coerceArtifactRef(ref: { kind: string; id: string; label?: string; relation?: string; url?: string; imageWidth?: number; mapId?: string; sectionContext?: unknown }): ArtifactRef | undefined {
   const kind = coerceArtifactKind(ref.kind);
   if (!kind || !ref.id) return undefined;
+  const relation = typeof ref.relation === "string" && ref.relation.trim() ? ref.relation.trim().slice(0, 64) : undefined;
   return {
     kind,
     id: ref.id,
     ...(Number.isInteger(ref.imageWidth) && ref.imageWidth! >= 25 && ref.imageWidth! <= 100 ? { imageWidth: ref.imageWidth } : {}),
     ...(ref.label ? { label: ref.label } : {}),
+    ...(relation ? { relation } : {}),
     ...(ref.url ? { url: ref.url } : {}),
     ...(safeMapId(ref.mapId) ? { mapId: safeMapId(ref.mapId) } : {}),
     ...(coercePaperSectionRefContext(ref.sectionContext) ? { sectionContext: coercePaperSectionRefContext(ref.sectionContext) } : {}),

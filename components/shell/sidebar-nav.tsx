@@ -47,7 +47,7 @@ export function SidebarNav({ items, compact = false }: { items: NavItem[]; compa
         <FastTooltip key={item.href} label={item.label}>
           <Link href={item.href} aria-label={item.label} aria-current={active ? "page" : undefined}
             className={active ? `p-glass-sm ${styles.compactActive}` : undefined}>
-            <Icon size={18} aria-hidden="true" />
+            <span data-sidebar-flip={`nav-${item.icon}`} className="inline-flex"><Icon size={18} aria-hidden="true" /></span>
           </Link>
         </FastTooltip>
       );
@@ -77,8 +77,8 @@ export function SidebarNav({ items, compact = false }: { items: NavItem[]; compa
                 active && "p-selected",
               )}
             >
-              <span className="p-sidebar-icon"><Icon size={16} aria-hidden="true" /></span>
-              <span className="ob-brand-font">{item.label}</span>
+              <span data-sidebar-flip={`nav-${item.icon}`} className="p-sidebar-icon"><Icon size={16} aria-hidden="true" /></span>
+              <span className={cn("ob-brand-font", styles.navLabel)}>{item.label}</span>
             </Link>
           </li>
         );
@@ -86,7 +86,7 @@ export function SidebarNav({ items, compact = false }: { items: NavItem[]; compa
     </ul>
   );
   return (
-    <nav className="flex-1 overflow-y-auto px-3 py-1">
+    <nav className="flex-1 overflow-x-visible overflow-y-auto px-3 py-1">
       {renderItems(primary)}
       {more.length > 0 && (
         <div className="mt-4">

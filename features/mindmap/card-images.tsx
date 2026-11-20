@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { FastTooltip } from "@/components/fast-tooltip";
 import { Modal } from "@/components/modal"
-import { ArrowDownRight, ExternalLink, FileText, Maximize2, RotateCcw, Trash2, X, ZoomIn, ZoomOut } from "lucide-react"
+import { ArrowDownRight, ExternalLink, FileText, Maximize2, MoveHorizontal, Trash2, X, ZoomIn, ZoomOut } from "lucide-react"
 import type { ArtifactRef } from "@/lib/types"
 import { artifactHref } from "@/lib/research/artifact-link"
 import { detachMindmapImage } from "@/lib/mindmap/image-refs"
@@ -68,7 +68,7 @@ function CardImage({ project, image, readOnly, onView, onResize, onRemove }: {
     <div className={styles.tools}>
       <FastTooltip label="View full image"><button type="button" aria-label={"Expand image: " + caption} onClick={onView}><Maximize2 size={14} /></button></FastTooltip>
       {!readOnly && <>
-        <FastTooltip label="Full card width"><button type="button" aria-label={"Reset image size: " + caption} onClick={() => onResize(100)}><RotateCcw size={14} /></button></FastTooltip>
+        {width < 100 && <FastTooltip label="Fit full card width"><button type="button" aria-label={"Fit full card width: " + caption} onClick={() => onResize(100)}><MoveHorizontal size={14} /></button></FastTooltip>}
         <FastTooltip label="Remove from card (undo available)"><button type="button" aria-label={"Remove image from card: " + caption} onClick={onRemove}><Trash2 size={14} /></button></FastTooltip>
       </>}
     </div>

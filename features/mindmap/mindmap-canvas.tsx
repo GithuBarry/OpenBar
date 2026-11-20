@@ -136,11 +136,21 @@ function FlowCanvas({
   const { setCenter, getNodesBounds, getZoom, getViewport, setViewport, viewportInitialized } = useReactFlow();
   const storageKey = viewportStorageKey(mindmap);
   const [savedViewport] = useState(() => readViewport(storageKey));
+  const viewportSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const preserveViewport = useCallback(() => {
+    if (viewportSaveTimer.current !== null) {
+      clearTimeout(viewportSaveTimer.current);
+      viewportSaveTimer.current = null;
+    }
     if (!viewportInitialized) return;
     try { window.sessionStorage.setItem(storageKey, JSON.stringify(getViewport())); }
     catch { /* The current view continues to work with browser storage disabled. */ }
   }, [getViewport, storageKey, viewportInitialized]);
+  const schedulePreserveViewport = useCallback(() => {
+    if (!viewportInitialized) return;
+    if (viewportSaveTimer.current !== null) clearTimeout(viewportSaveTimer.current);
+    viewportSaveTimer.current = setTimeout(preserveViewport, 400);
+  }, [preserveViewport, viewportInitialized]);
   const nodesInitialized = useNodesInitialized();
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [handTool, setHandTool] = useState(false);
@@ -186,7 +196,7 @@ function FlowCanvas({
   const rasterFrame = useRef<number | null>(null);
   useEffect(() => {
     const editor = canvasRef.current?.closest("[data-mindmap-editor]");
-    const preserveInteraction = () => { clearCollapseAnchor(); initialViewRef.current = true; preserveViewport(); };
+    const preserveInteraction = () => { clearCollapseAnchor(); initialViewRef.current = true; schedulePreserveViewport(); };
     editor?.addEventListener("pointerdown", preserveInteraction, true);
     editor?.addEventListener("keydown", preserveInteraction, true);
     window.addEventListener("pagehide", preserveViewport);
@@ -196,7 +206,7 @@ function FlowCanvas({
       editor?.removeEventListener("keydown", preserveInteraction, true);
       window.removeEventListener("pagehide", preserveViewport);
     };
-  }, [clearCollapseAnchor, preserveViewport]);
+  }, [clearCollapseAnchor, preserveViewport, schedulePreserveViewport]);
   const beginViewportMove = useCallback((event: MouseEvent | TouchEvent | null) => {
     if (event) initialViewRef.current = true;
     if (rasterFrame.current !== null) cancelAnimationFrame(rasterFrame.current);
@@ -343,7 +353,7 @@ function FlowCanvas({
   const controls = <>
     <Controls showInteractive={false} />
     <div data-mindmap-movement role="group" aria-label="Map movement">
-      <button type="button" aria-label="Pan across cards" aria-pressed={handTool} title="Pan across cards · Esc to exit"
+      <button type="button" aria-label="Pan across cards" aria-pressed={handTool} title="Pan across cards (Esc to exit)"
         onClick={() => setHandTool(active => !active)}><Hand size={16} aria-hidden="true" /></button>
       <button type="button" aria-label={centerLabel} title={centerLabel} disabled={!nodesInitialized} onClick={() => {
         const ids = selectedForCenter.length ? selectedForCenter.map(node => node.id) : [mindmap.rootId];

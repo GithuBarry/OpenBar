@@ -38,7 +38,95 @@ export function splitBundleSource(source: string): BundleSourcePart[] {
   });
 }
 
-/** Reapply edits made during a save to the server's rebuilt include graph. */
+type LineHunk = { start: number; end: number; lines: string[] };
+
+/** Compute minimal changed line hunks from `base` to `target` using LCS on trimmed diff window. */
+function diffLineHunks(base: string[], target: string[]): LineHunk[] | null {
+  let prefix = 0;
+  while (prefix < base.length && prefix < target.length && base[prefix] === target[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < base.length - prefix
+    && suffix < target.length - prefix
+    && base[base.length - 1 - suffix] === target[target.length - 1 - suffix]
+  ) suffix += 1;
+
+  const bMid = base.slice(prefix, base.length - suffix);
+  const tMid = target.slice(prefix, target.length - suffix);
+  if (!bMid.length && !tMid.length) return [];
+  // Bound DP table for huge diffs; fall back to single-file hunk if very large.
+  if (bMid.length * tMid.length > 250_000) {
+    return [{ start: prefix, end: base.length - suffix, lines: tMid }];
+  }
+  const m = bMid.length;
+  const n = tMid.length;
+  const dp = Array.from({ length: m + 1 }, () => new Uint32Array(n + 1));
+  for (let i = m - 1; i >= 0; i -= 1) {
+    for (let j = n - 1; j >= 0; j -= 1) {
+      dp[i]![j] = bMid[i] === tMid[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
+    }
+  }
+  const hunks: LineHunk[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < m || j < n) {
+    if (i < m && j < n && bMid[i] === tMid[j]) {
+      i += 1;
+      j += 1;
+      continue;
+    }
+    const startI = i;
+    const startJ = j;
+    while (i < m || j < n) {
+      if (i < m && j < n && bMid[i] === tMid[j]) break;
+      if (i < m && (j >= n || dp[i + 1]![j]! >= dp[i]![j + 1]!)) i += 1;
+      else j += 1;
+    }
+    hunks.push({ start: prefix + startI, end: prefix + i, lines: tMid.slice(startJ, j) });
+  }
+  return hunks;
+}
+
+/** Conservative line-level 3-way merge. Returns null on any overlapping or adjacent conflict. */
+export function mergeTextThreeWay(base: string, remote: string, local: string): string | null {
+  if (local === base) return remote;
+  if (remote === base) return local;
+  if (local === remote) return local;
+  const baseLines = base.split("\n");
+  const remoteHunks = diffLineHunks(baseLines, remote.split("\n"));
+  const localHunks = diffLineHunks(baseLines, local.split("\n"));
+  if (!remoteHunks || !localHunks) return null;
+
+  const combined: Array<LineHunk & { side: "remote" | "local" }> = [
+    ...remoteHunks.map((h) => ({ ...h, side: "remote" as const })),
+    ...localHunks.map((h) => ({ ...h, side: "local" as const })),
+  ].sort((a, b) => a.start - b.start || a.end - b.end);
+
+  const mergedHunks: LineHunk[] = [];
+  for (const hunk of combined) {
+    const prev = mergedHunks.at(-1);
+    if (prev && hunk.start <= prev.end) {
+      // Allow identical changes at the exact same range; reject any true overlap/adjacency.
+      if (prev.start === hunk.start && prev.end === hunk.end && prev.lines.join("\n") === hunk.lines.join("\n")) {
+        continue;
+      }
+      return null;
+    }
+    mergedHunks.push({ start: hunk.start, end: hunk.end, lines: hunk.lines });
+  }
+
+  const out: string[] = [];
+  let cursor = 0;
+  for (const hunk of mergedHunks) {
+    out.push(...baseLines.slice(cursor, hunk.start));
+    out.push(...hunk.lines);
+    cursor = hunk.end;
+  }
+  out.push(...baseLines.slice(cursor));
+  return out.join("\n");
+}
+
+/** Reapply edits made during a save to the server's rebuilt include graph or newer disk snapshot. */
 export function rebaseBundleSource(saved: string, live: string, canonical: string):
   | { ok: true; source: string }
   | { ok: false; files: string[] } {
@@ -66,17 +154,28 @@ export function rebaseBundleSource(saved: string, live: string, canonical: strin
     if (existing !== undefined && existing !== part.body) conflicts.add(part.filePath);
     canonicalByFile.set(part.filePath, part.body);
   }
+  const mergedByFile = new Map<string, string>();
   for (const [file, edit] of changed) {
     if (edit.before === edit.after) continue;
     const canonicalBody = canonicalByFile.get(file);
-    if (canonicalBody === undefined || !fileBytesUnchanged(edit.before, canonicalBody)) conflicts.add(file);
+    if (canonicalBody === undefined) {
+      conflicts.add(file);
+      continue;
+    }
+    if (fileBytesUnchanged(edit.before, canonicalBody)) {
+      mergedByFile.set(file, edit.after);
+      continue;
+    }
+    const merged = mergeTextThreeWay(edit.before, canonicalBody, edit.after);
+    if (merged === null) conflicts.add(file);
+    else mergedByFile.set(file, merged);
   }
   if (conflicts.size) return { ok: false, files: [...conflicts] };
   return {
     ok: true,
     source: canonicalParts.map((part) => {
-      const edit = changed.get(part.filePath);
-      return `${fileBanner(part.filePath)}${edit && edit.before !== edit.after ? edit.after : part.body}`;
+      const merged = mergedByFile.get(part.filePath);
+      return `${fileBanner(part.filePath)}${merged !== undefined ? merged : part.body}`;
     }).join(""),
   };
 }

@@ -7,7 +7,7 @@ function reviewText(node?: MindmapNode, editorText?: string) {
   if (!node) return "Card absent from this version."
   const notes = cardNotesText(node.caption, node.caution)
   return [editorText ?? [node.title, node.text].filter(Boolean).join("\n"), notes && `Notes\n${notes}`]
-    .filter(Boolean).join("\n\n") || (node.todoId ? `Paper TODO · ${node.todoId}` : "Empty card")
+    .filter(Boolean).join("\n\n") || (node.todoId ? `Paper TODO: ${node.todoId}` : "Empty card")
 }
 
 export function RecoveryCardReview({ draft, saved, todos }: {

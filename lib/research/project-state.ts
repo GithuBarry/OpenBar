@@ -639,7 +639,7 @@ export function buildProjectState(input: {
         nodeCount: map.nodes.length,
       };
     }),
-    wiki: (input.wiki || []).map(page => ({ slug: page.slug, title: page.title, href: `/p/${encodeURIComponent(slug)}/wiki/${encodeURIComponent(page.slug)}`, updatedAt: page.updatedAt })),
+    wiki: (input.wiki || []).map(page => ({ slug: page.slug, title: page.title, href: `/p/${encodeURIComponent(slug)}/wiki/${encodeURIComponent(page.slug)}`, ...(page.bodyPath ? { path: page.bodyPath } : {}), updatedAt: page.updatedAt })),
     recent: deriveRecentActivity({
       slug,
       outline: paper?.outline || [],
@@ -825,12 +825,8 @@ export function projectStateForAgent(state: ProjectState, query: ProjectStateQue
         title: section.title,
         openTodos: section.openTodos,
         file: section.file,
-        sourceHash: section.sourceHash,
-        sourceRange: section.sourceRange,
         headingPath: section.headingPath,
-        excerpt: section.excerpt,
-        parseStatus: section.parseStatus,
-        diagnostic: section.diagnostic,
+        ...(section.parseStatus && section.parseStatus !== "ok" ? { parseStatus: section.parseStatus, diagnostic: section.diagnostic } : {}),
       })),
     },
     todos: todoLimit > 0 ? todoRows([...unplaced, ...openTodos.filter((todo) => !primaryUnplaced(todo))]) : undefined,
@@ -937,7 +933,9 @@ export function searchProjectContent(input: {
     for (const node of map.nodes) {
       const todo = node.todoId ? todosById.get(node.todoId) : undefined;
       const refBits = (node.refs || []).flatMap((ref) => [ref.kind, ref.id, ref.label, ref.url]);
-      const hay = [mapTitle, node.title, node.text, node.todoId, todo?.title, todo?.text, ...(node.tags || []), ...refBits]
+      const cautionBits = node.caution ? [node.caution.critical, node.caution.important, node.caution.background] : [];
+      const metadataBits = node.metadata ? Object.entries(node.metadata).flatMap(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]) : [];
+      const hay = [mapTitle, node.title, node.text, node.caption, ...cautionBits, node.todoId, todo?.title, todo?.text, ...(node.tags || []), ...refBits, ...metadataBits]
         .filter(Boolean)
         .join("\n");
       if (!hay.toLowerCase().includes(needle)) continue;
@@ -945,7 +943,7 @@ export function searchProjectContent(input: {
       hits.push({
         id: `mindmap:${mapId}:node:${node.id}`,
         kind: "mindmap_node",
-        title: `${mapTitle} · ${nodeTitle}`,
+        title: `${mapTitle}: ${nodeTitle}`,
         snippet: snippetAround(hay, query),
         href: mindmapHref(slug, mapId, node.id),
       });

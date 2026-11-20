@@ -18,8 +18,8 @@ and skill bodies load when requested through the tools.
 When sync also names a Git or Overleaf action, check the inbox first, then perform
 the requested synchronization.
 
-Tool results can start with pending @agent notifications. Repeated IDs represent
-the same request. Handle each request within the user's current authorization
+Tool results can start with pending @agent and fast-tracked @stat ("agent STAT") notifications. Repeated IDs represent
+the same request. Handle fast-tracked @stat requests first within the user's current authorization
 and project instructions. Acknowledgement preserves request text and paper TODO
 completion. Editing the request text creates a fresh notification. Prefixes
 arrive on the next OpenBar tool call.

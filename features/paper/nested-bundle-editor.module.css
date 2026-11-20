@@ -11,6 +11,8 @@
   min-height: 0;
   padding-top: var(--source-toolbar-top, 0px);
   padding-bottom: var(--source-toolbar-bottom, 3rem);
+  scroll-padding-top: var(--source-toolbar-top, 0px);
+  scroll-padding-bottom: var(--source-toolbar-bottom, 3rem);
 }
 .workspace[data-find-open="true"] > .editor,
 .workspace[data-find-open="true"] > :global(.ob-cm-root) { padding-top: 0; }
@@ -44,7 +46,7 @@
   flex: 1;
   padding: 4px 6px;
   border: 1px solid rgb(var(--line));
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: rgb(var(--surface-2));
   color: rgb(var(--ink));
   font-family: var(--font-mono);
