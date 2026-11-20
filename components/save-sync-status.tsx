@@ -11,10 +11,9 @@ export type SaveRemoteState = "checking" | "local" | "pending" | "syncing" | "sy
 export type StatusPillTone = "danger" | "warn" | "accent";
 
 export function SleepZzz({ size = 16 }: { size?: number }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
-    <path d="M4 13h7l-7 7h7" />
-    <path d="M12.5 7.5h5l-5 5h5" />
-    <path d="M17.5 3h3.5l-3.5 3.5h3.5" />
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
+    <path d="M3 12h8l-8 8h8" />
+    <path d="M14 4h6l-6 6h6" />
   </svg>;
 }
 
