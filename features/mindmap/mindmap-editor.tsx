@@ -3052,17 +3052,20 @@ export function MindmapEditor({
           <span>Editing paused for draft review</span>
           <Popover.Trigger asChild><button type="button" aria-label="Review browser draft">Review<ChevronRight size={12} aria-hidden="true" /></button></Popover.Trigger>
         </div>
-        <PopoverSurface className={styles.recoveryPanel} side="bottom" align="start" aria-label="Review browser draft" data-editor-notice data-recovery-review>
+        <PopoverSurface className={styles.recoveryPanel} side="bottom" align="center" sideOffset={10} aria-label="Review browser draft" data-editor-notice data-recovery-review>
+          <Popover.Arrow className={styles.recoveryArrow} width={14} height={7} />
+          <div className={styles.recoveryBody}>
           <header><strong>Review browser draft</strong><Popover.Close aria-label="Close browser draft review"><X size={15} /></Popover.Close></header>
           <p>This tab has a draft from {new Date(recoveryDraft.savedAt).toLocaleString()}.</p>
-          {restorableDraft ? recoveryDraft.baseHash !== recoverySavedHash && <p>Your edits can be restored onto the latest saved map.</p> : <>
-            <p>This draft needs manual review. Compare the cards or download a copy before discarding it.</p>
-            <RecoveryCardReview draft={recoveryDraft} saved={recoverySavedMap} todos={paperState?.paper?.todos} />
-          </>}
+          {restorableDraft ? recoveryDraft.baseHash !== recoverySavedHash && <p>Your edits can be restored onto the latest saved map.</p> : (
+            <p>This draft needs manual review. Compare the differences or download a copy before discarding it.</p>
+          )}
+          <RecoveryCardReview draft={recoveryDraft} saved={recoverySavedMap} todos={paperState?.paper?.todos} defaultOpen={!restorableDraft} />
           <div className={styles.recoveryActions}>
             {restorableDraft && <button type="button" className="p-button p-button-primary btn-primary" onClick={restoreBrowserDraft}>Restore draft</button>}
             <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download draft</button>
             <button type="button" className="p-button p-button-borderless btn-ghost" onClick={keepSavedMap}>Keep saved map</button>
+          </div>
           </div>
         </PopoverSurface>
       </Popover.Root>}

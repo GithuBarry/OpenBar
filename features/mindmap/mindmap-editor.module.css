@@ -62,13 +62,16 @@
 .noticeRow > :global([data-editor-notice]) { position: static; inset: auto; flex: 0 0 auto; max-width: 100%; transform: none; pointer-events: auto; }
 .recoveryNotice { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 3px 5px 3px 10px; border: 1px solid rgb(var(--accent) / .25); border-radius: 9px; background: rgb(var(--surface)); box-shadow: var(--shadow-float); color: rgb(var(--ink)); font-size: 12px; line-height: 20px; }
 .recoveryNotice > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.recoveryNotice > button { display: inline-flex; align-items: center; flex-shrink: 0; gap: 3px; min-height: 26px; padding: 0 6px; border-radius: 5px; color: rgb(var(--accent-text)); font-weight: 600; cursor: pointer; }
+.recoveryNotice > button { display: inline-flex; align-items: center; flex-shrink: 0; gap: 3px; min-height: 26px; padding: 0 8px; border-radius: 999px; color: rgb(var(--accent-text)); font-weight: 600; cursor: pointer; }
 .recoveryNotice > button:hover { background: rgb(var(--accent) / .1); }
 .recoveryNotice > button:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: -2px; }
-.recoveryPanel { z-index: 70; width: min(380px, calc(100vw - 24px)); max-height: min(480px, calc(100dvh - 32px)); overflow-y: auto; overscroll-behavior: contain; padding: 16px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-glass); background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); font-family: var(--font-sans); }
-.recoveryPanel > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; line-height: 1.4; }
-.recoveryPanel > header > button { display: grid; place-items: center; flex-shrink: 0; width: 26px; height: 26px; border-radius: 5px; color: rgb(var(--muted)); cursor: pointer; }
-.recoveryPanel > p { margin: 10px 0; font-size: 12px; line-height: 1.55; color: rgb(var(--muted)); overflow-wrap: anywhere; }
+.recoveryPanel { z-index: 70; width: min(460px, calc(100vw - 24px)); overflow: visible; padding: 0; border: 1px solid rgb(var(--line)); border-radius: var(--radius-glass); background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); font-family: var(--font-sans); }
+.recoveryBody { max-height: min(560px, calc(100dvh - 48px)); overflow-y: auto; overscroll-behavior: contain; padding: 16px; }
+.recoveryArrow { fill: var(--surface-overlay); filter: drop-shadow(0 -1px 0 rgb(var(--line))); }
+.recoveryBody > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; line-height: 1.4; }
+.recoveryBody > header > button { display: grid; place-items: center; flex-shrink: 0; width: 26px; height: 26px; border-radius: var(--radius-control); color: rgb(var(--muted)); cursor: pointer; }
+.recoveryBody > header > button:hover { background: rgb(var(--surface-2)); color: rgb(var(--ink)); }
+.recoveryBody > p { margin: 10px 0; font-size: 12px; line-height: 1.55; color: rgb(var(--muted)); overflow-wrap: anywhere; }
 .recoveryActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
 .recoveryActions > button { max-width: 100%; white-space: normal; }
 .canvasTools { top: auto; bottom: var(--mindmap-dock-bottom); left: 50%; transform: translateX(-50%); }
