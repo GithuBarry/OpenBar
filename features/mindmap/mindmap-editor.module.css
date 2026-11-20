@@ -271,8 +271,8 @@
 .unreadReply { position: absolute; top: 9px; right: -4px; width: 7px; height: 7px; border-radius: 50%; background: var(--p-sys-red, #ef4444); box-shadow: 0 0 0 2px rgb(var(--surface)); pointer-events: none; }
 .activityBadge:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 3px; }
 .agentDraft .activityBadge { right: 94px; }
-.agentDraft > .cardProgress { top: 19px; }
-.draftActions { position: absolute; top: -15px; right: 10px; display: inline-flex; align-items: center; gap: 2px; padding: 2px 3px; border: 1px solid rgb(var(--accent) / .35); border-radius: 999px; background: rgb(var(--surface)); box-shadow: 0 1px 4px rgb(0 0 0 / .10); }
+.agentDraft > .cardProgress { top: 14px; }
+.draftActions { position: absolute; top: -17px; right: 10px; display: inline-flex; align-items: center; gap: 2px; padding: 2px 3px; border: 1px solid rgb(var(--accent) / .35); border-radius: 999px; background: rgb(var(--surface)); box-shadow: 0 1px 4px rgb(0 0 0 / .10); }
 .draftActions button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 999px; color: rgb(var(--accent-text)); cursor: pointer; transition: background 140ms ease, color 140ms ease; }
 .draftActions button:hover:enabled { color: rgb(var(--accent-text)); background: rgb(var(--accent) / .14); }
 .draftActions button:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; }
