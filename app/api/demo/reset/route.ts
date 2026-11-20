@@ -16,7 +16,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const slugs = publicDemoSlugs();
   try {
-    resetDemoFixture(process.env.OPENBARRY_CONTENT || path.join(process.cwd(), "content"));
+    resetDemoFixture(process.env.OPENBAR_CONTENT || path.join(process.cwd(), "content"));
     revalidatePath("/", "layout");
     for (const slug of slugs) revalidatePath(`/p/${slug}`, "layout");
     return noStoreJson({ ok: true, slugs });

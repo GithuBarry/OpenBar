@@ -713,8 +713,8 @@ export function isSafeCommittedPath(file: string): boolean {
   const normalized = file.replaceAll("\\", "/");
   return !normalized.startsWith(".git/")
     && !normalized.includes("/.git/")
-    && !/(^|\/)(?:\.OpenBar|\.openbarry|openbarry)\/(?:build|recovery)(?:\/|$)/.test(normalized)
-    && !/(^|\/)(?:\.OpenBar|\.openbarry|openbarry)\/project-write(?:\.ob-lock)?$/.test(normalized)
+    && !/(^|\/)(?:\.OpenBar|openbar)\/(?:build|recovery)(?:\/|$)/.test(normalized)
+    && !/(^|\/)(?:\.OpenBar|openbar)\/project-write(?:\.ob-lock)?$/.test(normalized)
     && !/(^|\/)(?:activity\.jsonl|request-replay(?:-journal)?\.json)$/.test(normalized)
     && !isSensitivePath(normalized);
 }

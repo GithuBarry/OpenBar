@@ -4,11 +4,11 @@ import path from "node:path";
 /**
  * Readable/writable filesystem roots for MCP and evidence source checks.
  * Default is the content tree only — never process.cwd(), which would expose
- * package.json, .env, and source. Extra roots come from OPENBARRY_ALLOWED_PATHS.
+ * package.json, .env, and source. Extra roots come from OPENBAR_ALLOWED_PATHS.
  */
 export function getAllowedRoots(): string[] {
-  const contentRoot = process.env.OPENBARRY_CONTENT || path.join(process.cwd(), "content");
-  const custom = (process.env.OPENBARRY_ALLOWED_PATHS || "")
+  const contentRoot = process.env.OPENBAR_CONTENT || path.join(process.cwd(), "content");
+  const custom = (process.env.OPENBAR_ALLOWED_PATHS || "")
     .split(path.delimiter)
     .map((item) => item.trim())
     .filter(Boolean);

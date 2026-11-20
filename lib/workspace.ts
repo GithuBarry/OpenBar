@@ -16,7 +16,7 @@ import { withProjectWriteLockAsync } from "@/lib/research/project-lock";
 import { WORKSPACE_INPUTS } from "@/lib/research/command-inputs";
 import type { Project } from "@/lib/types";
 
-const WORKSPACE_SCHEMA = "openbarry/workspace@1";
+const WORKSPACE_SCHEMA = "openbar/workspace@1";
 const WORKSPACE_ID = "workspace";
 
 const workspaceSettingsSchema = z
@@ -40,7 +40,7 @@ export const DEFAULT_WORKSPACE_SETTINGS: WorkspaceSettings = {
 };
 
 function contentRoot() {
-  return process.env.OPENBARRY_CONTENT || path.join(process.cwd(), "content");
+  return process.env.OPENBAR_CONTENT || path.join(process.cwd(), "content");
 }
 
 export function workspaceSettingsFile() {

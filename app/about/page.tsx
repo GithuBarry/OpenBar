@@ -82,7 +82,7 @@ export default async function AboutPage() {
             <li className="min-w-0 rounded-xl border border-line bg-canvas p-5">
               <h3 className="text-sm font-semibold">3. Choose where papers are saved</h3>
               <p className="mt-2 text-sm leading-6 text-muted">The default is the <code>content</code> folder in your OpenBar checkout. Projects live in <code>content/projects/&lt;slug&gt;</code>. To use another folder, add this setting to <code>.env.local</code> in the checkout, using your own absolute path:</p>
-              <pre className="mt-3 overflow-x-auto rounded-lg border border-line bg-surface-2 p-4 font-mono text-xs leading-6 text-ink"><code>{'OPENBARRY_CONTENT="/absolute/path/to/openbar-content"'}</code></pre>
+              <pre className="mt-3 overflow-x-auto rounded-lg border border-line bg-surface-2 p-4 font-mono text-xs leading-6 text-ink"><code>{'OPENBAR_CONTENT="/absolute/path/to/openbar-content"'}</code></pre>
               <p className="mt-2 text-sm leading-6 text-muted">Give the OpenBar process write access and back up the entire content folder, including hidden <code>.OpenBar</code> directories. The app repository’s ignore rules keep private project content separate from app commits. Restart OpenBar after changing the setting.</p>
             </li>
             <li className="min-w-0 rounded-xl border border-line bg-canvas p-5">

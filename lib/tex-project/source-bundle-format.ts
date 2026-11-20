@@ -6,7 +6,7 @@ import { PAPER_REFERENCES_FILE } from "./paper-compose";
  * Keep Node filesystem code in source-bundle.ts / source-persist.ts.
  */
 
-export const SOURCE_FILE_BANNER_PREFIX = "% === openbarry:file ";
+export const SOURCE_FILE_BANNER_PREFIX = "% === openbar:file ";
 
 export function fileBanner(filePath: string): string {
   return `${SOURCE_FILE_BANNER_PREFIX}${filePath} ===\n`;
@@ -20,7 +20,7 @@ export type BundleSourcePart = {
   body: string;
 };
 
-const BANNER_RE = /^% === openbarry:file (.+) ===\n/gm;
+const BANNER_RE = /^% === openbar:file (.+) ===\n/gm;
 
 export function splitBundleSource(source: string): BundleSourcePart[] {
   const hits = [...source.matchAll(BANNER_RE)];
@@ -214,7 +214,7 @@ export function isPassthroughInclude(raw: string): boolean {
     || /(^|\/)references\.tex$/.test(path)
     || normalized === ".OpenBar/references.tex"
     || normalized === PAPER_REFERENCES_FILE
-    || path.includes("openbarry/references")
+    || path.includes("openbar/references")
   );
 }
 

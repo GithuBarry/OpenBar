@@ -58,9 +58,9 @@ function isInside(root: string, candidate: string): boolean {
 function isAllowedTransactionLocation(relative: string, prefix = false, projectScope = false, derived = false): boolean {
   const parts = relative.split("/").filter(Boolean);
   if (!parts.length) return prefix;
-  if (projectScope) return !isProtectedProjectPath(relative, prefix) || (derived && [".OpenBar/references.tex", "manuscript/openbarry/references.tex", "openbarry-references.tex", "manuscript/openbarry-references.tex"].some(file => file === relative || (prefix && file.startsWith(relative + "/"))));
+  if (projectScope) return !isProtectedProjectPath(relative, prefix) || (derived && [".OpenBar/references.tex", "manuscript/openbar/references.tex", "openbar-references.tex", "manuscript/openbar-references.tex"].some(file => file === relative || (prefix && file.startsWith(relative + "/"))));
   const lower = parts.map(part => part.toLowerCase());
-  if (lower[0] === ".openbar" || lower[0] === "openbarry") {
+  if (lower[0] === ".openbar" || lower[0] === "openbar") {
     if (prefix && parts.length === 1) return true;
     if (parts.length === 2 && lower[1] === "mindmap.tex") return true;
     if (lower[1] !== "mindmaps") return false;

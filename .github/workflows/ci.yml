@@ -63,7 +63,7 @@ jobs:
           PORT=3299
           TOKEN="ci-smoke-token"
           LOG_FILE="${RUNNER_TEMP:-/tmp}/openbar-ci-server.log"
-          HOSTNAME=127.0.0.1 PORT="$PORT" OPENBARRY_CONTENT="$CONTENT_DIR" OPENBARRY_ACCESS_TOKEN="$TOKEN" \
+          HOSTNAME=127.0.0.1 PORT="$PORT" OPENBAR_CONTENT="$CONTENT_DIR" OPENBAR_ACCESS_TOKEN="$TOKEN" \
             node .next/standalone/server.js >"$LOG_FILE" 2>&1 &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true' EXIT

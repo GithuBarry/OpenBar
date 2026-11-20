@@ -26,7 +26,7 @@ export type ProjectFilesEditReceipt = { files: Array<{ path: string; previousHas
 /** Authored files share a root capability while OpenBar and Git own their state. */
 export function isProtectedProjectPath(relative: string, prefix = false): boolean {
   const parts = relative.replaceAll("\\", "/").toLowerCase().split("/").filter(Boolean);
-  return parts.some((part, index) => part === ".git" || ([".openbar", ".openbarry", "openbarry"].includes(part)
+  return parts.some((part, index) => part === ".git" || ([".openbar", "openbar"].includes(part)
     && !(prefix && index === parts.length - 1) && !["skills", "wiki"].includes(parts[index + 1] || "")))
-    || (parts.at(-1) === "openbarry-references.tex" && (parts.length === 1 || (parts.length === 2 && parts[0] === "manuscript")));
+    || (parts.at(-1) === "openbar-references.tex" && (parts.length === 1 || (parts.length === 2 && parts[0] === "manuscript")));
 }

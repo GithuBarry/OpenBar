@@ -17,7 +17,7 @@ export function demoProjectDirectory(contentRoot: string, slug: string = DEMO_PR
 }
 
 function assertFixtureSource(sourceRoot: string, slug: string): void {
-  const projectFile = path.join(sourceRoot, slug, "manuscript", "openbarry", "project.tex");
+  const projectFile = path.join(sourceRoot, slug, "manuscript", "openbar", "project.tex");
   if (!fs.existsSync(projectFile)) throw new Error(`Demo fixture is missing ${projectFile}.`);
 }
 

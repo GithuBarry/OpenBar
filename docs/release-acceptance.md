@@ -91,7 +91,7 @@ acceptance run:
 
 ## Authenticated MCP acceptance
 
-Set `OPENBARRY_ACCESS_TOKEN` for the running server and call `/api/mcp` with
+Set `OPENBAR_ACCESS_TOKEN` for the running server and call `/api/mcp` with
 the matching bearer token.
 
 1. Connect with the current official SDK client. Repeat with a 2025 client and the stdio bridge, using the SDK's stateless HTTP support.

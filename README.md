@@ -27,11 +27,11 @@ pnpm dev
 ```
 
 Open [localhost:3000](http://localhost:3000). Projects live under
-`content/projects/<slug>`. Set `OPENBARRY_CONTENT` to use another content directory,
-and set `OPENBARRY_DEV_ORIGINS` (comma-separated) if accessing `pnpm dev` over LAN or Tailscale.
+`content/projects/<slug>`. Set `OPENBAR_CONTENT` to use another content directory,
+and set `OPENBAR_DEV_ORIGINS` (comma-separated) if accessing `pnpm dev` over LAN or Tailscale.
 
 For production (`pnpm build && pnpm start`), configure access via `OPENBAR_LOCAL_ACCESS=1` (loopback),
-`OPENBARRY_ACCESS_TOKEN` (bearer token for MCP/API), or `CLOUDFLARE_ACCESS_TEAM_DOMAIN` + `CLOUDFLARE_ACCESS_AUD`
+`OPENBAR_ACCESS_TOKEN` (bearer token for MCP/API), or `CLOUDFLARE_ACCESS_TEAM_DOMAIN` + `CLOUDFLARE_ACCESS_AUD`
 (Cloudflare Access). See [deploy/README.md](deploy/README.md) for hosting details.
 
 TeX Live with `latexmk` enables PDF compilation.

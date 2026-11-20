@@ -14,7 +14,7 @@ Container replacement, rebuild, or recovery event can discard `/data/openbar`,
 after which startup seeds the configured projects from the image fixture. The
 Reset demo action provides recovery to that known fixture baseline.
 
-Durable researcher hosting requires persistent storage for `OPENBARRY_CONTENT`
+Durable researcher hosting requires persistent storage for `OPENBAR_CONTENT`
 plus a backup and restore policy. Attach that storage before accepting
 long-lived authored work. The current Wrangler configuration intentionally
 ships the disposable demo boundary and supplies no durable content binding.

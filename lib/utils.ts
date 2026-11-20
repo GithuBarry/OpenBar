@@ -69,6 +69,6 @@ export function formatWorkspaceDate(iso: string): string {
     month: "short",
     day: "numeric",
     year: "numeric",
-    timeZone: process.env.OPENBARRY_TZ || undefined,
+    timeZone: process.env.OPENBAR_TZ || undefined,
   }).format(d);
 }

@@ -7,10 +7,10 @@ import os from "node:os";
 import path from "node:path";
 
 export function gitCredentialHome(): string {
-  if (process.env.OPENBARRY_GIT_CREDENTIAL_DIR) {
-    return path.resolve(process.env.OPENBARRY_GIT_CREDENTIAL_DIR);
+  if (process.env.OPENBAR_GIT_CREDENTIAL_DIR) {
+    return path.resolve(process.env.OPENBAR_GIT_CREDENTIAL_DIR);
   }
-  return path.join(os.homedir(), ".config", "openbarry", "git");
+  return path.join(os.homedir(), ".config", "openbar", "git");
 }
 
 export function gitProcessEnv(base: Record<string, string | undefined> = process.env): NodeJS.ProcessEnv {

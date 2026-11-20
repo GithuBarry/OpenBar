@@ -72,7 +72,7 @@ function writableDir(dir: string): ToolCapability {
   }
 }
 
-export function getRuntimeCapabilities(contentRoot = process.env.OPENBARRY_CONTENT || path.join(process.cwd(), "content")): RuntimeCapabilities {
+export function getRuntimeCapabilities(contentRoot = process.env.OPENBAR_CONTENT || path.join(process.cwd(), "content")): RuntimeCapabilities {
   const key = path.resolve(contentRoot);
   const cached = capabilitiesCache.get(key);
   const now = Date.now();

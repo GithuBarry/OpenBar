@@ -76,7 +76,7 @@ import {
 } from "./types";
 
 const CONTENT_ROOT =
-  process.env.OPENBARRY_CONTENT || path.join(process.cwd(), "content");
+  process.env.OPENBAR_CONTENT || path.join(process.cwd(), "content");
 
 const projectsDir = () => path.join(CONTENT_ROOT, "projects");
 const projectDir = (slug: string) => path.join(projectsDir(), safeSegment(slug, "project slug"));

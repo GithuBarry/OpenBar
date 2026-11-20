@@ -23,7 +23,7 @@ export function withProjectWriteGuard<T>(
  * Resolve the metadata directory that belongs to a manuscript path.
  *
  * Canonical projects keep OpenBar state in `.OpenBar`. Legacy nested projects
- * keep it in `openbarry` beside the manuscript. Persisted project records
+ * keep it in `openbar` beside the manuscript. Persisted project records
  * identify the authored layout while runtime ownership uses the project root.
  */
 export function projectMetadataDir(inputPath: string): string {
@@ -37,13 +37,13 @@ export function projectMetadataDir(inputPath: string): string {
 
   for (;;) {
     if (path.basename(current) === ".OpenBar") return current;
-    if (path.basename(current) === "openbarry") return current;
+    if (path.basename(current) === "openbar") return current;
     if (fs.existsSync(path.join(current, ".OpenBar", "project.tex"))) return path.join(current, ".OpenBar");
-    if (fs.existsSync(path.join(current, "manuscript", "openbarry", "project.tex"))) return path.join(current, "manuscript", "openbarry");
+    if (fs.existsSync(path.join(current, "manuscript", "openbar", "project.tex"))) return path.join(current, "manuscript", "openbar");
     if (fs.existsSync(path.join(current, ".OpenBar"))) return path.join(current, ".OpenBar");
-    if (fs.existsSync(path.join(current, "openbarry"))) return path.join(current, "openbarry");
-    if (fs.existsSync(path.join(current, "manuscript", "openbarry"))) return path.join(current, "manuscript", "openbarry");
-    if (path.basename(current) === "manuscript") return path.join(current, "openbarry");
+    if (fs.existsSync(path.join(current, "openbar"))) return path.join(current, "openbar");
+    if (fs.existsSync(path.join(current, "manuscript", "openbar"))) return path.join(current, "manuscript", "openbar");
+    if (path.basename(current) === "manuscript") return path.join(current, "openbar");
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
@@ -56,7 +56,7 @@ export function projectMetadataDir(inputPath: string): string {
 export function projectWriteIdentityPath(inputPath: string): string {
   const metadata = projectMetadataDir(inputPath);
   let current = path.dirname(metadata);
-  if (path.basename(metadata) === "openbarry" && path.basename(current) === "manuscript") {
+  if (path.basename(metadata) === "openbar" && path.basename(current) === "manuscript") {
     current = path.dirname(current);
   }
   const missing: string[] = [];

@@ -7,7 +7,7 @@ export class OpenBarContainer extends Container<Env> {
     NODE_ENV: "production",
     HOSTNAME: "0.0.0.0",
     PORT: "3000",
-    OPENBARRY_CONTENT: "/data/openbar",
+    OPENBAR_CONTENT: "/data/openbar",
     OPENBAR_PUBLIC_DEMO: "1",
     OPENBAR_DEMO_SLUGS: "command-v,noveltybench",
     OPENBAR_DEMO_FIXTURE: "/opt/openbar-seed/published-papers",

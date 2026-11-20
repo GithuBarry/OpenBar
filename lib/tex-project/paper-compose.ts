@@ -5,7 +5,7 @@
  *   \title{Project}
  *   \section{Abstract}
  *   <TeX body>
- *   \input{openbarry-references}
+ *   \input{openbar-references}
  *   \appendix
  *   \section{...}
  *
@@ -15,8 +15,8 @@
 import { findMacros, mandatoryArgs, nodesToPlainText, nodesToTex, parseTex } from "./tex-ast";
 import { escapeTexText } from "./tex-encode";
 
-export const PAPER_REFERENCES_FILE = "openbarry-references.tex";
-export const PAPER_REFERENCES_INPUT = "\\input{openbarry-references}";
+export const PAPER_REFERENCES_FILE = "openbar-references.tex";
+export const PAPER_REFERENCES_INPUT = "\\input{openbar-references}";
 
 /**
  * Read the document-facing title from a TeX root without changing any source
@@ -38,7 +38,7 @@ export function readTexDocumentTitle(source: string): string | undefined {
 export function isPaperChromeLine(line: string): boolean {
   const t = line.trim();
   return /^\\appendix\b/.test(t)
-    || /^\\input\s*\{(?:\.OpenBar\/references|openbarry\/references|openbarry-references)(?:\.tex)?\}(?:\s*%.*)?$/.test(t);
+    || /^\\input\s*\{(?:\.OpenBar\/references|openbar\/references|openbar-references)(?:\.tex)?\}(?:\s*%.*)?$/.test(t);
 }
 
 export function texHeadingLevel(command: string): number {

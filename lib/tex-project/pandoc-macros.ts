@@ -1,10 +1,10 @@
 /**
  * Pandoc's latex_macros reader cannot expand optional-arg `\providecommand`
  * bodies that contain `#1` / `\if` / `\detokenize`. Collect a Pandoc-safe
- * header from OpenBarry macros plus simple `\newcommand` replacements.
+ * header from OpenBar macros plus simple `\newcommand` replacements.
  */
 
-const OPENBARRY_PANDOC_MACROS = [
+const OPENBAR_PANDOC_MACROS = [
   "\\providecommand{\\xspace}{}",
   "\\providecommand{\\obcite}[1]{\\cite{#1}}",
   "\\providecommand{\\obclaim}[1]{#1}",
@@ -78,7 +78,7 @@ export function pandocSafeMacros(...sources: Array<string | undefined | null>): 
     .map(extractSimpleNewcommands)
     .filter(Boolean)
     .join("\n");
-  return extracted ? `${OPENBARRY_PANDOC_MACROS}\n${extracted}` : OPENBARRY_PANDOC_MACROS;
+  return extracted ? `${OPENBAR_PANDOC_MACROS}\n${extracted}` : OPENBAR_PANDOC_MACROS;
 }
 
 export type PreviewMacroBinding =

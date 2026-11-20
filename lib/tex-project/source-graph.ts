@@ -190,12 +190,12 @@ function hasTexSections(source: string): boolean {
 function configuredMainFile(manuscriptDir: string): string | undefined {
   const recordFiles = [
     path.join(manuscriptDir, ".OpenBar", "project.tex"),
-    path.join(manuscriptDir, "openbarry", "project.tex"),
+    path.join(manuscriptDir, "openbar", "project.tex"),
   ];
   for (const file of recordFiles) {
     try {
       const source = fs.readFileSync(file, "utf8");
-      const record = getDataBlock<Record<string, unknown>>(source, "openbarry/project@1", "project")?.data;
+      const record = getDataBlock<Record<string, unknown>>(source, "openbar/project@1", "project")?.data;
       const mainFile = typeof record?.mainFile === "string" ? record.mainFile.trim() : "";
       if (mainFile) return mainFile;
     } catch {

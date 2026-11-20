@@ -47,7 +47,7 @@ RUN mkdir -p /data/openbar /app/.next /app/deploy \
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
-ENV OPENBARRY_CONTENT=/data/openbar
+ENV OPENBAR_CONTENT=/data/openbar
 ENV OPENBAR_PUBLIC_DEMO=1
 ENV OPENBAR_DEMO_SLUGS=command-v,noveltybench
 ENV OPENBAR_DEMO_FIXTURE=/opt/openbar-seed/published-papers

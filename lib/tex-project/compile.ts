@@ -445,7 +445,7 @@ export function compilerEnv(options: CompilerEnvironmentOptions = {}): NodeJS.Pr
 let availabilityCache: { key: string; available: boolean; expires: number } | undefined;
 
 function latexmkAvailable(): boolean {
-  const key = `${process.env.PATH || ""}:${process.env.OPENBARRY_TEX_BIN || ""}`;
+  const key = `${process.env.PATH || ""}:${process.env.OPENBAR_TEX_BIN || ""}`;
   if (availabilityCache?.key === key && availabilityCache.expires > Date.now()) return availabilityCache.available;
   let available = false;
   try {
@@ -476,7 +476,7 @@ function shouldIncludeSnapshotPath(relative: string): boolean {
   if (parts[0] === ".git" || parts[0] === "node_modules") return false;
   if (parts.some((part) => part.endsWith(".ob-lock"))) return false;
   if (parts[0] === "wiki") return false;
-  if (parts[0] === ".OpenBar" || parts[0] === ".openbarry" || parts[0] === "openbarry") {
+  if (parts[0] === ".OpenBar" || parts[0] === "openbar") {
     // OpenBar records describe the workspace and maps. Compiler options have
     // their own hash fields, and bibliography sources such as references.bib
     // remain part of the snapshot in both supported project layouts.
@@ -541,7 +541,7 @@ function cleanupOldArtifacts(projectDir: string, displayedId = displayedArtifact
 let toolchainCache: { key: string; value: string; expires: number } | undefined;
 
 function compilerToolchainIdentity(): string {
-  const key = `${process.env.PATH || ""}:${process.env.OPENBARRY_TEX_BIN || ""}`;
+  const key = `${process.env.PATH || ""}:${process.env.OPENBAR_TEX_BIN || ""}`;
   if (toolchainCache?.key === key && toolchainCache.expires > Date.now()) return toolchainCache.value;
   let value: string;
   try {

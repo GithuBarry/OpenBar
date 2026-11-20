@@ -37,7 +37,7 @@ One-line definition:
 ## Project inventory boundary
 
 The supported product inventory is the web content-store project inventory at
-`OPENBARRY_CONTENT/projects/<slug>`. The web home page and workspace WebMCP
+`OPENBAR_CONTENT/projects/<slug>`. The web home page and workspace WebMCP
 derive project discovery from this source.
 
 The workspace-registry CLI reads a machine-local registration file for

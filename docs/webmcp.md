@@ -119,7 +119,7 @@ their judgment to recognize similar content.
 
 ## Authenticated Streamable HTTP MCP
 
-The `/api/mcp` endpoint requires a bearer token from `OPENBARRY_ACCESS_TOKEN`
+The `/api/mcp` endpoint requires a bearer token from `OPENBAR_ACCESS_TOKEN`
 or a verified Cloudflare Access identity allowed by the deployment. Public
 demo access and same-origin browser access do not grant MCP access. The
 endpoint supports SDK protocol discovery, `tools/list`, `tools/call`, bounded
@@ -261,13 +261,13 @@ browser WebMCP. A future HTTPS Cloudflare tunnel uses the same origin policy.
 when reachable. Native WebMCP requires a browser secure context, provided by
 HTTPS or loopback localhost.
 
-For a separately hosted browser agent, set `OPENBARRY_AGENT_ORIGINS` to its exact
+For a separately hosted browser agent, set `OPENBAR_AGENT_ORIGINS` to its exact
 HTTPS origin. Multiple origins use commas. Loopback HTTP origins support local
 testing. Restart the server after changing this setting. The setting configures
 HTTP MCP preflight and response CORS, the tools permissions policy, and WebMCP
 `exposedTo` registration. An embedding page must also delegate `tools` using its
 iframe `allow` attribute and its own permissions policy. HTTP MCP continues to
-require `OPENBARRY_ACCESS_TOKEN`. Approved browser callers can read the MCP session
+require `OPENBAR_ACCESS_TOKEN`. Approved browser callers can read the MCP session
 header and send authorization and protocol headers.
 
 ## Portable browser and headless access
@@ -387,8 +387,8 @@ A stdio-only client can launch:
   "command": "node",
   "args": ["/absolute/path/to/OpenBar/scripts/mcp-stdio.mjs"],
   "env": {
-    "OPENBARRY_URL": "https://openbar.example.ts.net",
-    "OPENBARRY_ACCESS_TOKEN": "<provide securely>"
+    "OPENBAR_URL": "https://openbar.example.ts.net",
+    "OPENBAR_ACCESS_TOKEN": "<provide securely>"
   }
 }
 ```

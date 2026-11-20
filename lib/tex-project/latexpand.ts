@@ -24,7 +24,7 @@ export type ProjectExpansion = {
 
 export function discoverTexBinDirs(): string[] {
   const dirs = new Set<string>();
-  const configured = process.env.OPENBARRY_TEX_BIN;
+  const configured = process.env.OPENBAR_TEX_BIN;
   if (configured) dirs.add(path.resolve(configured));
   for (const dir of ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin", "/home/linuxbrew/.linuxbrew/bin", path.join(os.homedir(), ".local/bin"), "/usr/bin"]) {
     dirs.add(dir);
@@ -54,7 +54,7 @@ export function discoverTexBinDirs(): string[] {
 
 export function resolveLatexpandBin(): string {
   const extras = [
-    process.env.OPENBARRY_LATEXPAND,
+    process.env.OPENBAR_LATEXPAND,
     ...discoverTexBinDirs().map((dir) => path.join(dir, "latexpand")),
   ].filter((item): item is string => Boolean(item));
   for (const abs of extras) {

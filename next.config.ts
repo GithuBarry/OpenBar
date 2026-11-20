@@ -6,7 +6,7 @@ import type { NextConfig } from "next";
 const configDir = path.dirname(fileURLToPath(import.meta.url));
 
 function devOriginsFromEnvironment(): string[] {
-  const extra = (process.env.OPENBARRY_DEV_ORIGINS || "")
+  const extra = (process.env.OPENBAR_DEV_ORIGINS || "")
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
@@ -44,7 +44,7 @@ const nextConfig: NextConfig = {
   },
   // Next 16 treats each browser host as a separate origin and blocks
   // /_next chunks + HMR unless listed here. Supply private LAN or tailnet
-  // dev hosts via OPENBARRY_DEV_ORIGINS (comma-separated).
+  // dev hosts via OPENBAR_DEV_ORIGINS (comma-separated).
   allowedDevOrigins: devOriginsFromEnvironment(),
   serverExternalPackages: [
     "file-type",

@@ -3,11 +3,11 @@
 import { StreamableHTTPClientTransport, isInitializeRequest, isJSONRPCRequest } from '@modelcontextprotocol/client'
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
 
-const base = process.env.OPENBARRY_URL || 'http://127.0.0.1:3000'
+const base = process.env.OPENBAR_URL || 'http://127.0.0.1:3000'
 const endpoint = new URL('/api/mcp', base)
-if (endpoint.protocol !== 'https:' && !(endpoint.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname))) throw new Error('Use HTTPS or loopback HTTP for OPENBARRY_URL.')
-const token = process.env.OPENBARRY_ACCESS_TOKEN
-if (!token) throw new Error('Set OPENBARRY_ACCESS_TOKEN before starting the bridge.')
+if (endpoint.protocol !== 'https:' && !(endpoint.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname))) throw new Error('Use HTTPS or loopback HTTP for OPENBAR_URL.')
+const token = process.env.OPENBAR_ACCESS_TOKEN
+if (!token) throw new Error('Set OPENBAR_ACCESS_TOKEN before starting the bridge.')
 
 const stdio = new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 4_000_000 })
 const http = new StreamableHTTPClientTransport(endpoint, {

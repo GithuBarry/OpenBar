@@ -1,13 +1,13 @@
-% OpenBarry manuscript support.
+% OpenBar manuscript support.
 % Designed to coexist with the document class and publisher style chosen by
-% the project. The package only supplies OpenBarry research macros.
+% the project. The package only supplies OpenBar research macros.
 \NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{openbarry}[2026/08/26 OpenBarry research macros]
+\ProvidesPackage{openbar}[2026/08/26 OpenBar research macros]
 
 % 1. Package options:
-% \usepackage{openbarry}            -> colored draft markers for collaborative editing
-% \usepackage[final]{openbarry}     -> clean publication text (comments, todos, and markers hidden)
-% \usepackage[neutral]{openbarry}   -> neutral text colors (no magenta/orange/blue)
+% \usepackage{openbar}            -> colored draft markers for collaborative editing
+% \usepackage[final]{openbar}     -> clean publication text (comments, todos, and markers hidden)
+% \usepackage[neutral]{openbar}   -> neutral text colors (no magenta/orange/blue)
 \newif\if@obfinal\@obfinalfalse
 \newif\if@obneutral\@obneutralfalse
 
@@ -45,7 +45,7 @@
     \providecommand{\obmarker}[2]{\textit{[#1: #2]}}
     \providecommand{\obcite}[2][]{\cite{#2}\if\relax\detokenize{#1}\relax\else, #1\fi}
   \else
-    % Standard OpenBarry colored draft mode
+    % Standard OpenBar colored draft mode
     \providecommand{\obclaim}[2][]{\textcolor{magenta!75!black}{#2}}
     \providecommand{\obevidence}[2][]{#2}
     \providecommand{\obcomment}[2][]{\textcolor{gray!75!black}{\textit{[Comment: #2]}}}

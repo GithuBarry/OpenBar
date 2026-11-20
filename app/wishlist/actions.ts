@@ -29,7 +29,7 @@ export async function agentPlatformWishlist(raw: unknown) {
     throw error;
   }
   const authorization = (await headers()).get("authorization");
-  if (authorization && !bearerMatches(authorization, process.env.OPENBARRY_ACCESS_TOKEN?.trim() || "")) {
+  if (authorization && !bearerMatches(authorization, process.env.OPENBAR_ACCESS_TOKEN?.trim() || "")) {
     return failResult("permission_denied", "Workspace access is required for platform feedback.", false);
   }
   return runPlatformWishlist(raw);

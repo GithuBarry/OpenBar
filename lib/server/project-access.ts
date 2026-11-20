@@ -23,7 +23,7 @@ export class ProjectAccessError extends Error {
 }
 
 function accessToken(): string | undefined {
-  return process.env.OPENBARRY_ACCESS_TOKEN?.trim() || undefined;
+  return process.env.OPENBAR_ACCESS_TOKEN?.trim() || undefined;
 }
 
 export async function requireWorkbenchAccess(): Promise<void> {

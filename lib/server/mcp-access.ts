@@ -19,7 +19,7 @@ export type McpAccessResult =
  * public-demo, and local-access switches never grant MCP access by themselves.
  */
 export async function authorizeMcpRequest(request: Request): Promise<McpAccessResult> {
-  const configuredToken = process.env.OPENBARRY_ACCESS_TOKEN?.trim();
+  const configuredToken = process.env.OPENBAR_ACCESS_TOKEN?.trim();
   if (configuredToken && bearerMatches(request.headers.get("authorization"), configuredToken)) {
     return { ok: true, actor: "access-token" };
   }
@@ -39,8 +39,8 @@ export async function authorizeMcpRequest(request: Request): Promise<McpAccessRe
       ok: false,
       status: 503,
       message: environment === "production"
-        ? "MCP access is unavailable until OPENBARRY_ACCESS_TOKEN or Cloudflare Access is configured."
-        : `MCP access is unavailable until OPENBARRY_ACCESS_TOKEN or Cloudflare Access is configured for ${isLoopbackHost(host) ? "this local server" : "this server"}.`,
+        ? "MCP access is unavailable until OPENBAR_ACCESS_TOKEN or Cloudflare Access is configured."
+        : `MCP access is unavailable until OPENBAR_ACCESS_TOKEN or Cloudflare Access is configured for ${isLoopbackHost(host) ? "this local server" : "this server"}.`,
     };
   }
 

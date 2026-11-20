@@ -38,12 +38,12 @@ import { assertHtmlCardBodies } from "@/lib/mindmap/html-card";
 import { maskTexLiterals } from "./tex-literals";
 
 export const TEX_SCHEMAS = {
-  project: "openbarry/project@1",
-  mindmap: "openbarry/mindmap@1",
-  bibliography: "openbarry/bibliography@1",
-  document: "openbarry/document@1",
+  project: "openbar/project@1",
+  mindmap: "openbar/mindmap@1",
+  bibliography: "openbar/bibliography@1",
+  document: "openbar/document@1",
   /** Frozen envelope id. Paper and TeX document edit-block bodies are TeX. */
-  markdown: "openbarry/markdown@1",
+  markdown: "openbar/markdown@1",
 } as const;
 
 export interface TexPaths {
@@ -114,7 +114,7 @@ function useCanonicalLayout(projectDir: string): boolean {
   // file is temporarily missing, even when a legacy-looking `manuscript/`
   // directory happens to exist beside it.
   if (fs.existsSync(path.join(projectDir, ".OpenBar", "project.tex"))) return true;
-  if (fs.existsSync(path.join(projectDir, "manuscript", "openbarry", "project.tex"))) return false;
+  if (fs.existsSync(path.join(projectDir, "manuscript", "openbar", "project.tex"))) return false;
   return hasSupportedTexDocument(projectDir)
     || !hasSupportedTexDocument(path.join(projectDir, "manuscript"));
 }
@@ -122,7 +122,7 @@ function useCanonicalLayout(projectDir: string): boolean {
 export function texPaths(projectDir: string): TexPaths {
   const canonical = useCanonicalLayout(projectDir);
   const manuscriptDir = canonical ? projectDir : path.join(projectDir, "manuscript");
-  const openBarDir = canonical ? path.join(projectDir, ".OpenBar") : path.join(manuscriptDir, "openbarry");
+  const openBarDir = canonical ? path.join(projectDir, ".OpenBar") : path.join(manuscriptDir, "openbar");
   // `paper.tex` remains the initialization default. Existing projects may
   // declare `main.tex`, `ms.tex`, or another document root discovered by the
   // source graph. A persisted `mainFile` is resolved by locateTexRoot using
@@ -132,7 +132,7 @@ export function texPaths(projectDir: string): TexPaths {
     projectDir,
     manuscriptDir,
     paperFile,
-    styleFile: path.join(manuscriptDir, "openbarry.sty"),
+    styleFile: path.join(manuscriptDir, "openbar.sty"),
     sectionsDir: path.join(manuscriptDir, "sections"),
     openBarDir,
     projectFile: path.join(openBarDir, "project.tex"),
@@ -143,7 +143,7 @@ export function texPaths(projectDir: string): TexPaths {
     mindmapsDir: path.join(openBarDir, "mindmaps"),
     buildDir: canonical
       ? path.join(projectDir, ".OpenBar", "build")
-      : path.join(projectDir, ".openbarry", "build"),
+      : path.join(projectDir, ".openbar", "build"),
   };
 }
 
@@ -492,7 +492,7 @@ export function writePaperProject(
       main.push(input);
     }
   }
-  if (!fs.existsSync(paths.styleFile)) writeTextAtomic(paths.styleFile, openBarryStyle());
+  if (!fs.existsSync(paths.styleFile)) writeTextAtomic(paths.styleFile, openBarStyle());
   if (!fs.existsSync(paths.bibliographyFile)) writeBibliographyRaw(projectDir, "");
   writeTextAtomic(paths.paperFile, paperRootTex(title, [...main, PAPER_REFERENCES_INPUT, ...appendixInputs]));
   ensureBibliographyInput(projectDir);
@@ -579,7 +579,7 @@ export function bibliographyInputWrites(projectDir: string, raw: string): Array<
   const writes: Array<{ file: string; source: string }> = [];
   let managedInput = false;
   for (const node of traverseInputGraph(paths.manuscriptDir).nodes.filter(node => node.editable)) {
-    const matches = [...maskTexLiterals(node.source).matchAll(/\\input\s*\{\s*(\.OpenBar\/references(?:\.tex)?|openbarry-references(?:\.tex)?)\s*\}/g)]
+    const matches = [...maskTexLiterals(node.source).matchAll(/\\input\s*\{\s*(\.OpenBar\/references(?:\.tex)?|openbar-references(?:\.tex)?)\s*\}/g)]
       .filter(match => {
         let precedingSlashes = 0;
         for (let index = match.index! - 1; index >= 0 && node.source[index] === "\\"; index -= 1) precedingSlashes += 1;
@@ -647,7 +647,7 @@ export function resolveNativeBodyAbs(projectDir: string, bodyPath: unknown): str
   const normalized = path.posix.normalize(bodyPath);
   const segments = normalized.split("/");
   if (segments.some((segment) => segment === "..") || segments[0] !== "wiki" || segments.length < 2) return null;
-  if (segments.some((segment) => segment === ".git" || segment === ".OpenBar" || segment === "openbarry")) return null;
+  if (segments.some((segment) => segment === ".git" || segment === ".OpenBar" || segment === "openbar")) return null;
   let root: string;
   try {
     root = fs.realpathSync.native(path.resolve(/*turbopackIgnore: true*/ texPaths(projectDir).manuscriptDir));
@@ -999,7 +999,7 @@ function paperRootTex(title: string, body: string[]): string {
   return [
     "% OpenBar manuscript entry point.",
     "\\documentclass[11pt]{article}",
-    "\\usepackage{openbarry}",
+    "\\usepackage{openbar}",
     paperTitleCommand(title),
     "\\date{}",
     "\\begin{document}",
@@ -1010,17 +1010,17 @@ function paperRootTex(title: string, body: string[]): string {
   ].join("\n");
 }
 
-function openBarryStyle(): string {
-  return String.raw`% OpenBarry manuscript support.
+function openBarStyle(): string {
+  return String.raw`% OpenBar manuscript support.
 % Designed to coexist with the document class and publisher style chosen by
-% the project. The package only supplies OpenBarry research macros.
+% the project. The package only supplies OpenBar research macros.
 \NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{openbarry}[2026/08/26 OpenBarry research macros]
+\ProvidesPackage{openbar}[2026/08/26 OpenBar research macros]
 
 % 1. Package options:
-% \usepackage{openbarry}            -> colored draft markers for collaborative editing
-% \usepackage[final]{openbarry}     -> clean publication text (comments, todos, and markers hidden)
-% \usepackage[neutral]{openbarry}   -> neutral text colors (no magenta/orange/blue)
+% \usepackage{openbar}            -> colored draft markers for collaborative editing
+% \usepackage[final]{openbar}     -> clean publication text (comments, todos, and markers hidden)
+% \usepackage[neutral]{openbar}   -> neutral text colors (no magenta/orange/blue)
 \newif\if@obfinal\@obfinalfalse
 \newif\if@obneutral\@obneutralfalse
 
@@ -1058,7 +1058,7 @@ function openBarryStyle(): string {
     \providecommand{\obmarker}[2]{\textit{[#1: #2]}}
     \providecommand{\obcite}[2][]{\cite{#2}\if\relax\detokenize{#1}\relax\else, #1\fi}
   \else
-    % Standard OpenBarry colored draft mode
+    % Standard OpenBar colored draft mode
     \providecommand{\obclaim}[2][]{\textcolor{magenta!75!black}{#2}}
     \providecommand{\obevidence}[2][]{#2}
     \providecommand{\obcomment}[2][]{\textcolor{gray!75!black}{\textit{[Comment: #2]}}}

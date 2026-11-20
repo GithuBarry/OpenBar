@@ -17,7 +17,7 @@ import { ThemeScript } from "@/components/theme";
 import { Providers } from "./providers";
 import { getWorkspaceSettings } from "@/lib/workspace";
 
-const siteUrl = new URL(process.env.NEXT_PUBLIC_OPENBARRY_URL || "http://localhost:3000");
+const siteUrl = new URL(process.env.NEXT_PUBLIC_OPENBAR_URL || "http://localhost:3000");
 
 export const dynamic = "force-dynamic";
 

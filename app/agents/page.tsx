@@ -16,7 +16,7 @@ export default function AgentAccessPage() {
       <section className="space-y-3" aria-labelledby="headless-help">
         <h2 id="headless-help" className="text-xl font-semibold">Connect a coding or headless agent (Recommended)</h2>
         <p>Prefer native MCP or REST over driving the user’s browser tabs. Native MCP contributes cleanly through revision checks without navigating or taking over the human’s open browser session.</p>
-        <p>Copy this address into a Streamable HTTP MCP connection and supply <code>Authorization: Bearer &lt;access token&gt;</code> using the server’s configured <code>OPENBARRY_ACCESS_TOKEN</code> (or its allowed Cloudflare Access identity). <strong>If you do not have the token or MCP connection yet, ask the human for the token</strong> instead of falling back to browser automation unless they explicitly ask you to use the browser.</p>
+        <p>Copy this address into a Streamable HTTP MCP connection and supply <code>Authorization: Bearer &lt;access token&gt;</code> using the server’s configured <code>OPENBAR_ACCESS_TOKEN</code> (or its allowed Cloudflare Access identity). <strong>If you do not have the token or MCP connection yet, ask the human for the token</strong> instead of falling back to browser automation unless they explicitly ask you to use the browser.</p>
         <AgentConnectionAddress />
         <ol className="list-decimal space-y-2 pl-5">
           <li>Connect using a current MCP SDK. The endpoint handles each HTTP request independently and also supports 2025 clients through the SDK.</li>
@@ -27,7 +27,7 @@ export default function AgentAccessPage() {
         <p>For Git conflicts, inspect the <code>sync</code> field in project state. Use <code>sync_project</code> with <code>review_pull</code> to receive the base, local, and Git contents for each conflicting file. Resolve whole files and call <code>apply_pull</code> with the returned token. Changes arriving during review require a fresh review.</p>
         <p>For mutation tools that accept <code>requestId</code>, supply a unique stable ID and reuse it for retries. HTTP MCP operates saved repository state without interrupting active browser editing.</p>
         <p>REST clients can read <code>/api/tools</code> and send JSON arguments to <code>/api/tools/&lt;name&gt;</code> with the same bearer token. <Link href="/openapi.json" className="text-accent underline">OpenAPI discovery</Link> describes every endpoint. MCP and REST results use <code>{'{"ok":true,"value":...}'}</code> with revision and save details.</p>
-        <p>Stdio clients can launch <code>node scripts/mcp-stdio.mjs</code> with <code>OPENBARRY_URL</code> and <code>OPENBARRY_ACCESS_TOKEN</code> in their environment. Tailscale addresses require access to your private network. External browser origins require configuration in <code>OPENBARRY_AGENT_ORIGINS</code>.</p>
+        <p>Stdio clients can launch <code>node scripts/mcp-stdio.mjs</code> with <code>OPENBAR_URL</code> and <code>OPENBAR_ACCESS_TOKEN</code> in their environment. Tailscale addresses require access to your private network. External browser origins require configuration in <code>OPENBAR_AGENT_ORIGINS</code>.</p>
         <p><Link href="/llms.txt" className="text-accent underline">Optional agent index</Link>{" | "}<Link href="/llms-deployment.txt" className="text-accent underline">Deployment and connection reference</Link></p>
       </section>
       <section className="space-y-3" aria-labelledby="inbox-help">

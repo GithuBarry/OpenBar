@@ -26,7 +26,7 @@ export function agentCors(request: Request, response: Response): Response {
 }
 
 export async function agentHttp(request: Request, run: (actor: string) => Promise<Response>): Promise<Response> {
-  if (!agentOriginAllowed(request)) return Response.json({ ok: false, code: "origin_not_allowed", message: "Configure this origin in OPENBARRY_AGENT_ORIGINS." }, { status: 403 })
+  if (!agentOriginAllowed(request)) return Response.json({ ok: false, code: "origin_not_allowed", message: "Configure this origin in OPENBAR_AGENT_ORIGINS." }, { status: 403 })
   if (request.method === "OPTIONS") return agentCors(request, new Response(null, { status: 204 }))
   const auth = await authorizeMcpRequest(request)
   if (!auth.ok) return agentCors(request, Response.json({ ok: false, code: "mcp_access_required", message: auth.message }, { status: auth.status, headers: auth.status === 401 ? { "WWW-Authenticate": 'Bearer realm="OpenBar"' } : {} }))

@@ -66,7 +66,7 @@ function posixFrom(root: string, file: string): string {
 }
 
 export function workspaceRoot(): string {
-  return process.env.OPENBARRY_CONTENT || path.join(process.cwd(), "content");
+  return process.env.OPENBAR_CONTENT || path.join(process.cwd(), "content");
 }
 
 /** Shared user instructions belong to the private workspace. */

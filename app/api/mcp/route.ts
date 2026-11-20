@@ -11,7 +11,7 @@ const handler = createMcpHandler(({ authInfo }) => createOpenbarMcpServer(authIn
 })
 
 async function dispatch(request: Request): Promise<Response> {
-  if (!agentOriginAllowed(request)) return Response.json({ error: "Agent origin is outside OPENBARRY_AGENT_ORIGINS.", code: "origin_not_allowed" }, { status: 403 })
+  if (!agentOriginAllowed(request)) return Response.json({ error: "Agent origin is outside OPENBAR_AGENT_ORIGINS.", code: "origin_not_allowed" }, { status: 403 })
   let response: Response
   if (request.method === "OPTIONS") {
     response = new Response(null, { status: 204, headers: { Allow: "GET, POST, DELETE, OPTIONS" } })

@@ -903,7 +903,7 @@ export function searchProjectContent(input: {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
       if (!line.toLowerCase().includes(needle)) continue;
-      if (line.trimStart().startsWith("% === openbarry:file")) continue;
+      if (line.trimStart().startsWith("% === openbar:file")) continue;
       const section = sectionAtSourceLine(input.paperSource, i, input.paper.outline);
       hits.push({
         id: `paper:${section?.id || "source"}:${i + 1}`,
