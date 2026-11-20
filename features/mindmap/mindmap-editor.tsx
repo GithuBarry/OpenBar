@@ -220,6 +220,9 @@ export function MindmapEditor({
   const [connectionDetailsOpenRequest, setConnectionDetailsOpenRequest] = useState(0);
   const [saveConflictAttention, setSaveConflictAttention] = useState(0);
   const [resumeEditAttentionRequest, setResumeEditAttentionRequest] = useState(0);
+  useEffect(() => {
+    if (sessionWritable) setResumeEditAttentionRequest(0);
+  }, [sessionWritable]);
   const manualReadOnlyRef = useRef(false);
   const sessionWritableRef = useRef(sessionWritable);
   sessionWritableRef.current = sessionWritable;

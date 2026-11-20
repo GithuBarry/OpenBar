@@ -82,7 +82,7 @@
 .searchFiltered { background: color-mix(in srgb, rgb(var(--accent)) 14%, rgb(var(--surface))); color: rgb(var(--accent-text)); }
 .searchTrigger { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 9px; color: rgb(var(--muted)); font-size: 12px; cursor: pointer; }
 .saveStatus { display: flex; align-items: center; flex-shrink: 0; }
-.saveStatus > button svg { width: 17px; height: 17px; }
+.saveStatus button svg { width: 17px; height: 17px; }
 .searchPanel, .optionsPanel { z-index: 90; border: 1px solid rgb(var(--line)); border-radius: var(--radius-glass); background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); font-family: var(--font-sans); width: min(420px, calc(100vw - 24px)); overflow: hidden; }
 .searchField { display: flex; align-items: center; gap: 10px; padding: 14px; border-bottom: 1px solid rgb(var(--line)); color: rgb(var(--muted)); }
 .searchField > input { flex: 1; min-width: 0; background: transparent; outline: none; font-size: 13px; color: rgb(var(--ink)); }
