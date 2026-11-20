@@ -194,9 +194,9 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
           : { backgroundColor: `rgb(${accent})`, color: "#fff", boxShadow: `inset 0 0 0 1.5px rgb(${accent})` };
       bounceRef.current = button.animate([
         base,
-        { ...peak, offset: 0.35 },
+        { ...peak, offset: 0.3 },
         base,
-      ], { duration: level === 1 ? 2480 : level === 2 ? 2880 : 3280, easing: "ease-in-out" });
+      ], { duration: level === 1 ? 1240 : level === 2 ? 1440 : 1640, easing: "ease-in-out" });
     }
 
     if (attentionRequest >= 3) {
