@@ -1,5 +1,6 @@
 /** Shared command inputs. Transport adapters add identity and concurrency fields. */
 import { z } from "zod";
+import { PLATFORM_WISHLIST_INPUT } from "./platform-wishlist-contract";
 import { MAX_MINDMAP_LABEL_CHARS, MAX_MINDMAP_LABELS, normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import { MIN_CARD_WIDTH, MAX_CARD_WIDTH } from "@/lib/mindmap/card-width";
 import { APPLY_PROJECT_EDITS_INPUT,READ_PROJECT_FILES_INPUT } from "./project-files-contract";
@@ -104,6 +105,7 @@ export const NATIVE_MINDMAP_INPUTS = {
 };
 
 export const MCP_INPUTS = {
+  platform_wishlist: PLATFORM_WISHLIST_INPUT,
   list_projects: WORKSPACE_INPUTS.list_projects,
   get_workspace_layout: WORKSPACE_INPUTS.get_workspace_layout,
   move_project: WORKSPACE_INPUTS.move_project,

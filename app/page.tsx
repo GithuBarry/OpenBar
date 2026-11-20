@@ -35,7 +35,7 @@ export default async function Home() {
 
   return (
     <main id="main-content" tabIndex={-1} className="ob-main-brand min-h-screen bg-canvas">
-      <WorkspaceWebMcp />
+      <WorkspaceWebMcp wishlistAvailable={platformWishlistAvailable()} />
       <div className="flex h-dvh flex-col">
         <header className="ob-chrome-header ob-home-header shrink-0 sticky top-0 z-10">
           <div className="ob-home-header-inner mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-4">

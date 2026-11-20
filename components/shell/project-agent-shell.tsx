@@ -27,15 +27,18 @@ export function ProjectAgentShell({
   project,
   children,
   publicDemo = false,
+  wishlistAvailable,
 }: {
   project: string;
   children: React.ReactNode;
   publicDemo?: boolean;
+  wishlistAvailable: boolean;
 }) {
   const pathname = usePathname();
   useInboxWebMcp(project);
   useSharedProjectWebMcp({
     project,
+    wishlistAvailable,
     profile: publicDemo ? "public-demo" : "full",
     current: () => {
       const loc = locationFromPath(project, pathname);

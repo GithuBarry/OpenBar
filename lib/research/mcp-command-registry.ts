@@ -4,6 +4,8 @@ import { resolveFigureAsset } from "@/lib/tex-project/project";
 import "server-only";
 import { acknowledgeAgentInbox,readAgentInbox } from "./agent-inbox";
 import { INBOX_TOOL_DESCRIPTIONS,type AgentInbox } from "./agent-inbox-contract";
+import { platformWishlistAvailable, runPlatformWishlist } from "./platform-wishlist";
+import { WISHLIST_DESCRIPTION } from "./platform-wishlist-contract";
 import { MINDMAP_EDIT_GUIDANCE } from "./agent-guidance";
 import { MCP_INPUTS, MINDMAP_LABELS_INPUT, NATIVE_MINDMAP_INPUTS } from "./command-inputs";
 import { commandJsonSchema,parseCommandInput } from "./command-schema";
@@ -1043,6 +1045,7 @@ async function executeManagedMindmapEdit(raw: unknown, context: McpCommandContex
 }
 
 export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
+  tool("platform_wishlist", "Platform wishlist", WISHLIST_DESCRIPTION, runPlatformWishlist),
   tool("list_projects", "List projects", "List project slugs and titles available to this authenticated MCP connection.", async () => executeListProjects(), { readOnlyHint: true }),
   tool("get_workspace_layout", "Read project layout", "Read active and archived projects in saved order and the hash required by move_project.", async () => okResult(getWorkspaceLayout()), { readOnlyHint: true }),
   tool("move_project", "Move a project", "Reorder, archive or restore a project with the current layout hash. Omit neighbors to append to the destination group.", async raw => {
@@ -1086,11 +1089,12 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
 const REGISTRY_BY_NAME = new Map(MCP_TOOL_REGISTRY.map((entry) => [entry.name, entry]));
 
 export function getMcpTool(name: string): McpToolDefinition | undefined {
+  if (name === "platform_wishlist" && !platformWishlistAvailable()) return undefined;
   return REGISTRY_BY_NAME.get(name);
 }
 
 export function listMcpTools(): McpToolDefinition[] {
-  return [...MCP_TOOL_REGISTRY];
+  return MCP_TOOL_REGISTRY.filter(entry => getMcpTool(entry.name));
 }
 
 async function executeCommand(name: string, args: unknown, context: McpCommandContext): Promise<OperationResult<unknown>> {

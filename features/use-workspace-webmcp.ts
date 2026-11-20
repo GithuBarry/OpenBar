@@ -1,5 +1,7 @@
 "use client";
 
+import { agentPlatformWishlist } from "@/app/wishlist/actions";
+import { platformWishlistWebMcp } from "@/lib/research/platform-wishlist-contract";
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
@@ -11,7 +13,7 @@ import {
 import { registerWebMcpToolsIndependent, waitForModelContext } from "@/lib/research/webmcp-register";
 import { useInboxWebMcp } from "@/features/use-inbox-webmcp";
 
-export function useWorkspaceWebMcp(host: WorkspaceWebMcpHost): void {
+export function useWorkspaceWebMcp(host: WorkspaceWebMcpHost, wishlistAvailable: boolean): void {
   useInboxWebMcp();
   const hostRef = useRef(host);
   hostRef.current = host;
@@ -24,9 +26,11 @@ export function useWorkspaceWebMcp(host: WorkspaceWebMcpHost): void {
       const modelContext = await waitForModelContext(30_000, controller.signal);
       if (!active || controller.signal.aborted || !modelContext?.registerTool) return;
       const bound = hostRef.current;
+      const tools = buildWorkspaceWebMcpTools(bound);
+      if (wishlistAvailable) tools.push(platformWishlistWebMcp(agentPlatformWishlist));
       const registration = await registerWebMcpToolsIndependent(
         modelContext,
-        buildWorkspaceWebMcpTools(bound),
+        tools,
         controller.signal,
         "workspace",
       );
@@ -38,15 +42,15 @@ export function useWorkspaceWebMcp(host: WorkspaceWebMcpHost): void {
       controller.abort();
       release?.();
     };
-  }, []);
+  }, [wishlistAvailable]);
 }
 
 /** Client-only mount for the workspace catalog on the home page. */
-export function WorkspaceWebMcp() {
+export function WorkspaceWebMcp({ wishlistAvailable }: { wishlistAvailable: boolean }) {
   const router = useRouter();
   useWorkspaceWebMcp({
     actions: workspaceWebMcpActions,
     navigate: (href) => router.push(href),
-  });
+  }, wishlistAvailable);
   return null;
 }

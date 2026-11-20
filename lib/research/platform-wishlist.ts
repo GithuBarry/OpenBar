@@ -6,6 +6,8 @@ import { z } from "zod";
 import packageJson from "@/package.json";
 import { openBarPaths } from "@/lib/config/openbar-paths";
 import { withWriteLockAsync, writeTextAtomic } from "@/lib/tex-project/codec";
+import { PLATFORM_WISHLIST_INPUT } from "./platform-wishlist-contract";
+import { failResult, okResult, type OperationResult } from "./operation-result";
 import { workspaceInstructionsAvailable } from "./project-skills";
 
 const wishSchema = z.object({
@@ -49,4 +51,22 @@ export async function addPlatformWish(input: { text: string }, author: PlatformW
     writeTextAtomic(file, JSON.stringify([wish, ...wishes], null, 2) + "\n", 0o600);
     return wish;
   });
+}
+
+export async function runPlatformWishlist(raw: unknown): Promise<OperationResult<unknown>> {
+  if (!platformWishlistAvailable()) return failResult("permission_denied", "The platform wishlist requires a private workspace.", false);
+  const parsed = PLATFORM_WISHLIST_INPUT.safeParse(raw);
+  if (!parsed.success) return failResult("invalid_arguments", parsed.error.issues.map(issue => issue.message).join(" "), false);
+  const { action, text, before, limit = 10 } = parsed.data;
+  try {
+    if (action === "add") return okResult(await addPlatformWish({ text: text! }, "agent"));
+    const wishes = listPlatformWishlist();
+    const start = before ? wishes.findIndex(wish => wish.id === before) + 1 : 0;
+    if (before && start === 0) return failResult("invalid_arguments", "Use nextBefore from the preceding page.", false);
+    const items = wishes.slice(start, start + limit);
+    const nextBefore = start + items.length < wishes.length ? items.at(-1)?.id : undefined;
+    return okResult({ items, total: wishes.length, nextBefore });
+  } catch {
+    return failResult("operation_failed", "The platform wishlist is unavailable. Try again.", true);
+  }
 }

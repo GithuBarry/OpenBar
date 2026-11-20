@@ -1,5 +1,7 @@
 "use client";
 
+import { agentPlatformWishlist } from "@/app/wishlist/actions";
+import { platformWishlistWebMcp } from "@/lib/research/platform-wishlist-contract";
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
@@ -12,6 +14,7 @@ export function useSharedProjectWebMcp(input: {
   project: string;
   current: CurrentLocation | (() => CurrentLocation | undefined);
   profile?: SharedWebMcpProfile;
+  wishlistAvailable: boolean;
 }): void {
   const router = useRouter();
   const inputRef = useRef(input);
@@ -37,6 +40,7 @@ export function useSharedProjectWebMcp(input: {
         read: input => sharedWebMcpActions.readProjectFiles(inputRef.current.project, input),
         edit: input => sharedWebMcpActions.applyProjectEdits(inputRef.current.project, input),
       }));
+      if (inputRef.current.wishlistAvailable) tools.push(platformWishlistWebMcp(agentPlatformWishlist));
       const registration = await registerWebMcpToolsIndependent(
         modelContext,
         tools,
@@ -51,5 +55,5 @@ export function useSharedProjectWebMcp(input: {
       controller.abort();
       release?.();
     };
-  }, [input.profile, input.project, router]);
+  }, [input.profile, input.project, input.wishlistAvailable, router]);
 }

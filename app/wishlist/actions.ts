@@ -1,8 +1,11 @@
 "use server";
 
+import { headers } from "next/headers";
+import { bearerMatches } from "@/lib/server/access-policy";
+import { failResult } from "@/lib/research/operation-result";
 import { revalidatePath } from "next/cache";
-import { addPlatformWish, platformWishlistAvailable } from "@/lib/research/platform-wishlist";
-import { requireWorkbenchAccess } from "@/lib/server/project-access";
+import { addPlatformWish, platformWishlistAvailable, runPlatformWishlist } from "@/lib/research/platform-wishlist";
+import { ProjectAccessError, requireWorkbenchAccess } from "@/lib/server/project-access";
 
 export async function submitPlatformWish(text: string) {
   await requireWorkbenchAccess();
@@ -16,4 +19,18 @@ export async function submitPlatformWish(text: string) {
   }
   revalidatePath("/wishlist");
   return { ok: true, message: "Feedback added." };
+}
+
+export async function agentPlatformWishlist(raw: unknown) {
+  try {
+    await requireWorkbenchAccess();
+  } catch (error) {
+    if (error instanceof ProjectAccessError) return failResult("permission_denied", "Workspace access is required for platform feedback.", false);
+    throw error;
+  }
+  const authorization = (await headers()).get("authorization");
+  if (authorization && !bearerMatches(authorization, process.env.OPENBARRY_ACCESS_TOKEN?.trim() || "")) {
+    return failResult("permission_denied", "Workspace access is required for platform feedback.", false);
+  }
+  return runPlatformWishlist(raw);
 }

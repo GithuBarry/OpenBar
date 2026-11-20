@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { getProjectMetadata } from "@/lib/store";
+import { platformWishlistAvailable } from "@/lib/research/platform-wishlist";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
 import { requireProjectPage } from "@/lib/server/project-access";
 import { Sidebar } from "@/components/shell/sidebar";
@@ -26,7 +27,7 @@ export default async function ProjectLayout({
   const publicDemo = isPublicDemoMode();
 
   return (
-    <ProjectAgentShell project={slug} publicDemo={publicDemo}>
+    <ProjectAgentShell project={slug} publicDemo={publicDemo} wishlistAvailable={platformWishlistAvailable()}>
       <meta name="openbar-agent-requests" content={JSON.stringify(getProjectAgentMentions(slug))} />
       <div className="flex h-screen overflow-hidden">
         <Sidebar
