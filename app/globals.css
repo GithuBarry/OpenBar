@@ -808,48 +808,77 @@ html[data-shift-key="true"]:not([data-alt-key="true"]) .ob-mod-swap > .ob-mod-sh
   transform-origin: center 55%;
   animation: ob-alarm-ring 0.65s ease-in-out infinite;
 }
-.ob-status-anchor {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
 @keyframes ob-sleep-bubble-in {
   from { opacity: 0; transform: translateY(4px) scale(0.96); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .ob-sleep-bubble {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 12px);
-  z-index: 40;
-  width: max-content;
-  max-width: min(280px, 78vw);
-  padding: 7px 12px;
-  border: 1px solid rgb(var(--warn) / .4);
+  z-index: 80;
+  max-width: min(290px, calc(100vw - 24px));
+  border: 1px solid rgb(var(--line));
   border-radius: var(--radius-glass);
   background: var(--surface-overlay);
   color: rgb(var(--ink));
   box-shadow: var(--shadow-pop);
+  animation: ob-sleep-bubble-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ob-sleep-bubble-button {
+  display: block;
+  width: 100%;
+  padding: 8px 13px;
+  border: 0;
+  border-radius: var(--radius-glass);
+  background: transparent;
+  color: rgb(var(--ink));
   font: 500 12px/1.35 var(--font-sans);
   text-align: left;
   cursor: pointer;
-  animation: ob-sleep-bubble-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
-  transition: background-color 120ms ease, border-color 120ms ease;
 }
-.ob-sleep-bubble:hover {
-  border-color: rgb(var(--warn) / .7);
+.ob-sleep-bubble-button:hover {
+  background: rgb(var(--ink) / .05);
 }
-.ob-sleep-bubble::after {
-  content: "";
-  position: absolute;
-  right: 16px;
-  top: 100%;
-  width: 9px;
-  height: 9px;
-  background: var(--surface-overlay);
-  border-right: 1px solid rgb(var(--warn) / .4);
-  border-bottom: 1px solid rgb(var(--warn) / .4);
-  transform: translateY(-50%) rotate(45deg);
+.ob-sleep-bubble-arrow {
+  fill: var(--surface-overlay);
+  filter: drop-shadow(0 1px 0 rgb(var(--line)));
+}
+.ob-falling-z-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+  overflow: hidden;
+}
+@keyframes ob-falling-z {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 0) rotate(0deg) scale(0.75);
+  }
+  15% {
+    opacity: 0.95;
+    transform: translate(calc(-50% + var(--ob-z-dx) * 0.25), calc(var(--ob-z-drop) * 0.12)) rotate(calc(var(--ob-z-rot) * 0.35)) scale(1);
+  }
+  75% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--ob-z-dx)), var(--ob-z-drop)) rotate(var(--ob-z-rot)) scale(0.9);
+  }
+}
+.ob-falling-z {
+  position: fixed;
+  font-family: var(--font-sans);
+  font-weight: 700;
+  line-height: 1;
+  color: rgb(var(--accent-text));
+  opacity: 0;
+  will-change: transform, opacity;
+  animation-name: ob-falling-z;
+  animation-timing-function: cubic-bezier(0.32, 0, 0.72, 0.88);
+  animation-fill-mode: both;
+}
+.ob-falling-z[data-warm] {
+  color: rgb(var(--warn));
 }
 @media (prefers-reduced-motion: reduce) {
   .ob-mod-primary, .ob-mod-alt, .ob-mod-shift, .ob-sleep-wake-zzz, .ob-sleep-wake-alarm { transition: none; }

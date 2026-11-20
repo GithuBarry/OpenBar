@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
+import * as Popover from "@radix-ui/react-popover";
 import { AlarmClock, CircleAlert, CloudOff, Gauge, History, LoaderCircle, LockKeyhole, LockKeyholeOpen, RefreshCw } from "lucide-react";
 import { FastTooltip } from "./fast-tooltip";
 import { cn } from "@/lib/utils";
@@ -9,6 +11,20 @@ import { hostBusyDetail } from "@/lib/editor-issue-priority";
 
 export type SaveRemoteState = "checking" | "local" | "pending" | "syncing" | "synced" | "changed" | "blocked" | "unconfigured" | "unavailable" | "failed";
 export type StatusPillTone = "danger" | "warn" | "accent";
+
+type FallingZ = {
+  id: number;
+  x: number;
+  y: number;
+  dx: number;
+  drop: number;
+  rot: number;
+  size: number;
+  delay: number;
+  duration: number;
+  glyph: "Z" | "z";
+  warm: boolean;
+};
 
 export function SleepZzz({ size = 16, animated = true }: { size?: number; animated?: boolean }) {
   const zSvg = <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round" className={cn("shrink-0", animated && "ob-sleep-zzz")} aria-hidden="true">
@@ -132,9 +148,12 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
   ].filter(Boolean).join("\n");
   const [retainedCue, setRetainedCue] = useState<string>("");
   const [complaint, setComplaint] = useState<string | null>(null);
+  const [fallingZs, setFallingZs] = useState<FallingZ[]>([]);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const bounceRef = useRef<Animation | null>(null);
   const complaintTimerRef = useRef<number | null>(null);
+  const zBurstIdRef = useRef(0);
+  const zCleanupTimersRef = useRef<number[]>([]);
   useEffect(() => {
     if (pillCue) setRetainedCue(pillCue);
   }, [pillCue]);
@@ -150,6 +169,8 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
   useEffect(() => () => {
     bounceRef.current?.cancel();
     if (complaintTimerRef.current) window.clearTimeout(complaintTimerRef.current);
+    for (const timer of zCleanupTimersRef.current) window.clearTimeout(timer);
+    zCleanupTimersRef.current = [];
   }, []);
   useEffect(() => {
     const button = buttonRef.current;
@@ -169,31 +190,32 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
       const base = { backgroundColor: baseBg, color: baseColor, boxShadow: baseShadow };
 
       if (reduced) {
-        const tone = attentionRequest >= 2 ? warn : accent;
+        const tone = attentionRequest >= 3 ? warn : accent;
+        const solid = attentionRequest >= 2;
         bounceRef.current = button.animate([
           base,
-          { backgroundColor: `rgb(${tone} / ${attentionRequest >= 3 ? 0.55 : 0.32})`, color: attentionRequest >= 3 ? "#fff" : `rgb(${tone})`, boxShadow: `0 0 0 4px rgb(${tone} / 0.5)`, offset: 0.25 },
+          { backgroundColor: solid ? `rgb(${tone})` : `rgb(${tone} / 0.36)`, color: solid ? "#fff" : `rgb(${accentText})`, boxShadow: `inset 0 0 0 1.5px rgb(${tone} / 0.7)`, offset: 0.25 },
           base,
         ], { duration: 900, easing: "ease-out" });
       } else if (attentionRequest === 1) {
         bounceRef.current = button.animate([
           base,
-          { backgroundColor: `rgb(${accent} / 0.42)`, color: `rgb(${accentText})`, boxShadow: `0 0 0 4px rgb(${accent} / 0.46), 0 0 22px rgb(${accent} / 0.36)`, offset: 0.28 },
+          { backgroundColor: `rgb(${accent} / 0.42)`, color: `rgb(${accentText})`, boxShadow: `inset 0 0 0 1.5px rgb(${accent} / 0.55)`, offset: 0.28 },
           base,
         ], { duration: 760, easing: "ease-out" });
       } else if (attentionRequest === 2) {
-        const peak = { backgroundColor: `rgb(${warn} / 0.5)`, color: `rgb(${warn})`, boxShadow: `0 0 0 5px rgb(${warn} / 0.58), 0 0 28px rgb(${warn} / 0.44)` };
-        const dip = { backgroundColor: `rgb(${warn} / 0.16)`, color: `rgb(${warn})`, boxShadow: `0 0 0 2px rgb(${warn} / 0.22)` };
+        const peak = { backgroundColor: `rgb(${accent})`, color: "#fff", boxShadow: `inset 0 0 0 1.5px rgb(${accent})` };
+        const dip = { backgroundColor: `rgb(${accent} / 0.24)`, color: `rgb(${accentText})`, boxShadow: `inset 0 0 0 1.5px rgb(${accent} / 0.45)` };
         bounceRef.current = button.animate([
           base,
           { ...peak, offset: 0.22 },
-          { ...dip, offset: 0.46 },
-          { ...peak, boxShadow: `0 0 0 6px rgb(${warn} / 0.64), 0 0 32px rgb(${warn} / 0.5)`, offset: 0.7 },
+          { ...dip, offset: 0.48 },
+          { ...peak, offset: 0.72 },
           base,
         ], { duration: 1050, easing: "ease-in-out" });
       } else {
-        const strong = { backgroundColor: `rgb(${warn})`, color: "#fff", boxShadow: `0 0 0 8px rgb(${warn} / 0.68), 0 0 38px rgb(${warn} / 0.58)` };
-        const mid = { backgroundColor: `rgb(${warn} / 0.24)`, color: `rgb(${warn})`, boxShadow: `0 0 0 2px rgb(${warn} / 0.28)` };
+        const strong = { backgroundColor: `rgb(${warn})`, color: "#fff", boxShadow: `inset 0 0 0 1.5px rgb(${warn})` };
+        const mid = { backgroundColor: `rgb(${warn} / 0.2)`, color: `rgb(${warn})`, boxShadow: `inset 0 0 0 1.5px rgb(${warn} / 0.5)` };
         bounceRef.current = button.animate([
           base,
           { ...strong, offset: 0.14 },
@@ -222,6 +244,38 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
         setComplaint(null);
         complaintTimerRef.current = null;
       }, 4500);
+
+      if (session.sleeping && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        const rect = button.getBoundingClientRect();
+        const burst = ++zBurstIdRef.current;
+        const specs = [
+          { frac: 0.18, dx: -10, drop: 78, rot: -18, size: 14, delay: 0, duration: 960, glyph: "Z" as const, warm: true },
+          { frac: 0.42, dx: 6, drop: 92, rot: 14, size: 11, delay: 95, duration: 1060, glyph: "z" as const, warm: false },
+          { frac: 0.68, dx: -6, drop: 84, rot: -12, size: 15, delay: 185, duration: 1020, glyph: "Z" as const, warm: true },
+          { frac: 0.3, dx: 9, drop: 72, rot: 20, size: 12, delay: 270, duration: 920, glyph: "z" as const, warm: false },
+          { frac: 0.82, dx: 4, drop: 88, rot: -16, size: 13, delay: 340, duration: 1040, glyph: "Z" as const, warm: true },
+        ];
+        const batch: FallingZ[] = specs.map((spec, index) => ({
+          id: burst * 100 + index,
+          x: rect.left + rect.width * spec.frac,
+          y: rect.bottom - 4,
+          dx: spec.dx,
+          drop: spec.drop,
+          rot: spec.rot,
+          size: spec.size,
+          delay: spec.delay,
+          duration: spec.duration,
+          glyph: spec.glyph,
+          warm: spec.warm,
+        }));
+        const ids = new Set(batch.map(item => item.id));
+        setFallingZs(current => [...current.slice(-15), ...batch]);
+        const timer = window.setTimeout(() => {
+          setFallingZs(current => current.filter(item => !ids.has(item.id)));
+          zCleanupTimersRef.current = zCleanupTimersRef.current.filter(id => id !== timer);
+        }, 1550);
+        zCleanupTimersRef.current.push(timer);
+      }
     }
   }, [attentionRequest, session.sleeping, readOnlyRestorable]);
   const displayCue = pillCue || retainedCue;
@@ -240,21 +294,9 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
   const interactive = Boolean(handleClick || onForceSync || session.canRelease);
   const altHint = onForceSync ? "\n⌥-click: Sync Git now" : "";
   const shiftHint = session.canRelease ? "\n⇧-click: Release edit access" : "";
-  return <span className="ob-status-anchor">
-    {complaint && (
-      <button
-        type="button"
-        className="ob-sleep-bubble"
-        role="status"
-        onClick={() => {
-          setComplaint(null);
-          handleClick?.();
-        }}
-      >
-        {complaint}
-      </button>
-    )}
+  return <Popover.Root open={Boolean(complaint)} onOpenChange={open => { if (!open) setComplaint(null); }}>
     <FastTooltip label={`${detail}${canRetry ? "\nClick to retry Git sync." : ""}${altHint}${shiftHint}`}>
+    <Popover.Anchor asChild>
     <button ref={buttonRef} type="button" onClick={(event) => {
       setComplaint(null);
       if (event.shiftKey && session.canRelease) { event.preventDefault(); void session.release(); return; }
@@ -280,6 +322,55 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
         <span className={cn("min-w-0 truncate font-semibold tabular-nums", pillCue ? "inline" : compact && "hidden xl:inline")}>{label}</span>
       )}
     </button>
+    </Popover.Anchor>
   </FastTooltip>
-  </span>;
+    <Popover.Portal>
+      <Popover.Content
+        side="top"
+        align="end"
+        sideOffset={10}
+        collisionPadding={12}
+        className="ob-sleep-bubble"
+        onOpenAutoFocus={event => event.preventDefault()}
+        onCloseAutoFocus={event => event.preventDefault()}
+      >
+        <button
+          type="button"
+          className="ob-sleep-bubble-button"
+          role="status"
+          onClick={() => {
+            setComplaint(null);
+            handleClick?.();
+          }}
+        >
+          {complaint}
+        </button>
+        <Popover.Arrow className="ob-sleep-bubble-arrow" width={12} height={6} />
+      </Popover.Content>
+    </Popover.Portal>
+    {fallingZs.length > 0 && typeof document !== "undefined" && createPortal(
+      <div className="ob-falling-z-layer" aria-hidden="true">
+        {fallingZs.map(item => (
+          <span
+            key={item.id}
+            className="ob-falling-z"
+            data-warm={item.warm || undefined}
+            style={{
+              left: `${item.x}px`,
+              top: `${item.y}px`,
+              fontSize: `${item.size}px`,
+              animationDelay: `${item.delay}ms`,
+              animationDuration: `${item.duration}ms`,
+              "--ob-z-dx": `${item.dx}px`,
+              "--ob-z-drop": `${item.drop}px`,
+              "--ob-z-rot": `${item.rot}deg`,
+            } as CSSProperties}
+          >
+            {item.glyph}
+          </span>
+        ))}
+      </div>,
+      document.body,
+    )}
+  </Popover.Root>;
 }
