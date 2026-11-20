@@ -79,8 +79,17 @@ jobs:
           echo "Health: $HEALTH"
           node -e 'const h = JSON.parse(process.argv[1]); if (!h.ok) process.exit(1);' "$HEALTH"
 
+          UNAUTH_CODE=$(curl -sS -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PORT}/")
+          echo "GET / (unauthenticated) -> HTTP ${UNAUTH_CODE}"
+          if [ "$UNAUTH_CODE" != "401" ]; then
+            cat "$LOG_FILE"
+            exit 1
+          fi
+
           for route in "/" "/agents" "/openapi.json" "/p/command-v/mindmap" "/p/command-v/paper"; do
-            CODE=$(curl -sS -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PORT}${route}")
+            CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer ${TOKEN}" \
+              "http://127.0.0.1:${PORT}${route}")
             echo "GET ${route} -> HTTP ${CODE}"
             if [ "$CODE" != "200" ]; then
               cat "$LOG_FILE"
