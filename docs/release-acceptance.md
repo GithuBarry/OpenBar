@@ -58,7 +58,7 @@ acceptance run:
 200 /p/command-v/wiki
 200 /p/command-v/wiki/overview
 404 /p/command-v/wiki/missing-page
-200 /p/[project-b-redacted]/wiki
+200 /p/noveltybench/wiki
 ```
 
 ## Manual browser acceptance

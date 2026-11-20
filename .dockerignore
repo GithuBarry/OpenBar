@@ -8,6 +8,7 @@ content/projects
 content/workspace.tex
 content/AGENTS.md
 content/skills
+deploy/private
 .git
 .github
 .worktrees

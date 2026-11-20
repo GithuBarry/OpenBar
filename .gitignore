@@ -31,6 +31,9 @@ __pycache__/
 .vscode
 *.pem
 
+# Private local deployment configs (never tracked)
+deploy/private/
+
 # iCloud/macOS duplicate-file noise
 * 2.*
 * 2/
