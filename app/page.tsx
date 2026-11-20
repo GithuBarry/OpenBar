@@ -47,7 +47,7 @@ export default async function Home() {
             </div>
             <div className="ob-home-header-actions flex items-center gap-4">
               <ThemeToggle />
-              {viewOnly ? <span className="text-xs text-muted" role="status">View only</span> : <><AgentReadyIndicator />{publicDemo ? <ResetDemoButton slug={projects[0]?.slug || "private-project-a"} /> : <CreateProjectButton />}</>}
+              {viewOnly ? <span className="text-xs text-muted" role="status">View only</span> : <><AgentReadyIndicator />{publicDemo ? <ResetDemoButton slug={projects[0]?.slug || "command-v"} /> : <CreateProjectButton />}</>}
             </div>
           </div>
         </header>

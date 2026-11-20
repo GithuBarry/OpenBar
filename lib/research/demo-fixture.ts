@@ -4,7 +4,7 @@ import path from "node:path";
 import { withWriteLock } from "@/lib/tex-project/codec";
 import { publicDemoSlugs } from "@/lib/server/demo-mode";
 
-export const DEMO_PROJECT_SLUGS = ["private-project-a", "private-project-b"] as const;
+export const DEMO_PROJECT_SLUGS = ["command-v", "noveltybench"] as const;
 export const DEMO_PROJECT_SLUG = DEMO_PROJECT_SLUGS[0];
 
 export function demoFixtureSource(root = process.cwd()): string {

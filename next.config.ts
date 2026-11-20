@@ -5,6 +5,14 @@ import type { NextConfig } from "next";
 
 const configDir = path.dirname(fileURLToPath(import.meta.url));
 
+function devOriginsFromEnvironment(): string[] {
+  const extra = (process.env.OPENBARRY_DEV_ORIGINS || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return Array.from(new Set(["127.0.0.1", "127.0.2.2", "localhost", ...extra]));
+}
+
 function distDirFromEnvironment(): string {
   const requested = process.env.OB_DIST?.trim();
   if (!requested) return ".next";
@@ -35,16 +43,9 @@ const nextConfig: NextConfig = {
     "/*": ["./content/projects/**", "./scratch/**", "./.scratch/**", "./.next*/standalone/**"],
   },
   // Next 16 treats each browser host as a separate origin and blocks
-  // /_next chunks + HMR unless listed here. Keep the stable tailnet name and
-  // current tailnet address available for the long-lived private workbench.
-  allowedDevOrigins: [
-    "127.0.0.1",
-    "127.0.2.2",
-    "localhost",
-    "100.64.0.1",
-    "openbar.example.ts.net",
-    "dev.example.ts.net",
-  ],
+  // /_next chunks + HMR unless listed here. Supply private LAN or tailnet
+  // dev hosts via OPENBARRY_DEV_ORIGINS (comma-separated).
+  allowedDevOrigins: devOriginsFromEnvironment(),
   serverExternalPackages: [
     "file-type",
     "proper-lockfile",

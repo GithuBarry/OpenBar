@@ -257,7 +257,7 @@ expected-remote-commit lease, and force pull preserves unrelated untracked files
 OpenBar sends `Origin-Agent-Cluster: ?1` and `Permissions-Policy: tools=(self)`.
 Open the project through HTTPS, such as `https://openbar.example.ts.net`, for native
 browser WebMCP. A future HTTPS Cloudflare tunnel uses the same origin policy.
-`http://100.64.0.1:3000` can serve the human UI and authenticated HTTP MCP
+`http://100.x.y.z:3000` can serve the human UI and authenticated HTTP MCP
 when reachable. Native WebMCP requires a browser secure context, provided by
 HTTPS or loopback localhost.
 

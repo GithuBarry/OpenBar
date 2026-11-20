@@ -55,9 +55,9 @@ The built-server route check returned these raw statuses in the recorded
 acceptance run:
 
 ```text
-200 /p/[project-a-redacted]/wiki
-200 /p/[project-a-redacted]/wiki/overview
-404 /p/[project-a-redacted]/wiki/missing-page
+200 /p/command-v/wiki
+200 /p/command-v/wiki/overview
+404 /p/command-v/wiki/missing-page
 200 /p/[project-b-redacted]/wiki
 ```
 

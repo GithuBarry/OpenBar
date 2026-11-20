@@ -6,7 +6,7 @@ export type PublicDemoConfig = {
 
 const PUBLIC_DEMO_VALUES = /^(?:1|true|yes)$/i;
 const SAFE_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const DEFAULT_PUBLIC_DEMO_SLUGS = ["private-project-a", "private-project-b"];
+const DEFAULT_PUBLIC_DEMO_SLUGS = ["command-v", "noveltybench"];
 
 function parseDemoSlugs(env: NodeJS.ProcessEnv): string[] {
   const raw = env.OPENBAR_DEMO_SLUGS?.trim()
