@@ -12,6 +12,19 @@ import { hostBusyDetail } from "@/lib/editor-issue-priority";
 export type SaveRemoteState = "checking" | "local" | "pending" | "syncing" | "synced" | "changed" | "blocked" | "unconfigured" | "unavailable" | "failed";
 export type StatusPillTone = "danger" | "warn" | "accent";
 
+const SLEEP_COMPLAINTS = [
+  "Still napping — click to wake me up",
+  "Hey, I’m asleep over here — wake me up first",
+  "Five more minutes… or click me to edit",
+  "Zzz… that card won’t move while I’m snoozing",
+  "You’re shaking all my Z’s loose — click me!",
+  "Still in snooze mode — tap here to resume",
+  "Running low on Z’s over here…",
+  "Okay, you’re persistent — click this pill to wake up",
+  "Dreaming of clean LaTeX compiles — tap to resume",
+  "Alright, alright — click me and we’ll get back to work",
+];
+
 type FallingZ = {
   id: number;
   x: number;
@@ -202,11 +215,7 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
 
     if (attentionRequest >= 3) {
       const message = session.sleeping
-        ? attentionRequest === 3
-          ? "Still napping — click to wake me up"
-          : attentionRequest === 4
-            ? "Hey, I’m asleep over here — wake me up first"
-            : "Five more minutes… or click me to edit"
+        ? SLEEP_COMPLAINTS[(attentionRequest - 3) % SLEEP_COMPLAINTS.length]!
         : readOnlyRestorable
           ? "Editing in another tab — click to take over"
           : "Read-only right now";
@@ -321,7 +330,7 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
             handleClick?.();
           }}
         >
-          {complaint}
+          <span key={attentionRequest} className="ob-sleep-bubble-text">{complaint}</span>
         </button>
         <Popover.Arrow className="ob-sleep-bubble-arrow" width={12} height={6} />
       </Popover.Content>
