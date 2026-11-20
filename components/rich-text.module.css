@@ -6,9 +6,9 @@
 .agentMention { display: inline; padding: 1px 4px; border-radius: 4px; background: rgb(var(--accent) / .13); color: rgb(var(--ink)); font-weight: 650; box-decoration-break: clone; }
 .agentStat { background: rgb(var(--accent) / .2); color: rgb(var(--accent-text)); }
 .tableScroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; margin: 6px 0; }
-.tableScroll table { width: 100%; border-collapse: collapse; font-size: calc(12px * var(--map-font-scale, 1)); line-height: 1.4; }
-.tableCompact { overflow-x: scroll; scrollbar-width: thin; scrollbar-color: rgb(var(--muted) / .55) rgb(var(--surface-2)); padding-bottom: 3px; }
-.tableCompact table { width: max-content; min-width: 100%; }
+.tableScroll table { width: auto; border-collapse: collapse; font-size: calc(12px * var(--map-font-scale, 1)); line-height: 1.4; }
+.tableCompact { overflow-x: auto; scrollbar-width: thin; scrollbar-color: rgb(var(--muted) / .55) rgb(var(--surface-2)); padding-bottom: 3px; }
+.tableCompact table { width: max-content; }
 .tableCompact::-webkit-scrollbar { height: 8px; }
 .tableCompact::-webkit-scrollbar-track { background: rgb(var(--surface-2)); border-radius: 999px; }
 .tableCompact::-webkit-scrollbar-thumb { background: rgb(var(--muted) / .55); border-radius: 999px; }

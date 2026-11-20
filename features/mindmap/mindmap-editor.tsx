@@ -3614,7 +3614,6 @@ function MindmapUnplacedTray({ project, paperState, nodes, selectedParentId, onP
   </aside>;
 }
 
-const tableWidthCache = new Map<string, number>();
 
 function CanvasNode({
   fontSize,
@@ -3724,31 +3723,23 @@ function CanvasNode({
     ? activityLabel === "recent activity in this branch" ? "Recent activity in this branch" : `Recent activity: ${activityLabel}`
     : undefined;
   const [imageDropActive, setImageDropActive] = useState(false);
-  const tableFitKey = node.cardWidth === undefined && node.contentFormat === "markdown" && node.tableLayout !== "scroll" && markdownTableColumns(node.text) > 0
-    ? JSON.stringify([project, node, cardContent, coverage, activityLabel, fontSize]) : null;
+  const fitTable = node.cardWidth === undefined && node.contentFormat === "markdown" && node.tableLayout !== "scroll" && markdownTableColumns(node.text) > 0;
   useLayoutEffect(() => {
     const card = cardRef.current;
-    if (!card || !tableFitKey || editing) return;
-    let width = tableWidthCache.get(tableFitKey);
-    if (width === undefined) {
-      const maximum = nodeDimensions(node).width;
-      card.style.width = `${maximum}px`;
-      const height = card.offsetHeight;
-      let low = Math.min(NODE_WIDTH, maximum), high = maximum;
-      // Minimize area at the full-width height with a bounded width search.
-      while (high - low > 1) {
-        const middle = Math.floor((low + high) / 2);
-        card.style.width = `${middle}px`;
-        if (card.offsetHeight <= height) high = middle;
-        else low = middle;
-      }
-      width = Math.min(maximum, high + 1);
-      if (tableWidthCache.size >= 2000) tableWidthCache.delete(tableWidthCache.keys().next().value!);
-      tableWidthCache.set(tableFitKey, width);
+    if (!card || !fitTable || editing) return;
+    const tables = card.querySelectorAll<HTMLTableElement>(".mindmap-node-detail table, .mindmap-node-title table");
+    if (!tables.length) return;
+    const maximum = nodeDimensions(node).width;
+    card.style.width = `${maximum}px`;
+    let width = Math.min(NODE_WIDTH, maximum);
+    for (const table of tables) {
+      const wrapper = table.parentElement!;
+      width = Math.max(width, table.offsetWidth + card.offsetWidth - wrapper.clientWidth + 1);
     }
+    width = Math.min(maximum, width);
     card.style.width = `${width}px`;
     onMeasure(node.id, { width, height: card.offsetHeight });
-  }, [tableFitKey, editing, node.id, onMeasure]);
+  }, [fitTable, editing, node, fontSize, onMeasure]);
   useEffect(() => {
     const card = cardRef.current;
     if (!card) return;
