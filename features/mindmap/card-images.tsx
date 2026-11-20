@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { FastTooltip } from "@/components/fast-tooltip";
 import { Modal } from "@/components/modal"
-import { ExternalLink, FileText, Maximize2, MoveDiagonal2, MoveHorizontal, Trash2, X, ZoomIn, ZoomOut } from "lucide-react"
+import { ExternalLink, FileText, Maximize2, MoveHorizontal, Trash2, X, ZoomIn, ZoomOut } from "lucide-react"
 import type { ArtifactRef } from "@/lib/types"
 import { artifactHref } from "@/lib/research/artifact-link"
 import { detachMindmapImage } from "@/lib/mindmap/image-refs"
@@ -101,7 +101,7 @@ function CardImage({ project, image, readOnly, onView, onResize, onRemove }: {
           : ["ArrowLeft", "ArrowDown"].includes(event.key) ? Math.max(25, width - 5)
           : ["ArrowRight", "ArrowUp"].includes(event.key) ? Math.min(100, width + 5) : null
         if (next !== null) { event.preventDefault(); onResize(next) }
-      }}><MoveDiagonal2 size={11} /></button></FastTooltip>}
+      }}><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M12.91 8.04A6 6 0 0 1 8.04 12.91" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" /></svg></button></FastTooltip>}
     </div>
     {image.label && <figcaption title={image.label}>{image.label}</figcaption>}
   </figure>

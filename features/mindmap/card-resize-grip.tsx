@@ -84,6 +84,6 @@ export function CardResizeGrip({ width, onPreview, onCommit }: {
     onLostPointerCapture={event => finish(event.currentTarget, false)}
     onKeyDown={keyDown} onClick={event => event.stopPropagation()}
     onDoubleClick={event => { event.preventDefault(); event.stopPropagation(); latest.current.onCommit(undefined); }}>
-    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M14 6a8 8 0 0 1-8 8" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" /></svg>
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M16.33 7A11.5 11.5 0 0 1 7 16.33" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
   </button>;
 }
