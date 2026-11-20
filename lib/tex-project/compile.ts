@@ -12,7 +12,7 @@ import { paperSourceHash, readProjectRecord, texPaths } from "./project";
 import { locateTexRoot } from "./source-graph";
 import { parseTexFileLines, type TexFileLine } from "./tex-diagnostics";
 import { discoverTexBinDirs } from "./latexpand";
-import { withProjectWriteLock } from "@/lib/research/project-lock";
+import { withProjectWriteLockAsync } from "@/lib/research/project-lock";
 
 export type { TexFileLine };
 export { parseTexFileLines };
@@ -215,17 +215,15 @@ function hashBuildInputRecords(input: Omit<BuildInputHashInput, "files"> & { fil
 function currentBuildInput(projectDir: string): BuildInputSnapshot {
   const paths = texPaths(projectDir);
   const sourceRoot = path.resolve(paths.manuscriptDir);
-  return withProjectWriteLock(projectDir, () => {
-    const config = readCompilerConfig(projectDir);
-    const sourceHash = paperSourceHash(projectDir);
-    const rootFile = normalizeBuildPath(path.relative(sourceRoot, locateTexRoot(sourceRoot, config.mainFile)));
-    return {
-      sourceHash,
-      rootFile,
-      config,
-      buildInputHash: snapshotDigest(sourceRoot, sourceHash, config, rootFile),
-    };
-  });
+  const config = readCompilerConfig(projectDir);
+  const sourceHash = paperSourceHash(projectDir);
+  const rootFile = normalizeBuildPath(path.relative(sourceRoot, locateTexRoot(sourceRoot, config.mainFile)));
+  return {
+    sourceHash,
+    rootFile,
+    config,
+    buildInputHash: snapshotDigest(sourceRoot, sourceHash, config, rootFile),
+  };
 }
 
 function artifactBuildInputHash(projectDir: string): string | undefined {
@@ -358,6 +356,12 @@ export function requestPaperCompile(projectDir: string): PaperCompileStatus {
   return status;
 }
 
+export function hasCompiledPdf(projectDir: string, artifactId?: string): boolean {
+  const manifest = readArtifactManifest(projectDir, artifactId);
+  if (!manifest) return false;
+  return fs.existsSync(compiledPdfFile(projectDir, manifest.artifactId));
+}
+
 export function getCompiledPdf(projectDir: string, artifactId?: string): Buffer | null {
   try {
     const artifact = readArtifactManifest(projectDir, artifactId);
@@ -476,7 +480,7 @@ function shouldIncludeSnapshotPath(relative: string): boolean {
   if (parts[0] === ".git" || parts[0] === "node_modules") return false;
   if (parts.some((part) => part.endsWith(".ob-lock"))) return false;
   if (parts[0] === "wiki") return false;
-  if (parts[0] === ".OpenBar" || parts[0] === "openbar") {
+  if (parts[0] === ".OpenBar" || parts[0] === ".openbar" || parts[0] === "openbar") {
     // OpenBar records describe the workspace and maps. Compiler options have
     // their own hash fields, and bibliography sources such as references.bib
     // remain part of the snapshot in both supported project layouts.
@@ -650,7 +654,7 @@ async function runLatexmk(projectDir: string, target: BuildInputSnapshot, jobId:
     // Capture the complete compiler input set while the same lock used by
     // source writes is held. A second hash catches an external writer that
     // raced the filesystem copy; mixed snapshots are rejected explicitly.
-    const capture = withProjectWriteLock(projectDir, () => {
+    const capture = await withProjectWriteLockAsync(projectDir, async () => {
       const before = paperSourceHash(projectDir);
       const currentConfig = readCompilerConfig(projectDir);
       const sourceRootFile = locateTexRoot(sourceRoot, currentConfig.mainFile);

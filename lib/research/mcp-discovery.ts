@@ -2,7 +2,7 @@ import { ProtocolError, ResourceNotFoundError, type Server } from "@modelcontext
 
 import { AGENT_GUIDANCE } from "./agent-guidance"
 import { executeMcpTool } from "./mcp-command-registry"
-import { listProjects } from "@/lib/store"
+import { listVisibleProjects } from "@/lib/store"
 
 const guideUri = "openbar://guide"
 const templates = [
@@ -15,7 +15,7 @@ const templates = [
 export function registerMcpDiscovery(server: Server, actor: string): void {
   server.setRequestHandler("resources/list", async () => ({ resources: [
     { uri: guideUri, name: "agent-guide", mimeType: "text/plain", description: "OpenBar agent instructions" },
-    ...listProjects().map(project => ({ uri: `openbar://projects/${encodeURIComponent(project.slug)}/state`, name: project.slug, description: project.title, mimeType: "application/json" })),
+    ...listVisibleProjects().map(project => ({ uri: `openbar://projects/${encodeURIComponent(project.slug)}/state`, name: project.slug, description: project.title, mimeType: "application/json" })),
   ] }))
   server.setRequestHandler("resources/templates/list", async () => ({ resourceTemplates: templates }))
   server.setRequestHandler("resources/read", async ({ params: { uri } }, context) => {

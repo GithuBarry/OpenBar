@@ -30,9 +30,23 @@ Open [localhost:3000](http://localhost:3000). Projects live under
 `content/projects/<slug>`. Set `OPENBAR_CONTENT` to use another content directory,
 and set `OPENBAR_DEV_ORIGINS` (comma-separated) if accessing `pnpm dev` over LAN or Tailscale.
 
-For production (`pnpm build && pnpm start`), configure access via `OPENBAR_LOCAL_ACCESS=1` (loopback),
+For production, build and copy static assets into the standalone directory before starting:
+
+```bash
+pnpm build
+cp -a public .next/standalone/public
+cp -a .next/static .next/standalone/.next/static
+OPENBAR_LOCAL_ACCESS=1 pnpm start
+```
+
+Configure production access via `OPENBAR_LOCAL_ACCESS=1` (loopback),
 `OPENBAR_ACCESS_TOKEN` (bearer token for MCP/API), or `CLOUDFLARE_ACCESS_TEAM_DOMAIN` + `CLOUDFLARE_ACCESS_AUD`
-(Cloudflare Access). See [deploy/README.md](deploy/README.md) for hosting details.
+(Cloudflare Access). See [deploy/README.md](deploy/README.md) for container hosting details.
+
+## Scope & forks
+
+Research workflows are highly personal and dynamic, and OpenBar reflects my own.
+If it’s useful to you, feel free to fork and adapt it however you like under the MIT license.
 
 TeX Live with `latexmk` enables PDF compilation.
 [TexLab](https://github.com/latex-lsp/texlab) adds LaTeX completion. See the

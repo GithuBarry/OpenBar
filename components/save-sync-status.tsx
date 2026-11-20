@@ -281,16 +281,16 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
   }, [attentionRequest, session.sleeping, readOnlyRestorable, manualViewOnly, review]);
   const displayCue = pillCue || retainedCue;
 
-  const canRetry = !reconnecting && !host && saved && !saving && !conflict && ["pending", "changed", "blocked", "unavailable", "failed"].includes(remote) && !!onRetry;
+  const canRetry = !reconnecting && !host && saved && !saving && !conflict && ["pending", "blocked", "unavailable", "failed"].includes(remote) && !!onRetry;
   const canOpenConnection = reconnecting && Boolean(onConnectionIssue);
   const handleClick = canOpenConnection
     ? onConnectionIssue
     : hasRecoveryDraft && onRecoveryDraft
       ? onRecoveryDraft
-      : (review || remoteError) && canRetry
-        ? onRetry
-        : !conflict && !review && !remoteError && readOnlyRestorable
-          ? () => void session.restore()
+      : readOnlyRestorable && (!canRetry || !session.writable)
+        ? () => void session.restore()
+        : (review || remoteError) && canRetry
+          ? onRetry
           : manualViewOnly && onExitReadOnly
             ? onExitReadOnly
             : canRetry

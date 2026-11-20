@@ -18,7 +18,7 @@ export default async function WishlistPage() {
     <div className="mx-auto max-w-2xl">
       <Link href="/" className="inline-flex items-center gap-2 text-sm text-muted hover:text-ink"><ArrowLeft size={15} aria-hidden="true" />Workspace</Link>
       <h1 className="mb-2 mt-6 text-3xl font-semibold tracking-tight">Platform wishlist</h1>
-      <p className="mb-5 text-sm leading-6 text-muted">Ideas from people and agents for the next version of OpenBar.</p>
+      <p className="mb-5 text-sm leading-6 text-muted">Ideas from people and agents for the next version of OpenBar. Stored locally on this OpenBar server only — nothing is sent externally.</p>
       <WishForm />
       {wishes.length ? <ol aria-label="Platform feedback" className="mt-5 divide-y divide-line">
         {wishes.map(wish => <li key={wish.id} className="py-4">

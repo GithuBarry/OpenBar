@@ -1,6 +1,7 @@
 /** Ephemeral section addresses derived from the current file and heading order. */
 import { discoverTexHeadings, type TexHeading } from "./tex-structure";
 import { splitBundleSource, inlineBundleIncludesMapped } from "./source-bundle-format";
+import { maskTexLiterals } from "./tex-literals";
 
 export type DerivedSection = {
   id: string;
@@ -52,13 +53,14 @@ export function headingInvocation(source: string, from: number) {
 
 export function deriveSections(source: string, filePath = "paper.tex"): DerivedSection[] {
   const headings = discoverTexHeadings(source, filePath);
+  const masked = maskTexLiterals(source);
   const address = Array.from(new TextEncoder().encode(filePath), byte => byte.toString(16).padStart(2, "0")).join("");
   return headings.flatMap((heading, index) => {
     const invocation = headingInvocation(source, heading.start);
     if (!invocation) return [];
     const next = headings[index + 1];
     let to = next?.start ?? source.length;
-    const endDocument = /\\end\s*\{document\}|^[\t ]*\\appendix\b/m.exec(source.slice(invocation.end, to));
+    const endDocument = /\\end\s*\{document\}|^[\t ]*\\appendix\b/m.exec(masked.slice(invocation.end, to));
     if (endDocument) to = invocation.end + endDocument.index;
     // Retain the heading's ordinary label when replacing its body.
     let bodyFrom = invocation.end;
@@ -70,7 +72,7 @@ export function deriveSections(source: string, filePath = "paper.tex"): DerivedS
       level: heading.level as DerivedSection["level"],
       order: index,
       label: label?.[1] || "",
-      ...(/^\s*\\appendix\b/m.test(source.slice(0, heading.start)) ? { appendix: true } : {}),
+      ...(/^\s*\\appendix\b/m.test(masked.slice(0, heading.start)) ? { appendix: true } : {}),
       from: heading.start,
       bodyFrom,
       to,

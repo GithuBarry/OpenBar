@@ -162,7 +162,7 @@ export const NATIVE_MINDMAP_INPUTS = {
   attach_mindmap_image: MINDMAP_INPUTS.attach_mindmap_image.extend({ project: projectId, mapId: mapId, id: z.string().min(1), label: z.string().max(240).optional(), expectedDiskHash: diskHash.optional(), requestId: z.string().optional() }),
   detach_mindmap_image: MINDMAP_INPUTS.detach_mindmap_image.extend({ project: projectId, mapId: mapId, id: z.string().min(1), assetId: z.string().min(1), label: z.string().max(240).optional(), expectedDiskHash: diskHash.optional(), requestId: z.string().optional() }),
   caption_mindmap_image: MINDMAP_INPUTS.caption_mindmap_image.extend({ project: projectId, mapId: mapId, id: z.string().min(1), assetId: z.string().min(1), label: z.string().max(240), expectedDiskHash: diskHash.optional(), requestId: z.string().optional() }),
-  set_activity_window: z.strictObject({ project: projectId, mapId: mapId, days: z.number().int().min(1).max(365), expectedRevision: revision, requestId: z.string().optional() }),
+  set_activity_window: z.strictObject({ project: projectId, mapId: mapId, days: z.number().int().min(1).max(365), expectedRevision: revision, expectedDiskHash: diskHash.optional(), requestId: z.string().optional() }),
 };
 
 export const MCP_INPUTS = {

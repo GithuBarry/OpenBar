@@ -347,10 +347,11 @@ export const NestedBundleEditor = forwardRef<TexCodeMirrorHandle, {
 
   const applyVirtualChange = useCallback((from: number, to: number, insert: string): boolean => {
     if (readOnlyRef.current) return false;
+    if (from < 0 || to < from || to > sourceRef.current.length) return false;
     if (from === 0 && to === sourceRef.current.length) { commit(insert); return true; }
     const start = slotForVirtual(from);
     const end = slotForVirtual(Math.max(from, to - 1));
-    if (start && end && start.key === end.key) {
+    if (start && end && start.key === end.key && from >= start.virtualFrom && to <= start.virtualTo) {
       const handle = handlesRef.current.get(start.key);
       const view = handle?.getView();
       if (view) {

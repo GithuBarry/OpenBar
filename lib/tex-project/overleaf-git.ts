@@ -662,8 +662,10 @@ export async function pullOverleafGit(projectDir: string, operationId: string): 
         if (currentBranch !== branch) return { ok: false, message: "The Git branch changed. Check updates and try again." };
         const currentHead = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
         if (currentHead !== fetchedCommit) {
-          const isAncestor = await runGit(cwd, ["merge-base", "--is-ancestor", currentHead, fetchedCommit]).then(() => true, () => false);
-          if (!isAncestor) {
+          const localBehind = await runGit(cwd, ["merge-base", "--is-ancestor", currentHead, fetchedCommit]).then(() => true, () => false);
+          if (!localBehind) {
+            const localAhead = await runGit(cwd, ["merge-base", "--is-ancestor", fetchedCommit, currentHead]).then(() => true, () => false);
+            if (localAhead) return { ok: true, message: "Already up to date." };
             return { ok: false, message: "Local and remote Git branches have diverged. Review and reconcile Git updates before pulling." };
           }
         }
@@ -713,8 +715,8 @@ export function isSafeCommittedPath(file: string): boolean {
   const normalized = file.replaceAll("\\", "/");
   return !normalized.startsWith(".git/")
     && !normalized.includes("/.git/")
-    && !/(^|\/)(?:\.OpenBar|openbar)\/(?:build|recovery)(?:\/|$)/.test(normalized)
-    && !/(^|\/)(?:\.OpenBar|openbar)\/project-write(?:\.ob-lock)?$/.test(normalized)
+    && !/(^|\/)(?:\.OpenBar|\.openbar|openbar)\/(?:build|recovery)(?:\/|$)/.test(normalized)
+    && !/(^|\/)(?:\.OpenBar|\.openbar|openbar)\/project-write(?:\.ob-lock)?$/.test(normalized)
     && !/(^|\/)(?:activity\.jsonl|request-replay(?:-journal)?\.json)$/.test(normalized)
     && !isSensitivePath(normalized);
 }
@@ -833,8 +835,13 @@ export async function commitOverleafGit(
             originalIndexHash: originalIndexBytes ? sha256(originalIndexBytes) : null,
             preparedIndexHash: sha256(preparedIndex), preparedIndex: preparedIndex.toString("base64"),
           });
-          if (!lockIsOurs()) throw new Error("The Git index lock changed before checkpointing. Inspect Git state and the checkpoint recovery journal.");
-          await runGit(cwd, ["update-ref", `refs/heads/${branch}`, commitHash, head || "0".repeat(commitHash.length)]);
+          try {
+            if (!lockIsOurs()) throw new Error("The Git index lock changed before checkpointing. Inspect Git state and the checkpoint recovery journal.");
+            await runGit(cwd, ["update-ref", `refs/heads/${branch}`, commitHash, head || "0".repeat(commitHash.length)]);
+          } catch (error) {
+            await clearCheckpointJournal(cwd).catch(() => undefined);
+            throw error;
+          }
           try {
             if (!lockIsOurs()) throw new Error("The Git index lock changed during checkpointing. Inspect Git state and the checkpoint recovery journal.");
             fs.renameSync(ordinaryLockPath, ordinaryIndexPath);
@@ -923,7 +930,7 @@ export async function pushOverleafGit(
   // are never turned into diverged histories.
   const preStatus = await refreshOverleafGitStatus(projectDir).catch(() => null);
   if (preStatus?.isGitRepo && preStatus.isOverleafRemote) {
-    if (preStatus.error) {
+    if (preStatus.error && preStatus.lastCommit?.hash) {
       return { ok: false, code: "remote_unavailable", message: preStatus.error };
     }
     if ((preStatus.behind || 0) > 0) {
@@ -1289,18 +1296,26 @@ export async function finishForceSync(projectDir: string, token: string, confirm
       if (cancel && !session.phase) { fs.rmSync(file); return { ok: true, message: "Force synchronization cancelled." }; }
       if (!cancel && (!session.confirmation || confirmation !== session.confirmation || phrase !== `FORCE ${session.direction.toUpperCase()}`)) throw new Error("Both confirmations are required before forcing synchronization.");
       if (session.phase === "applying" && session.direction === "pull") {
-        const completed = await withProjectWriteLockAsync(projectDir, async () => {
-          if (await checkpointRecoveryMessage(cwd)) return false;
-          if (fs.existsSync(sourceTransactionJournalPath(texPaths(projectDir).manuscriptDir))) return false;
+        const pullState = await withProjectWriteLockAsync(projectDir, async () => {
+          if (await checkpointRecoveryMessage(cwd)) return "uncertain" as const;
+          if (fs.existsSync(sourceTransactionJournalPath(texPaths(projectDir).manuscriptDir))) return "uncertain" as const;
           const branch = (await runGit(cwd, ["symbolic-ref", "--short", "HEAD"])).trim();
           const head = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
           const dirty = (await projectGit(cwd).status(["--untracked-files=no"])).files.length;
-          return branch === session.branch && head === session.remoteCommit && !dirty;
+          if (branch === session.branch && head === session.remoteCommit && !dirty) return "applied" as const;
+          if (branch === session.branch && head === session.localCommit && !dirty) return "unchanged" as const;
+          return "uncertain" as const;
         });
-        if (!completed) return uncertain();
-        session.phase = "applied";
-        await saveForceSyncSession(cwd, session).catch(() => undefined);
-        return success();
+        if (pullState === "applied") {
+          session.phase = "applied";
+          await saveForceSyncSession(cwd, session).catch(() => undefined);
+          return success();
+        }
+        if (pullState === "unchanged" && cancel) {
+          fs.rmSync(file, { force: true });
+          return { ok: true, message: "Force pull did not change the local branch and was cancelled." };
+        }
+        return uncertain();
       }
       const remoteUrl = (await runGit(cwd, ["config", "--get", "remote.origin.url"])).trim();
       if (!isOverleafGitRemote(remoteUrl)) throw new Error("Connect this project to Git before forcing synchronization.");
@@ -1340,7 +1355,7 @@ export async function finishForceSync(projectDir: string, token: string, confirm
       if (!guarded.ok) return guarded;
       if (session.direction === "push") {
         mutationStarted = true;
-        await runGit(cwd, ["push", `--force-with-lease=refs/heads/${session.branch}:${session.remoteCommit}`, remoteUrl, `${session.localCommit}:refs/heads/${session.branch}`]);
+        await runGit(cwd, ["push", `--force-with-lease=refs/heads/${session.branch}:${session.remoteCommit}`, "origin", `${session.localCommit}:refs/heads/${session.branch}`]);
         session.phase = "applied";
         await saveForceSyncSession(cwd, session).catch(() => undefined);
       }

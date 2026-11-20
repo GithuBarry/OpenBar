@@ -3,11 +3,10 @@
  */
 
 import { execFile } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { compiledPdfFile, currentArtifactId } from "./compile";
+import { compiledPdfFile, currentArtifactId, hasCompiledPdf } from "./compile";
 import { discoverTexBinDirs } from "./latexpand";
 import { texPaths } from "./project";
 
@@ -68,8 +67,8 @@ export async function synctexView(projectDir: string, file: string, line: number
   | { ok: false; code: "capability_unavailable" | "compile_failed"; message: string }
 > {
   const requestedArtifactId = artifactId || currentArtifactId(projectDir);
+  if (!hasCompiledPdf(projectDir, requestedArtifactId)) return { ok: false, code: "compile_failed", message: "The requested PDF artifact is no longer available for SyncTeX." };
   const pdf = compiledPdfFile(projectDir, requestedArtifactId);
-  if (!fs.existsSync(pdf)) return { ok: false, code: "compile_failed", message: "The requested PDF artifact is no longer available for SyncTeX." };
   const root = path.resolve(texPaths(projectDir).manuscriptDir);
   const absolute = path.resolve(root, file);
   const relative = path.relative(root, absolute);
@@ -90,7 +89,7 @@ export async function synctexEdit(projectDir: string, page: number, x: number, y
   const paths = texPaths(projectDir);
   const requestedArtifactId = artifactId || currentArtifactId(projectDir);
   const pdf = compiledPdfFile(projectDir, requestedArtifactId);
-  if (!fs.existsSync(pdf)) return { ok: false, code: "compile_failed", message: "The requested PDF artifact is no longer available for SyncTeX." };
+  if (!hasCompiledPdf(projectDir, requestedArtifactId)) return { ok: false, code: "compile_failed", message: "The requested PDF artifact is no longer available for SyncTeX." };
   const output = await runSynctex(["edit", "-o", `${page}:${x}:${y}:${pdf}`]);
   if (output === null) {
     return { ok: false, code: "capability_unavailable", message: "synctex is not installed. Install TeX Live to enable PDF source navigation." };

@@ -823,9 +823,12 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
       view.dispatch({ effects: focusContextEffect.of(focusContextRef.current) });
     }, [focusContextKey]);
 
+    const isValueCurrentRef = useRef(isValueCurrent);
+    isValueCurrentRef.current = isValueCurrent;
+
     useLayoutEffect(() => {
       const view = viewRef.current;
-      if (!view || (isValueCurrent && !isValueCurrent())) return;
+      if (!view || (isValueCurrentRef.current && !isValueCurrentRef.current())) return;
       const current = view.state.doc.toString();
       if (current === value) return;
       const sel = view.state.selection.main;
@@ -838,7 +841,7 @@ export const TexCodeMirror = forwardRef<TexCodeMirrorHandle, TexCodeMirrorProps>
       requestAnimationFrame(() => {
         if (viewRef.current === view && view.state.doc.toString() === value) collapseInitialPackageGroups(view);
       });
-    }, [value, isValueCurrent]);
+    }, [value]);
 
     useEffect(() => {
       const view = viewRef.current;

@@ -41,7 +41,7 @@ export function RequestRevision({ nodeId, disabled = false, mode = "draft", onRe
   }
 
   return <Popover.Root open={open} onOpenChange={next => {
-    if (next && (pending.current || disabled)) return;
+    if (pending.current || (next && disabled)) return;
     setOpen(next);
   }}>
     <FastTooltip label={disabled ? "AI draft" : mode === "draft" ? "Ask AI to revise (@agent)\n⌥-click to fast-track (@stat)" : "Ask AI to revise (@agent)\n⌥-click to fast-track (@stat)"}><Popover.Trigger asChild>

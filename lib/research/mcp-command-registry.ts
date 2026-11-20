@@ -25,7 +25,7 @@ import { syncProjectCommand } from "./sync-project-command";
 import { applyMindmapAction,newNodeId } from "@/features/mindmap/mindmap-state";
 import { mindmapDiskHash,normalizeMindmap } from "@/lib/mindmap/mindmap";
 import { htmlCardValidationError, HtmlCardValidationError } from "@/lib/mindmap/html-card";
-import { assertAdministrativeWriteAllowed, assertPublicDemoProject } from "@/lib/server/demo-mode";
+import { assertAdministrativeWriteAllowed, assertPublicDemoProject, isPublicDemoMode, publicDemoSlugs } from "@/lib/server/demo-mode";
 import {
 readSavedPaperTodos,
 PaperTodoBindingError,
@@ -881,6 +881,7 @@ async function executeSetActivityWindow(args: unknown, context: McpCommandContex
     return idempotentWrite(project, "set_activity_window", record, context, (requestId) => {
       const map = mapRequired(project, mapId);
       assertRevision(map, integerArg(record, "expectedRevision"));
+      assertDiskHash(map, typeof record.expectedDiskHash === "string" ? record.expectedDiskHash : undefined);
       const next = { ...map, activityWindowDays: days };
       return writeMap(project, map, next, requestId, "set_activity_window", [{ kind: "mindmap", id: mapId, mapId }], [{ field: "activityWindowDays", before: map.activityWindowDays, after: days }]);
     });
@@ -1020,10 +1021,11 @@ async function executeProjectFileEdits(raw: unknown, context: McpCommandContext)
 const executeConvertCardToTodo: McpToolDefinition["execute"] = async (raw, context) => {
   const args = NATIVE_MINDMAP_INPUTS.convert_card_to_todo.parse(raw);
   const project = projectArg(args);
+  const mapId = mapArg(args);
   const projectDir = projectContentDir(project);
   assertAdministrativeWriteAllowed("MCP paper TODO conversion");
   return idempotentWrite(project, "convert_card_to_todo", args, context, async (requestId, fingerprint) => {
-    const map = mapRequired(args.project, args.mapId);
+    const map = mapRequired(project, mapId);
     assertRevision(map, args.expectedRevision);
     assertDiskHash(map, args.expectedDiskHash);
     const node = map.nodes.find(card => card.id === args.id);
@@ -1062,8 +1064,9 @@ const executeConvertCardToTodo: McpToolDefinition["execute"] = async (raw, conte
 const executeLinkTodoCard: McpToolDefinition["execute"] = async (raw, context) => {
   const args = NATIVE_MINDMAP_INPUTS.link_todo_card.parse(raw);
   const project = projectArg(args);
+  const mapId = mapArg(args);
   return idempotentWrite(project, "link_todo_card", args, context, requestId => {
-    const map = mapRequired(project, args.mapId);
+    const map = mapRequired(project, mapId);
     assertRevision(map, args.expectedRevision);
     assertDiskHash(map, args.expectedDiskHash);
     let next: Mindmap;
@@ -1128,8 +1131,19 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
       throw error;
     }
   }, { idempotentHint: false }),
-  tool("check_inbox", "Check OpenBar updates", INBOX_TOOL_DESCRIPTIONS.check_inbox, async raw => okResult(readAgentInbox(MCP_INPUTS.check_inbox.parse(raw))), { readOnlyHint: true }),
-  tool("acknowledge_inbox", "Handle OpenBar notifications", INBOX_TOOL_DESCRIPTIONS.acknowledge_inbox, async raw => okResult(await acknowledgeAgentInbox(MCP_INPUTS.acknowledge_inbox.parse(raw)))),
+  tool("check_inbox", "Check OpenBar updates", INBOX_TOOL_DESCRIPTIONS.check_inbox, async raw => {
+    const input = MCP_INPUTS.check_inbox.parse(raw);
+    const scope = isPublicDemoMode() ? publicDemoSlugs() : undefined;
+    if (input.project && scope && !scope.includes(input.project)) return failResult("invalid_path", `Unknown project "${input.project}".`, false);
+    return okResult(readAgentInbox(input, scope));
+  }, { readOnlyHint: true }),
+  tool("acknowledge_inbox", "Handle OpenBar notifications", INBOX_TOOL_DESCRIPTIONS.acknowledge_inbox, async raw => {
+    assertAdministrativeWriteAllowed("MCP inbox updates");
+    const input = MCP_INPUTS.acknowledge_inbox.parse(raw);
+    const scope = isPublicDemoMode() ? publicDemoSlugs() : undefined;
+    if (input.project && scope && !scope.includes(input.project)) return failResult("invalid_path", `Unknown project "${input.project}".`, false);
+    return okResult(await acknowledgeAgentInbox(input, scope, "webmcp"));
+  }),
   tool("read_project_skill", "Read project skill", sharedToolDescription("read_project_skill"), async raw => {
     const args = asObject(raw)!;
     const result = readAnySkill(projectContentDir(projectArg(args)), stringArg(args, "id")!, args.source as Parameters<typeof readAnySkill>[2]);
@@ -1140,7 +1154,22 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
   tool("sync_project", "Review and resolve Git synchronization", sharedToolDescription("sync_project"), async (args) => {
     const record = asObject(args);
     if (!record) return failResult("invalid_arguments", "Arguments must be an object.", false);
-    try { const project = projectArg(record); const { project: _project, ...input } = record; return syncProjectCommand(projectContentDir(project), input); }
+    try {
+      const project = projectArg(record);
+      const { project: _project, ...input } = record;
+      const projectDir = projectContentDir(project);
+      const action = typeof input.action === "string" ? input.action : "";
+      const mutating = action === "review_pull" || action === "apply_pull" || action === "cancel_pull";
+      if (!mutating) return syncProjectCommand(projectDir, input);
+      const claim = await acquireProjectWriteSession(projectDir, { sessionId: randomUUID(), label: "Agent Git synchronization" });
+      if (!claim.ok) return failResult(claim.code, claim.message, true);
+      if (!claim.credential) return failResult("write_session_unavailable", "Git synchronization needs a writing session.", true);
+      try {
+        return await withProjectWriteSessionContext(projectDir, claim.credential, () => syncProjectCommand(projectDir, input));
+      } finally {
+        await releaseProjectWriteSession(projectDir, claim.credential).catch(() => undefined);
+      }
+    }
     catch (error) { return caught(error); }
   }, { destructiveHint: true, idempotentHint: false }),
   tool("compile_paper", "Compile paper", "Start a five-minute-bounded compiler job from an immutable source snapshot. The last successful artifact remains addressable if this job fails.", executeCompile),
@@ -1192,7 +1221,9 @@ export async function executeMcpTool(name: string, args: unknown, context: McpCo
   if (name === "check_inbox" || name === "acknowledge_inbox") return result;
   try {
     const record = asObject(args);
-    const inbox = readAgentInbox({ project: typeof record?.project === "string" ? record.project : undefined, limit: 3 });
+    const scope = isPublicDemoMode() ? publicDemoSlugs() : undefined;
+    const requestedProject = typeof record?.project === "string" ? record.project : undefined;
+    const inbox = readAgentInbox({ project: requestedProject && (!scope || scope.includes(requestedProject)) ? requestedProject : undefined, limit: 3 }, scope);
     return inbox.count ? { notifications: inbox, ...result } : result;
   } catch {
     return { notifications: { error: "OpenBar inbox could not be checked. Call check_inbox to retry." }, ...result };

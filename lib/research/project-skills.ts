@@ -155,6 +155,7 @@ export function discoverSkillsInDir(root: string, source: ProjectSkill["source"]
 }
 
 export function discoverWorkspaceSkills(): ProjectSkill[] {
+  if (!workspaceInstructionsAvailable()) return [];
   return discoverSkillsInDir(workspaceRoot(), "workspace");
 }
 
@@ -360,10 +361,10 @@ export function readSkillFile(root: string, id: string, source: ProjectSkill["so
 
 export function readAnySkill(projectRoot: string, id: string, source?: ProjectSkill["source"]): { skill: ProjectSkill; body: string } | null {
   if (source === "project") return readSkillFile(projectRoot, id, "project");
-  if (source === "workspace") return readSkillFile(workspaceRoot(), id, "workspace");
+  if (source === "workspace") return workspaceInstructionsAvailable() ? readSkillFile(workspaceRoot(), id, "workspace") : null;
   if (source === "openbar") return readBundledSkill(id);
   return readSkillFile(projectRoot, id, "project")
-    || readSkillFile(workspaceRoot(), id, "workspace")
+    || (workspaceInstructionsAvailable() ? readSkillFile(workspaceRoot(), id, "workspace") : null)
     || readBundledSkill(id);
 }
 

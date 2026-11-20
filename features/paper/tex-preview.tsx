@@ -18,21 +18,12 @@ function PdfFigure({ project, src, page }: { project: string; src: string; page?
   const host = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   useEffect(() => {
-    // Begin loading off-screen figures after the document is painted. A
-    // nearby figure still starts immediately when the user scrolls to it.
-    const observer = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) { setVisible(true); observer?.disconnect(); }
+    if (typeof IntersectionObserver === "undefined") { setVisible(true); return; }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) { setVisible(true); observer.disconnect(); }
     }, { rootMargin: "400px" });
-    if (host.current) observer?.observe(host.current);
-    const idle = typeof window.requestIdleCallback === "function"
-      ? window.requestIdleCallback(() => setVisible(true), { timeout: 1000 })
-      : null;
-    const timer = idle === null ? window.setTimeout(() => setVisible(true), 0) : null;
-    return () => {
-      observer?.disconnect();
-      if (idle !== null) window.cancelIdleCallback(idle);
-      if (timer !== null) window.clearTimeout(timer);
-    };
+    if (host.current) observer.observe(host.current);
+    return () => observer.disconnect();
   }, []);
   return <div ref={host} style={{ minHeight: 240 }}>{visible ? <PdfJsViewer project={project} src={src} page={page} compact /> : <div className="flex min-h-60 items-center justify-center text-xs text-muted">PDF figure</div>}</div>;
 }

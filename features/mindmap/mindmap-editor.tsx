@@ -1988,10 +1988,12 @@ export function MindmapEditor({
 
   const undo = useCallback(() => {
     if (readOnly) { notifyBlockedEdit(); return; }
+    noteEditBurstRef.current = null;
     dispatch({ type: "undo" });
   }, [notifyBlockedEdit, readOnly]);
   const redo = useCallback(() => {
     if (readOnly) { notifyBlockedEdit(); return; }
+    noteEditBurstRef.current = null;
     dispatch({ type: "redo" });
   }, [notifyBlockedEdit, readOnly]);
 
@@ -3083,7 +3085,8 @@ export function MindmapEditor({
             onPaneClick={() => {
               setMapSettingsOpen(false);
               dispatch({ type: "clear-selection" });
-              void inlineEditorSessionRef.current?.commit();
+              if (inlineEditorSessionRef.current) void inlineEditorSessionRef.current.commit();
+              else setEditingId(null);
             }}
             onReparent={(id, parentId, beforeId, afterId) => {
               setSaveError(null);

@@ -658,10 +658,12 @@ export function resolveNativeBodyAbs(projectDir: string, bodyPath: unknown): str
   const wikiRoot = path.join(root, "wiki");
   if (!abs.startsWith(wikiRoot + path.sep)) return null;
   try {
+    const realWikiRoot = fs.existsSync(wikiRoot) ? fs.realpathSync.native(wikiRoot) : wikiRoot;
+    if (realWikiRoot !== wikiRoot && !realWikiRoot.startsWith(root + path.sep)) return null;
     if (fs.existsSync(abs)) {
       if (!fs.statSync(abs).isFile()) return null;
       const real = fs.realpathSync.native(abs);
-      if (real !== root && !real.startsWith(root + path.sep)) return null;
+      if (!real.startsWith(realWikiRoot + path.sep)) return null;
       return abs;
     }
     let parent = path.dirname(abs);
@@ -671,7 +673,7 @@ export function resolveNativeBodyAbs(projectDir: string, bodyPath: unknown): str
       parent = next;
     }
     const realParent = fs.realpathSync.native(parent);
-    if (realParent !== root && !realParent.startsWith(root + path.sep)) return null;
+    if (realParent !== root && realParent !== realWikiRoot && !realParent.startsWith(realWikiRoot + path.sep)) return null;
   } catch {
     return null;
   }

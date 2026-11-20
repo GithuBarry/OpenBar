@@ -20,7 +20,7 @@ export function projectLastEditedAt(projectDir: string, paperFile: string, fallb
     for (const entry of entries) {
       const file = path.join(directory, entry.name);
       if (entry.isDirectory()) {
-        const metadataRecovery = entry.name === "recovery" && [".OpenBar", "openbar"].includes(path.basename(directory));
+        const metadataRecovery = entry.name === "recovery" && [".OpenBar", ".openbar", "openbar"].includes(path.basename(directory));
         if (!GENERATED_DIRS.has(entry.name) && !GENERATED_FILE.test(entry.name) && !metadataRecovery) visit(file);
       } else if (entry.isFile() && !RUNTIME_FILES.has(entry.name) && !GENERATED_FILE.test(entry.name) && file !== compiledPdf) {
         try { latest = Math.max(latest, fs.statSync(file).mtimeMs); }
