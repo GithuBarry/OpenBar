@@ -15,6 +15,7 @@ import { ThemeToggle } from "./theme-toggle";
 import { SidebarNav } from "./sidebar-nav";
 import { ResetDemoButton } from "@/components/demo/reset-demo-button";
 import { useProjectWriteSession } from "@/components/project-session/project-write-session";
+import { SleepZzz } from "@/components/save-sync-status";
 import { AgentReadyIndicator } from "./agent-ready";
 
 const STORAGE_KEY = "ob-sidebar";
@@ -44,7 +45,7 @@ export function Sidebar({
   const [ready, setReady] = useState(false);
   const [narrow, setNarrow] = useState(false);
   const flipRectsRef = useRef<Map<string, DOMRect> | null>(null);
-  const { writable, canRelease, release, restore, canRestore, accessMessage } = useProjectWriteSession();
+  const { writable, canRelease, release, restore, canRestore, sleeping, accessMessage } = useProjectWriteSession();
 
   useEffect(() => {
     const narrow = window.matchMedia("(max-width: 1023px)");
@@ -192,7 +193,7 @@ export function Sidebar({
           <FastTooltip label="Show sidebar"><Dialog.Trigger asChild><button type="button" data-sidebar-flip="toggle" aria-label="Show sidebar" onClick={() => changeOpen(true)}><PanelLeft size={18} aria-hidden="true" /></button></Dialog.Trigger></FastTooltip>
           {active && <SidebarNav items={nav} compact />}
           {!publicDemo && writable && <FastTooltip label={canRelease ? "Release editing access" : "Finish saving before releasing editing access"}><button type="button" aria-label="Release editing access" disabled={!canRelease} onClick={() => { void release(); }}><LockKeyholeOpen size={18} /></button></FastTooltip>}
-          {!publicDemo && !viewOnly && !writable && <FastTooltip label={canRestore ? "Restore editing access" : accessMessage}><button type="button" aria-label="Restore editing access" disabled={!canRestore} onClick={restore}><LockKeyhole size={18} /></button></FastTooltip>}
+          {!publicDemo && !viewOnly && !writable && <FastTooltip label={canRestore ? "Restore editing access" : accessMessage}><button type="button" aria-label="Restore editing access" disabled={!canRestore} onClick={restore}>{sleeping ? <SleepZzz size={18} /> : <LockKeyhole size={18} />}</button></FastTooltip>}
           <div className="mt-auto">{viewOnly ? <FastTooltip label="View only"><span aria-label="View only"><LockKeyhole size={18} /></span></FastTooltip> : <span data-sidebar-flip="agent" className="inline-flex"><AgentReadyIndicator /></span>}</div>
         </nav>
       )}

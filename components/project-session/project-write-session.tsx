@@ -14,6 +14,7 @@ type SessionContext = {
   canRelease: boolean;
   restore: () => void;
   canRestore: boolean;
+  sleeping: boolean;
   check: () => Promise<void>;
   checking: boolean;
   accessMessage: string;
@@ -30,7 +31,7 @@ type SessionContext = {
   inboxRevision?: string;
 };
 
-const defaultSession: SessionContext = { writable: true, setPendingWork: () => {}, release: async () => {}, canRelease: false, restore: () => {}, canRestore: false, check: async () => {}, checking: false, accessMessage: "", accessError: null, inspect: async () => { throw new Error("Open a project to check editing access."); }, resumeEdit: async () => { throw new Error("Open a project to resume editing."); }, pendingLocalWork: false, getDiagnostics: () => ({ state: "unavailable" }), connectionState: "connected", connectionError: null, lastSuccessfulConnection: null, isBackendUnavailable: () => false, hostResources: null }
+const defaultSession: SessionContext = { writable: true, setPendingWork: () => {}, release: async () => {}, canRelease: false, restore: () => {}, canRestore: false, sleeping: false, check: async () => {}, checking: false, accessMessage: "", accessError: null, inspect: async () => { throw new Error("Open a project to check editing access."); }, resumeEdit: async () => { throw new Error("Open a project to resume editing."); }, pendingLocalWork: false, getDiagnostics: () => ({ state: "unavailable" }), connectionState: "connected", connectionError: null, lastSuccessfulConnection: null, isBackendUnavailable: () => false, hostResources: null }
 const WriteSessionContext = createContext<SessionContext>(defaultSession)
 const viewOnlySession: SessionContext = { ...defaultSession, writable: false, accessMessage: "View only", getDiagnostics: () => ({ state: "view-only", writable: false }) }
 export function useProjectWriteSession() { return useContext(WriteSessionContext); }
@@ -81,6 +82,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
   const [accessError, setAccessError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [idleYielded, setIdleYielded] = useState(false);
+  const [releasedByUser, setReleasedByUser] = useState(false);
   const [pendingWork, setPendingWorkState] = useState(false);
   const [pendingRequestCount, setPendingRequestCount] = useState(0);
   const [connectionState, setConnectionState] = useState<"connected" | "reconnecting">("connected");
@@ -334,6 +336,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
         lastActivity.current = Date.now();
         manuallyReleased.current = false;
         setIdleYielded(false);
+        setReleasedByUser(false);
         heldWriterLease.current = true;
         record(result.credential);
         setWritable(true);
@@ -363,6 +366,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
       setWritable(false);
       manuallyReleased.current = !idle;
       setIdleYielded(idle);
+      setReleasedByUser(!idle);
       setMessage(null);
     } catch (error) { requestError("Release failed.", error); }
     finally { releasing.current = false; setWorking(false); }
@@ -539,7 +543,8 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
     hostResourcesAgeMs: hostResources ? Math.max(0, Date.now() - hostResources.sampledAt) : null,
     inboxRevision,
   }), [endpoint, status, publicDemo, writable, accessMessage, accessError, working, idleYielded, connectionError, lastSuccessfulConnection, hostResources, inboxRevision]);
-  const context = useMemo(() => ({ writable: publicDemo ? true : writable, setPendingWork, release, canRelease: writable && !working && !pendingWork && pendingRequestCount === 0, restore, canRestore: !publicDemo && !working && !writable && Boolean(status) && pendingRequestCount === 0, check, checking: working, accessMessage, accessError, inspect, resumeEdit, pendingLocalWork: pendingWork, getDiagnostics, connectionState, connectionError, lastSuccessfulConnection, isBackendUnavailable, hostResources, inboxRevision }), [publicDemo, writable, setPendingWork, release, working, pendingWork, pendingRequestCount, restore, status, check, accessMessage, accessError, inspect, resumeEdit, getDiagnostics, connectionState, connectionError, lastSuccessfulConnection, isBackendUnavailable, hostResources, inboxRevision]);
+  const sleeping = !publicDemo && !writable && (idleYielded || releasedByUser) && status?.state !== "occupied";
+  const context = useMemo(() => ({ writable: publicDemo ? true : writable, setPendingWork, release, canRelease: writable && !working && !pendingWork && pendingRequestCount === 0, restore, canRestore: !publicDemo && !working && !writable && Boolean(status) && pendingRequestCount === 0, sleeping, check, checking: working, accessMessage, accessError, inspect, resumeEdit, pendingLocalWork: pendingWork, getDiagnostics, connectionState, connectionError, lastSuccessfulConnection, isBackendUnavailable, hostResources, inboxRevision }), [publicDemo, writable, setPendingWork, release, working, pendingWork, pendingRequestCount, restore, status, sleeping, check, accessMessage, accessError, inspect, resumeEdit, getDiagnostics, connectionState, connectionError, lastSuccessfulConnection, isBackendUnavailable, hostResources, inboxRevision]);
   return <WriteSessionContext.Provider value={context}>
     {children}
   </WriteSessionContext.Provider>;

@@ -3,6 +3,7 @@
 import { Info, LockKeyhole, LockKeyholeOpen, RefreshCw } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { FastTooltip } from "@/components/fast-tooltip";
+import { SleepZzz } from "@/components/save-sync-status";
 import { cn } from "@/lib/utils";
 import { useProjectWriteSession } from "./project-write-session";
 import styles from "./resume-edit-control.module.css";
@@ -37,7 +38,7 @@ export function ResumeEditControl({ className, embedded = false, suppressError =
   return <div ref={controlRef} className={cn(styles.control, !embedded && "p-glass-sm", !embedded && styles.floating, className)} data-resume-edit data-resume-edit-attention={attentionRequest || undefined}>
     <FastTooltip label={session.accessMessage}><span className={styles.trigger} tabIndex={failed ? 0 : undefined}>
       <button type="button" className="p-button p-button-secondary" disabled={!session.canRestore} onClick={session.restore} aria-label="Resume edit" aria-busy={session.checking}>
-        {session.canRestore ? <LockKeyholeOpen size={14} aria-hidden="true" /> : <LockKeyhole size={14} aria-hidden="true" />}
+        {session.sleeping ? <SleepZzz size={15} /> : session.canRestore ? <LockKeyholeOpen size={14} aria-hidden="true" /> : <LockKeyhole size={14} aria-hidden="true" />}
         <span>{failed ? "Resume edit failed" : "Resume edit"}</span>
         {failed && <Info size={13} aria-hidden="true" />}
       </button>

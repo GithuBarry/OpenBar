@@ -10,6 +10,14 @@ import { hostBusyDetail } from "@/lib/editor-issue-priority";
 export type SaveRemoteState = "checking" | "local" | "pending" | "syncing" | "synced" | "changed" | "blocked" | "unconfigured" | "unavailable" | "failed";
 export type StatusPillTone = "danger" | "warn" | "accent";
 
+export function SleepZzz({ size = 16 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
+    <path d="M4 13h7l-7 7h7" />
+    <path d="M12.5 7.5h5l-5 5h5" />
+    <path d="M17.5 3h3.5l-3.5 3.5h3.5" />
+  </svg>;
+}
+
 export function SaveChecks({ stage, size = 14 }: { stage: "local" | "queued" | "remote"; size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={`rgb(var(--${stage === "remote" ? "accent" : "ink"}))`} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
     <path d={stage === "local" ? "m4 12 5 5L20 6" : "m1 12 5 5L17 6"} />
@@ -86,7 +94,7 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
   } else if (readOnlyRestorable) {
     pillCue = "Resume";
     pillTone = "accent";
-    customIcon = <LockKeyholeOpen size={15} className="shrink-0" />;
+    customIcon = session.sleeping ? <SleepZzz size={16} /> : <LockKeyholeOpen size={15} className="shrink-0" />;
   } else if (readOnlyLocked) {
     pillCue = "View only";
     pillTone = "warn";
@@ -164,7 +172,7 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
       <span className="ob-mod-swap" aria-hidden="true">
         <span className="ob-mod-primary">{customIcon || <SaveStatusIcon saved={saved} saving={saving} conflict={conflict} attention={Boolean(error)} remote={remote} connectionUnavailable={reconnecting} hostBusy={Boolean(host)} />}</span>
         {onForceSync && <span className="ob-mod-alt"><RefreshCw size={15} /></span>}
-        {session.canRelease && <span className="ob-mod-shift"><LockKeyhole size={15} /></span>}
+        {session.canRelease && <span className="ob-mod-shift"><SleepZzz size={16} /></span>}
       </span>
       {iconOnly ? (
         <span className="ob-status-label-track" data-open={pillCue ? "true" : "false"} aria-hidden={!pillCue}>

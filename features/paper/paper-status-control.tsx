@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Cog, LockKeyhole, RefreshCw } from "lucide-react";
+import { Cog, RefreshCw } from "lucide-react";
 import { FastTooltip } from "@/components/fast-tooltip";
-import { SaveStatusIcon, type SaveRemoteState, type StatusPillTone } from "@/components/save-sync-status";
+import { SaveStatusIcon, SleepZzz, type SaveRemoteState, type StatusPillTone } from "@/components/save-sync-status";
 import { cn } from "@/lib/utils";
 import { useProjectWriteSession } from "@/components/project-session/project-write-session";
 import { hostBusyDetail, type EditorIssue } from "@/lib/editor-issue-priority";
@@ -95,7 +95,7 @@ export function PaperStatusControl({
                   </>}
         </span>
         {onForceSync && <span className="ob-mod-alt"><RefreshCw size={15} /></span>}
-        {session.canRelease && <span className="ob-mod-shift"><LockKeyhole size={15} /></span>}
+        {session.canRelease && <span className="ob-mod-shift"><SleepZzz size={16} /></span>}
       </span>
       <span className="ob-status-label-track" data-open={pillCue ? "true" : "false"} aria-hidden={!pillCue}>
         <span className="ob-status-label-inner">{displayCue}</span>
