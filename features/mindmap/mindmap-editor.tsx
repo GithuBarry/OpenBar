@@ -3647,8 +3647,8 @@ function AccentPicker({ value, label, onChange }: {
   }
   return <>
     <div className="mindmap-color-palette" role="group" aria-label={`${label} palette`}>
-      {CARD_PALETTE.map((option) => <FastTooltip key={option.value} label={option.label}><button type="button" className={cn("mindmap-color-swatch", value === option.value && "mindmap-color-swatch-selected")} style={{ backgroundColor: option.value }} aria-label={option.label + " accent"} aria-pressed={value === option.value} onClick={() => choose(option.value)} /></FastTooltip>)}
-      <FastTooltip label="Use default accent"><button type="button" className={cn("mindmap-color-swatch mindmap-color-swatch-auto", value === "" && "mindmap-color-swatch-selected")} aria-label="Use default accent" aria-pressed={value === ""} onClick={() => choose()}>Auto</button></FastTooltip>
+      {CARD_PALETTE.map((option) => <button key={option.value} type="button" className={cn("mindmap-color-swatch", value === option.value && "mindmap-color-swatch-selected")} style={{ backgroundColor: option.value }} aria-label={option.label + " accent"} aria-pressed={value === option.value} onClick={() => choose(option.value)} />)}
+      <button type="button" className={cn("mindmap-color-swatch mindmap-color-swatch-auto", value === "" && "mindmap-color-swatch-selected")} aria-label="Use default accent" aria-pressed={value === ""} onClick={() => choose()}>Auto</button>
       <FastTooltip label="Custom accent"><button type="button" className="mindmap-color-swatch mindmap-color-swatch-auto mindmap-color-swatch-icon" aria-label={`Custom ${label.toLowerCase()}`} aria-expanded={customOpen} onClick={() => setCustomOpen((open) => !open)}><Pencil size={12} aria-hidden="true" /></button></FastTooltip>
     </div>
     {customOpen && <input autoFocus value={value ?? ""} onChange={(event) => onChange(event.target.value.trim() || undefined)} placeholder="#785ef0 or CSS color" aria-label={`Custom ${label.toLowerCase()} value`} />}
