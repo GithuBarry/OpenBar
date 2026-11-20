@@ -196,7 +196,7 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
         base,
         { ...peak, offset: 0.28 },
         base,
-      ], { duration: level === 1 ? 620 : level === 2 ? 720 : 820, easing: "ease-out" });
+      ], { duration: level === 1 ? 1240 : level === 2 ? 1440 : 1640, easing: "ease-in-out" });
     }
 
     if (attentionRequest >= 3) {
