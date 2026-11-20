@@ -367,7 +367,7 @@ export function MindmapEditor({
       held = next;
       setShiftExpandHeld(next);
     };
-    const key = (event: globalThis.KeyboardEvent) => update(event.shiftKey);
+    const key = (event: globalThis.KeyboardEvent) => update(event.shiftKey || event.altKey);
     const blur = () => update(false);
     window.addEventListener("keydown", key, true);
     window.addEventListener("keyup", key, true);
