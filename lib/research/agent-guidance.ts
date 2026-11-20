@@ -40,13 +40,17 @@ Card attention budget: Keep visible card titles short (<=10 words) and visible b
 export const MINDMAP_WRITING_SKILL_ID = "mindmap-writing";
 export const MINDMAP_WRITING_REFERENCE = `For card writing, comparison tables, and HTML/SVG examples, use read_project_skill with source "openbar" and id "${MINDMAP_WRITING_SKILL_ID}".`;
 
-export const MINDMAP_EDIT_GUIDANCE = `Choose link-todo to bind an existing card or place-todo to place a task under a parent. Repeat placement returns its current card. Use move to relocate it. Verify the saved card and TODO IDs. ${MINDMAP_WRITING_REFERENCE}`;
+export const MINDMAP_EDIT_GUIDANCE = `Use link-todo to bind an existing card or place-todo to place an unplaced TODO (repeat placement returns the existing card); move relocates it. ${MINDMAP_WRITING_REFERENCE}`;
 
-export const AGENT_GUIDANCE = `${INBOX_GUIDANCE}
+/** Sent on native MCP initialize (excludes browser-only WebMCP session tools). */
+export const MCP_INSTRUCTIONS = `${INBOX_GUIDANCE}
 
-get_project_state includes project context, humanDecisions, shared user instructions, and available skills. Use read_project_files and apply_project_edits with current hashes for authored files. Use get_mindmap (pass detail="outline", nodeIds, or ifRevision to avoid re-reading unchanged cards) and apply_mindmap_edits with the current revision for managed cards. Keep visible prose concise (<=80 words), use Agent draft children for distinct contributions, put supporting detail in caption (collapsed Notes), attach provenance in refs[], and mark failed/abandoned work progress="ditched". Preserve human-removed cards as project decisions and ask before recreating similar content unless the current request calls for it. ${MINDMAP_WRITING_REFERENCE}
+Workflow: start with get_project_state (context, humanDecisions, instructions, skills). Use read_project_files / apply_project_edits with exact hashes for authored files (including TeX TODO wording/completion). Use get_mindmap (pass detail="outline", nodeIds, or ifRevision to save tokens) and apply_mindmap_edits with current revision for map cards. Keep visible cards concise (<=10-word title, <=80-word body or compact table/SVG), put reasoning/details in caption (collapsed Notes), attach provenance in refs[], leave cardWidth unset for prose cards, and mark failed/abandoned work progress="ditched". Respect human-removed cards as decisions (ask before recreating). Make the smallest requested change and report changed locations. ${MINDMAP_WRITING_REFERENCE}`;
 
-In the browser, get_editing_session shows writing access before a handoff. Resume edit transfers access at the human's request. release_edit yields it after local work is saved. Native MCP can contribute through revision checks. Make the smallest requested change, preserve other work, and report changed locations. Browser requests also appear in openbar-agent-requests metadata. Connection setup is at /agents.`;
+/** Full guidance for browser pages and meta discovery (adds browser WebMCP session handoff). */
+export const AGENT_GUIDANCE = `${MCP_INSTRUCTIONS}
+
+Browser WebMCP: check get_editing_session before a handoff; Resume edit transfers access on human request, release_edit yields it after saving. Pending requests also appear in openbar-agent-requests metadata. Setup: /agents.`;
 
 const MAX_VISIBLE_CARD_WORDS = 80;
 const UNREVIEWED_DRAFT_WARNING_THRESHOLD = 10;

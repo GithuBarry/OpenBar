@@ -1,9 +1,8 @@
-import { AGENT_GUIDANCE } from "@/lib/research/agent-guidance";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AgentConnectionAddress } from "@/components/agent-connection-address";
 
-export const metadata: Metadata = { title: "OpenBar agent instructions", description: "Start using OpenBar with the interface, browser WebMCP, or authenticated HTTP MCP." };
+export const metadata: Metadata = { title: "OpenBar agent instructions", description: "Start using OpenBar with authenticated HTTP MCP, REST, or browser WebMCP." };
 
 export default function AgentAccessPage() {
   return (
@@ -11,9 +10,8 @@ export default function AgentAccessPage() {
       <Link href="/" className="text-sm text-accent">← OpenBar workspace</Link>
       <header className="space-y-3">
         <h1 className="text-3xl font-semibold">OpenBar agent instructions</h1>
-        <p className="font-medium">{AGENT_GUIDANCE}</p>
-        <p className="text-muted">OpenBar supports people, browser agents, and headless clients. The Tools button in each project opens the current browser-tool status and this guide.</p>
-        <p className="text-muted">For instructions specific to a private project, open <code>/p/&lt;project&gt;/instructions</code> on this workspace. Use the project name from the link you followed.</p>
+        <p className="text-muted">OpenBar supports headless MCP/REST clients, browser agents, and people. Connect via native MCP first (below); the MCP server supplies live tool schemas and concise session instructions on handshake.</p>
+        <p className="text-muted">For project-specific instructions and skills, call <code>get_project_state</code> or open <code>/p/&lt;project&gt;/instructions</code>.</p>
       </header>
       <section className="space-y-3" aria-labelledby="headless-help">
         <h2 id="headless-help" className="text-xl font-semibold">Connect a coding or headless agent (Recommended)</h2>
