@@ -23,7 +23,10 @@ __pycache__/
 
 # Env files
 .env
-.env*.local
+.env.*
+*.env
+!.env.example
+!.env.sample
 
 # Editor / OS
 .DS_Store
@@ -50,8 +53,8 @@ deploy/private/
 **/*.out
 
 # Private research state stays in a separate mounted content store
-/content/projects/
-/content/workspace.tex
+/content/*
+!/content/.gitkeep
 /migrates/
 /HANDOFF.md
 /HANDOFF_PLAN.md
