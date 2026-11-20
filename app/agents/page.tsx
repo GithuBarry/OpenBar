@@ -3,17 +3,17 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { AgentConnectionAddress } from "@/components/agent-connection-address";
 
-export const metadata: Metadata = { title: "Tools and agent access", description: "Start using OpenBar with the interface, browser WebMCP, or authenticated HTTP MCP." };
+export const metadata: Metadata = { title: "OpenBar agent instructions", description: "Start using OpenBar with the interface, browser WebMCP, or authenticated HTTP MCP." };
 
 export default function AgentAccessPage() {
   return (
     <main id="main-content" tabIndex={-1} className="mx-auto max-w-3xl space-y-8 px-6 py-10 text-ink">
       <Link href="/" className="text-sm text-accent">← OpenBar workspace</Link>
       <header className="space-y-3">
-        <h1 className="text-3xl font-semibold">Tools and agent access</h1>
+        <h1 className="text-3xl font-semibold">OpenBar agent instructions</h1>
         <p className="font-medium">{AGENT_GUIDANCE}</p>
         <p className="text-muted">OpenBar supports people, browser agents, and headless clients. The Tools button in each project opens the current browser-tool status and this guide.</p>
-        <p className="text-muted">Tool descriptions and schemas define each operation. Project context and relevant skills are available through the tools as needed.</p>
+        <p className="text-muted">For instructions specific to a private project, open <code>/p/&lt;project&gt;/instructions</code> on this workspace. Use the project name from the link you followed.</p>
       </header>
       <section className="space-y-3" aria-labelledby="interface-help">
         <h2 id="interface-help" className="text-xl font-semibold">Use the interface</h2>

@@ -2,6 +2,8 @@
 
 OpenBar is a research-paper and mindmap workspace with native MCP and WebMCP tools.
 
+- OpenBar agent instructions and connection guide: /agents
+- Private project instructions: /p/<project>/instructions (use the slug from the link you opened)
 - Every new agent session, including without earlier chat context: get_project_state, then check_inbox
 - "Tick", "check updates", "check inbox", or "sync": check_inbox
 - Reply on the linked card, then acknowledge exact IDs: acknowledge_inbox
@@ -9,7 +11,6 @@ OpenBar is a research-paper and mindmap workspace with native MCP and WebMCP too
 - HTTP MCP: /api/mcp
 - REST tool discovery: /api/tools
 - OpenAPI schemas: /openapi.json
-- Connection setup: /agents
 - Deployment and transport reference: /llms-deployment.txt
 
 Tool descriptions and schemas carry each operation's contract. Project instructions

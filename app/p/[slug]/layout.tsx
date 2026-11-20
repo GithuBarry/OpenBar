@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { getProjectMetadata } from "@/lib/store";
+import { workspaceInstructionsAvailable } from "@/lib/research/project-skills";
 import { platformWishlistAvailable } from "@/lib/research/platform-wishlist";
 import { isPublicDemoMode } from "@/lib/server/demo-mode";
 import { requireProjectPage } from "@/lib/server/project-access";
@@ -38,6 +39,9 @@ export default async function ProjectLayout({
           publicDemo={publicDemo}
         />
         <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 overflow-y-auto bg-canvas">
+          {workspaceInstructionsAvailable() && (
+            <link rel="help" title="Project agent instructions" href={`/p/${encodeURIComponent(slug)}/instructions`} />
+          )}
           {children}
         </main>
       </div>

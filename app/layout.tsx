@@ -49,21 +49,26 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const viewOnly = process.env.OPENBAR_VIEW_ONLY === "1";
+  const agentGuide = viewOnly ? "/about#agent-setup" : "/agents";
   return (
     <html
       lang="en"
       suppressHydrationWarning
     >
       <head>
-        <meta name="openbar-agent-instructions" content={AGENT_GUIDANCE} />
+        <meta name="openbar-agent-instructions" content={viewOnly ? "Read-only viewer. Read the agent instructions at /about#agent-setup." : AGENT_GUIDANCE} />
         <meta name="openbar-agent-origins" content={JSON.stringify(agentOrigins())} />
-        <link rel="help" href="/agents" title="Tools and agent access" />
-        <link rel="alternate" type="text/plain" href="/llms.txt" title="OpenBar agent guide" />
-        <link rel="help" type="text/plain" href="/llms-deployment.txt" title="OpenBar deployment and connection setup" />
+        <link rel="help" href={agentGuide} title="OpenBar agent instructions" />
+        {!viewOnly && <>
+          <link rel="alternate" type="text/plain" href="/llms.txt" title="OpenBar agent guide" />
+          <link rel="help" type="text/plain" href="/llms-deployment.txt" title="OpenBar deployment and connection setup" />
+        </>}
         <ThemeScript />
       </head>
       <body className="min-h-screen antialiased">
         <a className="ob-skip-link" href="#main-content">Skip to content</a>
+        <a className="ob-skip-link" href={agentGuide}>OpenBar agent instructions</a>
         <Providers>{children}</Providers>
       </body>
     </html>

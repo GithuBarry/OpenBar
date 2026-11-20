@@ -32,6 +32,7 @@ const DAILY_FLOW = [
 export default async function AboutPage() {
   await requireWorkbenchPage();
   const workspace = getWorkspaceSettings();
+  const viewOnly = process.env.OPENBAR_VIEW_ONLY === "1";
 
   return (
     <main id="main-content" tabIndex={-1} className="ob-main-brand min-h-screen bg-canvas text-ink">
@@ -57,7 +58,7 @@ export default async function AboutPage() {
           {platformWishlistAvailable() && <Link href="/wishlist" className="text-accent underline underline-offset-4">Platform wishlist</Link>}
           <a href="#local-setup" className="text-accent underline underline-offset-4">Install locally</a>
           <a href="#first-paper" className="text-accent underline underline-offset-4">Start your first paper</a>
-          <a href="#agent-setup" className="text-accent underline underline-offset-4">Connect an agent</a>
+          <a href="#agent-setup" className="text-accent underline underline-offset-4">Agent instructions</a>
         </nav>
       </section>
 
@@ -120,20 +121,14 @@ export default async function AboutPage() {
       <section id="agent-setup" aria-labelledby="agent-setup-heading" className="scroll-mt-24 border-y border-line bg-surface/50">
         <div className="mx-auto max-w-6xl px-6 py-10">
           <div className="flex items-center gap-2 text-accent"><LockKeyhole size={17} /><p className="text-sm font-semibold">Agent access</p></div>
-          <h2 id="agent-setup-heading" className="mt-3 font-sans text-3xl font-semibold tracking-tight">Connect the agent you use.</h2>
-          <div className="mt-5 grid gap-5 lg:grid-cols-2">
-            <div className="rounded-xl border border-line bg-canvas p-5">
-              <h3 className="text-sm font-semibold">Browser agent</h3>
-              <p className="mt-2 text-sm leading-6 text-muted">Open a project over HTTPS or localhost in a browser integration that supports WebMCP. Select <strong>Tools</strong> to see the current tool catalog and connection status. The active page supplies the project identity and live editor state.</p>
-              <p className="mt-2 text-sm leading-6 text-muted">Have the agent start with <code>get_project_state</code>, read the relevant instructions and skills, and use the tools for the paper or mindmap currently open.</p>
-            </div>
-            <div className="rounded-xl border border-line bg-canvas p-5">
-              <h3 className="text-sm font-semibold">MCP client</h3>
-              <p className="mt-2 text-sm leading-6 text-muted">Add a Streamable HTTP connection using your workspace address followed by <code>/api/mcp</code>. Your workspace owner supplies the configured <code>OPENBARRY_ACCESS_TOKEN</code> as a bearer token, or an allowed Cloudflare Access identity. HTTP MCP requires this authentication on localhost too.</p>
-              <p className="mt-2 text-sm leading-6 text-muted">Start with <code>get_project_state</code> and the project slug from its <code>/p/&lt;slug&gt;/paper</code> URL. HTTP MCP reads and edits saved project files. A Tailscale address requires the client to have access to that private network.</p>
-            </div>
-          </div>
-          <Link href="/agents" className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-accent underline underline-offset-4">Agent connection guide and troubleshooting <ArrowRight size={14} /></Link>
+          <h2 id="agent-setup-heading" className="mt-3 font-sans text-3xl font-semibold tracking-tight">OpenBar agent instructions</h2>
+          {viewOnly ? (
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-muted">
+              This shared viewer provides read-only access. Follow project links to read the paper, mindmap, and wiki. For editing or agent tools, ask the workspace owner for private workspace access.
+            </p>
+          ) : (
+            <Link href="/agents" className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-accent underline underline-offset-4">Read the agent instructions and connection guide <ArrowRight size={14} /></Link>
+          )}
         </div>
       </section>
 

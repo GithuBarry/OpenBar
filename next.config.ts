@@ -21,7 +21,7 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: "/:path*", headers: [
       { key: "Origin-Agent-Cluster", value: "?1" },
-      { key: "Link", value: '</agents>; rel="help"; title="MCP and WebMCP setup", </llms.txt>; rel="alternate"; type="text/plain"; title="OpenBar agent instructions"' },
+      { key: "Link", value: '</agents>; rel="help"; title="OpenBar agent instructions (private workspace)", </about#agent-setup>; rel="help"; title="OpenBar agent instructions (shared viewer)", </llms.txt>; rel="alternate"; type="text/plain"; title="OpenBar agent instructions"' },
       { key: "Permissions-Policy", value: agentPermissionsPolicy() },
     ] }];
   },
