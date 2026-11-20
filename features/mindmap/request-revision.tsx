@@ -7,9 +7,10 @@ import { FastTooltip } from "@/components/fast-tooltip";
 import { PopoverSurface } from "@/components/pop";
 import styles from "./mindmap-editor.module.css";
 
-export function RequestRevision({ nodeId, disabled = false, onRequest }: {
+export function RequestRevision({ nodeId, disabled = false, mode = "draft", onRequest }: {
   nodeId: string;
   disabled?: boolean;
+  mode?: "draft" | "card";
   onRequest: (note: string) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
@@ -43,16 +44,22 @@ export function RequestRevision({ nodeId, disabled = false, onRequest }: {
     if (pending.current || disabled) return;
     setOpen(next);
   }}>
-    <FastTooltip label={disabled ? "AI draft" : "Ask AI to revise (@agent)\n⌥-click to fast-track (@stat)"}><Popover.Trigger asChild>
+    <FastTooltip label={disabled ? "AI draft" : mode === "draft" ? "Ask AI to revise (@agent)\n⌥-click to fast-track (@stat)" : "Ask AI to revise (@agent)\n⌥-click to fast-track (@stat)"}><Popover.Trigger asChild>
       <button
         type="button"
-        className={styles.draftRevise}
-        aria-label={disabled ? "AI draft" : "Ask AI to revise this draft"}
+        className={mode === "draft" ? styles.draftRevise : styles.cardReviseButton}
+        aria-label={disabled ? "AI draft" : "Ask AI to revise this card"}
         disabled={disabled}
         onClick={event => { if (event.altKey) setFastTrack(true); else setFastTrack(false); }}
       >
-        <span className={styles.draftSparkle} aria-hidden="true"><Sparkles size={12} strokeWidth={2.3} /></span>
-        {!disabled && <span className={styles.draftBubble} aria-hidden="true"><MessageSquare size={12} strokeWidth={2.2} /><span className={styles.draftStatMark}>!</span></span>}
+        {mode === "draft" ? (
+          <>
+            <span className={styles.draftSparkle} aria-hidden="true"><Sparkles size={12} strokeWidth={2.3} /></span>
+            {!disabled && <span className={styles.draftBubble} aria-hidden="true"><MessageSquare size={12} strokeWidth={2.2} /><span className={styles.draftStatMark}>!</span></span>}
+          </>
+        ) : (
+          <span className={styles.cardReviseBubble} aria-hidden="true"><MessageSquare size={12} strokeWidth={2.2} /><span className={styles.draftStatMark}>!</span></span>
+        )}
       </button>
     </Popover.Trigger></FastTooltip>
     <PopoverSurface side="bottom" align="end" aria-label="Request a draft revision" data-mind-editor={nodeId}

@@ -67,6 +67,7 @@ import {
 } from "lucide-react";
 
 import { markAgentDraft, withAgentTableFormat } from "@/lib/mindmap/agent-draft";
+import { diffChangedWordSpans, draftChangesByNode, type DraftChangeInfo } from "@/lib/mindmap/draft-diff";
 import { isLockedMindmapEditIntent } from "@/lib/mindmap/locked-edit-intent";
 import { focusedMindmapCardId } from "@/lib/mindmap/focused-card";
 import { markdownTableColumns, startsWithMarkdownTable } from "@/lib/mindmap/markdown-table";
@@ -1766,7 +1767,7 @@ export function MindmapEditor({
     if (editor?.nodeId === id && !await editor.commit()) throw new Error("Finish saving the open card, then retry.");
     await persistWebMcpMutation(current => {
       const card = indexMindmap(current.mindmap).nodeById.get(id);
-      if (!card || (!card.agentDraft && card.contentFormat !== "html")) throw new Error("Open an Agent draft or HTML card to add an agent comment.");
+      if (!card) throw new Error("Card not found.");
       // Paper and HTML source stay intact while comments live in map Notes.
       if (card.todoId || card.contentFormat === "html") {
         if (card.caption === note || card.caption?.startsWith(note + "\n\n")) return null;
@@ -1803,6 +1804,10 @@ export function MindmapEditor({
   const agentDraftNodes = useMemo(
     () => mindmap.nodes.filter((node) => node.agentDraft),
     [mindmap.nodes],
+  );
+  const draftChangesMap = useMemo(
+    () => draftChangesByNode(paperState?.recent, new Set(agentDraftNodes.map((node) => node.id))),
+    [paperState?.recent, agentDraftNodes],
   );
   const draftCursorRef = useRef(0);
 
@@ -2561,6 +2566,7 @@ export function MindmapEditor({
         activityLabel={activityNodeIds.has(node.id) ? Date.parse(activityAt) >= Date.parse(activitySince || "") ? relativeActivityLabel(activityAt) : "recent activity in this branch" : null}
         unreadReply={unreadNodeIds.has(node.id)}
         answeredRequest={answeredRequests.get(node.id)}
+        draftChanges={node.agentDraft ? draftChangesMap.get(node.id) : undefined}
         onRead={() => readAgentReply(node.id, node)}
         dimensions={dimensions}
         onMeasure={measureCard}
@@ -2638,6 +2644,7 @@ export function MindmapEditor({
     activitySince,
     unreadNodeIds,
     answeredRequests,
+    draftChangesMap,
     readAgentReply,
     imageUploads,
     collapsedIds,
@@ -3747,6 +3754,7 @@ function CanvasNode({
   activityLabel,
   unreadReply,
   answeredRequest,
+  draftChanges,
   onRead,
   dimensions,
   onMeasure,
@@ -3796,6 +3804,7 @@ function CanvasNode({
   activityLabel?: string | null;
   unreadReply: boolean;
   answeredRequest?: string;
+  draftChanges?: DraftChangeInfo;
   onRead: () => void;
   dimensions: Dimensions;
   fontSize: number;
@@ -3828,6 +3837,7 @@ function CanvasNode({
   const cardRef = useRef<HTMLElement | null>(null);
   const htmlCard = !node.todoId && (node.contentFormat === "html" || restoredDraft?.contentFormat === "html");
   const [notesOpen, setNotesOpen] = useState(() => Boolean(node.todoId && node.agentDraft && node.caption?.startsWith("@agent ")));
+  const [draftDiffHover, setDraftDiffHover] = useState(false);
   const collapsedChildCount = shiftExpandHeld ? childNavigation.length : collapsedDescendantCount;
   const expandChildLabel = `Expand ${collapsedChildCount} ${shiftExpandHeld ? "immediate " : ""}child card${collapsedChildCount === 1 ? "" : "s"}`;
   const activityDescription = activityLabel
@@ -4003,6 +4013,23 @@ function CanvasNode({
     });
     return () => cancelAnimationFrame(frame);
   }, [editing, htmlCard, restoredDraft]);
+  const showDraftDiff = Boolean(node.agentDraft && draftDiffHover && draftChanges && !editing);
+  const plainCard = !node.todoId && !htmlCard && (!node.contentFormat || node.contentFormat === "plain");
+  const titleWordDiff = useMemo(
+    () => (showDraftDiff && plainCard && draftChanges?.titleChanged && !draftChanges.isNew
+      ? diffChangedWordSpans(draftChanges.beforeTitle, displayTitle)
+      : null),
+    [showDraftDiff, plainCard, draftChanges, displayTitle],
+  );
+  const bodyWordDiff = useMemo(
+    () => (showDraftDiff && plainCard && draftChanges?.bodyChanged && !draftChanges.isNew
+      ? diffChangedWordSpans(draftChanges.beforeText, displayBody)
+      : null),
+    [showDraftDiff, plainCard, draftChanges, displayBody],
+  );
+  const underlineWholeTitle = showDraftDiff && Boolean(draftChanges?.titleChanged) && !titleWordDiff;
+  const underlineWholeBody = showDraftDiff && Boolean(draftChanges?.bodyChanged) && !bodyWordDiff;
+  const underlineNotes = showDraftDiff && Boolean(draftChanges?.notesChanged);
   return (
     <>
     <NodeToolbar
@@ -4037,6 +4064,9 @@ function CanvasNode({
       data-mind-node={node.id}
       data-progress={node.progress ?? undefined}
       data-filtered-out={filteredOut || undefined}
+      data-draft-underline-title={underlineWholeTitle || undefined}
+      data-draft-underline-body={underlineWholeBody || undefined}
+      data-draft-underline-notes={underlineNotes || undefined}
       data-child-navigation={childNavigation.length > 0 || undefined}
       data-mind-editor={editing ? node.id : undefined}
       role="treeitem"
@@ -4095,14 +4125,37 @@ function CanvasNode({
         onDropTodo(todoId);
       }}
     >
-      {node.agentDraft && (
-        <div className={cn(styles.draftActions, "nodrag nopan")} data-mind-editor={node.id} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
+      {node.agentDraft ? (
+        <div
+          className={cn(styles.draftActions, "nodrag nopan")}
+          data-mind-editor={node.id}
+          onMouseEnter={() => setDraftDiffHover(true)}
+          onMouseLeave={() => setDraftDiffHover(false)}
+          onFocus={() => setDraftDiffHover(true)}
+          onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraftDiffHover(false); }}
+          onPointerDown={event => event.stopPropagation()}
+          onClick={event => event.stopPropagation()}
+        >
           {!readOnly && <FastTooltip label="Accept draft"><button type="button" aria-label="Accept draft" onClick={() => void onSaveDraft()}><Check size={13} /></button></FastTooltip>}
           <RequestRevision nodeId={node.id} disabled={readOnly || (editing && htmlCard)} onRequest={async mention => {
             await onRequestRevision(mention);
             if (node.todoId || htmlCard) setNotesOpen(true);
           }} />
           {!readOnly && onDeleteDraft && <FastTooltip label="Discard draft"><button type="button" aria-label="Delete draft" onClick={onDeleteDraft}><X size={13} /></button></FastTooltip>}
+        </div>
+      ) : !readOnly && !(editing && htmlCard) && (
+        <div
+          className={cn(styles.cardReviseZone, "nodrag nopan")}
+          data-mind-editor={node.id}
+          onPointerDown={event => event.stopPropagation()}
+          onClick={event => event.stopPropagation()}
+        >
+          <div className={styles.cardRevisePill}>
+            <RequestRevision nodeId={node.id} mode="card" onRequest={async mention => {
+              await onRequestRevision(mention);
+              if (node.todoId || htmlCard) setNotesOpen(true);
+            }} />
+          </div>
         </div>
       )}
       {unreadReply && <span className={styles.unreadReply} role="img" aria-label="Unread agent reply" title="Unread agent reply" />}
@@ -4162,8 +4215,12 @@ function CanvasNode({
           ) : (
             <>
               {!displayTitle.trim() && !displayBody.trim() && <div className={styles.cardPlaceholder}>New card</div>}
-              {displayTitle.trim() && <div className={cn("mindmap-node-title", node.parentId === null && styles.rootTitle)}>{node.parentId === null ? <><span className={styles.rootAccent} aria-hidden="true" /><div className={styles.rootSubject}><NodeRichText text={displayTitle} format={htmlCard ? "plain" : node.contentFormat} tableLayout={node.tableLayout} /></div></> : <NodeRichText text={displayTitle} format={htmlCard ? "plain" : node.contentFormat} tableLayout={node.tableLayout} />}</div>}
-              {displayBody.trim() && <div className="mindmap-node-detail"><NodeRichText text={displayBody} format={htmlCard ? "html" : node.contentFormat} tableLayout={node.tableLayout} /></div>}
+              {displayTitle.trim() && <div className={cn("mindmap-node-title", node.parentId === null && styles.rootTitle)}>
+                {node.parentId === null ? (
+                  <><span className={styles.rootAccent} aria-hidden="true" /><div className={styles.rootSubject}>{titleWordDiff ? titleWordDiff.map((seg, i) => seg.changed ? <span key={i} className={styles.draftChanged}>{seg.text}</span> : seg.text) : <NodeRichText text={displayTitle} format={htmlCard ? "plain" : node.contentFormat} tableLayout={node.tableLayout} />}</div></>
+                ) : titleWordDiff ? titleWordDiff.map((seg, i) => seg.changed ? <span key={i} className={styles.draftChanged}>{seg.text}</span> : seg.text) : <NodeRichText text={displayTitle} format={htmlCard ? "plain" : node.contentFormat} tableLayout={node.tableLayout} />}
+              </div>}
+              {displayBody.trim() && <div className="mindmap-node-detail">{bodyWordDiff ? bodyWordDiff.map((seg, i) => seg.changed ? <span key={i} className={styles.draftChanged}>{seg.text}</span> : seg.text) : <NodeRichText text={displayBody} format={htmlCard ? "html" : node.contentFormat} tableLayout={node.tableLayout} />}</div>}
             </>
           )}
         </>

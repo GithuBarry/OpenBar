@@ -283,6 +283,23 @@
 .draftRevise:hover:enabled .draftSparkle, .draftRevise:focus-visible:enabled .draftSparkle { opacity: 0; transform: scale(.78); }
 .draftRevise:hover:enabled .draftBubble, .draftRevise:focus-visible:enabled .draftBubble { opacity: 1; transform: scale(1); }
 :global(html[data-alt-key="true"]) .draftRevise:is(:hover, :focus-visible):enabled .draftStatMark { opacity: 1; transform: scale(1); }
+.cardReviseZone { position: absolute; top: -22px; right: 2px; z-index: 3; display: flex; align-items: flex-start; justify-content: flex-end; width: 52px; height: 44px; padding: 5px 8px 0 0; pointer-events: auto; }
+.cardRevisePill { display: inline-flex; align-items: center; padding: 2px 3px; border: 1px solid rgb(var(--line)); border-radius: 999px; background: rgb(var(--surface)); box-shadow: 0 1px 4px rgb(0 0 0 / .08); opacity: 0; transform: translateY(2px) scale(.94); pointer-events: none; transition: opacity 140ms ease, transform 140ms ease, border-color 140ms ease; }
+.cardReviseZone:hover .cardRevisePill, .cardReviseZone:focus-within .cardRevisePill, .cardReviseZone:has([data-state="open"]) .cardRevisePill { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+.cardRevisePill:hover, .cardRevisePill:has([data-state="open"]) { border-color: rgb(var(--accent) / .4); }
+@media (hover: none) and (pointer: coarse) {
+  :global([data-mind-node][aria-selected="true"]) > .cardReviseZone .cardRevisePill { opacity: .85; transform: translateY(0) scale(1); pointer-events: auto; }
+}
+.cardReviseButton { position: relative; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; color: rgb(var(--muted)); cursor: pointer; transition: background 140ms ease, color 140ms ease; }
+.cardReviseButton:hover:enabled, .cardReviseButton[data-state="open"] { background: rgb(var(--accent) / .14); color: rgb(var(--accent-text)); }
+.cardReviseButton:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; }
+.cardReviseBubble { position: relative; display: inline-grid; place-items: center; }
+:global(html[data-alt-key="true"]) .cardReviseButton:is(:hover, :focus-visible):enabled .draftStatMark { opacity: 1; transform: scale(1); }
+.draftChanged { text-decoration-line: underline; text-decoration-style: dashed; text-decoration-color: rgb(var(--accent) / .78); text-underline-offset: 3px; text-decoration-thickness: 1.5px; }
+.card[data-draft-underline-title="true"] :global(.mindmap-node-title),
+.card[data-draft-underline-title="true"] :global(.mindmap-node-todo-title),
+.card[data-draft-underline-body="true"] :global(.mindmap-node-detail),
+.card[data-draft-underline-notes="true"] summary { text-decoration-line: underline; text-decoration-style: dashed; text-decoration-color: rgb(var(--accent) / .78); text-underline-offset: 3px; text-decoration-thickness: 1.5px; }
 
 @media (pointer: coarse) {
   .editor { --mindmap-dock-height: 56px; --mindmap-zoom-size: 44px; --mindmap-notice-height: 46px; }

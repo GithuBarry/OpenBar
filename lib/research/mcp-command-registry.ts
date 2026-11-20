@@ -576,7 +576,7 @@ function parseBatchInput(args: JsonObject): MindmapBatchInput {
 }
 
 function changesForNode(before: MindmapNode, after: MindmapNode): ActivityChange[] {
-  return activityChanges(before, after, ["title", "text", "parentId", "order", "color", "tags", "progress", "priority", "tableLayout", "cardWidth", "refs", "metadata"]);
+  return activityChanges(before, after, ["title", "text", "caption", "parentId", "order", "color", "tags", "progress", "priority", "tableLayout", "cardWidth", "refs", "metadata"]);
 }
 
 async function executeGetProjectState(args: unknown): Promise<OperationResult<unknown>> {
