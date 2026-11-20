@@ -4150,19 +4150,12 @@ function CanvasNode({
             </div>
           ) : (
             <>
-              {!answeredRequest && !displayTitle.trim() && !displayBody.trim() && <div className={styles.cardPlaceholder}>New card</div>}
+              {!displayTitle.trim() && !displayBody.trim() && <div className={styles.cardPlaceholder}>New card</div>}
               {displayTitle.trim() && <div className={cn("mindmap-node-title", node.parentId === null && styles.rootTitle)}>{node.parentId === null ? <><span className={styles.rootAccent} aria-hidden="true" /><div className={styles.rootSubject}><NodeRichText text={displayTitle} format={htmlCard ? "plain" : node.contentFormat} tableLayout={node.tableLayout} /></div></> : <NodeRichText text={displayTitle} format={htmlCard ? "plain" : node.contentFormat} tableLayout={node.tableLayout} />}</div>}
               {displayBody.trim() && <div className="mindmap-node-detail"><NodeRichText text={displayBody} format={htmlCard ? "html" : node.contentFormat} tableLayout={node.tableLayout} /></div>}
             </>
           )}
         </>
-      )}
-      {!editing && answeredRequest && (
-        <details className="nodrag nopan nowheel mt-1 text-[0.85em] text-muted-foreground"
-          onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
-          <summary className="cursor-pointer">Original request</summary>
-          <div className="mt-1 max-h-40 overflow-y-auto overscroll-contain whitespace-pre-wrap break-words" onWheel={event => event.stopPropagation()}>{answeredRequest}</div>
-        </details>
       )}
           {(uploading > 0 || node.refs?.some(ref => ref.kind === "figure")) && (
             <CardImages project={project} refs={node.refs || []} readOnly={readOnly} uploading={uploading}

@@ -194,8 +194,9 @@
 .todoMissing { color: rgb(var(--warn-text)); }
 .todoMissing > svg { color: rgb(var(--warn)); }
 .progressChoices { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
-.progressChoices > button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid transparent; border-radius: var(--radius-control); color: rgb(var(--ok)); }
-.progressChoices > button[aria-pressed="true"] { background: var(--surface-selected); border-color: var(--border-selected); color: rgb(var(--ink)); }
+.progressChoices > button { display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 999px; color: rgb(var(--ok)); cursor: pointer; transition: background 140ms ease; }
+.progressChoices > button:hover:enabled { background: rgb(var(--ink) / .06); }
+.progressChoices > button[aria-pressed="true"] { background: rgb(var(--ok) / .16); color: rgb(var(--ok)); }
 .progressChoices > button:focus-visible { outline: 2px solid rgb(var(--ok)); outline-offset: 1px; }
 .progressChoices > button:disabled { opacity: .5; }
 @media (pointer: fine) {
