@@ -147,6 +147,13 @@ function withCreatedAt<T extends { createdAt?: string; updatedAt?: string }>(
 // Projects
 // ---------------------------------------------------------------------------
 
+/** Find a pasted project address whose capitalization differs from its saved directory. */
+export function findProjectSlugIgnoringCase(input: string): string | undefined {
+  const key = input.toLowerCase();
+  return listDir(projectsDir()).find(slug => validProjectSlug(slug)
+    && slug.toLowerCase() === key && hasTexProject(projectDir(slug)));
+}
+
 export function listProjects(): Project[] {
   const dir = projectsDir();
   const slugs = listDir(dir).filter((slug) => validProjectSlug(slug) && hasTexProject(path.join(dir, slug)));

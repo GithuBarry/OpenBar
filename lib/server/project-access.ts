@@ -1,17 +1,17 @@
 import "server-only";
 
 import { headers } from "next/headers";
-import { notFound, unauthorized } from "next/navigation";
+import { notFound, redirect, unauthorized } from "next/navigation";
 
 import { callerMayAccess } from "@/lib/server/access-policy";
-import { assertPublicDemoProject, isPublicDemoMode } from "@/lib/server/demo-mode";
+import { assertPublicDemoProject, isPublicDemoMode, publicDemoSlugs } from "@/lib/server/demo-mode";
 import {
   cloudflareAccessConfigured,
   cloudflareAccessJwtFromHeaders,
   identityAllowed,
   verifyCloudflareAccessJwt,
 } from "@/lib/server/cloudflare-access";
-import { getProjectMetadata } from "@/lib/store";
+import { findProjectSlugIgnoringCase, getProjectMetadata } from "@/lib/store";
 
 export class ProjectAccessError extends Error {
   status: number;
@@ -82,7 +82,19 @@ export async function requireProjectPage(slug: string): Promise<void> {
     await requireProjectAccess(slug);
   } catch (error) {
     if (error instanceof ProjectAccessError && error.status === 401) unauthorized();
-    if (error instanceof ProjectAccessError && (error.status === 403 || error.status === 404)) notFound();
+    if (error instanceof ProjectAccessError && error.status === 404) {
+      await requireWorkbenchPage();
+      const url = (await headers()).get("x-openbar-project-url");
+      const prefix = `/p/${slug}`;
+      if (url && (url === prefix || url.startsWith(prefix + "/") || url.startsWith(prefix + "?"))) {
+        const canonical = findProjectSlugIgnoringCase(slug);
+        if (canonical && canonical !== slug && (!isPublicDemoMode() || publicDemoSlugs().includes(canonical))) {
+          redirect(`/p/${canonical}${url.slice(prefix.length)}`);
+        }
+      }
+      notFound();
+    }
+    if (error instanceof ProjectAccessError && error.status === 403) notFound();
     throw error;
   }
 }

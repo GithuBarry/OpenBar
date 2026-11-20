@@ -1,8 +1,14 @@
+function mapPath(path: string) {
+  return path.replace(/\/$/, "")
+    .replace(/^\/p\/([^/]+)\/mindmap(?=\/|$)/, (_, slug: string) =>
+      `/p/${encodeURIComponent(decodeURIComponent(slug).toLowerCase())}/mindmap`)
+    .replace(/^(\/p\/[^/]+\/mindmap)\/(?:draft|mindmap)$/, "$1");
+}
+
 export function sameMapCardId(href: string, current: URL): string | undefined {
   if (!href.includes("#")) return;
   try {
     const url = new URL(href, current);
-    const mapPath = (path: string) => path.replace(/\/$/, "").replace(/^(\/p\/[^/]+\/mindmap)\/(?:draft|mindmap)$/, "$1");
     if (url.origin === current.origin && mapPath(url.pathname) === mapPath(current.pathname) && url.hash.length > 1) {
       return decodeURIComponent(url.hash.slice(1));
     }

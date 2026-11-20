@@ -9,7 +9,7 @@ import { isPublicDemoMode } from "@/lib/server/demo-mode";
  * /api/health stay reachable for local work and load-balancer probes. Origin
  * JWT verification still happens in requireWorkbenchAccess.
  */
-export function proxy(request: NextRequest) {
+function checkAccess(request: NextRequest) {
   if (isPublicDemoMode()) return NextResponse.next();
   // Authenticated agent routes verify their own bearer or Access identity.
   const pathname = request.nextUrl.pathname;
@@ -25,6 +25,20 @@ export function proxy(request: NextRequest) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
   return NextResponse.next();
+}
+
+export function proxy(request: NextRequest) {
+  const response = checkAccess(request);
+  const { pathname, search } = request.nextUrl;
+  if (response.headers.get("x-middleware-next") !== "1" || !pathname.startsWith("/p/")) return response;
+
+  const headers = new Headers(request.headers);
+  if ((request.method === "GET" || request.method === "HEAD") && !headers.has("next-action")) {
+    headers.set("x-openbar-project-url", pathname + search);
+  } else {
+    headers.delete("x-openbar-project-url");
+  }
+  return NextResponse.next({ request: { headers } });
 }
 
 export const config = {
