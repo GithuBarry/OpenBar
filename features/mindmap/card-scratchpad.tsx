@@ -1,7 +1,7 @@
 "use client";
 
 import styles from "./card-scratchpad.module.css";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 import { cardNotesText, hasNoteText, type MindmapCaution } from "@/lib/mindmap/caution";
 import { NotesTextarea } from "./notes-textarea";
@@ -45,7 +45,7 @@ export function CardScratchpad({ open, onOpenChange, text, caution, editing = fa
       onToggle={event => { onOpenChange(event.currentTarget.open); if (event.currentTarget.open) fitEditor(event.currentTarget.querySelector("textarea")); }}>
       <summary aria-label={open ? "Hide notes" : "Show notes"} aria-expanded={open} aria-description={description} title={description}>
         <span className={styles.tab}>
-          <ChevronDown className={styles.chevron} size={12} aria-hidden="true" />Notes
+          <ChevronRight className={styles.chevron} size={12} aria-hidden="true" />Notes
           <NotesContentIndicator text={notes} className={styles.amount} />
         </span>
       </summary>
