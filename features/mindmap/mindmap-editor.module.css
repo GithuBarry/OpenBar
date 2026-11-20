@@ -280,9 +280,9 @@
 .draftSparkle, .draftBubble { grid-area: 1 / 1; display: grid; place-items: center; transition: opacity 140ms ease, transform 140ms ease; }
 .draftBubble { position: relative; opacity: 0; transform: scale(.78); }
 .draftStatMark { position: absolute; top: -4px; right: -4px; display: inline-flex; align-items: center; justify-content: center; width: 11px; height: 11px; border-radius: 999px; background: rgb(var(--warn)); color: #fff; font-size: 8px; font-weight: 800; line-height: 1; box-shadow: 0 0 0 1.5px rgb(var(--surface)); opacity: 0; transform: scale(.6); transition: opacity 120ms ease, transform 120ms ease; pointer-events: none; }
-.draftRevise:hover:enabled .draftSparkle, .draftRevise:focus-visible:enabled .draftSparkle, :global(html[data-alt-key="true"]) .card:hover .draftRevise:enabled .draftSparkle { opacity: 0; transform: scale(.78); }
-.draftRevise:hover:enabled .draftBubble, .draftRevise:focus-visible:enabled .draftBubble, :global(html[data-alt-key="true"]) .card:hover .draftRevise:enabled .draftBubble { opacity: 1; transform: scale(1); }
-:global(html[data-alt-key="true"]) :is(.card:hover .draftRevise, .draftRevise:focus-visible):enabled .draftStatMark { opacity: 1; transform: scale(1); }
+.draftRevise:hover:enabled .draftSparkle, .draftRevise:focus-visible:enabled .draftSparkle { opacity: 0; transform: scale(.78); }
+.draftRevise:hover:enabled .draftBubble, .draftRevise:focus-visible:enabled .draftBubble { opacity: 1; transform: scale(1); }
+:global(html[data-alt-key="true"]) .draftRevise:is(:hover, :focus-visible):enabled .draftStatMark { opacity: 1; transform: scale(1); }
 
 @media (pointer: coarse) {
   .editor { --mindmap-dock-height: 56px; --mindmap-zoom-size: 44px; --mindmap-notice-height: 46px; }
