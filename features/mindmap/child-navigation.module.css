@@ -1,7 +1,7 @@
 .rail { position: absolute; z-index: 2; top: 50%; right: calc(-1 * var(--mind-card-border-right, 1px)); width: 20px; transform: translateY(-50%); pointer-events: none; }
 .tick { position: absolute; right: 0; display: grid; place-items: center; width: 20px; height: 28px; padding: 0; border: 0; border-radius: 3px; background: transparent; cursor: pointer; pointer-events: auto; transform: translateY(-50%); }
 .tick::before { content: ""; position: absolute; top: 50%; right: 0; width: 10px; height: 1.5px; border-radius: 2px; background: rgb(var(--line)); opacity: 0; transform: translate(50%, -50%); pointer-events: none; transition: opacity 100ms ease, width 100ms ease, background 100ms ease; }
-.rail:hover .tick::before, .rail:focus-within .tick::before { opacity: 1; }
+.rail:hover .tick::before, .rail:focus-within .tick::before, .rail[data-exploring="true"] .tick::before { opacity: 1; }
 .tick:hover::before, .tick:focus-visible::before, .tick[data-state="delayed-open"]::before, .tick[data-state="instant-open"]::before { width: 17px; background: rgb(var(--accent)); opacity: 1; }
 :global([data-mind-node]:has(> .mindmap-collapse-toggle:is(:hover, :focus-visible))) > .rail .tick::before { width: 17px; background: rgb(var(--accent)); opacity: 1; }
 .tick:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 1px; }
