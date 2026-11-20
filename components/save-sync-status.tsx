@@ -135,10 +135,12 @@ export function SaveSyncStatus({ saved, saving, conflict = false, error, remote,
         : canRetry
           ? onRetry
           : undefined;
-  const interactive = Boolean(handleClick || onForceSync);
+  const interactive = Boolean(handleClick || onForceSync || session.canRelease);
   const altHint = onForceSync ? "\n⌥-click: Sync Git now" : "";
-  return <FastTooltip label={`${detail}${canRetry ? "\nClick to retry Git sync." : ""}${altHint}`}>
+  const shiftHint = session.canRelease ? "\n⇧-click: Release edit access" : "";
+  return <FastTooltip label={`${detail}${canRetry ? "\nClick to retry Git sync." : ""}${altHint}${shiftHint}`}>
     <button type="button" onClick={(event) => {
+      if (event.shiftKey && session.canRelease) { event.preventDefault(); void session.release(); return; }
       if (event.altKey && onForceSync) { event.preventDefault(); onForceSync(); return; }
       handleClick?.();
     }}

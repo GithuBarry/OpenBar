@@ -39,7 +39,7 @@ export function PaperStatusControl({
   const gitStatus = gitIssue || gitDescription;
   const pdfStatus = compiling ? "Compiling PDF" : compileError ? `PDF compile failed: ${compileError}` : pdfCurrent ? "PDF is up to date" : "PDF needs recompiling";
   const action = reconnecting ? "Open connection details" : localIssue ? "Open save details" : gitIssue ? "Open Git sync details" : compileDelayed ? "Resume checking the compile job" : compiling ? "Compiling PDF" : "Press to recompile PDF";
-  const label = [reconnecting ? "Reconnecting to OpenBar" : primaryIssue?.title || host, status, gitStatus, pdfStatus, action, onForceSync ? "⌥-click: Sync Git now" : null].filter(Boolean).join(". ");
+  const label = [reconnecting ? "Reconnecting to OpenBar" : primaryIssue?.title || host, status, gitStatus, pdfStatus, action, onForceSync ? "⌥-click: Sync Git now" : null, session.canRelease ? "⇧-click: Release edit access" : null].filter(Boolean).join(". ");
   const saveIcon = <SaveStatusIcon saved={saved} saving={saving} remote={remote} conflict={conflict} attention={Boolean(gitIssue || localIssue)} size={18} connectionUnavailable={reconnecting} hostBusy={Boolean(host)} />;
 
   let pillCue: string | null = null;
@@ -80,9 +80,10 @@ export function PaperStatusControl({
     <button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.unifiedStatus)}
       data-status-tone={pillTone}
       onClick={(event) => {
+        if (event.shiftKey && session.canRelease) { event.preventDefault(); void session.release(); return; }
         if (event.altKey && onForceSync) { event.preventDefault(); onForceSync(); return; }
         handleClick?.();
-      }} disabled={!reconnecting && compiling && !gitIssue && !localIssue && !compileDelayed && !onForceSync} aria-disabled={host ? true : undefined} data-editor-notice={reconnecting || undefined} aria-label={label}>
+      }} disabled={!reconnecting && compiling && !gitIssue && !localIssue && !compileDelayed && !onForceSync && !session.canRelease} aria-disabled={host ? true : undefined} data-editor-notice={reconnecting || undefined} aria-label={label}>
       <span className={styles.statusIcon} aria-hidden="true">
         {reconnecting || host || gitIssue || localIssue ? saveIcon
           : compiling ? <Cog size={16} className={cn(styles.compileGear, styles.compileRunning)} />

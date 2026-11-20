@@ -97,6 +97,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
   const pendingKeys = useRef(new Set<string>());
   const pendingRequests = useRef(0);
   const releasing = useRef(false);
+  const manuallyReleased = useRef(false);
   const mounted = useRef(false);
   const credential = useRef<Credential | null>(null);
   const heldWriterLease = useRef(false);
@@ -331,6 +332,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
       if (result.status) setStatus(result.status);
       if (result.ok && result.credential) {
         lastActivity.current = Date.now();
+        manuallyReleased.current = false;
         setIdleYielded(false);
         heldWriterLease.current = true;
         record(result.credential);
@@ -359,6 +361,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
       if (!result.ok) { record(null); setWritable(false); setMessage(result.message || "Editing access changed. Your open draft stays in this tab."); return; }
       record(null);
       setWritable(false);
+      manuallyReleased.current = !idle;
       setIdleYielded(idle);
       setMessage(null);
     } catch (error) { requestError("Release failed.", error); }
@@ -417,7 +420,7 @@ export function ProjectWriteSession({ project, children, publicDemo = false }: {
           if (!stopped && credential.current === current) {
             setStatus(next);
             setAccessError(null);
-            if (next.state === "available" && document.visibilityState === "visible" && Date.now() - lastActivity.current < PROJECT_WRITE_SESSION_IDLE_MS) {
+            if (!manuallyReleased.current && next.state === "available" && document.visibilityState === "visible" && Date.now() - lastActivity.current < PROJECT_WRITE_SESSION_IDLE_MS) {
               await claim(undefined, false);
             }
           }
