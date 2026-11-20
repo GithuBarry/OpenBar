@@ -2969,7 +2969,7 @@ export function MindmapEditor({
               {expandAllFromToolbar ? <ChevronsUpDown size={15} aria-hidden="true" /> : <ChevronsDownUp size={15} aria-hidden="true" />}
             </button>
           </FastTooltip>
-          <Select label="Collapse depth" value={String(collapseDepth)} onValueChange={value => setCollapseDepth(Number(value))}
+          <Select label="Collapse depth" tooltip="Choose depth to collapse" value={String(collapseDepth)} onValueChange={value => setCollapseDepth(Number(value))}
             className={cn("p-button p-button-glass ob-glass-button", styles.depthSelect)}
             options={Array.from({ length: maxCollapseDepth - 1 }, (_, index) => ({ value: String(index + 2), label: `${index + 2}+` }))} />
           </div>
