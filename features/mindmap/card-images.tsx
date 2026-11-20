@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { FastTooltip } from "@/components/fast-tooltip";
 import { Modal } from "@/components/modal"
-import { ArrowDownRight, ExternalLink, FileText, Maximize2, MoveHorizontal, Trash2, X, ZoomIn, ZoomOut } from "lucide-react"
+import { ExternalLink, FileText, Maximize2, MoveDiagonal2, MoveHorizontal, Trash2, X, ZoomIn, ZoomOut } from "lucide-react"
 import type { ArtifactRef } from "@/lib/types"
 import { artifactHref } from "@/lib/research/artifact-link"
 import { detachMindmapImage } from "@/lib/mindmap/image-refs"
@@ -60,6 +60,7 @@ function CardImage({ project, image, readOnly, onView, onResize, onRemove }: {
   const width = previewWidth ?? image.imageWidth ?? 100
   const caption = image.label || image.id.split("/").pop() || "Card image"
   return <figure ref={figure} className={styles.image} style={{ width: width + "%" }} data-card-image={image.id}>
+    <div className={styles.frame}>
     <button type="button" className={styles.preview} aria-label={"View image: " + caption} onClick={onView}>
       {isPdf(image) ? <span className={styles.placeholder}><FileText size={28} />Open PDF preview</span>
         : failed ? <span className={styles.placeholder}>Open image (preview unavailable)</span>
@@ -72,7 +73,6 @@ function CardImage({ project, image, readOnly, onView, onResize, onRemove }: {
         <FastTooltip label="Remove from card (undo available)"><button type="button" aria-label={"Remove image from card: " + caption} onClick={onRemove}><Trash2 size={14} /></button></FastTooltip>
       </>}
     </div>
-    {image.label && <figcaption title={image.label}>{image.label}</figcaption>}
     {!readOnly && <FastTooltip label="Drag to resize or use arrow keys"><button type="button" className={styles.resize} role="slider" aria-label={"Image width: " + caption}
       aria-valuemin={25} aria-valuemax={100} aria-valuenow={Math.round(width)} aria-valuetext={Math.round(width) + "% of card width"}
       onPointerDown={event => {
@@ -101,7 +101,9 @@ function CardImage({ project, image, readOnly, onView, onResize, onRemove }: {
           : ["ArrowLeft", "ArrowDown"].includes(event.key) ? Math.max(25, width - 5)
           : ["ArrowRight", "ArrowUp"].includes(event.key) ? Math.min(100, width + 5) : null
         if (next !== null) { event.preventDefault(); onResize(next) }
-      }}><ArrowDownRight size={13} /></button></FastTooltip>}
+      }}><MoveDiagonal2 size={11} /></button></FastTooltip>}
+    </div>
+    {image.label && <figcaption title={image.label}>{image.label}</figcaption>}
   </figure>
 }
 
