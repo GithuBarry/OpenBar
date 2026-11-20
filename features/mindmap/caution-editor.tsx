@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronRight, Maximize2 } from "lucide-react";
+import { ChevronRight, SquareArrowOutUpRight } from "lucide-react";
 import { cardNotesText, hasNoteText, type MindmapCaution } from "@/lib/mindmap/caution";
 import { FastTooltip } from "@/components/fast-tooltip";
 import { NotesTextarea } from "./notes-textarea";
@@ -37,17 +37,17 @@ export function CautionEditor({ value, caption, cardTitle, readOnly = false, onN
         }}>
         <span className="ob-mod-swap" aria-hidden="true">
           <span className="ob-mod-primary"><ChevronRight className={styles.chevron} size={14} /></span>
-          <span className="ob-mod-shift"><Maximize2 size={12} /></span>
-          <span className="ob-mod-alt"><Maximize2 size={12} /></span>
+          <span className="ob-mod-shift"><SquareArrowOutUpRight size={12} /></span>
+          <span className="ob-mod-alt"><SquareArrowOutUpRight size={12} /></span>
         </span>Notes
         <NotesContentIndicator text={notes} className={styles.amount} />
       </summary>
       <NotesTextarea className={styles.editor} aria-label="Notes" value={notes} rows={4} readOnly={readOnly} onChange={onNotesChange} />
     </details>
     {(hasNotes || open) && (
-      <FastTooltip label="Open notes in viewer">
-        <button type="button" className={styles.expand} aria-label="Open notes in viewer" onClick={() => setViewerOpen(true)}>
-          <Maximize2 size={13} aria-hidden="true" />
+      <FastTooltip label="Pop out notes viewer">
+        <button type="button" className={styles.expand} aria-label="Pop out notes viewer" onClick={() => setViewerOpen(true)}>
+          <SquareArrowOutUpRight size={13} aria-hidden="true" />
         </button>
       </FastTooltip>
     )}

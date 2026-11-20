@@ -1,7 +1,7 @@
 "use client";
 
 import styles from "./card-scratchpad.module.css";
-import { ChevronDown, ChevronRight, Eye, Maximize2, Pencil } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, Pencil, SquareArrowOutUpRight, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cardNotesText, hasNoteText, type MindmapCaution } from "@/lib/mindmap/caution";
 import { looksLikeMarkdown } from "@/lib/mindmap/markdown-detect";
@@ -86,15 +86,15 @@ export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, e
         <span className={styles.tab}>
           <span className="ob-mod-swap" aria-hidden="true">
             <span className="ob-mod-primary"><ChevronRight className={styles.chevron} size={12} /></span>
-            <span className="ob-mod-shift"><Maximize2 size={11} /></span>
-            <span className="ob-mod-alt"><Maximize2 size={11} /></span>
+            <span className="ob-mod-shift"><SquareArrowOutUpRight size={11} /></span>
+            <span className="ob-mod-alt"><SquareArrowOutUpRight size={11} /></span>
           </span>Notes
           <NotesContentIndicator text={notes} className={styles.amount} />
         </span>
       </summary>
       <div className={styles.body}>
         <div className={styles.bodyHeader}>
-          <button type="button" className={styles.heading} aria-label="Hide notes" onClick={() => onOpenChange(false)}>Notes<ChevronDown className={styles.headingChevron} size={12} aria-hidden="true" /></button>
+          <button type="button" className={styles.heading} aria-label="Hide notes" onClick={() => onOpenChange(false)}><ChevronDown className={styles.headingChevron} size={12} aria-hidden="true" />Notes</button>
           <div className={styles.bodyActions}>
             {editable && !editing && isMarkdown && (
               <FastTooltip label={editingInline ? "Preview formatted notes" : "Edit notes"}>
@@ -109,14 +109,24 @@ export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, e
                 </button>
               </FastTooltip>
             )}
-            <FastTooltip label="Open notes in viewer">
+            <FastTooltip label="Pop out notes viewer">
               <button
                 type="button"
                 className={styles.bodyAction}
-                aria-label="Open notes in viewer"
+                aria-label="Pop out notes viewer"
                 onClick={() => setViewerOpen(true)}
               >
-                <Maximize2 size={11} aria-hidden="true" />
+                <SquareArrowOutUpRight size={11} aria-hidden="true" />
+              </button>
+            </FastTooltip>
+            <FastTooltip label="Close notes">
+              <button
+                type="button"
+                className={styles.bodyAction}
+                aria-label="Close notes"
+                onClick={() => onOpenChange(false)}
+              >
+                <X size={12} aria-hidden="true" />
               </button>
             </FastTooltip>
           </div>
