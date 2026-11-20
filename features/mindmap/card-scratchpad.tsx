@@ -76,15 +76,19 @@ export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, e
         aria-label={open ? "Hide notes" : "Show notes"}
         aria-expanded={open}
         aria-description={description}
-        title={hasNotes ? `${description} (⌥-click to open viewer)` : description}
+        title={hasNotes ? `${description} (⇧-click to open viewer)` : description}
         onClick={event => {
-          if (event.altKey) {
+          if (event.shiftKey || event.altKey) {
             event.preventDefault();
             setViewerOpen(true);
           }
         }}>
         <span className={styles.tab}>
-          <ChevronRight className={styles.chevron} size={12} aria-hidden="true" />Notes
+          <span className="ob-mod-swap" aria-hidden="true">
+            <span className="ob-mod-primary"><ChevronRight className={styles.chevron} size={12} /></span>
+            <span className="ob-mod-shift"><Maximize2 size={11} /></span>
+            <span className="ob-mod-alt"><Maximize2 size={11} /></span>
+          </span>Notes
           <NotesContentIndicator text={notes} className={styles.amount} />
         </span>
       </summary>

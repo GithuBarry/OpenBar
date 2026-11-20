@@ -23,8 +23,23 @@ export function CautionEditor({ value, caption, cardTitle, readOnly = false, onN
   const description = notesContentDescription(notes);
   return <div className={styles.wrap}>
     <details data-caution-editor open={open} onToggle={event => setOpen(event.currentTarget.open)}>
-      <summary className={styles.summary} aria-label={open ? "Hide notes" : "Show notes"} aria-expanded={open} aria-description={description} title={description}>
-        <ChevronRight className={styles.chevron} size={14} aria-hidden="true" />Notes
+      <summary
+        className={styles.summary}
+        aria-label={open ? "Hide notes" : "Show notes"}
+        aria-expanded={open}
+        aria-description={description}
+        title={hasNotes ? `${description} (⇧-click to open viewer)` : description}
+        onClick={event => {
+          if (event.shiftKey || event.altKey) {
+            event.preventDefault();
+            setViewerOpen(true);
+          }
+        }}>
+        <span className="ob-mod-swap" aria-hidden="true">
+          <span className="ob-mod-primary"><ChevronRight className={styles.chevron} size={14} /></span>
+          <span className="ob-mod-shift"><Maximize2 size={12} /></span>
+          <span className="ob-mod-alt"><Maximize2 size={12} /></span>
+        </span>Notes
         <NotesContentIndicator text={notes} className={styles.amount} />
       </summary>
       <NotesTextarea className={styles.editor} aria-label="Notes" value={notes} rows={4} readOnly={readOnly} onChange={onNotesChange} />

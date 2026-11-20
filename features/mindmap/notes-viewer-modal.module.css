@@ -1,8 +1,9 @@
 .viewer {
   position: fixed;
-  width: min(760px, 92vw);
-  max-width: 92vw;
-  max-height: min(82dvh, 780px);
+  width: min(1160px, 94vw);
+  height: min(90dvh, 960px);
+  max-width: 94vw;
+  max-height: 92dvh;
   margin: 0;
   padding: 0;
   border: 1px solid rgb(var(--line));
@@ -19,7 +20,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  max-height: min(82dvh, 780px);
+  height: 100%;
   flex: 1;
 }
 
@@ -105,15 +106,20 @@
 }
 
 .body {
+  display: flex;
+  flex-direction: column;
   flex: 1;
-  min-height: 160px;
+  min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 20px 22px 24px;
+  padding: 24px 32px 32px;
   user-select: text;
 }
 
 .plainBody {
+  width: 100%;
+  max-width: 960px;
+  margin-inline: auto;
   font-size: 14px;
   line-height: 1.65;
   color: rgb(var(--ink));
@@ -122,6 +128,9 @@
 }
 
 .markdownBody {
+  width: 100%;
+  max-width: 960px;
+  margin-inline: auto;
   font-size: 14px;
   line-height: 1.65;
   color: rgb(var(--ink));
@@ -197,7 +206,10 @@
   display: block;
   box-sizing: border-box;
   width: 100%;
-  min-height: min(50dvh, 420px);
+  max-width: 960px;
+  margin-inline: auto;
+  flex: 1;
+  min-height: 100%;
   padding: 0;
   border: 0;
   background: transparent;
@@ -208,9 +220,17 @@
 }
 
 .empty {
-  margin: 0;
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
   font-size: 13px;
   color: rgb(var(--muted));
+}
+
+@media (max-width: 640px) {
+  .body {
+    padding: 16px 18px 24px;
+  }
 }
 
 @media (pointer: coarse) {
