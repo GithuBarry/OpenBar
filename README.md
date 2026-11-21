@@ -30,6 +30,8 @@ Open [localhost:3000](http://localhost:3000). Projects live under
 `content/projects/<slug>`. Set `OPENBAR_CONTENT` to use another content directory,
 and set `OPENBAR_DEV_ORIGINS` (comma-separated) if accessing `pnpm dev` over LAN or Tailscale.
 
+Build from a clean checkout and supply secrets at runtime because Next.js copies root `.env` and `.env.production` files into the standalone package when present.
+
 For production, build and copy static assets into the standalone directory before starting:
 
 ```bash

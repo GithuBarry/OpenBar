@@ -36,11 +36,15 @@ const nextConfig: NextConfig = {
   output: "standalone",
   distDir: distDirFromEnvironment(),
   outputFileTracingRoot: configDir,
-  // Content is a runtime data tree, not application code. Keep it out of NFT
-  // traces so `next build` does not warn about walking manuscript files.
-  // Pandoc Lua filters must ship with the server trace.
+  // Local builds can trace the checkout as well as the application. Workspace
+  // content and deployment credentials are supplied separately at runtime.
   outputFileTracingExcludes: {
-    "/*": ["./content/projects/**", "./scratch/**", "./.scratch/**", "./.next*/standalone/**"],
+    "/*": [
+      "**/.git{,/**}", "./content/**", "./deploy/private/**", "./migrates/**",
+      "./{HANDOFF,HANDOFF_PLAN,PLAN}.md", "./{scratch,.scratch,.worktrees}/**",
+      "./.next*-runtime/**", "./.next*/standalone/**",
+      "**/*.pem", "**/*.env", "**/.env{,.*}",
+    ],
   },
   // Next 16 treats each browser host as a separate origin and blocks
   // /_next chunks + HMR unless listed here. Supply private LAN or tailnet
