@@ -16,7 +16,7 @@ export function sameMapCardId(href: string, current: URL): string | undefined {
 }
 
 /** Keep the unfragmented map entry reachable when the first jump starts on the canvas. */
-export function connectCardLinkHistory(focus: (id: string) => boolean, selectedId: () => string | undefined) {
+export function connectCardLinkHistory(focus: (id: string, initial?: boolean) => boolean, selectedId: () => string | undefined) {
   function followLocation() {
     const url = new URL(window.location.href);
     const id = sameMapCardId(url.href, url);
@@ -42,7 +42,9 @@ export function connectCardLinkHistory(focus: (id: string) => boolean, selectedI
     }
     window.history.pushState(null, "", current.pathname + current.search + hash);
   }
-  if (window.location.hash) followLocation();
+  const initialUrl = new URL(window.location.href);
+  const initialId = sameMapCardId(initialUrl.href, initialUrl);
+  if (initialId) focus(initialId, true);
   window.addEventListener("hashchange", followLocation);
   document.addEventListener("click", followLink, true);
   return () => {

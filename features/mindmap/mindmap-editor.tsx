@@ -219,7 +219,7 @@ export function MindmapEditor({
   paperState?: ProjectState | null;
 }) {
   const router = useRouter();
-  const focusCardRef = useRef<(id: string) => void>(() => {});
+  const focusCardRef = useRef<(id: string, initial?: boolean) => void>(() => {});
   const { writable: sessionWritable, setPendingWork, connectionState, isBackendUnavailable, accessMessage, accessError, inboxRevision } = useProjectWriteSession();
   const [connectionDetailsOpenRequest, setConnectionDetailsOpenRequest] = useState(0);
   const [saveConflictAttention, setSaveConflictAttention] = useState(0);
@@ -1695,7 +1695,7 @@ export function MindmapEditor({
     dispatch({ type: "select", id, additive: additive || selectMultiple });
   }, [readAgentReply, selectMultiple]);
 
-  const focusCard = useCallback((id: string) => {
+  const focusCard = useCallback((id: string, initial = false) => {
     if (!layout.nodeById.has(id)) return;
     let parent = layout.nodeById.get(id)?.parentId;
     const visited = new Set<string>();
@@ -1706,7 +1706,7 @@ export function MindmapEditor({
     }
     selectCard(id);
     setViewMode("map");
-    setFocusRequest(current => ({ id, sequence: (current?.sequence || 0) + 1 }));
+    setFocusRequest(current => ({ id, initial, sequence: (current?.sequence || 0) + 1 }));
   }, [layout.nodeById, selectCard, setLocalCollapsed]);
   focusCardRef.current = focusCard;
   const linkedCardPreview = useCallback((id: string): CardNavigationItem | undefined => {
@@ -2566,9 +2566,9 @@ export function MindmapEditor({
     }).finally(() => { pendingImageUploads.current -= files.length; });
   }
 
-  useEffect(() => connectCardLinkHistory(id => {
+  useEffect(() => connectCardLinkHistory((id, initial) => {
     if (!indexMindmap(sessionRef.current.mindmap).nodeById.has(id)) return false;
-    focusCardRef.current(id);
+    focusCardRef.current(id, initial);
     return true;
   }, () => sessionRef.current.selectedId), []);
 
@@ -2588,6 +2588,8 @@ export function MindmapEditor({
       }];
     })
   ), [editingId, layout, selectedIdSet, effectiveFontSize, shiftExpandHeld]);
+
+  const layoutMeasured = useMemo(() => flowNodes.every(node => measuredCards.has(node.id)), [flowNodes, measuredCards]);
 
   const renderCard = useCallback((id: string) => {
     const node = layout.nodeById.get(id);
@@ -3083,7 +3085,8 @@ export function MindmapEditor({
           {unplacedOpen && unplacedCount > 0 && <MindmapUnplacedTray project={project} paperState={paperState} nodes={mindmap.nodes} selectedParentId={selected?.id || mindmap.rootId} readOnly={readOnly} onBlockedEdit={notifyBlockedEdit} onPlaceTodo={placeUnplacedTodo} onClose={() => setUnplacedOpen(false)} />}
           <div className={styles.canvasSurface}>
           <MindmapCanvas
-            virtualize={mindmap.nodes.length > 80 && !editingId && flowNodes.every(node => measuredCards.has(node.id))}
+            layoutMeasured={layoutMeasured}
+            virtualize={mindmap.nodes.length > 80 && !editingId && layoutMeasured}
             mindmap={mindmap}
             selectMultiple={selectMultiple}
             nodes={flowNodes}

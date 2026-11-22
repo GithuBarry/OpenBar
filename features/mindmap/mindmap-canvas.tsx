@@ -18,7 +18,6 @@ import {
   type NodeMouseHandler,
   type NodeProps,
   type NodeChange,
-  type Rect,
   type Viewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -41,7 +40,7 @@ export type MindmapFlowNode = {
   renderVersion?: string;
 };
 
-export type MindmapFocusRequest = { id: string; sequence: number; center?: boolean };
+export type MindmapFocusRequest = { id: string; sequence: number; center?: boolean; initial?: boolean };
 
 type CardData = { render: (id: string) => ReactNode; renderVersion?: string; ports: ChildPort[]; portSignature: string };
 
@@ -112,6 +111,7 @@ function FlowCanvas({
   readOnly,
   selectMultiple = false,
   virtualize,
+  layoutMeasured,
   onSelect,
   onDoubleClick,
   onReparent,
@@ -126,6 +126,7 @@ function FlowCanvas({
   readOnly: boolean;
   selectMultiple?: boolean;
   virtualize?: boolean;
+  layoutMeasured: boolean;
   onSelect: (id: string, additive: boolean) => void;
   onDoubleClick: (id: string) => void;
   onReparent: (id: string, parentId: string, beforeId?: string, afterId?: string) => void;
@@ -193,10 +194,11 @@ function FlowCanvas({
     collapseSettleTimer.current = null;
   }, []);
   const initialViewRef = useRef(Boolean(savedViewport));
+  const interacted = useRef(false);
   const rasterFrame = useRef<number | null>(null);
   useEffect(() => {
     const editor = canvasRef.current?.closest("[data-mindmap-editor]");
-    const preserveInteraction = () => { clearCollapseAnchor(); initialViewRef.current = true; schedulePreserveViewport(); };
+    const preserveInteraction = () => { interacted.current = true; clearCollapseAnchor(); initialViewRef.current = true; schedulePreserveViewport(); };
     editor?.addEventListener("pointerdown", preserveInteraction, true);
     editor?.addEventListener("keydown", preserveInteraction, true);
     window.addEventListener("pagehide", preserveViewport);
@@ -208,7 +210,7 @@ function FlowCanvas({
     };
   }, [clearCollapseAnchor, preserveViewport, schedulePreserveViewport]);
   const beginViewportMove = useCallback((event: MouseEvent | TouchEvent | null) => {
-    if (event) initialViewRef.current = true;
+    if (event) { interacted.current = true; initialViewRef.current = true; }
     if (rasterFrame.current !== null) cancelAnimationFrame(rasterFrame.current);
     const viewport = canvasRef.current?.querySelector<HTMLElement>(".react-flow__viewport");
     if (viewport) viewport.style.willChange = "transform";
@@ -238,21 +240,30 @@ function FlowCanvas({
       : tray ? tray.getBoundingClientRect().right - pane.getBoundingClientRect().left + 48 : 48;
     void setViewport({ x: left - root.x, y: pane.clientHeight / 2 - root.y - root.height / 2, zoom: 1 });
   }, [viewportInitialized, nodesInitialized, nodes, mindmap.rootId, focusRequest, setViewport]);
-  const centerBounds = useCallback((bounds: Rect, zoom: number) => {
-    void setCenter(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2, {
-      zoom, duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180,
-    });
-  }, [setCenter]);
+  const focusNode = focusRequest ? nodes.find(node => node.id === focusRequest.id) : undefined;
+  const focusX = focusNode && focusNode.x + focusNode.width / 2;
+  const focusY = focusNode && focusNode.y + focusNode.height / 2;
   useEffect(() => {
-    if (!viewportInitialized || !nodesInitialized || !focusRequest || lastFocusRef.current === focusRequest.sequence) return;
-    const node = nodes.find((item) => item.id === focusRequest.id);
-    if (!node) return;
-    lastFocusRef.current = focusRequest.sequence;
-    clearCollapseAnchor();
-    initialViewRef.current = true;
-    if (focusRequest.center === false) return;
-    centerBounds(node, getZoom());
-  }, [viewportInitialized, nodesInitialized, focusRequest, nodes, centerBounds, getZoom, clearCollapseAnchor]);
+    if (!viewportInitialized || !focusRequest || focusX === undefined || focusY === undefined
+      || lastFocusRef.current === focusRequest.sequence) return;
+    const focus = () => {
+      lastFocusRef.current = focusRequest.sequence;
+      if (focusRequest.initial && interacted.current) return;
+      clearCollapseAnchor();
+      initialViewRef.current = true;
+      if (focusRequest.center !== false) {
+        const animate = !focusRequest.initial && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        void setCenter(focusX, focusY, { zoom: getZoom(), duration: animate ? 180 : 0 });
+      }
+    };
+    if (focusRequest.initial) {
+      if (!layoutMeasured) return;
+      // Sibling measurements can still reposition a deep card over successive frames.
+      const timer = window.setTimeout(focus, 150);
+      return () => window.clearTimeout(timer);
+    }
+    focus();
+  }, [viewportInitialized, focusRequest, focusX, focusY, layoutMeasured, getZoom, setCenter, clearCollapseAnchor]);
 
   const childPorts = useMemo(() => {
     const { childrenByParent } = indexMindmap(mindmap);
@@ -424,7 +435,7 @@ function FlowCanvas({
           visibleCount: nodes.length, viewport: getViewport(), active: false,
         };
       }}
-      onWheelCapture={() => { clearCollapseAnchor(); initialViewRef.current = true; }}
+      onWheelCapture={() => { interacted.current = true; clearCollapseAnchor(); initialViewRef.current = true; }}
       onKeyDownCapture={() => { clearCollapseAnchor(); initialViewRef.current = true; }}
       onlyRenderVisibleElements={virtualize}
       onMoveStart={beginViewportMove}
@@ -511,6 +522,7 @@ export function MindmapCanvas(props: {
   readOnly: boolean;
   selectMultiple?: boolean;
   virtualize?: boolean;
+  layoutMeasured: boolean;
   onSelect: (id: string, additive: boolean) => void;
   onDoubleClick: (id: string) => void;
   onReparent: (id: string, parentId: string, beforeId?: string, afterId?: string) => void;
