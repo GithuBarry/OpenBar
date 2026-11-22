@@ -50,6 +50,7 @@ export const MINDMAP_EDIT_GUIDANCE = `Use link-todo to bind an existing card or 
 
 /** Sent on native MCP initialize (excludes browser-only WebMCP session tools). */
 export const MCP_INSTRUCTIONS = `${INBOX_GUIDANCE}
+When asked to watch a project, MCP Events clients can subscribe to openbar.inbox.mention with {project}, then call check_inbox for pending work and on each wake.
 
 ${CARD_PRESENTATION_GUIDANCE}
 

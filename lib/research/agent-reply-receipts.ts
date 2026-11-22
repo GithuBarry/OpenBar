@@ -20,6 +20,7 @@ const HASH = /^[a-f0-9]{64}$/
 const FIELDS = new Set(['title', 'text', 'caption', 'critical', 'important', 'background'])
 const DISPOSITIONS = new Set(['captured', 'acknowledged', 'already_resolved', 'reopened', 'already_open', 'stale', 'missing'])
 const HISTORY_LIMIT = 200
+const MENTION_EVENT_LIMIT = 200
 const HISTORY_CHARACTER_BUDGET = 1024 * 1024
 const HISTORY_REPLY_LIMIT = 100
 const empty = (): AgentInboxReceipts => ({ version: 1, acknowledged: [], receipts: {} })
@@ -60,6 +61,12 @@ export function readAgentInboxReceipts(projectDir: string): AgentInboxReceipts {
     || !Number.isFinite(Date.parse(item.recordedAt)) || !Number.isFinite(Date.parse(item.updatedAt)) || !DISPOSITIONS.has(item.disposition)
     || !Array.isArray(item.replies) || item.replies.length > HISTORY_REPLY_LIMIT || item.replies.some(reply => !reply || typeof reply.mapId !== 'string' || typeof reply.nodeId !== 'string' || typeof reply.href !== 'string'
       || !HASH.test(reply.responseRevision) || (reply.updatedAt !== undefined && !Number.isFinite(Date.parse(reply.updatedAt))) || (reply.repliedAt !== undefined && !Number.isFinite(Date.parse(reply.repliedAt))))))) throw new Error('OpenBar inbox history needs recovery.')
+  const journal = raw.mentionJournal
+  if (journal !== undefined && (!journal || !Array.isArray(journal.entries) || journal.entries.length > MENTION_EVENT_LIMIT
+    || (journal.previous !== undefined && !HASH.test(journal.previous))
+    || journal.entries.some((entry: NonNullable<AgentInboxReceipts['mentionJournal']>['entries'][number]) =>
+      !entry || !HASH.test(entry.id) || typeof entry.mapId !== 'string' || typeof entry.nodeId !== 'string'
+      || !Number.isFinite(Date.parse(entry.createdAt)) || (entry.priority !== undefined && entry.priority !== 'fast-tracked')))) throw new Error('OpenBar mention events need recovery.')
   return raw as AgentInboxReceipts
 }
 
@@ -152,10 +159,16 @@ function advisory(error: unknown, log = true): OperationDiagnostic {
 }
 
 /** Called inside the admitted project lock after CAS preflight, before saving. */
-export function beginAgentReplyCapture(projectDir: string, projectId: string, actor: 'human' | 'webmcp', beforeMap?: Mindmap | null): AgentReplyCapture | undefined {
+export function beginAgentReplyCapture(projectDir: string, projectId: string, actor: 'human' | 'webmcp', beforeMap?: Mindmap | null, nextMap?: Mindmap): AgentReplyCapture | undefined {
   try {
     const state = readAgentInboxReceipts(projectDir)
-    if (actor === 'human' && !Object.keys(state.agentFieldHashes || {}).length && !Object.keys(state.receipts).length && !state.history?.length && !state.acknowledged.length) return undefined
+    if (actor === 'human' && nextMap && !Object.keys(state.agentFieldHashes || {}).length
+      && !Object.keys(state.receipts).length && !state.history?.length && !state.acknowledged.length) {
+      const oldBindings = new Map(beforeMap?.nodes.map(node => [node.id, node.todoId]))
+      const candidate = nextMap.nodes.some(node => (node.todoId && node.todoId !== oldBindings.get(node.id))
+        || Object.values(agentMentionFields(node)).some(value => value && AGENT_MENTION_PATTERN.test(value)))
+      if (!candidate) return undefined
+    }
     const mapTodos = beforeMap !== undefined ? readAgentReplyTodos(projectDir, projectId) : undefined
     return { actor, snapshot: readAgentReplySnapshot(projectDir, projectId, state, mapTodos ? { maps: beforeMap ? [beforeMap] : [], todos: mapTodos } : undefined),
       ...(mapTodos ? { mapTodos } : {}) }
@@ -224,6 +237,19 @@ export function completeAgentReplyCapture(projectDir: string, projectId: string,
           question: history?.question || continued?.question || before.cards[requestKey]?.question || note!.text,
           contentHash: card.contentHash, responseRevision: agentReplyRevision(requestId, card.contentHash), updatedAt: new Date().toISOString(),
           ...(previous?.published && previous.requestId === requestId ? { published: previous.published } : {}) }
+      }
+      if (capture.actor === 'human') {
+        const seen = new Set([...(state.mentionJournal?.entries || []), ...(state.history || [])].map(entry => entry.id))
+        if (state.mentionJournal?.previous) seen.add(state.mentionJournal.previous)
+        const createdAt = new Date().toISOString()
+        for (const [key, note] of afterNotes) {
+          const id = agentReplyRequestId(state, note)
+          if (requestIds.get(key) === id || seen.has(id) || state.acknowledged.includes(id)) continue
+          const journal = state.mentionJournal ||= { entries: [] }
+          journal.entries.push({ id, createdAt, mapId: note.mapId, nodeId: note.nodeId, ...(note.priority ? { priority: note.priority } : {}) })
+          seen.add(id)
+          if (journal.entries.length > MENTION_EVENT_LIMIT) journal.previous = journal.entries.shift()!.id
+        }
       }
       rememberAgentRequests(state, after)
       pruneAgentInboxReceipts(state, after, projectId)

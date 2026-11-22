@@ -654,11 +654,13 @@ export async function persistSourceBundleAction(
   nextSource: string,
   expectedBundleHash: string,
   dryRun = false,
+  actor: "human" | "webmcp" = "human",
 ) {
   await requireProjectAccess(slug);
   return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
     const result = persistSourceBundle({
       manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
+      inboxWriter: { projectDir: projectContentDir(slug), actor },
       nextSource,
       expectedBundleHash,
       dryRun,
@@ -985,6 +987,7 @@ export async function persistPaperTodoAction(
   return withBrowserProjectWriteSession(projectContentDir(slug), async () => {
     const result = persistPaperTodoOperation({
       manuscriptDir: texPaths(projectContentDir(slug)).manuscriptDir,
+      inboxWriter: { projectDir: projectContentDir(slug), actor: "human" },
       operation,
       expectedBundleHash,
     });

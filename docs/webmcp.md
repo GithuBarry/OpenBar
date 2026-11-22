@@ -38,7 +38,27 @@ request. Editing mention-bearing text produces a new ID. Receipts store delivery
 IDs in machine runtime storage, while the paper and map own the request text.
 Acknowledgement preserves paper TODO completion. `includeAcknowledged` shows handled
 items and `acknowledged=false` reopens them. Humans can do both in the Tools panel.
-Notifications arrive with the next OpenBar call. An idle agent can check explicitly.
+Clients receive pending notifications on their next OpenBar call. An MCP Events
+client can also watch for newly saved mentions in one project over authenticated
+HTTP. In OpenCode 2.3 or later, enable `experimental.mcp_events`, restart
+OpenCode, and ask the chat to watch continuously. With an MCP connection named
+`openbar`, the arguments to OpenCode’s `watch_mcp_event` are:
+
+```json
+{
+  "server": "openbar",
+  "event": "openbar.inbox.mention",
+  "arguments": { "project": "<slug>" },
+  "once": false
+}
+```
+
+The project slug comes from the project URL. Register the watch, then call
+`check_inbox` for outstanding requests. On each wake, use the same inbox and
+acknowledgement flow. OpenCode’s default watch ends after the first event.
+The stream reports new and edited human mentions saved through OpenBar. Use
+`check_inbox` to reconcile outstanding requests after an external file edit
+or a gap in replay history.
 
 A memoryless agent follows this path:
 

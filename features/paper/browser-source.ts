@@ -1,3 +1,4 @@
+import { AGENT_INBOX_ACTOR_HEADER } from "@/lib/research/agent-inbox-contract"
 import type { getEditablePaperAction, persistSourceBundleAction } from "@/app/actions"
 
 type EditablePaper = Awaited<ReturnType<typeof getEditablePaperAction>>
@@ -15,14 +16,14 @@ export async function saveBrowserPaperSource(
   project: string,
   nextSource: string,
   expectedBundleHash: string,
-  options: { signal?: AbortSignal; dryRun?: boolean } = {},
+  options: { signal?: AbortSignal; dryRun?: boolean; actor?: "human" | "webmcp" } = {},
 ): Promise<SourceSaveResult> {
   if (options.signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" })
   // Once submitted, retain the committed revision receipt even if the caller
   // cancels. The save queue acknowledges it before reporting cancellation.
   const response = await fetch(`/api/p/${encodeURIComponent(project)}/paper/source`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", [AGENT_INBOX_ACTOR_HEADER]: options.actor || "human" },
     body: JSON.stringify({ nextSource, expectedBundleHash, dryRun: options.dryRun }),
   })
   const result = await response.json().catch(() => null) as SourceSaveResult | { error?: string } | null

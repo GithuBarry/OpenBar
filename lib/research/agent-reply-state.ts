@@ -1,7 +1,7 @@
 import type { MindmapNode } from '@/lib/types'
 import { sha256Hex } from '@/lib/mindmap/sha256'
 import type { AgentFieldHashes } from './agent-mentions'
-import type { AgentRequestHistory } from './agent-inbox-contract'
+import type { AgentRequestHistory, InboxNotification } from './agent-inbox-contract'
 import { mindmapCardContentForTodo, ordinaryMindmapCardContent } from './todo-map'
 
 export type ReplyPublication = { responseRevision: string, contentHash: string, repliedAt: string }
@@ -24,6 +24,7 @@ export type AgentInboxReceipts = {
   receipts: Record<string, AgentReplyReceipt>
   agentFieldHashes?: AgentFieldHashes
   history?: AgentRequestHistory[]
+  mentionJournal?: { previous?: string, entries: Array<Pick<InboxNotification, 'id' | 'mapId' | 'nodeId' | 'priority'> & { createdAt: string }> }
 }
 
 function stable(value: unknown): unknown {

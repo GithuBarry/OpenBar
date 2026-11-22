@@ -534,7 +534,7 @@ export function saveMindmap(slug: string, mindmap: Mindmap, expectedDiskHash?: s
     const newBindings = new Set(canonicalized.nodes.flatMap(node =>
       node.todoId && previousNodes.get(node.id)?.todoId !== node.todoId ? [node.todoId] : []));
     readSavedPaperTodos(slug, newBindings);
-    const replyCapture = beginAgentReplyCapture(dir, slug, actor, current);
+    const replyCapture = beginAgentReplyCapture(dir, slug, actor, current, canonicalized);
     writeMindmapRecord(dir, persistableMindmap(canonicalized));
     const persisted = readMindmapRecord(dir, identity.id);
     if (!persisted) throw new Error(`Mindmap "${identity.id}" could not be read after saving.`);

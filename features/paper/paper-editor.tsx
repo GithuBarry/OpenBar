@@ -574,7 +574,7 @@ export function PaperEditor({
   };
   const saveTimerRef = useRef<number | null>(null);
   const burstStartRef = useRef<number | null>(null);
-  const pendingSaveRef = useRef<{ text: string; requestId: number } | null>(null);
+  const pendingSaveRef = useRef<{ text: string; requestId: number; actor: "human" | "webmcp" } | null>(null);
   const saveRequestIdRef = useRef(0);
   const saveBusyRef = useRef(false);
   const todoRemovalBusyRef = useRef(0);
@@ -1143,7 +1143,7 @@ export function PaperEditor({
     resetPreview(next);
   }, [clearRecoveryDraft, resetPreview]);
 
-  const persistOne = useCallback(async (text: string, signal?: AbortSignal) => {
+  const persistOne = useCallback(async (text: string, signal?: AbortSignal, actor: "human" | "webmcp" = "human") => {
     saveFailureRef.current = null;
     if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
     const baseline = savedSourceRef.current;
@@ -1158,7 +1158,7 @@ export function PaperEditor({
     if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
     let saveText = text;
     let rebasedFromDisk: { hash: string; source: string } | null = null;
-    let result = await saveBrowserPaperSource(project, saveText, bundleHashRef.current, { signal });
+    let result = await saveBrowserPaperSource(project, saveText, bundleHashRef.current, { signal, actor });
     if (!result.ok && result.code === "stale_disk_state") {
       // Attempt conservative line-level 3-way rebase against the latest disk bundle.
       // Do not mutate bundleHashRef/savedSourceRef until the retry save actually succeeds.
@@ -1168,7 +1168,7 @@ export function PaperEditor({
         if (merged.ok) {
           rebasedFromDisk = { hash: diskPaper.bundle.bundleHash, source: diskPaper.bundle.source };
           saveText = merged.source;
-          result = await saveBrowserPaperSource(project, saveText, diskPaper.bundle.bundleHash, { signal });
+          result = await saveBrowserPaperSource(project, saveText, diskPaper.bundle.bundleHash, { signal, actor });
         }
       }
     }
@@ -1268,12 +1268,12 @@ export function PaperEditor({
     void pushRemote("OpenBar: save paper", true);
   }, [project, pushRemote, resetPreview, writeRecoveryDraft]);
 
-  const doSave = useCallback(async (text: string, signal?: AbortSignal) => {
+  const doSave = useCallback(async (text: string, signal?: AbortSignal, actor: "human" | "webmcp" = "human") => {
     if (!sessionWritableRef.current) return false;
     if (isBackendUnavailable()) { writeRecoveryDraft(); return false; }
     const previousFailure = saveFailureRef.current;
     const requestId = ++saveRequestIdRef.current;
-    pendingSaveRef.current = { text, requestId };
+    pendingSaveRef.current = { text, requestId, actor };
     const job = saveQueueRef.current.then(async () => {
       while (pendingSaveRef.current !== null) {
         const pending = pendingSaveRef.current;
@@ -1281,7 +1281,7 @@ export function PaperEditor({
         // A caller's abort signal belongs only to its own target. If a newer
         // caller has replaced the pending snapshot, that newer write must not
         // be cancelled when the older caller goes away.
-        await persistOne(pending.text, pending.requestId === requestId ? signal : undefined);
+        await persistOne(pending.text, pending.requestId === requestId ? signal : undefined, pending.actor);
       }
     });
     saveQueueRef.current = job.then(() => undefined, () => undefined);
@@ -1468,13 +1468,13 @@ export function PaperEditor({
     saveTimerRef.current = window.setTimeout(flush, Math.min(AUTOSAVE_IDLE_MS, maxWait));
   }, [doSave, liveSource, writeRecoveryDraft]);
 
-  const saveNow = useCallback(async (nextSource: string, signal?: AbortSignal) => {
+  const saveNow = useCallback(async (nextSource: string, signal?: AbortSignal, actor: "human" | "webmcp" = "human") => {
     burstStartRef.current = null;
     if (saveTimerRef.current) {
       window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
-    return doSave(nextSource, signal);
+    return doSave(nextSource, signal, actor);
   }, [doSave]);
 
   const onDocChanges = useCallback((changes: TexDocChange[], length: number) => {
@@ -2225,6 +2225,10 @@ export function PaperEditor({
         code: "stale_selection",
       });
     }
+    if (before !== savedSourceRef.current) {
+      if (!await saveNow(before, signal)) throw Object.assign(new Error("Save the current paper draft before applying an agent edit."), { code: "save_failed" });
+      if (liveSource() !== before) throw Object.assign(new Error("The paper changed while saving. Read the current selection again."), { code: "stale_selection" });
+    }
     const applied = editorRef.current?.applyVirtualChange(from, to, insert);
     if (!applied) {
       throw Object.assign(new Error("stale_selection: source range is not attached to the live editor."), {
@@ -2239,14 +2243,14 @@ export function PaperEditor({
     });
     setAgentNotice(`Agent updated ${section?.title ? `§ ${section.title}` : "the paper"}`);
     window.setTimeout(() => setAgentNotice(null), 4000);
-    const saved = await saveNow(next, signal);
+    const saved = await saveNow(next, signal, "webmcp");
     if (saved) return;
     const failure = saveFailureRef.current;
     throw Object.assign(new Error(failure?.message || "Could not save the live paper."), {
       code: failure?.code || "save_failed",
       ...(failure?.currentHash ? { currentHash: failure.currentHash } : {}),
     });
-  }, [saveNow]);
+  }, [liveSource, saveNow]);
 
   const reconcilePaperFiles = useCallback((paper: HydratedPaper | null, baseline: string) => {
     if (!paper || paper.bundle.bundleHash === bundleHashRef.current) return;

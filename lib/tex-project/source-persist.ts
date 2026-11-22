@@ -13,8 +13,23 @@ import { buildSourceBundle, mapVirtualRange, type SourceBundle } from "./source-
 import { clearSourceTransactionJournal, recoverSourceTransaction, writeSourceTransactionJournal } from "./source-transaction";
 import { bannerRanges, fileBanner, fileBytesUnchanged, splitBundleSource } from "./source-bundle-format";
 
+import { beginAgentReplyCapture, completeAgentReplyCapture } from "@/lib/research/agent-reply-receipts";
+import { AGENT_MENTION_PATTERN } from "@/lib/research/agent-mentions";
+
+export type PaperInboxWriter = { projectDir: string, actor: "human" | "webmcp" };
+
+/** Watch mention-bearing source or changed includes, after validation and under the paper's write lock. */
+function preparePaperInboxUpdate(writer: PaperInboxWriter | undefined, files: Array<{ previous: string, next: string }>) {
+  if (!writer || !files.some(({ previous, next }) => AGENT_MENTION_PATTERN.test(previous) || AGENT_MENTION_PATTERN.test(next)
+    || /\\(?:input|include)\s*\{/.test(previous) || /\\(?:input|include)\s*\{/.test(next))) return;
+  const project = path.basename(writer.projectDir);
+  const capture = beginAgentReplyCapture(writer.projectDir, project, writer.actor);
+  return () => completeAgentReplyCapture(writer.projectDir, project, capture);
+}
+
 export function persistVirtualRange(input: {
   manuscriptDir: string;
+  inboxWriter?: PaperInboxWriter;
   from: number;
   to: number;
   text: string;
@@ -76,7 +91,9 @@ export function persistVirtualRange(input: {
         { diskHash: bundle.bundleHash, revision: bundle.revision },
       );
     }
+    const updateInbox = preparePaperInboxUpdate(input.inboxWriter, [{ previous: current, next }]);
     writeTextAtomic(abs, next);
+    updateInbox?.();
     const after = buildSourceBundle(input.manuscriptDir, undefined, 0, true);
     return okResult({ filePath: mapped.segment!.filePath, bundleHash: after.bundleHash }, { diskHash: after.bundleHash, revision: after.revision });
   });
@@ -84,6 +101,7 @@ export function persistVirtualRange(input: {
 
 export function persistSourceBundle(input: {
   manuscriptDir: string;
+  inboxWriter?: PaperInboxWriter;
   nextSource: string;
   expectedBundleHash?: string;
   dryRun?: boolean;
@@ -188,6 +206,7 @@ export function persistSourceBundle(input: {
         { diskHash: bundle.bundleHash, revision: bundle.revision },
       );
     }
+    const updateInbox = preparePaperInboxUpdate(input.inboxWriter, writes);
     const committed: typeof writes = [];
     try {
       writeSourceTransactionJournal(input.manuscriptDir, {
@@ -207,6 +226,7 @@ export function persistSourceBundle(input: {
       throw error;
     }
     clearSourceTransactionJournal(input.manuscriptDir, true);
+    updateInbox?.();
     const after = buildSourceBundle(input.manuscriptDir, undefined, 0, true);
     const graphChanged = bundle.segments.length !== after.segments.length
       || bundle.segments.some((segment, index) => segment.filePath !== after.segments[index]?.filePath);

@@ -5,14 +5,15 @@ import { MCP_INSTRUCTIONS } from "@/lib/research/agent-guidance"
 import { formatInboxPrefix } from "@/lib/research/agent-inbox-contract"
 import { executeMcpTool, getMcpTool, listMcpTools } from "@/lib/research/mcp-command-registry"
 import { registerMcpDiscovery } from "@/lib/research/mcp-discovery"
+import { INBOX_MCP_EVENT_CAPABILITY, registerInboxMcpEvents } from "./mcp-events"
 
 /** Domain operations retain their operation envelopes across SDK transports. */
-export function createOpenbarMcpServer(actor: string): Server {
+export function createOpenbarMcpServer(actor: string, options: { events?: boolean } = { events: true }): Server {
   // The low-level SDK server preserves the existing JSON Schema tool catalog
   // and operation envelopes while owning protocol validation and cancellation.
   const server = new Server({ name: "OpenBar", version: packageJson.version }, {
     instructions: MCP_INSTRUCTIONS,
-    capabilities: { tools: { listChanged: false }, resources: {}, prompts: {} },
+    capabilities: { tools: { listChanged: false }, resources: {}, prompts: {}, ...(options.events ? INBOX_MCP_EVENT_CAPABILITY : {}) },
   })
 
   server.setRequestHandler("tools/list", async () => ({
@@ -40,5 +41,6 @@ export function createOpenbarMcpServer(actor: string): Server {
     } satisfies CallToolResult
   })
   registerMcpDiscovery(server, actor)
+  if (options.events) registerInboxMcpEvents(server, actor)
   return server
 }

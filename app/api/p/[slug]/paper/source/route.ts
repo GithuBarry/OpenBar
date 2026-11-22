@@ -1,3 +1,4 @@
+import { AGENT_INBOX_ACTOR_HEADER } from "@/lib/research/agent-inbox-contract"
 import { getEditablePaperAction, persistSourceBundleAction } from "@/app/actions"
 import { ProjectAccessError, requireProjectAccess } from "@/lib/server/project-access"
 import { requestIsSameOrigin } from "@/lib/server/request-origin"
@@ -33,7 +34,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
       || (input.dryRun !== undefined && typeof input.dryRun !== "boolean")) {
       return json({ error: "The paper source and its saved revision are required." }, 400)
     }
-    const result = await persistSourceBundleAction(slug, input.nextSource, input.expectedBundleHash, input.dryRun === true)
+    const actor = request.headers.get(AGENT_INBOX_ACTOR_HEADER) === "webmcp" ? "webmcp" : "human"
+    const result = await persistSourceBundleAction(slug, input.nextSource, input.expectedBundleHash, input.dryRun === true, actor)
     return json(result, result.ok ? 200 : result.code === "stale_disk_state" || result.code === "conflict" ? 409 : 400)
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "Could not save the paper.", ...(error instanceof ProjectWriteSessionError ? { code: error.code } : {}) }, error instanceof ProjectAccessError || error instanceof ProjectWriteSessionError ? error.status : 500)

@@ -5,7 +5,7 @@
 import { applySourceOperation } from "@/lib/research/operation-service";
 import type { SourceOperation } from "@/lib/research/operations";
 import { failResult } from "@/lib/research/operation-result";
-import { persistSourceBundle, persistVirtualRange } from "@/lib/tex-project/source-persist";
+import { persistSourceBundle, persistVirtualRange, type PaperInboxWriter } from "@/lib/tex-project/source-persist";
 import { buildSourceBundle } from "@/lib/tex-project/source-bundle";
 import { analyzePaper } from "@/lib/research/paper-analysis";
 import { previewTodoAtSection, relocateTodoInBundle } from "./paper-todo-placement";
@@ -13,6 +13,7 @@ import { previewTodoAtSection, relocateTodoInBundle } from "./paper-todo-placeme
 export function persistPaperTodoOperation(input: {
   manuscriptDir: string;
   operation: SourceOperation;
+  inboxWriter?: PaperInboxWriter;
   expectedBundleHash?: string;
   dryRun?: boolean;
 }) {
@@ -31,6 +32,7 @@ export function persistPaperTodoOperation(input: {
     if (patch.from === 0 && patch.to === bundle.source.length) {
       return persistSourceBundle({
         manuscriptDir: input.manuscriptDir,
+        inboxWriter: input.inboxWriter,
         nextSource: applied.value.source,
         expectedBundleHash: input.expectedBundleHash,
         dryRun: input.dryRun,
@@ -38,6 +40,7 @@ export function persistPaperTodoOperation(input: {
     }
     return persistVirtualRange({
       manuscriptDir: input.manuscriptDir,
+      inboxWriter: input.inboxWriter,
       from: patch.from,
       to: patch.to,
       text: patch.next,
@@ -47,6 +50,7 @@ export function persistPaperTodoOperation(input: {
   }
   return persistSourceBundle({
     manuscriptDir: input.manuscriptDir,
+    inboxWriter: input.inboxWriter,
     nextSource: applied.value.source,
     expectedBundleHash: input.expectedBundleHash,
     dryRun: input.dryRun,
