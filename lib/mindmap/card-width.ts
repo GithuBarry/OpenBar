@@ -1,3 +1,8 @@
+/** Keep the legacy/default representation for hashing and saving individual widths. */
+export function persistedCardWidthMode(value: unknown): "siblings" | "depth" | undefined {
+  return value === "siblings" || value === "depth" ? value : undefined;
+}
+
 export const MIN_CARD_WIDTH = 180;
 export const MAX_CARD_WIDTH = 1200;
 

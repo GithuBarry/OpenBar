@@ -801,6 +801,7 @@ export function MindmapEditor({
         mapId: current.id || "draft",
         title: current.title,
         fontSize: current.fontSize || DEFAULT_MINDMAP_FONT_SIZE,
+        cardWidthMode: current.cardWidthMode ?? "individual",
         role: current.role,
         isPrimary: isPrimaryMindmap(current),
         revision: sessionRef.current.revision,
@@ -986,6 +987,9 @@ export function MindmapEditor({
       scheduleRemote("OpenBar: reopen paper TODO");
     }),
     focusTodoInPaper: (todoId) => router.push(`/p/${project}/paper#${encodeURIComponent(todoId)}`),
+    setCardWidthMode: async (cardWidthMode, revision) => {
+      await persistWebMcpMutation({ type: "set-card-width-mode", cardWidthMode }, revision);
+    },
     setFontSize: async (fontSize, expectedRevision) => {
       await persistWebMcpMutation({ type: "set-font-size", fontSize }, expectedRevision);
     },

@@ -1,9 +1,9 @@
 import { byOrder, indexMindmap, type MindmapIndex } from "@/lib/mindmap-index";
 import { DEFAULT_MINDMAP_FONT_SIZE, normalizeMindmap } from "@/lib/mindmap/mindmap";
 import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
-import { normalizeCardWidth } from "@/lib/mindmap/card-width";
+import { normalizeCardWidth, persistedCardWidthMode } from "@/lib/mindmap/card-width";
 import { normalizeMindmapCaution, restoreCardNotes, type CardNoteField, type MindmapCaution } from "@/lib/mindmap/caution";
-import type { Mindmap, MindmapNode } from "@/lib/types";
+import type { Mindmap, MindmapCardWidthMode, MindmapNode } from "@/lib/types";
 import { mergeSavedMindmap } from "@/lib/mindmap/merge-saved";
 import { linkedTodoCaption } from "@/lib/mindmap/link-existing-todo";
 import { cardFormatPatch } from "./html-card-editing";
@@ -78,6 +78,7 @@ export type MindmapTreeAction =
   | { type: "unbind-todo"; id: string; todoId?: string; title?: string; text: string }
   | { type: "reparent"; id: string; parentId: string; beforeId?: string; afterId?: string }
   | { type: "rename-map"; title: string }
+  | { type: "set-card-width-mode"; cardWidthMode: MindmapCardWidthMode }
   | { type: "set-font-size"; fontSize: number }
   | { type: "replace"; mindmap: Mindmap; selectedId?: string };
 
@@ -143,6 +144,7 @@ export function mapSignature(mindmap: Mindmap): string {
     projectId: persistable.projectId,
     title: persistable.title,
     fontSize: persistable.fontSize,
+    cardWidthMode: persistable.cardWidthMode,
     rootId: persistable.rootId,
     nodes: persistable.nodes,
   }));
@@ -483,6 +485,11 @@ export function applyMindmapAction(mindmap: Mindmap, action: MindmapTreeAction):
           )),
         },
       };
+    }
+    case "set-card-width-mode": {
+      const cardWidthMode = persistedCardWidthMode(action.cardWidthMode);
+      if (cardWidthMode === persistedCardWidthMode(mindmap.cardWidthMode)) return { mindmap };
+      return { mindmap: { ...mindmap, cardWidthMode, updatedAt: new Date().toISOString() } };
     }
     case "set-font-size": {
       const fontSize = Math.max(10, Math.min(20, Math.round(action.fontSize)));

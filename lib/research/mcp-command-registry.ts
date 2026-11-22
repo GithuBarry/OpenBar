@@ -616,6 +616,7 @@ async function executeGetMindmap(args: unknown): Promise<OperationResult<unknown
         primary: map.role === "draft" || map.id === DRAFT_MINDMAP_ID,
         rootId: map.rootId,
         title: map.title,
+        cardWidthMode: map.cardWidthMode ?? "individual",
         revision: currentRevision,
         diskHash: map.diskHash,
         totalNodes: map.nodes.length,
@@ -654,6 +655,7 @@ async function executeGetMindmap(args: unknown): Promise<OperationResult<unknown
       primary: map.role === "draft" || map.id === DRAFT_MINDMAP_ID,
       rootId: map.rootId,
       title: map.title,
+      cardWidthMode: map.cardWidthMode ?? "individual",
       revision: currentRevision,
       diskHash: map.diskHash,
       detail: nodeIdFilter ? "full" : detail,
@@ -971,6 +973,18 @@ const executeRenameMindmap: McpToolDefinition["execute"] = async (raw, context) 
     });
   };
 
+const executeSetMindmapCardWidthMode: McpToolDefinition["execute"] = async (raw, context) => {
+  const args = NATIVE_MINDMAP_INPUTS.set_mindmap_card_width_mode.parse(raw);
+  const project = projectArg(args);
+  return idempotentWrite(project, "set_mindmap_card_width_mode", args, context, requestId => {
+    const map = mapRequired(project, mapArg(args));
+    assertRevision(map, args.expectedRevision);
+    assertDiskHash(map, args.expectedDiskHash);
+    const { mindmap } = applyMindmapAction(map, { type: "set-card-width-mode", cardWidthMode: args.cardWidthMode });
+    return writeMap(project, map, mindmap, requestId, "set_mindmap_card_width_mode", [{ kind: "mindmap", id: map.id! }], [{ field: "cardWidthMode", before: map.cardWidthMode ?? "individual", after: args.cardWidthMode }]);
+  });
+};
+
 const executeSetMindmapFontSize: McpToolDefinition["execute"] = async (raw, context) => {
     const args = asObject(raw)!;
     const project = projectArg(args);
@@ -1087,7 +1101,7 @@ async function executeManagedMindmapEdit(raw: unknown, context: McpCommandContex
   const operations = {
     add: "add_mindmap_node", patch: "patch_mindmap_node", move: "move_mindmap_node",
     "preview-batch": "preview_mindmap_batch", "apply-batch": "apply_mindmap_batch",
-    "place-todo": "place_todo_card", "link-todo": "link_todo_card", "convert-to-todo": "convert_card_to_todo", rename: "rename_mindmap", "font-size": "set_mindmap_font_size",
+    "place-todo": "place_todo_card", "link-todo": "link_todo_card", "convert-to-todo": "convert_card_to_todo", rename: "rename_mindmap", "font-size": "set_mindmap_font_size", "card-width-mode": "set_mindmap_card_width_mode",
     "attach-image": "attach_mindmap_image", "detach-image": "detach_mindmap_image", "caption-image": "caption_mindmap_image",
     "activity-window": "set_activity_window",
   } as const;
@@ -1104,6 +1118,7 @@ async function executeManagedMindmapEdit(raw: unknown, context: McpCommandContex
     add_mindmap_node: executeAddMindmapNode, patch_mindmap_node: executePatchMindmapNode, move_mindmap_node: executeMoveMindmapNode,
     preview_mindmap_batch: executePreviewMindmapBatch, apply_mindmap_batch: executeApplyMindmapBatch,
     place_todo_card: executePlaceTodoCard, link_todo_card: executeLinkTodoCard, convert_card_to_todo: executeConvertCardToTodo, rename_mindmap: executeRenameMindmap, set_mindmap_font_size: executeSetMindmapFontSize,
+    set_mindmap_card_width_mode: executeSetMindmapCardWidthMode,
     attach_mindmap_image: (input, context) => executeMapImage("attach_mindmap_image", input, context),
     detach_mindmap_image: (input, context) => executeMapImage("detach_mindmap_image", input, context),
     caption_mindmap_image: (input, context) => executeMapImage("caption_mindmap_image", input, context),
@@ -1177,7 +1192,7 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
   tool("get_activity", "Read activity", "Read durable authored operation history after applying the selected day filter and before pagination.", executeActivity, { readOnlyHint: true }),
   tool("read_project_files", "Read project files", "List directories or read authored project files with exact byte SHA256 and bounded UTF-8/base64 content. Paths are relative to the project root. OpenBar managed state and Git metadata are protected.", executeReadProjectFiles, { readOnlyHint: true }),
   tool("apply_project_edits", "Apply project file edits", "Atomically create, replace, or delete authored project files using exact prior hashes. Batch a destination create and source delete to move a file. dryRun previews the complete batch. OpenBar managed state and Git metadata are protected.", executeProjectFileEdits, { destructiveHint: true }),
-  tool("apply_mindmap_edits", "Edit managed mindmap state", `Apply one revision-checked map operation. edit.operation: add, patch, move, preview-batch, apply-batch, place-todo, link-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, activity-window. args: add {parentId,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,id?}, patch {id,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, batch {selectedIds,changes?,deleteMode?,move?,previewToken?}, place-todo {todoId,parentId}, link-todo {id,todoId}, convert-to-todo {id,sectionId?,expectedBundleHash}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, activity-window {days}. labels read back as tags. refs[]: {kind: paper-section|paper-todo|paper-comment|wiki-page|mindmap-node|figure|web|external, id, label?, relation?, url?, mapId?} (do not attach local code/JSON/CSV files as refs; put local paths in caption). presentation: {shape?:leaf|callout, contentFormat?:plain|markdown|tex|html, tableLayout?:wide|scroll, color?, progress?:0..6|"ditched"|null, cardWidth?:180..1200|null}. Preview batches before apply-batch. deleteMode cards promotes children; branches removes descendants. Agent writes stay Agent draft until human Save/Delete. ${MINDMAP_EDIT_GUIDANCE}`, executeManagedMindmapEdit, { destructiveHint: true }),
+  tool("apply_mindmap_edits", "Edit managed mindmap state", `Apply one revision-checked map operation. edit.operation: add, patch, move, preview-batch, apply-batch, place-todo, link-todo, convert-to-todo, rename, font-size, card-width-mode, attach-image, detach-image, caption-image, activity-window. args: add {parentId,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,id?}, patch {id,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, batch {selectedIds,changes?,deleteMode?,move?,previewToken?}, place-todo {todoId,parentId}, link-todo {id,todoId}, convert-to-todo {id,sectionId?,expectedBundleHash}, rename {title}, font-size {fontSize}, card-width-mode {cardWidthMode:"individual"|"siblings"|"depth"}, images {id,assetId,label?}, activity-window {days}. labels read back as tags. refs[]: {kind: paper-section|paper-todo|paper-comment|wiki-page|mindmap-node|figure|web|external, id, label?, relation?, url?, mapId?} (do not attach local code/JSON/CSV files as refs; put local paths in caption). presentation: {shape?:leaf|callout, contentFormat?:plain|markdown|tex|html, tableLayout?:wide|scroll, color?, progress?:0..6|"ditched"|null, cardWidth?:180..1200|null}. Preview batches before apply-batch. deleteMode cards promotes children; branches removes descendants. Agent writes stay Agent draft until human Save/Delete. ${MINDMAP_EDIT_GUIDANCE}`, executeManagedMindmapEdit, { destructiveHint: true }),
   tool("celebrate", "Queue a celebration animation", "Queue a non-blocking celebration animation (full-screen or bursting from a specific mindmap card) with a short reason shown the next time the human focuses OpenBar. Use sparingly for genuine milestones (passing evals, beating baselines, clean paper compile, finishing a major branch).", async (raw) => {
     const args = MCP_INPUTS.celebrate.parse(raw);
     assertAdministrativeWriteAllowed("Celebration actions");

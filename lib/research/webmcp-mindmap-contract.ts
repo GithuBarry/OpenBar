@@ -5,7 +5,7 @@
 import { cautionValidationError,normalizeMindmapCaution,type MindmapCaution } from "@/lib/mindmap/caution";
 import { attachMindmapImage,captionMindmapImage,detachMindmapImage } from "@/lib/mindmap/image-refs";
 import { safeUrl } from "@/lib/safe-url";
-import type { ArtifactRef,Mindmap,MindmapNode,MindmapNodeShape } from "@/lib/types";
+import type { ArtifactRef,Mindmap,MindmapCardWidthMode,MindmapNode,MindmapNodeShape } from "@/lib/types";
 import { coercePaperSectionRefContext,isArtifactKind } from "./artifact-link";
 import { MINDMAP_CARD_SHORT_REMINDER, MINDMAP_EDIT_GUIDANCE, mindmapAttentionWarnings } from "./agent-guidance";
 import { MIN_CARD_WIDTH, MAX_CARD_WIDTH } from "@/lib/mindmap/card-width";
@@ -106,6 +106,7 @@ export type LiveMindmapSnapshot = {
   mapId: string;
   title?: string;
   fontSize?: number;
+  cardWidthMode?: MindmapCardWidthMode;
   role?: "draft" | "planning";
   isPrimary: boolean;
   revision: number;
@@ -144,6 +145,7 @@ export type MindmapWebMcpHost = {
   completeTodo?: (todoId: string) => void | Promise<void>;
   reopenTodo?: (todoId: string) => void | Promise<void>;
   focusTodoInPaper?: (todoId: string) => void;
+  setCardWidthMode?: (mode: MindmapCardWidthMode, expectedRevision: number) => void | Promise<void>;
   setFontSize?: (fontSize: number, expectedRevision?: number) => void | Promise<void>;
   renameMap?: (title: string, expectedRevision?: number) => void | Promise<void>;
   sharedActions?: SharedWebMcpActions;
@@ -333,6 +335,7 @@ export async function executeMindmapWebMcpTool(
     case "get_mindmap": {
       return okResult({
         ...snapshot,
+        cardWidthMode: snapshot.cardWidthMode ?? "individual",
         role: snapshot.role,
         isPrimary: typeof snapshot.isPrimary === "boolean"
           ? snapshot.isPrimary
@@ -638,6 +641,14 @@ export async function executeMindmapWebMcpTool(
       host.focusTodoInPaper?.(String(args.todoId));
       return okResult({ todoId: args.todoId }, { revision: snapshot.revision });
     }
+    case "set_mindmap_card_width_mode": {
+      const rev = assertRevision(args.expectedRevision, snapshot.revision);
+      if (!rev.ok) return rev;
+      if (!host.setCardWidthMode) return failResult("capability_unavailable", "Card width settings are unavailable.", false);
+      const { cardWidthMode } = MINDMAP_INPUTS.set_mindmap_card_width_mode.parse(args);
+      const result = await runPersistedMutation(host, () => host.setCardWidthMode!(cardWidthMode, snapshot.revision));
+      return result.ok ? okResult({ cardWidthMode }, { revision: result.revision, diskHash: result.diskHash }) : result;
+    }
     case "set_mindmap_font_size": {
       const rev = assertRevision(args.expectedRevision, snapshot.revision);
       if (!rev.ok) return rev;
@@ -681,7 +692,7 @@ async function executeManagedMapEdit(host: MindmapWebMcpHost, raw: unknown): Pro
     add: "add_mindmap_node", patch: "patch_mindmap_node", move: "move_mindmap_node",
     "delete-card": "delete_mindmap_node", "delete-branch": "delete_mindmap_branch",
     "place-todo": "place_todo_card", "link-todo": "link_todo_card", "convert-to-todo": "convert_card_to_todo",
-    rename: "rename_mindmap", "font-size": "set_mindmap_font_size",
+    rename: "rename_mindmap", "font-size": "set_mindmap_font_size", "card-width-mode": "set_mindmap_card_width_mode",
     "attach-image": "attach_mindmap_image", "detach-image": "detach_mindmap_image", "caption-image": "caption_mindmap_image",
   } as const;
   if (!Object.hasOwn(operations, args.edit.operation)) return failResult("invalid_arguments", `Use a managed map operation: ${Object.keys(operations).join(", ")}.`, false);
@@ -703,7 +714,7 @@ export function buildMindmapWebMcpTools(host: MindmapWebMcpHost) {
   return [...tools, {
     name: "apply_mindmap_edits",
     title: "Edit live mindmap state",
-    description: `Apply one live revision-checked operation. edit.operation: add, patch, move, delete-card, delete-branch, place-todo, link-todo, convert-to-todo, rename, font-size, attach-image, detach-image, caption-image, view-preferences. args: add {parentId,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?}, patch {id,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, delete {id}, place-todo {todoId,parentId}, link-todo {id,todoId}, convert-to-todo {id,sectionId?}, rename {title}, font-size {fontSize}, images {id,assetId,label?}, view-preferences {centerOnEdit}. delete-card promotes children; delete-branch removes descendants. Agent writes stay Agent draft until human Save/Delete. While a human edits one card, add Agent draft children or edit other cards. ${MINDMAP_EDIT_GUIDANCE}`,
+    description: `Apply one live revision-checked operation. edit.operation: add, patch, move, delete-card, delete-branch, place-todo, link-todo, convert-to-todo, rename, font-size, card-width-mode, attach-image, detach-image, caption-image, view-preferences. args: add {parentId,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?}, patch {id,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, delete {id}, place-todo {todoId,parentId}, link-todo {id,todoId}, convert-to-todo {id,sectionId?}, rename {title}, font-size {fontSize}, card-width-mode {cardWidthMode:"individual"|"siblings"|"depth"}, images {id,assetId,label?}, view-preferences {centerOnEdit}. delete-card promotes children; delete-branch removes descendants. Agent writes stay Agent draft until human Save/Delete. While a human edits one card, add Agent draft children or edit other cards. ${MINDMAP_EDIT_GUIDANCE}`,
     inputSchema: commandJsonSchema(MINDMAP_EDIT_INPUT),
     annotations: { readOnlyHint: false, destructiveHint: true, untrustedContentHint: true },
     execute: (args?: unknown) => executeManagedMapEdit(host, args),
@@ -750,6 +761,7 @@ export function mindmapToolDescription(name: MindmapWebMcpToolName): string {
   if (name === "focus_todo_in_paper") {
     return "Open the paper at this TODO's TeX location.";
   }
+  if (name === "set_mindmap_card_width_mode") return "Set whether card widths are individual, shared by siblings, or shared at a depth. Saved per map.";
   if (name === "set_mindmap_font_size") return "Set the open map card body font size from 10 through 20 CSS pixels. Titles and tables scale proportionally. Saved per map.";
   if (name === "rename_mindmap") {
     return "Rename the open mindmap. The primary paper map can still have a title.";

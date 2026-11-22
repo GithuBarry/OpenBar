@@ -87,6 +87,9 @@ export interface MindmapNode {
   updatedAt?: string;
 }
 
+export const MINDMAP_CARD_WIDTH_MODES = ["individual", "siblings", "depth"] as const;
+export type MindmapCardWidthMode = typeof MINDMAP_CARD_WIDTH_MODES[number];
+
 export interface Mindmap {
   projectId: string;
   id?: string;
@@ -105,6 +108,8 @@ export interface Mindmap {
   activityWindowDays?: number;
   /** Map-owned card body font size in CSS pixels, 10 through 20. */
   fontSize?: number;
+  /** Shared layout widths leave each card’s stored width intact. Absent means individual. */
+  cardWidthMode?: MindmapCardWidthMode;
   diskHash?: string;
 }
 

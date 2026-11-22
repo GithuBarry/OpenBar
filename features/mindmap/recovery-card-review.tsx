@@ -131,6 +131,7 @@ export function RecoveryCardReview({ draft, saved, todos, defaultOpen = false }:
     }
     const meta: string[] = []
     if ((draft.mindmap.title || "") !== (saved.title || "")) meta.push(`map title: "${saved.title || ""}" → "${draft.mindmap.title || ""}"`)
+    if ((draft.mindmap.cardWidthMode ?? "individual") !== (saved.cardWidthMode ?? "individual")) meta.push(`card widths: ${saved.cardWidthMode ?? "individual"} → ${draft.mindmap.cardWidthMode ?? "individual"}`)
     if ((draft.mindmap.fontSize || 12) !== (saved.fontSize || 12)) meta.push(`font size: ${saved.fontSize || 12}px → ${draft.mindmap.fontSize || 12}px`)
     return { diffs: items, mapChanges: meta }
   }, [draft, saved, todos])

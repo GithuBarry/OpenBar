@@ -34,6 +34,7 @@ const MINDMAP_FIELDS: ReadonlyArray<keyof Mindmap> = [
   "updatedAt",
   "activityWindowDays",
   "fontSize",
+  "cardWidthMode",
 ];
 
 function valuesEqual(left: unknown, right: unknown): boolean {

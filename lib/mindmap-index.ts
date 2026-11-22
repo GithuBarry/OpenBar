@@ -1,6 +1,6 @@
 import type { Mindmap, MindmapNode } from "@/lib/types";
 import { normalizeMindmapCaution } from "@/lib/mindmap/caution";
-import { normalizeCardWidth } from "@/lib/mindmap/card-width";
+import { normalizeCardWidth, persistedCardWidthMode } from "@/lib/mindmap/card-width";
 
 export type MindmapIndex = {
   nodeById: Map<string, MindmapNode>;
@@ -58,6 +58,7 @@ export function persistableMindmapNode(node: MindmapNode): MindmapNode {
 export function persistableMindmap(mindmap: Mindmap): Mindmap {
   return {
     ...mindmap,
+    cardWidthMode: persistedCardWidthMode(mindmap.cardWidthMode),
     nodes: mindmap.nodes.map(persistableMindmapNode),
   };
 }

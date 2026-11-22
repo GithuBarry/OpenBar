@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { type BibEntry } from "@/lib/bibtex";
 import { parseBibtexCitationJs, formatBibliographyHtml } from "@/lib/citation";
+import { persistedCardWidthMode } from "@/lib/mindmap/card-width";
 import type { Mindmap } from "@/lib/types";
 import { normalizeMindmapProgress } from "@/lib/mindmap/progress";
 
@@ -216,6 +217,7 @@ export function normalizeStoredMindmap(mindmap: Mindmap, fileId: string): Mindma
     ...mindmap,
     id,
     role,
+    cardWidthMode: persistedCardWidthMode(mindmap.cardWidthMode),
     title: mindmap.title?.trim() || (role === "draft" ? DEFAULT_PRIMARY_MINDMAP_TITLE : id),
     createdAt: mindmap.createdAt || mindmap.updatedAt,
     nodes: mindmap.nodes.map((node) => ({

@@ -1,5 +1,6 @@
 /** Shared command inputs. Transport adapters add identity and concurrency fields. */
 import { z } from "zod";
+import { MINDMAP_CARD_WIDTH_MODES } from "@/lib/types";
 import { PLATFORM_WISHLIST_INPUT } from "./platform-wishlist-contract";
 import { MAX_MINDMAP_LABEL_CHARS, MAX_MINDMAP_LABELS, normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import { MIN_CARD_WIDTH, MAX_CARD_WIDTH } from "@/lib/mindmap/card-width";
@@ -130,6 +131,7 @@ export const MINDMAP_INPUTS = {
   place_todo_card: z.strictObject({ todoId: z.string().describe("Stable TODO id from the current paper."), parentId: z.string().describe("The existing card that should own this TODO card."), expectedRevision: z.number().int().min(0) }),
   convert_card_to_todo: z.strictObject({ id: z.string(), sectionId: z.string().describe("Optional current section id from the paper outline. Omit to place the TODO at a neutral location in the manuscript root.").optional(), expectedRevision: z.number().int().min(0), requestId: z.string().describe("Stable retry key. Reusing it returns the original local result.").optional() }),
   focus_todo_in_paper: z.strictObject({ todoId: z.string() }),
+  set_mindmap_card_width_mode: z.strictObject({ cardWidthMode: z.enum(MINDMAP_CARD_WIDTH_MODES), expectedRevision: revision }),
   set_mindmap_font_size: z.strictObject({ fontSize: z.number().int().min(10).max(20), expectedRevision: z.number().int().min(0) }),
   rename_mindmap: z.strictObject({ title: z.string(), expectedRevision: z.number().int().min(0) })
 };
@@ -158,6 +160,7 @@ export const NATIVE_MINDMAP_INPUTS = {
   link_todo_card: MINDMAP_INPUTS.link_todo_card.extend({ project: projectId, mapId, expectedDiskHash: diskHash.optional(), requestId: z.string().optional() }),
   place_todo_card: MINDMAP_INPUTS.place_todo_card.extend({ project: projectId, mapId: mapId, expectedDiskHash: diskHash.optional(), requestId: z.string().optional() }),
   rename_mindmap: MINDMAP_INPUTS.rename_mindmap.extend({ project: projectId, mapId: mapId, title: z.string().min(1).max(500), expectedDiskHash: diskHash.optional(), requestId: z.string().optional() }),
+  set_mindmap_card_width_mode: MINDMAP_INPUTS.set_mindmap_card_width_mode.extend({ project: projectId, mapId, expectedDiskHash: diskHash.optional(), requestId: z.string().optional() }),
   set_mindmap_font_size: MINDMAP_INPUTS.set_mindmap_font_size.extend({ project: projectId, mapId: mapId, expectedDiskHash: diskHash.optional(), requestId: z.string().optional() }),
   attach_mindmap_image: MINDMAP_INPUTS.attach_mindmap_image.extend({ project: projectId, mapId: mapId, id: z.string().min(1), label: z.string().max(240).optional(), expectedDiskHash: diskHash.optional(), requestId: z.string().optional() }),
   detach_mindmap_image: MINDMAP_INPUTS.detach_mindmap_image.extend({ project: projectId, mapId: mapId, id: z.string().min(1), assetId: z.string().min(1), label: z.string().max(240).optional(), expectedDiskHash: diskHash.optional(), requestId: z.string().optional() }),
