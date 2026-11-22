@@ -9,13 +9,17 @@ Add or patch an ordinary card with presentation.contentFormat:"html", a plain ti
 
 export const EXPERIMENT_WRITING_GUIDANCE = `A single experiment may occupy the whole day. Before a long run, ask which sentence, figure, or table cell its outcome could change. Reuse the existing paper TODO at that point, or leave one small placeholder when the work has a clear place in the argument. Exploration can stay on a draft card. While the run is in progress, leave that placeholder alone. When evidence or the research decision changes, use the run artifact to draft the smallest update at the same location. For example, fill a pending cell with the verified numerator and denominator. If a run fails before evaluation, keep the cell pending and link the diagnostic from the same task. Polish the surrounding prose when the argument is ready.`;
 
+const CARD_PRESENTATION_GUIDANCE = `State the takeaway in one sentence a new reader can understand. Quantify changes against a named baseline on a stated sample. Use prose for a simple fact, a table for exact comparisons, or a labeled chart for a pattern. Give units, denominators, uncertainty and evidence gaps alongside the values. Keep essential color keys with the graphic and navigation hints beside their controls.`;
+
 export const PROJECT_DELIVERY_GUIDANCE = `Deliver useful structure early and refine it as work progresses. Choose the presentation that makes the project's direction, planned scope, known results, and remaining work quickest to understand.
 
 ${EXPERIMENT_WRITING_GUIDANCE}
 
 Mindmap structure: Use meaningful branching relationships in the project's own terms. Write concise prose cards, use child cards for distinct topics, and put supporting detail in collapsed Notes. Definitions, explanations, and conclusions belong in prose cards or Notes. For example, an Evaluation branch can have Dataset coverage, Method/model results, and Failure analysis children, with scoring details in Notes on the relevant card.
 
-Comparison tables: Use tables selectively for genuine two-dimensional comparisons. Give both axes meaningful roles, such as methods down rows and models across columns, with measured results at their intersections. Choose axes that make comparisons useful. Retain prose cards and branches for their explanatory and organizational roles. Let tables size to their contents. Set a fixed card width only for an intentional layout. For a Markdown table on an ordinary card, set presentation.contentFormat to "markdown" when adding or patching the card and verify the saved format.
+${CARD_PRESENTATION_GUIDANCE}
+
+Comparison tables: Use tables selectively for genuine two-dimensional comparisons. Give both axes meaningful roles, such as methods down rows and models across columns, with measured results at their intersections. For example, give tasks passed and tasks reached separate columns when the denominators differ. Let tables size to their contents. Set a fixed card width only for an intentional layout. For a Markdown table on an ordinary card, set presentation.contentFormat to "markdown" when adding or patching the card and verify the saved format.
 
 Visible incompleteness: Both the mindmap and manuscript should visibly reflect unfinished work. Preserve intended branches, sections, comparisons, table rows and columns, and figures while evidence arrives. Keep empty or explicitly pending result cells, unresolved questions, TODOs, and sentence placeholders beside the relevant argument. Fill entries as evidence becomes available. Preserve verified results and stable TODO identities during reorganization, and expose gaps reopened by scope changes.
 
@@ -46,6 +50,8 @@ export const MINDMAP_EDIT_GUIDANCE = `Use link-todo to bind an existing card or 
 
 /** Sent on native MCP initialize (excludes browser-only WebMCP session tools). */
 export const MCP_INSTRUCTIONS = `${INBOX_GUIDANCE}
+
+${CARD_PRESENTATION_GUIDANCE}
 
 Workflow: start with get_project_state (context, humanDecisions, instructions, skills). Use read_project_files / apply_project_edits with exact hashes for authored files (including TeX TODO wording/completion). Use get_mindmap (pass detail="outline", nodeIds, or ifRevision to save tokens) and apply_mindmap_edits with current revision for map cards. Keep visible cards concise (<=10-word title, <=80-word body or compact table/SVG), put reasoning/details and local script/data file paths in caption (collapsed Notes), use refs[] only for clickable links (web URLs, paper/map/wiki refs, manuscript figures — never local code/data files), leave cardWidth unset for prose cards, and mark failed/abandoned work progress="ditched". Respect human-removed cards as decisions (ask before recreating). Make the smallest requested change and report changed locations. ${MINDMAP_WRITING_REFERENCE}`;
 
