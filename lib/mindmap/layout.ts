@@ -1,12 +1,12 @@
 /**
- * Deterministic connected-tree layout via d3-hierarchy.
+ * Deterministic connected-tree contour layout for variable-size cards.
  * Card size hugs wrapped text up to NODE_WIDTH / ROOT_WIDTH.
  */
 
 import { markdownTableColumns } from "./markdown-table";
-import { normalizeCardWidth } from "./card-width";
+import { MIN_CARD_WIDTH, normalizeCardWidth } from "./card-width";
 import { MAX_HTML_CARD_LENGTH } from "./html-card";
-import { hierarchy, tree } from "d3-hierarchy";
+import { flextree } from "d3-flextree";
 
 import { indexMindmap } from "@/lib/mindmap-index";
 import type { Mindmap, MindmapNode } from "@/lib/types";
@@ -16,15 +16,10 @@ type Dimensions = { width: number; height: number };
 
 type Datum = { id: string; children: Datum[] };
 
-type SeparableTree = {
-  nodeSize(size: [number, number]): SeparableTree;
-  separation(fn: (a: { data: Datum }, b: { data: Datum }) => number): SeparableTree;
-  (root: ReturnType<typeof hierarchy<Datum>>): void;
-};
-
-/** Max card width for readable dense topics and TODOs. */
+/** Baseline width for a prose card. */
 export const NODE_WIDTH = 264;
 export const MAX_AUTO_TABLE_WIDTH = 900;
+const MAX_AUTO_PROSE_WIDTH = 480;
 /** Min one-line card height. */
 export const NODE_HEIGHT = 36;
 export const ROOT_WIDTH = 300;
@@ -60,6 +55,17 @@ function wrappedSize(text: string, maxInner: number, fontPx: number, linePx: num
     height += lines * linePx;
   }
   return { width, height };
+}
+
+/** Use room already occupied by a sibling when it saves at least two lines. */
+export function fitProseToSiblingWidth(node: MindmapNode, text: string | undefined, preferred: Dimensions, siblingMaxWidth: number): number {
+  const width = Math.min(siblingMaxWidth, MAX_AUTO_PROSE_WIDTH);
+  if (width <= preferred.width || node.cardWidth !== undefined || node.contentFormat === "html" ||
+      node.refs?.some(ref => ref.kind === "figure") || (node.contentFormat === "markdown" && markdownTableColumns(node.text))) {
+    return preferred.width;
+  }
+  const expanded = nodeDimensions({ ...node, cardWidth: width }, text);
+  return preferred.height - expanded.height >= 2 * DETAIL_LH ? width : preferred.width;
 }
 
 export function nodeDimensions(node: MindmapNode, displayText?: string): Dimensions {
@@ -105,9 +111,21 @@ export function nodeDimensions(node: MindmapNode, displayText?: string): Dimensi
     ? wrappedSize(detailText, maxInner, node.todoId ? TODO_BODY_PX : DETAIL_PX, node.todoId ? TODO_BODY_LH : DETAIL_LH)
     : { width: 0, height: 0 };
   const naturalInnerW = Math.max(title.width, naturalDetail.width);
-  const width = cardWidth ?? (wideTable || imageCard
-    ? Math.min(maxW, Math.max(baseMaxW, Math.ceil(naturalInnerW + padX)))
-    : baseMaxW);
+  let width = cardWidth ?? baseMaxW;
+  if (cardWidth === undefined) {
+    if (wideTable || imageCard) {
+      width = Math.min(maxW, Math.max(baseMaxW, Math.ceil(naturalInnerW + padX)));
+    } else if (tableColumns === 0) {
+      const textHeight = title.height + naturalDetail.height;
+      const compact = Math.max(MIN_CARD_WIDTH, Math.ceil(naturalInnerW + padX));
+      // A tall paragraph can trade width for fewer lines. Hard line breaks alone
+      // do not benefit from extra width, so also bound it by the longest line.
+      const longestLine = Math.max(titleLine.length * titlePx * CHAR,
+        detailLines.reduce((max, line) => Math.max(max, line.length), 0) * DETAIL_PX * CHAR);
+      const balanced = Math.sqrt(baseMaxW * (textHeight + padY) * 1.35);
+      width = Math.max(compact, Math.min(MAX_AUTO_PROSE_WIDTH, Math.ceil(longestLine + padX), Math.round(balanced)));
+    }
+  }
   const actualInner = Math.max(titlePx * CHAR, width - padX);
   const actualTitle = wrappedSize(titleLine || "Untitled topic", actualInner, titlePx, titleLh);
   const detail = detailText
@@ -123,116 +141,101 @@ export function nodeDimensions(node: MindmapNode, displayText?: string): Dimensi
   return { width, height };
 }
 
+/** Width groups follow saved relationships, including currently collapsed cards. */
+export function groupedCardWidths(
+  mindmap: Mindmap,
+  naturalWidths: ReadonlyMap<string, number>,
+  mode: "individual" | "siblings" | "depth" = "individual",
+): Map<string, number> {
+  const widths = new Map(naturalWidths);
+  if (mode === "individual") return widths;
+  const { nodeById } = indexMindmap(mindmap);
+  const depthById = new Map<string, number>();
+  const depthOf = (id: string, path = new Set<string>()): number | undefined => {
+    const known = depthById.get(id);
+    if (known !== undefined) return known;
+    if (path.has(id)) return;
+    const node = nodeById.get(id);
+    if (!node) return;
+    if (id === mindmap.rootId) { depthById.set(id, 0); return 0; }
+    if (!node.parentId) return;
+    const nextPath = new Set(path).add(id);
+    const parentDepth = depthOf(node.parentId, nextPath);
+    if (parentDepth === undefined) return;
+    depthById.set(id, parentDepth + 1);
+    return parentDepth + 1;
+  };
+  const groups = new Map<string, string[]>();
+  for (const node of mindmap.nodes) {
+    const depth = mode === "depth" ? depthOf(node.id) : undefined;
+    const group = mode === "siblings"
+      ? node.id !== mindmap.rootId && node.parentId && nodeById.has(node.parentId) ? `parent:${node.parentId}` : `card:${node.id}`
+      : depth !== undefined ? `depth:${depth}` : `card:${node.id}`;
+    const members = groups.get(group) || [];
+    members.push(node.id);
+    groups.set(group, members);
+  }
+  for (const members of groups.values()) {
+    const maximum = Math.max(0, ...members.map(id => naturalWidths.get(id) || 0));
+    for (const id of members) if (maximum > 0) widths.set(id, maximum);
+  }
+  return widths;
+}
+
 export function layoutMindmapTree(
   mindmap: Mindmap,
   sizes: Map<string, Dimensions>,
   collapsedIds: ReadonlySet<string> = new Set(),
 ): { positions: Map<string, Point>; reachable: Set<string>; connected: Set<string> } {
   const { nodeById, childrenByParent } = indexMindmap(mindmap);
-  const toDatum = (id: string, path = new Set<string>()): Datum => {
-    const node = nodeById.get(id);
-    if (path.has(id)) return { id, children: [] };
-    const nextPath = new Set(path);
-    nextPath.add(id);
-    const kids = node && !collapsedIds.has(id) ? (childrenByParent.get(id) || []) : [];
-    return { id, children: kids.map((child) => toDatum(child.id, nextPath)) };
-  };
-  const rootId = nodeById.has(mindmap.rootId)
-    ? mindmap.rootId
-    : ([...nodeById.values()].find((node) => node.parentId === null)?.id || mindmap.nodes[0]?.id || "root");
-  const root = hierarchy(toDatum(rootId), (d) => d.children);
-  const layout = tree<Datum>().nodeSize([1, 1]) as unknown as SeparableTree;
-  layout.separation((a, b) => {
-    const ha = sizes.get(a.data.id)?.height ?? NODE_HEIGHT;
-    const hb = sizes.get(b.data.id)?.height ?? NODE_HEIGHT;
-    return (ha + hb) / 2 + VERTICAL_GAP;
-  });
-  layout(root);
   const positions = new Map<string, Point>();
   const reachable = new Set<string>();
-  const alignedX = new Map<number, number>([[0, 80]]);
-  for (let depth = 1; depth <= root.height; depth += 1) {
-    const previousWidth = depth === 1 ? ROOT_WIDTH : NODE_WIDTH;
-    alignedX.set(depth, (alignedX.get(depth - 1) || 80) + previousWidth + HORIZONTAL_GAP);
-  }
-  root.eachBefore((node) => {
-    const size = sizes.get(node.data.id) || { width: NODE_WIDTH, height: NODE_HEIGHT };
-    const parentPosition = node.parent ? positions.get(node.parent.data.id) : undefined;
-    const parentWidth = node.parent ? sizes.get(node.parent.data.id)?.width ?? NODE_WIDTH : 0;
-    positions.set(node.data.id, {
-      x: Math.max(24, Math.round(parentPosition
-        ? Math.max(alignedX.get(node.depth) || 80, parentPosition.x + parentWidth + HORIZONTAL_GAP)
-        : 80)),
-      y: Math.round(node.x - size.height / 2 + 88),
-    });
-    reachable.add(node.data.id);
-  });
-  groupSiblingBranchesVertically(root, positions, sizes);
-  const minimumY = Math.min(...[...positions.values()].map((point) => point.y), 24);
-  if (minimumY < 24) {
-    for (const [id, point] of positions) positions.set(id, { ...point, y: point.y + 24 - minimumY });
-  }
   const connected = new Set<string>();
-  const visitConnected = (id: string, path = new Set<string>()) => {
-    if (path.has(id) || !nodeById.has(id)) return;
+  const rootId = nodeById.has(mindmap.rootId)
+    ? mindmap.rootId
+    : ([...nodeById.values()].find((node) => node.parentId === null)?.id || mindmap.nodes[0]?.id);
+  if (!rootId) return { positions, reachable, connected };
+
+  const toDatum = (id: string): Datum | undefined => {
+    if (!nodeById.has(id) || reachable.has(id)) return;
+    reachable.add(id);
+    const children = collapsedIds.has(id) ? [] : (childrenByParent.get(id) || [])
+      .flatMap(child => {
+        const datum = toDatum(child.id);
+        return datum ? [datum] : [];
+      });
+    return { id, children };
+  };
+  const sizeOf = (id: string) => sizes.get(id) || { width: NODE_WIDTH, height: NODE_HEIGHT };
+  // Flextree packs real rectangular contours. Its depth dimension is the
+  // horizontal card width plus the exact parent-to-child clearance.
+  const layout = flextree<Datum>({
+    children: datum => datum.children,
+    nodeSize: node => {
+      const size = sizeOf(node.data.id);
+      return [size.height, size.width + HORIZONTAL_GAP];
+    },
+    spacing: VERTICAL_GAP,
+  });
+  const root = layout.hierarchy(toDatum(rootId)!);
+  layout(root);
+  let minimumY = 24;
+  for (const node of root.nodes) {
+    const point = { x: node.y + 80, y: node.x - sizeOf(node.data.id).height / 2 + 88 };
+    positions.set(node.data.id, point);
+    minimumY = Math.min(minimumY, point.y);
+  }
+  if (minimumY < 24) {
+    for (const point of positions.values()) point.y += 24 - minimumY;
+  }
+
+  // Full-graph membership keeps collapsed descendants out of orphan recovery.
+  const pending = [rootId];
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (connected.has(id) || !nodeById.has(id)) continue;
     connected.add(id);
-    const nextPath = new Set(path);
-    nextPath.add(id);
-    for (const child of childrenByParent.get(id) || []) visitConnected(child.id, nextPath);
-  };
-  visitConnected(rootId);
+    for (const child of childrenByParent.get(id) || []) pending.push(child.id);
+  }
   return { positions, reachable, connected };
-}
-
-type VerticalExtent = { top: number; bottom: number };
-
-/**
- * Give every sibling subtree its own vertical band in saved sibling order.
- * This keeps every parent's cards visually grouped even when neighboring
- * branches contain cards with very different measured heights.
- */
-function groupSiblingBranchesVertically(
-  root: ReturnType<typeof hierarchy<Datum>>,
-  positions: Map<string, Point>,
-  sizes: Map<string, Dimensions>,
-): void {
-  const shiftBranch = (node: typeof root, amount: number) => {
-    for (const descendant of node.descendants()) {
-      const point = positions.get(descendant.data.id);
-      if (point) point.y += amount;
-    }
-  };
-
-  const placeBranch = (node: typeof root): VerticalExtent => {
-    const point = positions.get(node.data.id)!;
-    const size = sizes.get(node.data.id) || { width: NODE_WIDTH, height: NODE_HEIGHT };
-    const children = node.children || [];
-    let previousBottom: number | undefined;
-    let childrenTop = Number.POSITIVE_INFINITY;
-    let childrenBottom = Number.NEGATIVE_INFINITY;
-
-    for (const child of children) {
-      let extent = placeBranch(child);
-      const shift = previousBottom === undefined
-        ? 0
-        : Math.max(0, previousBottom + VERTICAL_GAP - extent.top);
-      if (shift > 0) {
-        shiftBranch(child, shift);
-        extent = { top: extent.top + shift, bottom: extent.bottom + shift };
-      }
-      previousBottom = extent.bottom;
-      childrenTop = Math.min(childrenTop, extent.top);
-      childrenBottom = Math.max(childrenBottom, extent.bottom);
-    }
-
-    if (children.length > 0) {
-      point.y = Math.round((childrenTop + childrenBottom - size.height) / 2);
-    }
-    return {
-      top: Math.min(point.y, childrenTop),
-      bottom: Math.max(point.y + size.height, childrenBottom),
-    };
-  };
-
-  placeBranch(root);
 }

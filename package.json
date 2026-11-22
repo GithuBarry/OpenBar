@@ -55,7 +55,7 @@
     "@xyflow/react": "^12.11.6",
     "clsx": "^2.1.1",
     "codemirror-lang-latex": "^0.4.1",
-    "d3-hierarchy": "3.1.2",
+    "d3-flextree": "2.1.2",
     "dompurify": "3.4.18",
     "execa": "^10.2.1",
     "fflate": "^0.8.3",
@@ -84,6 +84,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@types/d3-flextree": "2.1.4",
     "@types/mdast": "^4.0.4",
     "@types/node": "^22.20.0",
     "@types/react": "^19.2.17",

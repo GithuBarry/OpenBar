@@ -103,6 +103,8 @@ import {
   NODE_WIDTH,
   MAX_AUTO_TABLE_WIDTH,
   VERTICAL_GAP,
+  fitProseToSiblingWidth,
+  groupedCardWidths,
   layoutMindmapTree,
   nodeDimensions,
 } from "@/lib/mindmap/layout";
@@ -175,6 +177,7 @@ type MindmapRemotePushResult = Awaited<ReturnType<typeof pushBrowserProject>>;
 
 type Point = { x: number; y: number };
 type Dimensions = { width: number; height: number };
+type CardMeasurement = Dimensions & { naturalWidth?: number; naturalKey?: string };
 type MindmapViewMode = "map" | "changes";
 type InspectorSectionId = "more";
 type InlineCardDraft = Pick<MindmapCardRecoveryDraft, "text" | "contentFormat" | "selection">;
@@ -1237,11 +1240,11 @@ export function MindmapEditor({
     if (readOnly) return;
     dispatch({ type: "patch-node", id, patch: { cardWidth: width } });
   }, [dispatch, previewCardWidth, readOnly]);
-  const [measuredCards, setMeasuredCards] = useState<Map<string, Dimensions>>(() => new Map());
+  const [measuredCards, setMeasuredCards] = useState<Map<string, CardMeasurement>>(() => new Map());
   useEffect(() => { setMeasuredCards(new Map()); }, [effectiveFontSize]);
-  const pendingMeasurements = useRef(new Map<string, Dimensions>());
+  const pendingMeasurements = useRef(new Map<string, CardMeasurement>());
   const measurementFrame = useRef<number | null>(null);
-  const measureCard = useCallback((id: string, size: Dimensions) => {
+  const measureCard = useCallback((id: string, size: CardMeasurement) => {
     // Virtualized cards report zero as they detach. Keep their last real size.
     if (size.width <= 0 || size.height <= 0) return;
     pendingMeasurements.current.set(id, size);
@@ -1254,7 +1257,8 @@ export function MindmapEditor({
         let next = current;
         for (const [nodeId, dimensions] of batch) {
           const previous = current.get(nodeId);
-          if (previous && Math.abs(previous.width - dimensions.width) < .5 && Math.abs(previous.height - dimensions.height) < .5) continue;
+          if (previous && Math.abs(previous.width - dimensions.width) < .5 && Math.abs(previous.height - dimensions.height) < .5
+            && previous.naturalWidth === dimensions.naturalWidth && previous.naturalKey === dimensions.naturalKey) continue;
           if (next === current) next = new Map(current);
           next.set(nodeId, dimensions);
         }
@@ -2865,6 +2869,7 @@ export function MindmapEditor({
         <div className={cn("p-glass-sm", paperStyles.toolbar, styles.projectBar)} role="group" aria-label="Map settings">
           {header}
           <div className={styles.fontTools}><MindmapFontSize value={effectiveFontSize} disabled={readOnly}
+            widthMode={mindmap.cardWidthMode ?? "individual"} onWidthModeChange={cardWidthMode => dispatch({ type: "set-card-width-mode", cardWidthMode })}
             onPreview={setPreviewFontSize}
             onChange={fontSize => dispatch({ type: "set-font-size", fontSize })} /></div>
           <div className={styles.toolbarActions}>
@@ -2900,6 +2905,7 @@ export function MindmapEditor({
                     />
                   </label>
               <MindmapFontSizeSlider value={effectiveFontSize} disabled={readOnly}
+                widthMode={mindmap.cardWidthMode ?? "individual"} onWidthModeChange={cardWidthMode => dispatch({ type: "set-card-width-mode", cardWidthMode })}
                 onPreview={setPreviewFontSize}
                 onChange={fontSize => dispatch({ type: "set-font-size", fontSize })} />
               <button type="button" className={styles.optionRow} aria-pressed={selectMultiple} onClick={() => { setSelectMultiple((value) => !value); setMapSettingsOpen(false); setCardMenuOpen(false); }}><CheckSquare size={15} />Select multiple{selectMultiple && <Check size={14} />}</button>
@@ -3879,7 +3885,7 @@ function CanvasNode({
   onRead: () => void;
   dimensions: Dimensions;
   fontSize: number;
-  onMeasure: (id: string, size: Dimensions) => void;
+  onMeasure: (id: string, size: CardMeasurement) => void;
   onResizePreview: (width: number | undefined) => void;
   onResizeCommit: (width: number | undefined) => void;
   orphan: boolean;
@@ -3917,6 +3923,7 @@ function CanvasNode({
     : undefined;
   const [imageDropActive, setImageDropActive] = useState(false);
   const fitTable = node.cardWidth === undefined && node.contentFormat === "markdown" && node.tableLayout !== "scroll" && markdownTableColumns(node.text) > 0;
+  const naturalTableSize = useRef<{ naturalWidth: number; naturalKey: string } | undefined>(undefined);
   useLayoutEffect(() => {
     const card = cardRef.current;
     if (!card || !fitTable || editing) return;
@@ -3929,15 +3936,16 @@ function CanvasNode({
       width = Math.max(width, table.offsetWidth + card.offsetWidth - wrapper.clientWidth + 1);
     }
     width = Math.min(MAX_AUTO_TABLE_WIDTH, width);
-    card.style.width = `${width}px`;
-    onMeasure(node.id, { width, height: card.offsetHeight });
+    naturalTableSize.current = { naturalWidth: width, naturalKey: naturalTableKey(node) };
+    card.style.width = `${dimensions.width}px`;
+    onMeasure(node.id, { width: dimensions.width, height: card.offsetHeight, ...naturalTableSize.current });
   }, [fitTable, editing, node, fontSize, onMeasure]);
   useEffect(() => {
     const card = cardRef.current;
     if (!card) return;
     const observer = new ResizeObserver(([entry]) => {
       const box = entry?.borderBoxSize?.[0];
-      onMeasure(node.id, { width: box?.inlineSize ?? card.offsetWidth, height: box?.blockSize ?? card.offsetHeight });
+      onMeasure(node.id, { width: box?.inlineSize ?? card.offsetWidth, height: box?.blockSize ?? card.offsetHeight, ...naturalTableSize.current });
     });
     observer.observe(card);
     return () => observer.disconnect();
@@ -4437,29 +4445,51 @@ function ToolbarButton({
   );
 }
 
+function naturalTableKey(node: MindmapNode): string {
+  return JSON.stringify([node.title, node.text, node.contentFormat, node.tableLayout]);
+}
+
 function createCanvasLayout(
   mindmap: Mindmap,
   extraHeight?: Map<string, number>,
   collapsedIds = new Set<string>(),
   paperState?: ProjectState | null,
-  measuredCards?: Map<string, Dimensions>,
+  measuredCards?: Map<string, CardMeasurement>,
 ): CanvasLayout {
   const safeNodes = Array.isArray(mindmap?.nodes) ? mindmap.nodes : [];
   const visibleNodes = safeNodes.map(withAgentTableFormat);
   const { nodeById, childrenByParent: children } = indexMindmap({ ...mindmap, nodes: visibleNodes });
   const displayTextById = new Map(visibleNodes.map((node) => [node.id, paperTodoText(node, paperState)]));
   const dimensions = new Map<string, Dimensions>();
+  const naturalWidths = new Map<string, number>();
+  const preferredSizes = new Map<string, Dimensions>();
   for (const node of visibleNodes) {
     const size = nodeDimensions(node, displayTextById.get(node.id));
-    const extra = extraHeight?.get(node.id) || 0;
+    preferredSizes.set(node.id, size);
     const measured = measuredCards?.get(node.id);
     const fittedTable = node.cardWidth === undefined && node.contentFormat === "markdown" && node.tableLayout !== "scroll" && markdownTableColumns(node.text) > 0;
-    const widthMatches = measured && (fittedTable
-      ? measured.width <= MAX_AUTO_TABLE_WIDTH && measured.width >= NODE_WIDTH
-      : Math.abs(measured.width - size.width) < 1);
-    dimensions.set(node.id, measured && widthMatches
-      ? { width: measured.width, height: measured.height }
-      : { ...size, height: size.height + extra });
+    const naturalWidth = fittedTable && measured?.naturalKey === naturalTableKey(node) && measured.naturalWidth
+      ? measured.naturalWidth : size.width;
+    naturalWidths.set(node.id, naturalWidth);
+  }
+  const widths = groupedCardWidths({ ...mindmap, nodes: visibleNodes }, naturalWidths, mindmap.cardWidthMode);
+  if (!mindmap.cardWidthMode || mindmap.cardWidthMode === "individual") {
+    const siblingWidths = groupedCardWidths({ ...mindmap, nodes: visibleNodes }, naturalWidths, "siblings");
+    for (const node of visibleNodes) {
+      const preferred = preferredSizes.get(node.id)!;
+      if (naturalWidths.get(node.id) === preferred.width) {
+        widths.set(node.id, fitProseToSiblingWidth(node, displayTextById.get(node.id), preferred, siblingWidths.get(node.id)!));
+      }
+    }
+  }
+  for (const node of visibleNodes) {
+    const width = widths.get(node.id)!;
+    const size = nodeDimensions({ ...node, cardWidth: width }, displayTextById.get(node.id));
+    const measured = measuredCards?.get(node.id);
+    const extra = extraHeight?.get(node.id) || 0;
+    dimensions.set(node.id, measured && Math.abs(measured.width - width) < 1
+      ? { width, height: measured.height }
+      : { width, height: size.height + extra });
   }
   const { positions, reachable, connected } = layoutMindmapTree(mindmap, dimensions, collapsedIds);
   const recoveryAnchorId = positions.has(mindmap.rootId)
@@ -4471,6 +4501,10 @@ function createCanvasLayout(
     const size = dimensions.get(id) || { width: NODE_WIDTH, height: NODE_HEIGHT };
     return point ? point.y + size.height : 0;
   }));
+  const orphanColumnWidths = [0, 0, 0];
+  for (const [index, node] of orphanNodes.entries()) {
+    orphanColumnWidths[index % 3] = Math.max(orphanColumnWidths[index % 3], dimensions.get(node.id)?.width || NODE_WIDTH);
+  }
   const orphanRowTops: number[] = [];
   const orphanRowHeights: number[] = [];
   for (const [index, node] of orphanNodes.entries()) {
@@ -4485,7 +4519,7 @@ function createCanvasLayout(
     orphanRowTops[row] = rowTop;
     orphanRowHeights[row] = Math.max(orphanRowHeights[row] || 0, size.height);
     positions.set(node.id, {
-      x: 24 + column * (NODE_WIDTH + HORIZONTAL_GAP),
+      x: 24 + orphanColumnWidths.slice(0, column).reduce((sum, width) => sum + width + HORIZONTAL_GAP, 0),
       y: rowTop,
     });
   }

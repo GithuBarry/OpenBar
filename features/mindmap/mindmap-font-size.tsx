@@ -7,6 +7,7 @@ import { ChoiceButtons } from "@/components/choice-buttons";
 import { FastTooltip } from "@/components/fast-tooltip";
 import { AnchoredPop } from "@/components/pop";
 import { DEFAULT_MINDMAP_FONT_SIZE } from "@/lib/mindmap/mindmap";
+import type { MindmapCardWidthMode } from "@/lib/types";
 import styles from "./mindmap-font-size.module.css";
 
 const MIN_SIZE = 10;
@@ -18,10 +19,24 @@ const PRESETS = [
   { value: 16, label: "Large" },
 ] as const;
 
-type SizeControlProps = { value: number; disabled?: boolean; onChange: (value: number) => void; onPreview?: (value: number | null) => void };
+const WIDTH_OPTIONS = [
+  { value: "individual", label: "Individual" },
+  { value: "siblings", label: "Siblings" },
+  { value: "depth", label: "Same depth" },
+] as const;
+
+type SizeControlProps = {
+  widthMode: MindmapCardWidthMode;
+  onWidthModeChange: (mode: MindmapCardWidthMode) => void;
+  value: number;
+  disabled?: boolean;
+  onChange: (value: number) => void;
+  onPreview?: (value: number | null) => void;
+};
 const clampSize = (value: number) => Math.max(MIN_SIZE, Math.min(MAX_SIZE, Math.round(value)));
 
-export function MindmapFontSize({ value, disabled = false, onChange, onPreview }: SizeControlProps) {
+export function MindmapFontSize(props: SizeControlProps) {
+  const { value, onPreview } = props;
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   return <div className={styles.control}>
@@ -31,12 +46,12 @@ export function MindmapFontSize({ value, disabled = false, onChange, onPreview }
       </button>
     </FastTooltip>
     <AnchoredPop open={open} anchorRef={anchor} onDismiss={() => { onPreview?.(null); setOpen(false); }} className={styles.popover}>
-      <MindmapFontSizeSlider value={value} disabled={disabled} onChange={onChange} onPreview={onPreview} />
+      <MindmapFontSizeSlider {...props} />
     </AnchoredPop>
   </div>;
 }
 
-export function MindmapFontSizeSlider({ value, disabled = false, onChange, onPreview }: SizeControlProps) {
+export function MindmapFontSizeSlider({ value, disabled = false, onChange, onPreview, widthMode, onWidthModeChange }: SizeControlProps) {
   const [draft, setDraft] = useState(String(value));
   const currentValue = useRef(value);
   useEffect(() => {
@@ -58,7 +73,7 @@ export function MindmapFontSizeSlider({ value, disabled = false, onChange, onPre
   const size = Number.isFinite(parsed) ? clampSize(parsed) : value;
   const step = (direction: number) => update(size + direction);
 
-  return <section className={styles.appearance} aria-label="Mindmap text appearance">
+  return <section className={styles.appearance} aria-label="Mindmap appearance settings">
     <div className={styles.heading}>
       <h3>Card text</h3>
       <button type="button" disabled={disabled || size === DEFAULT_SIZE} onClick={() => update(DEFAULT_SIZE)} aria-label="Reset card text size"><RotateCcw size={12} />Reset</button>
@@ -105,5 +120,7 @@ export function MindmapFontSizeSlider({ value, disabled = false, onChange, onPre
         onKeyUp={event => { if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"].includes(event.key)) update(Number(event.currentTarget.value)); }} />
     </div>
     <ChoiceButtons label="Card text size presets" value={size} options={PRESETS} onChange={update} disabled={disabled} />
+    <div className={styles.heading}><h3>Card width</h3></div>
+    <ChoiceButtons label="Card width" value={widthMode} options={WIDTH_OPTIONS} onChange={onWidthModeChange} disabled={disabled} />
   </section>;
 }

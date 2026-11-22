@@ -81,7 +81,7 @@ const mindmapCautionInput = z.strictObject({
 const MINDMAP_PRESENTATION_INPUT = z.strictObject({
   contentFormat: z.enum(["plain", "markdown", "tex", "html"]).optional(),
   tableLayout: z.enum(["wide", "scroll"]).optional(),
-  cardWidth: z.number().int().min(MIN_CARD_WIDTH).max(MAX_CARD_WIDTH).nullable().describe("Card width in canvas CSS pixels. Leave unset (auto ~264px) for ordinary prose cards; only set wider for wide tables or figures. null restores automatic width.").optional(),
+  cardWidth: z.number().int().min(MIN_CARD_WIDTH).max(MAX_CARD_WIDTH).nullable().describe("Preferred card width in canvas CSS pixels. Automatic sizing fits content. Sibling or depth alignment uses the widest card in the group. Set null to restore automatic sizing.").optional(),
   shape: z.enum(["branch", "leaf", "callout"]).optional(),
   color: z.string().optional(),
   progress: z.union([z.number().int().min(0).max(6), z.literal("ditched")]).nullable().describe("Map-local progress from 0 to 6, ditched for the yellow circle-slash status, or null to hide.").optional(),
