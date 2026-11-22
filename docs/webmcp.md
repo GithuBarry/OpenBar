@@ -418,10 +418,11 @@ portable browser bridge works with ordinary page-evaluation tooling.
 Use a configured bearer token for authenticated MCP access. The product
 instructions at `/llms.txt` and `/agents` describe the connection contract.
 
-Answered requests display as Q&A. Their saved request text retains its inbox
-identity, while the answered display omits the leading mention marker. Agents
-may add Agent draft child answer cards. Acknowledging the request publishes
-those answers together, each with its own unread red dot that clears when read.
+Write the answer so a new reader can understand it alongside its neighboring cards.
+Remove the mention from visible copy. Keep a question only if a concise Q&A helps
+explain the answer. When replacing a map-owned ask, preserve its original wording
+in collapsed Notes in the same patch. Acknowledging the request publishes its
+linked replies together, each with an unread dot that clears when read.
 
 Card width is map-owned presentation. Drag the lower-right resize grip to set
 it, or use `presentation.cardWidth` (180–1200 canvas pixels) through map edits.

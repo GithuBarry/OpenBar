@@ -48,10 +48,12 @@ export type AgentReply = {
 
 export const AGENT_INBOX_ACTOR_HEADER = 'X-OpenBar-Actor'
 
-export const INBOX_GUIDANCE = 'At session start, call check_inbox after get_project_state; also call it on "tick", "check updates", "check inbox", or "sync" (before Git sync). Handle fast-tracked @stat ("agent STAT") requests first. Reply on the linked card or Agent draft children with concise visible prose, move any map-owned ask into caption (collapsed Notes) in the same patch (keeping one copy), then call acknowledge_inbox with the exact notification IDs. Repeated IDs are the same request; edited text gets a new ID. Acknowledgement records handling only; paper TODO completion is a separate decision.'
+export const ANSWER_CARD_GUIDANCE = 'Remove the @agent or @stat marker from the reader-facing answer. Write for someone who never saw the conversation, using the terms and style of neighboring cards. Replace or rephrase the visible question, or keep a concise Q&A when the question helps explain the answer. Preserve the original wording once in its owning paper or map. When replacing a map-owned ask, move it into caption (collapsed Notes) in the same patch and retain existing notes.'
+
+export const INBOX_GUIDANCE = `At session start, call check_inbox after get_project_state; also call it on "tick", "check updates", "check inbox", or "sync" (before Git sync). Handle fast-tracked @stat ("agent STAT") requests first. Reply on the linked card or Agent draft children. ${ANSWER_CARD_GUIDANCE} After saving the reply, call acknowledge_inbox with the exact notification IDs. Repeated IDs identify the same request. Edited request text receives a new ID. Paper TODO completion is a separate decision.`
 
 export const INBOX_TOOL_DESCRIPTIONS = {
-  check_inbox: 'List pending human @agent and fast-tracked @stat requests with card links (fast-tracked first). Set includeAcknowledged=true for handled history.',
+  check_inbox: 'List pending human @agent and fast-tracked @stat requests with card links (fast-tracked first). For reply wording, see the bundled mindmap-writing skill. Set includeAcknowledged=true for handled history.',
   acknowledge_inbox: 'Mark exact notification IDs as handled after replying (set acknowledged=false to reopen). Preserves card content and paper TODO completion.',
 }
 
