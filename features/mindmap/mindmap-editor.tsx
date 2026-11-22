@@ -27,7 +27,7 @@ import { RequestRevision } from "./request-revision";
 import { PaperTodoPicker } from "./paper-todo-picker";
 import { CardLinkButton } from "./card-link-button";
 import { useAgentReplies } from "./use-agent-replies";
-import { agentReplyContentHash, visibleAgentAnswer } from "@/lib/research/agent-reply-state";
+import { agentReplyContentHash, visibleAgentAnswer, visibleAgentTitle } from "@/lib/research/agent-reply-state";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useTransition, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
@@ -3939,7 +3939,7 @@ function CanvasNode({
     return () => observer.disconnect();
   }, [node.id, onMeasure]);
   const { title, body } = cardContent;
-  const displayTitle = visibleAgentAnswer(title, answeredRequest);
+  const displayTitle = visibleAgentTitle(title, answeredRequest);
   const displayBody = visibleAgentAnswer(body, answeredRequest);
   const tags = node.tags || [];
   const initial = node.todoId ? `${title}${body ? `\n${body}` : ""}`.trim() : editableCardText(node);

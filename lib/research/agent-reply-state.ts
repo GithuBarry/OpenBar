@@ -56,6 +56,11 @@ export function answeredAgentRequests(
   return requests
 }
 
+/** Keep the stored subject or question visible after a reply. */
+export function visibleAgentTitle(text: string, question?: string): string {
+  return question ? cleanAgentReplyDisplay(text) : text
+}
+
 /** Fold only lines that match an explicitly tagged ask in the recorded request. */
 export function visibleAgentAnswer(text: string, question?: string): string {
   if (!question) return text
