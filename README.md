@@ -1,10 +1,15 @@
 # OpenBar
 
-A research workbench where you and your agent share one view of a project.
-Keep the LaTeX manuscript, mindmaps, notes, and instructions in a single
-repository so both sides stay aligned on open work and reach each other on the
-canvas, using your existing coding or browser agent over MCP or WebMCP with no
-LLM provider keys.
+OpenBar is my research UI. 
+
+It's a research workbench where you and your agent share 
+one view of a project. Keep the LaTeX manuscript, mindmaps, experiment results, and 
+working philosophy in a place so both sides stay aligned on the bigger picture 
+and the detailed progress, and grab each other on the canvas when needed.
+
+It optimizes for both user experience (UX) and agent experience (AX) 
+and holds minimal states outside of an Overleaf-style git repo.
+
 
 | Map the research | Draft the paper |
 | --- | --- |
@@ -19,13 +24,11 @@ LLM provider keys.
   measurements fill them in. Includes multi-file LaTeX editing with file
   folding, a companion reader, PDF preview, `.bib` editing and reference
   pasting, citation completion, and Overleaf Git sync.
-- **Keep agent-heavy research legible on mindmaps.** Agents produce runs,
-  ablations, and notes faster than chat logs or loose folders stay easy to
-  follow. Organize hypotheses, findings, dead ends, and synced manuscript TODOs
-  across a Primary map (in the tree or waiting in Unplaced) and optional
-  secondary views, with short summaries on cards, detail tucked into collapsed
-  notes, and rolled-up TODO counts, status markers, priorities, and labels
-  showing where each thread stands.
+- **Keep agent-heavy research legible on mindmaps.** Agents are fast and write a lot. 
+  Mindmaps compress that output logarithmically: hypotheses, findings, dead ends, and 
+  synced manuscript TODOs sit as concise expressive cards that branch into child cards and 
+  collapsed notes, keeping exploration sublinear while rolled-up TODO counts, 
+  status markers, priorities, and labels show where each thread stands.
 - **Present results in a form others can scan.** Organize findings into
   structured branches with inline tables, attached figures, and compact SVG
   charts, or build focused secondary maps over selected manuscript TODOs when
