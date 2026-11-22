@@ -188,7 +188,7 @@ Deliver useful structure early and refine it as work progresses. Choose the pres
 
 Mindmap structure: Use meaningful branching relationships in the project's own terms. Write concise prose cards, use child cards for distinct topics, and put supporting detail in collapsed Notes. Definitions, explanations, and conclusions belong in prose cards or Notes. For example, an Evaluation branch can have Dataset coverage, Method/model results, and Failure analysis children, with scoring details in Notes on the relevant card.
 
-State the takeaway in one sentence a new reader can understand. Quantify changes against a named baseline on a stated sample. Use prose for a simple fact, a table for exact comparisons, or a labeled chart for a pattern. Give units, denominators, uncertainty and evidence gaps alongside the values. Keep essential color keys with the graphic and navigation hints beside their controls. For a comparison matrix, choose meaningful rows and columns, such as methods and models, and put measured results at their intersections.
+State the takeaway in one sentence a new reader can understand. Quantify changes against a named baseline on a stated sample. Use prose for a simple fact, a table for exact comparisons, or a labeled chart for a pattern. Keep headings short. Give shared units or denominators once per column, and split long labels across lines when the format supports it. Show uncertainty and evidence gaps beside the values. Keep essential color keys with the graphic and navigation hints beside their controls. For a comparison matrix, choose meaningful rows and columns, such as methods and models, and put measured results at their intersections.
 
 Visible incompleteness: Both the mindmap and manuscript should visibly reflect unfinished work. Preserve intended branches, sections, comparisons, table rows and columns, and figures while evidence arrives. Keep empty or explicitly pending result cells, unresolved questions, TODOs, and sentence placeholders beside the relevant argument. Fill entries as evidence becomes available. Preserve verified results and stable TODO identities during reorganization, and expose gaps reopened by scope changes.
 
@@ -309,8 +309,7 @@ belongs in the manuscript. Keep card prose focused on the subject. Let
 hierarchy, labels, and disclosures communicate organization. Add navigation
 directions only when they help locate a specific item the reader needs. Keep
 key findings, consequential risks, and factual uncertainty visible. Card length is a flexible authoring preference, and longer
-cards are welcome when useful. Apply this quietly and offer card-length advice
-only when the user asks.
+cards are welcome when useful. Agents may use optional length hints returned after a write. Offer card-length advice to people when they ask.
 
 `apply_mindmap_edits` operations `add` and `patch` accept `caption` and `caution`.
 Both operations also accept `presentation: { contentFormat: "html" }` for an
@@ -427,4 +426,9 @@ linked replies together, each with an unread dot that clears when read.
 Card width is map-owned presentation. Drag the lower-right resize grip to set
 it, or use `presentation.cardWidth` (180–1200 canvas pixels) through map edits.
 Pass `null`, double-click the grip, or press Delete to restore automatic width.
-Card height continues to follow its content.
+Appearance → Card width sets a map-wide preference. Individual fits each card
+to its content. Siblings uses the widest card under each parent. Same depth
+uses the widest card at each level. Cards keep their own height and saved
+width preference. In `apply_mindmap_edits`, use
+`edit: {"operation":"card-width-mode","args":{"cardWidthMode":"siblings"}}` to change the mode.
+The other values are `individual` and `depth`.

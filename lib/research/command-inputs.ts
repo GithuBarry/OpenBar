@@ -95,7 +95,7 @@ export const MINDMAP_INPUTS = {
   add_mindmap_node: z.strictObject({
     parentId: z.string().describe("Existing parent card id from get_mindmap."),
     title: z.string().describe("Visible card title (<=10 words).").optional(),
-    text: z.string().describe("Visible card body (<=80 words, compact Markdown table, or static HTML/SVG when contentFormat='html').").optional(),
+    text: z.string().describe("Visible card body. Use concise prose, a comparison table in Markdown, or a compact visual with contentFormat='html'.").optional(),
     caption: z.string().describe("Collapsed Notes for reasoning, methods, run configs, and supporting detail.").optional(),
     caution: mindmapCautionInput.optional(),
     labels: MINDMAP_LABELS_INPUT.optional(),
