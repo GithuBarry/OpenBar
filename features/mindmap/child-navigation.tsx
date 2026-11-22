@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { RichText } from "@/components/rich-text";
+import { useBranchPreview } from "./branch-preview";
 import { childPortLayout } from "@/lib/mindmap/child-ports";
 import styles from "./child-navigation.module.css";
 
@@ -27,6 +28,7 @@ export function ChildNavigation({ parentTitle, items, height, onJump }: {
   onJump: (id: string) => void;
 }) {
   const [activeId, setActiveId] = useState<string | null>(null);
+  useBranchPreview(activeId);
   const railRef = useRef<HTMLElement | null>(null);
   const pointerInsideRef = useRef(false);
   const hoverTimerRef = useRef<number | null>(null);

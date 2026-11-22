@@ -25,6 +25,7 @@ import "@xyflow/react/dist/style.css";
 
 import { applyMindmapDrop, resolveMindmapDrop, type MindmapDrop } from "@/lib/mindmap/drop-targets";
 import { childPortLayout, childSourceHandleId, type ChildPort } from "@/lib/mindmap/child-ports";
+import { BranchPreviewContext } from "./branch-preview";
 import { CardLinkPreviewLine } from "./card-link-preview-line";
 import { indexMindmap } from "@/lib/mindmap-index";
 import type { Mindmap } from "@/lib/types";
@@ -305,6 +306,9 @@ function FlowCanvas({
     collapseSettleTimer.current = setTimeout(clearCollapseAnchor, 150);
   }, [baseFlowNodes, nodes, setViewport, storageKey, clearCollapseAnchor]);
   const flowNodes = controlledNodes;
+  const [hoveredCard, setHoveredCard] = useState<string | null>(null);
+  const [previewedBranch, setPreviewedBranch] = useState<string | null>(null);
+  const highlightedChild = previewedBranch ?? hoveredCard;
   const edges: Edge[] = useMemo(() => {
     const byId = new Map(nodes.map(node => [node.id, node]));
     return mindmap.nodes.flatMap(node => {
@@ -314,6 +318,12 @@ function FlowCanvas({
         type: "default", focusable: false, interactionWidth: 0 }];
     });
   }, [mindmap.nodes, nodes, childPorts]);
+
+  const highlightedEdges = useMemo(() => highlightedChild
+    ? edges.map(edge => edge.target === highlightedChild
+      ? { ...edge, style: { stroke: "rgb(var(--accent))", strokeWidth: 1.75 } }
+      : edge)
+    : edges, [edges, highlightedChild]);
 
   const onNodeClick: NodeMouseHandler = useCallback((event, node) => {
     if (event.detail === 0) onSelect(node.id, event.shiftKey);
@@ -347,7 +357,7 @@ function FlowCanvas({
   }, [mindmap, onDropPreview]);
 
   const controls = <Controls showInteractive={false} />;
-  return (
+  return <BranchPreviewContext.Provider value={setPreviewedBranch}>
     <ReactFlow
       key="fixed-card-geometry"
       defaultViewport={savedViewport}
@@ -420,7 +430,9 @@ function FlowCanvas({
       onMoveStart={beginViewportMove}
       onMoveEnd={finishViewportMove}
       nodes={flowNodes}
-      edges={edges}
+      edges={highlightedEdges}
+      onNodeMouseEnter={(_event, node) => setHoveredCard(node.id)}
+      onNodeMouseLeave={(_event, node) => setHoveredCard(current => current === node.id ? null : current)}
       onNodesChange={(changes: NodeChange[]) => {
         // Selection and deletion follow the manuscript-backed map reducer.
         setControlledNodes((current) => applyNodeChanges(changes.filter((change) => change.type !== "select" && change.type !== "remove"), current.length ? current : baseFlowNodes) as Node<CardData>[]);
@@ -489,7 +501,7 @@ function FlowCanvas({
       <Background gap={32} size={1} color="rgb(var(--accent) / 0.12)" />
       {controlsHost ? createPortal(controls, controlsHost) : null}
     </ReactFlow>
-  );
+  </BranchPreviewContext.Provider>;
 }
 
 export function MindmapCanvas(props: {

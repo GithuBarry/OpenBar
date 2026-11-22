@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
+import { useNodeId } from "@xyflow/react";
+import { useBranchPreview } from "./branch-preview";
 import { RichText } from "@/components/rich-text";
 import type { CardNavigationItem } from "./child-navigation";
 import previewStyles from "./child-navigation.module.css";
@@ -20,6 +22,8 @@ export function ParentNavigation({ cardTitle, item, onJump }: {
   onJump: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const cardId = useNodeId();
+  useBranchPreview(open && item ? cardId : null);
   const navRef = useRef<HTMLElement | null>(null);
   const itemIdRef = useRef(item?.id);
   itemIdRef.current = item?.id;
