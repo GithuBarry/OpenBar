@@ -8,7 +8,8 @@ working philosophy in a place so both sides stay aligned on the bigger picture
 and the detailed progress, and grab each other on the canvas when needed.
 
 It optimizes for both user experience (UX) and agent experience (AX) 
-and holds minimal states outside of an Overleaf-style git repo.
+and holds minimal states outside of an Overleaf-style git repo (works best if you 
+have an Overleaf premium account.). 
 
 
 | Map the research | Draft the paper |
