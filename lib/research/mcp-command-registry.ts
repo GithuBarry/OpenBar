@@ -7,7 +7,8 @@ import { queueCelebration } from "./celebration";
 import { INBOX_TOOL_DESCRIPTIONS,type AgentInbox } from "./agent-inbox-contract";
 import { platformWishlistAvailable, runPlatformWishlist } from "./platform-wishlist";
 import { WISHLIST_DESCRIPTION } from "./platform-wishlist-contract";
-import { MINDMAP_EDIT_GUIDANCE, mindmapAttentionWarnings } from "./agent-guidance";
+import { MINDMAP_EDIT_GUIDANCE, mindmapDraftWarnings } from "./agent-guidance";
+import { mindmapDensityHint } from "./mindmap-density";
 import { MCP_INPUTS, MINDMAP_LABELS_INPUT, NATIVE_MINDMAP_INPUTS } from "./command-inputs";
 import { commandJsonSchema,parseCommandInput } from "./command-schema";
 import { applyProjectEdits,readProjectFiles } from "./project-files";
@@ -385,6 +386,7 @@ async function writeMap(
   resources: Array<{ kind: string; id: string; mapId?: string }>,
   changes: ActivityChange[] = [],
   deleted = false,
+  contentWrite = false,
 ): Promise<OperationResult<unknown>> {
   const status = await getOverleafGitStatus(projectContentDir(project));
   if (status.isOverleafRemote && (status.behind || 0) > 0) return failResult("remote_conflict", "Editing is paused. Review and synchronize Git updates to resume.", true);
@@ -416,10 +418,9 @@ async function writeMap(
       updatedNodes,
       removedNodeIds: map.nodes.filter((node) => !savedIds.has(node.id)).map((node) => node.id),
     } });
-    const warnings = operation === "add_mindmap_node" || operation === "patch_mindmap_node"
-      ? mindmapAttentionWarnings(updatedNodes, nodes, { checkDraftCount: operation === "add_mindmap_node" })
-      : undefined;
-    return okResult(value, { revision: saved.revision, diskHash: saved.diskHash, remote: pendingRemote(), ...(warnings ? { warnings } : {}) });
+    const warnings = operation === "add_mindmap_node" ? mindmapDraftWarnings(map.nodes, nodes) : undefined;
+    const diagnostics = operation === "add_mindmap_node" || contentWrite ? mindmapDensityHint(updatedNodes, map.nodes) : undefined;
+    return okResult(value, { revision: saved.revision, diskHash: saved.diskHash, remote: pendingRemote(), ...(warnings ? { warnings } : {}), ...(diagnostics ? { diagnostics } : {}) });
   } catch (error) {
     return mutationFailure(error, map);
   }
@@ -749,7 +750,7 @@ async function executePatchMindmapNode(args: unknown, context: McpCommandContext
       const htmlError = htmlCardValidationError({ ...current, ...patch } as MindmapNode);
       if (htmlError) return failResult("invalid_arguments", htmlError, false);
       const next = applyMindmapAction(map, { type: "patch-node", id: nodeId!, patch: patch as never }).mindmap;
-      return writeMap(project, map, next, requestId, "patch_mindmap_node", [{ kind: "mindmap-node", id: nodeId!, mapId }], changesForNode(current, next.nodes.find((node) => node.id === nodeId)!));
+      return writeMap(project, map, next, requestId, "patch_mindmap_node", [{ kind: "mindmap-node", id: nodeId!, mapId }], changesForNode(current, next.nodes.find((node) => node.id === nodeId)!), false, record.title !== undefined || record.text !== undefined);
     });
   } catch (error) { return caught(error); }
 }

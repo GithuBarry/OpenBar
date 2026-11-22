@@ -7,7 +7,8 @@ import { attachMindmapImage,captionMindmapImage,detachMindmapImage } from "@/lib
 import { safeUrl } from "@/lib/safe-url";
 import type { ArtifactRef,Mindmap,MindmapCardWidthMode,MindmapNode,MindmapNodeShape } from "@/lib/types";
 import { coercePaperSectionRefContext,isArtifactKind } from "./artifact-link";
-import { MINDMAP_CARD_SHORT_REMINDER, MINDMAP_EDIT_GUIDANCE, mindmapAttentionWarnings } from "./agent-guidance";
+import { MINDMAP_CARD_SHORT_REMINDER, MINDMAP_EDIT_GUIDANCE, mindmapDraftWarnings } from "./agent-guidance";
+import { mindmapDensityHint } from "./mindmap-density";
 import { MIN_CARD_WIDTH, MAX_CARD_WIDTH } from "@/lib/mindmap/card-width";
 import { htmlCardValidationError, HtmlCardValidationError } from "@/lib/mindmap/html-card";
 import { MINDMAP_EDIT_INPUT,MINDMAP_INPUTS } from "./command-inputs";
@@ -390,8 +391,10 @@ export async function executeMindmapWebMcpTool(
         createdAt: "",
         updatedAt: "",
       };
-      const warnings = mindmapAttentionWarnings([addedNode], [...snapshot.nodes, addedNode], { checkDraftCount: true });
-      return okResult({ id: result.value }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}), ...(warnings ? { warnings } : {}) });
+      const savedNode = host.getSnapshot().nodes.find(node => node.id === result.value) || addedNode;
+      const warnings = mindmapDraftWarnings(snapshot.nodes, [...snapshot.nodes, savedNode]);
+      const diagnostics = mindmapDensityHint([savedNode], snapshot.nodes);
+      return okResult({ id: result.value }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}), ...(warnings ? { warnings } : {}), ...(diagnostics ? { diagnostics } : {}) });
     }
     case "move_mindmap_node": {
       const rev = assertRevision(args.expectedRevision, snapshot.revision);
@@ -512,8 +515,9 @@ export async function executeMindmapWebMcpTool(
       const result = await runPersistedMutation(host, () => host.patchNode(String(args.id ?? ""), patch, snapshot.revision));
       if (!result.ok) return result;
       const updatedNode = { ...node, ...patch, ...(patch.presentation || {}) };
-      const warnings = mindmapAttentionWarnings([updatedNode], snapshot.nodes.map((item) => item.id === node.id ? updatedNode : item));
-      return okResult({ id: args.id, patch }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}), ...(warnings ? { warnings } : {}) });
+      const savedNode = host.getSnapshot().nodes.find(item => item.id === node.id) || updatedNode;
+      const diagnostics = patch.title !== undefined || patch.text !== undefined ? mindmapDensityHint([savedNode], snapshot.nodes) : undefined;
+      return okResult({ id: args.id, patch }, { revision: result.revision, diskHash: result.diskHash, ...(result.remote ? { remote: result.remote } : {}), ...(diagnostics ? { diagnostics } : {}) });
     }
     case "attach_mindmap_image": {
       const rev = assertRevision(args.expectedRevision, snapshot.revision);

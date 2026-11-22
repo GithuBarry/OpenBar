@@ -3,12 +3,29 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { gfm } from "micromark-extension-gfm";
 
-type TableMetadata = { columns: number; startsWithTable: boolean };
+type TableMetadata = { columns: number; startsWithTable: boolean; verboseHeaders: boolean };
 const recentTables = new Map<string, TableMetadata>();
 const CACHE_LIMIT = 128;
 const CACHE_CHARACTER_LIMIT = 256 * 1024;
-const EMPTY_TABLE: TableMetadata = { columns: 0, startsWithTable: false };
+const EMPTY_TABLE: TableMetadata = { columns: 0, startsWithTable: false, verboseHeaders: false };
 let cachedCharacters = 0;
+
+function cellText(node: Nodes): string {
+  if ("children" in node) return node.children.map(cellText).join("");
+  return "value" in node ? String(node.value).replace(/<[^>]*>/g, " ") : "";
+}
+
+function hasVerboseHeaders(table: Table): boolean {
+  const [header, ...rows] = table.children;
+  return Boolean(header && rows.length && header.children.some((cell, column) => {
+    const headerLength = cellText(cell).trim().length;
+    if (headerLength < 18) return false;
+    const lengths = rows.map(row => row.children[column] ? cellText(row.children[column]).trim().length : 0).filter(Boolean);
+    if (!lengths.length) return false;
+    const mean = lengths.reduce((sum, length) => sum + length, 0) / lengths.length;
+    return mean <= 12 && headerLength >= mean * 2.5;
+  }));
+}
 
 /** Share one GFM parse across card content, layout, and inspector metadata. */
 function tableMetadata(text: string): TableMetadata {
@@ -25,7 +42,7 @@ function tableMetadata(text: string): TableMetadata {
   const columns = tables.reduce((max, table) => Math.max(max, table.children[0]?.children.length ?? 0), 0);
   const first = tree.children[0];
   const startsWithTable = first?.type === "table" && !text.slice(0, first.position?.start.offset).trim();
-  const metadata = { columns, startsWithTable };
+  const metadata = { columns, startsWithTable, verboseHeaders: tables.some(hasVerboseHeaders) };
   if (text.length <= CACHE_CHARACTER_LIMIT) {
     while (recentTables.size >= CACHE_LIMIT || cachedCharacters + text.length > CACHE_CHARACTER_LIMIT) {
       const oldest = recentTables.keys().next().value!;
@@ -44,4 +61,9 @@ export function markdownTableColumns(text: string): number {
 
 export function startsWithMarkdownTable(text: string): boolean {
   return tableMetadata(text).startsWithTable;
+}
+
+/** Compare rendered GFM cell text, including tables with optional outer pipes. */
+export function markdownTableHasVerboseHeaders(text: string): boolean {
+  return tableMetadata(text).verboseHeaders;
 }

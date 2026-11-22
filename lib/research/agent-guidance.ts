@@ -60,47 +60,20 @@ export const AGENT_GUIDANCE = `${MCP_INSTRUCTIONS}
 
 Browser WebMCP: check get_editing_session before a handoff; Resume edit transfers access on human request, release_edit yields it after saving. Pending requests also appear in openbar-agent-requests metadata. Setup: /agents.`;
 
-const MAX_VISIBLE_CARD_WORDS = 80;
 const UNREVIEWED_DRAFT_WARNING_THRESHOLD = 10;
 
-function countWords(text: string): number {
-  const trimmed = text.trim();
-  return trimmed ? trimmed.split(/\s+/).length : 0;
-}
-
-function looksLikeMarkdownTable(text: string): boolean {
-  return /^\s*\|.+\|\s*$/m.test(text) && /^\s*\|[\s:|-]+\|\s*$/m.test(text);
-}
-
-/** Non-blocking attention warnings returned to agents after mindmap writes. */
-export function mindmapAttentionWarnings(
-  updatedNodes: Array<Pick<MindmapNode, "id" | "todoId" | "title" | "text" | "agentDraft" | "contentFormat">>,
-  allNodes: Array<Pick<MindmapNode, "agentDraft">>,
-  options: { checkDraftCount?: boolean } = {},
+/** Mention the review backlog once when an addition crosses its threshold. */
+export function mindmapDraftWarnings(
+  beforeNodes: readonly Pick<MindmapNode, "agentDraft">[],
+  allNodes: readonly Pick<MindmapNode, "agentDraft">[],
 ): OperationDiagnostic[] | undefined {
-  const warnings: OperationDiagnostic[] = [];
-  for (const node of updatedNodes) {
-    if (node.todoId || node.contentFormat === "html") continue;
-    const body = node.text || "";
-    if (!body.trim() || looksLikeMarkdownTable(body)) continue;
-    const words = countWords(body);
-    if (words > MAX_VISIBLE_CARD_WORDS) {
-      warnings.push({
-        severity: "warning",
-        code: "verbose_card_body",
-        message: `Card "${node.title || node.id}" has ${words} visible words (usual target: ${MAX_VISIBLE_CARD_WORDS} or fewer). If helpful, move supporting detail into caption (collapsed Notes) or use a child card for a distinct topic.`,
-      });
-    }
+  const unreviewedDrafts = allNodes.filter(node => node.agentDraft).length;
+  if (unreviewedDrafts >= UNREVIEWED_DRAFT_WARNING_THRESHOLD
+    && beforeNodes.filter(node => node.agentDraft).length < UNREVIEWED_DRAFT_WARNING_THRESHOLD) {
+    return [{
+      severity: "warning",
+      code: "unreviewed_agent_drafts",
+      message: `${unreviewedDrafts} Agent draft cards await human review on this map. Prefer extending or consolidating existing cards before adding more.`,
+    }];
   }
-  if (options.checkDraftCount) {
-    const unreviewedDrafts = allNodes.filter((node) => node.agentDraft).length;
-    if (unreviewedDrafts >= UNREVIEWED_DRAFT_WARNING_THRESHOLD) {
-      warnings.push({
-        severity: "warning",
-        code: "unreviewed_agent_drafts",
-        message: `${unreviewedDrafts} Agent draft cards await human review on this map. Prefer extending or consolidating existing cards before adding more.`,
-      });
-    }
-  }
-  return warnings.length ? warnings : undefined;
 }
