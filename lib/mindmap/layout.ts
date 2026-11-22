@@ -3,7 +3,7 @@
  * Card size hugs wrapped text up to NODE_WIDTH / ROOT_WIDTH.
  */
 
-import { markdownTableColumns, markdownTableWidth } from "./markdown-table";
+import { markdownTableColumns } from "./markdown-table";
 import { normalizeCardWidth } from "./card-width";
 import { MAX_HTML_CARD_LENGTH } from "./html-card";
 import { hierarchy, tree } from "d3-hierarchy";
@@ -24,6 +24,7 @@ type SeparableTree = {
 
 /** Max card width for readable dense topics and TODOs. */
 export const NODE_WIDTH = 264;
+export const MAX_AUTO_TABLE_WIDTH = 900;
 /** Min one-line card height. */
 export const NODE_HEIGHT = 36;
 export const ROOT_WIDTH = 300;
@@ -80,7 +81,7 @@ export function nodeDimensions(node: MindmapNode, displayText?: string): Dimensi
   const imageCard = node.refs?.some((ref) => ref.kind === "figure") ?? false;
   const cardWidth = normalizeCardWidth(node.cardWidth);
   const maxW = cardWidth ?? (wideTable
-    ? Math.max(baseMaxW, Math.min(900, markdownTableWidth(node.text)))
+    ? MAX_AUTO_TABLE_WIDTH
     : imageCard ? Math.max(baseMaxW, 320) : baseMaxW);
   const padX = node.todoId ? 28 : PAD_X;
   const padY = node.todoId ? 24 : PAD_Y;

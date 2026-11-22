@@ -13,8 +13,13 @@
 .tableCompact::-webkit-scrollbar-track { background: rgb(var(--surface-2)); border-radius: 999px; }
 .tableCompact::-webkit-scrollbar-thumb { background: rgb(var(--muted) / .55); border-radius: 999px; }
 .tableScroll th, .tableScroll td { padding: 7px 8px; border: 1px solid rgb(var(--line)); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.tableWide th, .tableWide td { white-space: normal; overflow-wrap: anywhere; }
-.tableWide :is(p, code, pre) { white-space: normal; overflow-wrap: anywhere; }
+.tableWide :is(th, td),
+.htmlCard :is(th, td),
+:is(.tableWide, .htmlCard) :is(th, td) :is(p, code, pre) {
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: normal;
+}
 .tableScroll th { font-weight: 600; background: rgb(var(--surface-2)); }
 .tableScroll tbody tr:nth-child(even) { background: rgb(var(--surface-2) / .5); }
 .tableScroll:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }

@@ -101,6 +101,7 @@ import {
   HORIZONTAL_GAP,
   NODE_HEIGHT,
   NODE_WIDTH,
+  MAX_AUTO_TABLE_WIDTH,
   VERTICAL_GAP,
   layoutMindmapTree,
   nodeDimensions,
@@ -3917,14 +3918,13 @@ function CanvasNode({
     if (!card || !fitTable || editing) return;
     const tables = card.querySelectorAll<HTMLTableElement>(".mindmap-node-detail table, .mindmap-node-title table");
     if (!tables.length) return;
-    const maximum = nodeDimensions(node).width;
-    card.style.width = `${maximum}px`;
-    let width = Math.min(NODE_WIDTH, maximum);
+    card.style.width = `${MAX_AUTO_TABLE_WIDTH}px`;
+    let width = NODE_WIDTH;
     for (const table of tables) {
       const wrapper = table.parentElement!;
       width = Math.max(width, table.offsetWidth + card.offsetWidth - wrapper.clientWidth + 1);
     }
-    width = Math.min(maximum, width);
+    width = Math.min(MAX_AUTO_TABLE_WIDTH, width);
     card.style.width = `${width}px`;
     onMeasure(node.id, { width, height: card.offsetHeight });
   }, [fitTable, editing, node, fontSize, onMeasure]);
@@ -4451,7 +4451,7 @@ function createCanvasLayout(
     const measured = measuredCards?.get(node.id);
     const fittedTable = node.cardWidth === undefined && node.contentFormat === "markdown" && node.tableLayout !== "scroll" && markdownTableColumns(node.text) > 0;
     const widthMatches = measured && (fittedTable
-      ? measured.width <= size.width && measured.width >= Math.min(NODE_WIDTH, size.width)
+      ? measured.width <= MAX_AUTO_TABLE_WIDTH && measured.width >= NODE_WIDTH
       : Math.abs(measured.width - size.width) < 1);
     dimensions.set(node.id, measured && widthMatches
       ? { width: measured.width, height: measured.height }
