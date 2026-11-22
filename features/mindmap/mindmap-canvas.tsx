@@ -317,9 +317,7 @@ function FlowCanvas({
     collapseSettleTimer.current = setTimeout(clearCollapseAnchor, 150);
   }, [baseFlowNodes, nodes, setViewport, storageKey, clearCollapseAnchor]);
   const flowNodes = controlledNodes;
-  const [hoveredCard, setHoveredCard] = useState<string | null>(null);
   const [previewedBranch, setPreviewedBranch] = useState<string | null>(null);
-  const highlightedChild = previewedBranch ?? hoveredCard;
   const edges: Edge[] = useMemo(() => {
     const byId = new Map(nodes.map(node => [node.id, node]));
     return mindmap.nodes.flatMap(node => {
@@ -330,11 +328,11 @@ function FlowCanvas({
     });
   }, [mindmap.nodes, nodes, childPorts]);
 
-  const highlightedEdges = useMemo(() => highlightedChild
-    ? edges.map(edge => edge.target === highlightedChild
+  const highlightedEdges = useMemo(() => previewedBranch
+    ? edges.map(edge => edge.target === previewedBranch
       ? { ...edge, style: { stroke: "rgb(var(--accent))", strokeWidth: 1.75 } }
       : edge)
-    : edges, [edges, highlightedChild]);
+    : edges, [edges, previewedBranch]);
 
   const onNodeClick: NodeMouseHandler = useCallback((event, node) => {
     if (event.detail === 0) onSelect(node.id, event.shiftKey);
@@ -442,8 +440,6 @@ function FlowCanvas({
       onMoveEnd={finishViewportMove}
       nodes={flowNodes}
       edges={highlightedEdges}
-      onNodeMouseEnter={(_event, node) => setHoveredCard(node.id)}
-      onNodeMouseLeave={(_event, node) => setHoveredCard(current => current === node.id ? null : current)}
       onNodesChange={(changes: NodeChange[]) => {
         // Selection and deletion follow the manuscript-backed map reducer.
         setControlledNodes((current) => applyNodeChanges(changes.filter((change) => change.type !== "select" && change.type !== "remove"), current.length ? current : baseFlowNodes) as Node<CardData>[]);
