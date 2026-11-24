@@ -1,21 +1,31 @@
 import type { Mindmap } from "@/lib/types"
+import { reportBrowserConflict } from "@/lib/research/browser-conflict"
 import { mindmapDiskHash } from "./mindmap"
-import { rebaseSavedMindmap } from "./merge-saved"
+import { findMindmapConflictNodeIds, rebaseSavedMindmap } from "./merge-saved"
+
+function extractConflictHash(message: string): string | undefined {
+  const match = message.match(/\bhash\s+([a-f0-9]{64})\b/i)
+  return match?.[1]
+}
 
 /** Map writes use a stable URL so an open editor survives application updates. */
 export async function saveBrowserMindmap(project: string, mindmap: Mindmap, expectedDiskHash: string, actor: "human" | "webmcp" = "human", base?: Mindmap): Promise<Mindmap> {
   let pending = mindmap
   let expected = expectedDiskHash
   let baseline = base
+  const mapId = pending.id || "draft"
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const response = await fetch(`/api/p/${encodeURIComponent(project)}/mindmap`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mindmap: pending, expectedDiskHash: expected, actor }),
     })
+    let conflictSaved: Mindmap | undefined
+    let conflictNodeIds: string[] | undefined
     if (response.status === 409 && baseline && attempt < 2
       && (baseline.diskHash || mindmapDiskHash(baseline)) === expected) {
-      const saved = await loadBrowserMindmap(project, pending.id || "draft")
+      const saved = await loadBrowserMindmap(project, mapId)
+      conflictSaved = saved
       const rebased = rebaseSavedMindmap(baseline, saved, pending)
       if (rebased) {
         if (rebased === saved) return saved
@@ -24,10 +34,38 @@ export async function saveBrowserMindmap(project: string, mindmap: Mindmap, expe
         expected = saved.diskHash || mindmapDiskHash(saved)
         continue
       }
+      const nodeIds = findMindmapConflictNodeIds(baseline, saved, pending)
+      if (nodeIds.length) conflictNodeIds = nodeIds
     }
-    return readMapResponse(response)
+    try {
+      return await readMapResponse(response)
+    } catch (error) {
+      if (response.status === 409 && actor === "human") {
+        const message = error instanceof Error ? error.message : "conflict: mindmap changed on disk. Reload before saving."
+        reportBrowserConflict(project, {
+          kind: "mindmap",
+          code: "mindmap_conflict",
+          mapId,
+          message,
+          expectedHash: expected,
+          currentHash: conflictSaved?.diskHash || extractConflictHash(message),
+          ...(conflictNodeIds?.length ? { nodeIds: conflictNodeIds } : {}),
+        })
+      }
+      throw error
+    }
   }
-  throw new Error("The saved map keeps changing. Your draft remains in this tab.")
+  const message = "The saved map keeps changing. Your draft remains in this tab."
+  if (actor === "human") {
+    reportBrowserConflict(project, {
+      kind: "mindmap",
+      code: "mindmap_conflict",
+      mapId,
+      message,
+      expectedHash: expected,
+    })
+  }
+  throw new Error(message)
 }
 
 export async function loadBrowserMindmap(project: string, mapId: string): Promise<Mindmap> {

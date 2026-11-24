@@ -44,6 +44,9 @@ export type MindmapFocusRequest = { id: string; sequence: number; center?: boole
 
 type CardData = { render: (id: string) => ReactNode; renderVersion?: string; ports: ChildPort[]; portSignature: string };
 
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 2.5;
+
 function viewportStorageKey(mindmap: Mindmap): string {
   return `openbar:mindmap-viewport:v1:${encodeURIComponent(mindmap.projectId)}:${encodeURIComponent(mindmap.id || "draft")}`;
 }
@@ -53,7 +56,7 @@ function readViewport(key: string): Viewport | undefined {
     const value: unknown = JSON.parse(window.sessionStorage.getItem(key) || "null");
     if (!value || typeof value !== "object") return;
     const { x, y, zoom } = value as Viewport;
-    if ([x, y, zoom].every(item => typeof item === "number" && Number.isFinite(item)) && zoom >= 0.25 && zoom <= 2.5) return { x, y, zoom };
+    if ([x, y, zoom].every(item => typeof item === "number" && Number.isFinite(item)) && zoom >= MIN_ZOOM && zoom <= MAX_ZOOM) return { x, y, zoom };
   } catch { /* A fresh view remains available when browser storage is unavailable. */ }
 }
 
@@ -209,6 +212,43 @@ function FlowCanvas({
       window.removeEventListener("pagehide", preserveViewport);
     };
   }, [clearCollapseAnchor, preserveViewport, schedulePreserveViewport]);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const isMac = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");
+    const onPinchWheelCapture = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      // Always prevent native browser page zoom for trackpad pinch gestures inside the map.
+      event.preventDefault();
+      interacted.current = true;
+      clearCollapseAnchor();
+      initialViewRef.current = true;
+      const renderer = canvas.querySelector<HTMLElement>(".react-flow__renderer") ?? canvas;
+      const target = event.target instanceof Element ? event.target : null;
+      // React Flow ignores pinch wheel events inside `.nowheel` descendants, outside
+      // `.react-flow__renderer`, and crashes on non-Element targets (e.g. Text nodes).
+      if (!target || !renderer.contains(target) || target.closest(".nowheel")) {
+        event.stopPropagation();
+        const current = getViewport();
+        const factor = isMac ? 10 : 1;
+        const delta = -event.deltaY * (event.deltaMode === 1 ? 0.05 : event.deltaMode ? 1 : 0.002) * factor;
+        const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current.zoom * Math.pow(2, delta)));
+        if (nextZoom === current.zoom) return;
+        const bounds = renderer.getBoundingClientRect();
+        const px = event.clientX - bounds.left;
+        const py = event.clientY - bounds.top;
+        const ratio = nextZoom / current.zoom;
+        void setViewport({
+          x: px - (px - current.x) * ratio,
+          y: py - (py - current.y) * ratio,
+          zoom: nextZoom,
+        }, { duration: 0 });
+        schedulePreserveViewport();
+      }
+    };
+    canvas.addEventListener("wheel", onPinchWheelCapture, { capture: true, passive: false });
+    return () => canvas.removeEventListener("wheel", onPinchWheelCapture, { capture: true });
+  }, [clearCollapseAnchor, getViewport, schedulePreserveViewport, setViewport]);
   const beginViewportMove = useCallback((event: MouseEvent | TouchEvent | null) => {
     if (event) { interacted.current = true; initialViewRef.current = true; }
     if (rasterFrame.current !== null) cancelAnimationFrame(rasterFrame.current);
@@ -381,7 +421,12 @@ function FlowCanvas({
         const card = target.closest<HTMLElement>('[data-mind-node]');
         if (!card || (copyCardRef.current && card !== copyCardRef.current)) clearCanvasTextSelection();
         if (card && card === copyCardRef.current && target.closest(CARD_PROSE)) return;
-        if (card?.dataset.mindNode) onSelect(card.dataset.mindNode, event.shiftKey);
+        if (card?.dataset.mindNode) {
+          if (!target.closest("[contenteditable], .mindmap-inline-editor, [data-mind-editor]")) {
+            card.closest<HTMLElement>(".mindmap-viewport[tabindex='0']")?.focus({ preventScroll: true });
+          }
+          onSelect(card.dataset.mindNode, event.shiftKey);
+        }
         if (readOnly && event.button === 0 && card?.dataset.mindNode && card.dataset.mindNode !== mindmap.rootId && card !== copyCardRef.current) {
           blockedDragRef.current = { x: event.clientX, y: event.clientY, warned: false };
         } else {
@@ -495,8 +540,8 @@ function FlowCanvas({
       zoomOnScroll={false}
       zoomOnDoubleClick={false}
       panOnDrag
-      minZoom={0.25}
-      maxZoom={2.5}
+      minZoom={MIN_ZOOM}
+      maxZoom={MAX_ZOOM}
       nodeDragThreshold={4}
       proOptions={{ hideAttribution: true }}
       defaultEdgeOptions={{

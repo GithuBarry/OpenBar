@@ -33,6 +33,8 @@
 .inspectorGroup :global(.mindmap-field > :not(:first-child)) { grid-column: 2; min-width: 0; }
 .inspector .inspectorGroup :global(.mindmap-field input) { width: 100%; min-height: 30px; font-size: 11px; }
 .inspectorGroup :global(.mindmap-chip-list) { margin: 0; }
+.clearLabels { padding: 2px 5px; border-radius: var(--radius-control); color: rgb(var(--muted)); font-size: 11px; white-space: nowrap; }
+.clearLabels:hover:not(:disabled) { background: rgb(var(--danger) / 0.08); color: rgb(var(--danger)); }
 .inspectorGroup .progressField { display: block; }
 .inspectorGroup .progressField > span:first-child { display: block; margin: 0 0 6px; }
 .inspectorGroup :global(.mindmap-color-palette) { margin-bottom: 0; gap: 7px; }
@@ -57,7 +59,8 @@
 .toolbar { position: absolute; inset: 0; z-index: 24; pointer-events: none; }
 .toolbar > .projectBar, .toolbar > .canvasTools { position: absolute; width: max-content; height: var(--mindmap-dock-height); min-height: 0; max-width: calc(100% - 16px); flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; overflow-y: hidden; pointer-events: auto; }
 .projectBar { top: 8px; left: 8px; }
-.noticeRow { position: absolute; top: var(--mindmap-controls-bottom); left: 50%; transform: translateX(-50%); z-index: 45; display: flex; align-items: center; gap: 6px; width: max-content; max-width: calc(100% - 16px); height: var(--mindmap-notice-height); overflow-x: auto; overflow-y: hidden; overscroll-behavior: contain; scrollbar-width: none; pointer-events: none; }
+/* Wrap on narrow canvases instead of clipping the notice bounce and its shadow. */
+.noticeRow { position: absolute; top: var(--mindmap-controls-bottom); left: 50%; transform: translateX(-50%); z-index: 45; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px 6px; width: max-content; max-width: calc(100% - 16px); min-height: var(--mindmap-notice-height); pointer-events: none; }
 .noticeRow[hidden] { display: none; }
 .noticeRow > :global([data-editor-notice]) { position: static; inset: auto; flex: 0 0 auto; max-width: 100%; transform: none; pointer-events: auto; }
 .recoveryNotice { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 3px 5px 3px 10px; border: 1px solid rgb(var(--accent) / .25); border-radius: 9px; background: rgb(var(--surface)); box-shadow: var(--shadow-float); color: rgb(var(--ink)); font-size: 12px; line-height: 20px; }
@@ -205,6 +208,7 @@
   .inspector .progressChoices { gap: 2px; }
   .inspector .progressChoices > button { width: 32px; height: 32px; }
 }
+.archiveKicker { display: inline-flex; align-items: center; align-self: flex-start; margin-bottom: 4px; padding: 1px 6px; border: 1px dashed rgb(var(--muted) / .45); border-radius: 999px; background: rgb(var(--surface) / .65); color: rgb(var(--muted)); font-size: 10px; font-weight: 600; line-height: 14px; letter-spacing: .02em; text-transform: uppercase; }
 .progressCompact { display: inline-flex; align-items: center; color: rgb(var(--ok)); }
 .cardProgress { position: absolute; top: 13px; right: 14px; display: inline-flex; }
 .card:has(> .cardProgress) :global(.mindmap-node-title), .card:has(> .cardProgress) :global(.mindmap-inline-editor .cm-line:first-child) { padding-right: 24px; }
@@ -266,8 +270,9 @@
 .canvasSurface { overflow: hidden; }
 
 .cardPlaceholder { color: rgb(var(--faint)); font-size: 14px; line-height: 20px; }
-.card.agentDraft { --mind-card-surface: rgb(var(--surface)); --mind-card-border-left: 2px; --mind-card-border-right: 1.5px; border: 1.5px dashed rgb(var(--accent) / .72); border-left-width: 2px; background: var(--mind-card-surface); box-shadow: 0 2px 7px rgb(0 0 0 / .10); }
-.card.agentDraft:global(.mindmap-node-selected) { box-shadow: 0 0 0 1px rgb(var(--accent) / .2), 0 0 14px rgb(var(--accent) / .16), 0 3px 10px rgb(0 0 0 / .08); }
+.card.agentDraft { --mind-card-border-left: 2px; --mind-card-border-right: 1.5px; border: 1.5px dashed var(--mind-node-accent); border-left-width: 2px; background: var(--mind-card-surface); box-shadow: 0 2px 7px rgb(0 0 0 / .10); }
+.card.agentDraft:global(.mindmap-node-archive):not([data-custom-color="true"]) { border-color: rgb(var(--muted) / .55); }
+.card.agentDraft:global(.mindmap-node-selected) { border-color: var(--mind-node-accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--mind-node-accent) 26%, transparent), 0 0 14px color-mix(in srgb, var(--mind-node-accent) 18%, transparent), 0 3px 10px rgb(0 0 0 / .08); }
 .activityBadge { position: absolute; top: -3px; right: 12px; width: 7px; height: 7px; border-radius: 50%; background: rgb(var(--accent)); cursor: help; }
 .unreadReply { position: absolute; top: 9px; right: -4px; width: 7px; height: 7px; border-radius: 50%; background: var(--p-sys-red, #ef4444); box-shadow: 0 0 0 2px rgb(var(--surface)); pointer-events: none; }
 .activityBadge:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 3px; }

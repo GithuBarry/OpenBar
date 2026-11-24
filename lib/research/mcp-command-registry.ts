@@ -2,7 +2,7 @@ import { attachMindmapImage,captionMindmapImage,detachMindmapImage } from "@/lib
 import { artifactRefSchema } from "@/lib/schemas";
 import { resolveFigureAsset } from "@/lib/tex-project/project";
 import "server-only";
-import { acknowledgeAgentInbox,readAgentInbox } from "./agent-inbox";
+import { acknowledgeAgentInbox, claimAgentInbox, readAgentInbox } from "./agent-inbox";
 import { queueCelebration } from "./celebration";
 import { INBOX_TOOL_DESCRIPTIONS,type AgentInbox } from "./agent-inbox-contract";
 import { platformWishlistAvailable, runPlatformWishlist } from "./platform-wishlist";
@@ -579,7 +579,7 @@ function parseBatchInput(args: JsonObject): MindmapBatchInput {
 }
 
 function changesForNode(before: MindmapNode, after: MindmapNode): ActivityChange[] {
-  return activityChanges(before, after, ["title", "text", "caption", "parentId", "order", "color", "tags", "progress", "priority", "tableLayout", "cardWidth", "refs", "metadata"]);
+  return activityChanges(before, after, ["title", "text", "caption", "parentId", "order", "shape", "color", "tags", "progress", "priority", "tableLayout", "cardWidth", "defaultCollapsed", "refs", "metadata"]);
 }
 
 async function executeGetProjectState(args: unknown): Promise<OperationResult<unknown>> {
@@ -639,6 +639,8 @@ async function executeGetMindmap(args: unknown): Promise<OperationResult<unknown
         order: node.order,
         title: node.title,
         ...(node.todoId ? { todoId: node.todoId } : {}),
+        ...(node.shape && node.shape !== "leaf" ? { shape: node.shape } : {}),
+        ...(node.defaultCollapsed ? { defaultCollapsed: true } : {}),
         ...(node.contentFormat ? { contentFormat: node.contentFormat } : {}),
         ...(node.tags?.length ? { tags: node.tags } : {}),
         ...(node.priority ? { priority: node.priority } : {}),
@@ -1153,6 +1155,19 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
     if (input.project && scope && !scope.includes(input.project)) return failResult("invalid_path", `Unknown project "${input.project}".`, false);
     return okResult(readAgentInbox(input, scope));
   }, { readOnlyHint: true }),
+  tool("claim_inbox", "Mark inbox mentions as actively in progress", INBOX_TOOL_DESCRIPTIONS.claim_inbox, async raw => {
+    assertAdministrativeWriteAllowed("MCP inbox updates");
+    const input = MCP_INPUTS.claim_inbox.parse(raw);
+    if (Boolean(input.all) === Boolean(input.ids?.length)) {
+      return failResult("invalid_arguments", "Provide either ids or all: true (not both).", false);
+    }
+    if (input.all && !input.project) {
+      return failResult("invalid_arguments", "Specify project when claiming all pending mentions in a project.", false);
+    }
+    const scope = isPublicDemoMode() ? publicDemoSlugs() : undefined;
+    if (input.project && scope && !scope.includes(input.project)) return failResult("invalid_path", `Unknown project "${input.project}".`, false);
+    return okResult(await claimAgentInbox(input, scope));
+  }),
   tool("acknowledge_inbox", "Handle OpenBar notifications", INBOX_TOOL_DESCRIPTIONS.acknowledge_inbox, async raw => {
     assertAdministrativeWriteAllowed("MCP inbox updates");
     const input = MCP_INPUTS.acknowledge_inbox.parse(raw);
@@ -1192,8 +1207,8 @@ export const MCP_TOOL_REGISTRY: McpToolDefinition[] = [
   tool("get_paper_compile", "Read compile status", "Read latest attempted build and latest successful artifact state.", executeCompileStatus, { readOnlyHint: true }),
   tool("get_activity", "Read activity", "Read durable authored operation history after applying the selected day filter and before pagination.", executeActivity, { readOnlyHint: true }),
   tool("read_project_files", "Read project files", "List directories or read authored project files with exact byte SHA256 and bounded UTF-8/base64 content. Paths are relative to the project root. OpenBar managed state and Git metadata are protected.", executeReadProjectFiles, { readOnlyHint: true }),
-  tool("apply_project_edits", "Apply project file edits", "Atomically create, replace, or delete authored project files using exact prior hashes. Batch a destination create and source delete to move a file. dryRun previews the complete batch. OpenBar managed state and Git metadata are protected.", executeProjectFileEdits, { destructiveHint: true }),
-  tool("apply_mindmap_edits", "Edit managed mindmap state", `Apply one revision-checked map operation. edit.operation: add, patch, move, preview-batch, apply-batch, place-todo, link-todo, convert-to-todo, rename, font-size, card-width-mode, attach-image, detach-image, caption-image, activity-window. args: add {parentId,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,id?}, patch {id,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, batch {selectedIds,changes?,deleteMode?,move?,previewToken?}, place-todo {todoId,parentId}, link-todo {id,todoId}, convert-to-todo {id,sectionId?,expectedBundleHash}, rename {title}, font-size {fontSize}, card-width-mode {cardWidthMode:"individual"|"siblings"|"depth"}, images {id,assetId,label?}, activity-window {days}. labels read back as tags. refs[]: {kind: paper-section|paper-todo|paper-comment|wiki-page|mindmap-node|figure|web|external, id, label?, relation?, url?, mapId?} (do not attach local code/JSON/CSV files as refs; put local paths in caption). presentation: {shape?:leaf|callout, contentFormat?:plain|markdown|tex|html, tableLayout?:wide|scroll, color?, progress?:0..6|"ditched"|null, cardWidth?:180..1200|null}. Preview batches before apply-batch. deleteMode cards promotes children; branches removes descendants. Agent writes stay Agent draft until human Save/Delete. ${MINDMAP_EDIT_GUIDANCE}`, executeManagedMindmapEdit, { destructiveHint: true }),
+  tool("apply_project_edits", "Apply project file edits", "Atomically create, replace, or delete authored project files using exact prior hashes. Batch a destination create and source delete to move a file. dryRun previews the complete batch. OpenBar managed state and Git metadata are protected. For manuscript .tex prose, write for an external peer reviewer: NEVER leak internal method/experiment version labels (v1, v2, v3, repaired, wave, smoke, confirmatory), harness scripts/JSON filenames, or run-log bookkeeping; present one coherent final design and frame comparisons as named component ablations (see read_project_skill source='openbar' id='paper-writing').", executeProjectFileEdits, { destructiveHint: true }),
+  tool("apply_mindmap_edits", "Edit managed mindmap state", `Apply one revision-checked map operation. edit.operation: add, patch, move, preview-batch, apply-batch, place-todo, link-todo, convert-to-todo, rename, font-size, card-width-mode, attach-image, detach-image, caption-image, activity-window. args: add {parentId,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,id?}, patch {id,title?,text?,caption?,labels?,refs?,metadata?,presentation?,priority?,agentDraft?:true}, move {id,parentId,beforeId?,afterId?}, batch {selectedIds,changes?,deleteMode?,move?,previewToken?}, place-todo {todoId,parentId}, link-todo {id,todoId}, convert-to-todo {id,sectionId?,expectedBundleHash}, rename {title}, font-size {fontSize}, card-width-mode {cardWidthMode:"individual"|"siblings"|"depth"}, images {id,assetId,label?}, activity-window {days}. labels read back as tags. refs[]: {kind: paper-section|paper-todo|paper-comment|wiki-page|mindmap-node|figure|web|external, id, label?, relation?, url?, mapId?} (do not attach local code/JSON/CSV files as refs; put local paths in caption). presentation: {shape?:leaf|callout|archive, contentFormat?:plain|markdown|tex|html, tableLayout?:wide|scroll, color?, progress?:0..6|"ditched"|null, cardWidth?:180..1200|null, defaultCollapsed?:boolean, collapsed?:boolean}. Preview batches before apply-batch. deleteMode cards promotes children; branches removes descendants. Agent writes stay Agent draft until human Save/Delete. ${MINDMAP_EDIT_GUIDANCE}`, executeManagedMindmapEdit, { destructiveHint: true }),
   tool("celebrate", "Queue a celebration animation", "Queue a non-blocking celebration animation (full-screen or bursting from a specific mindmap card) with a short reason shown the next time the human focuses OpenBar. Use sparingly for genuine milestones (passing evals, beating baselines, clean paper compile, finishing a major branch).", async (raw) => {
     const args = MCP_INPUTS.celebrate.parse(raw);
     assertAdministrativeWriteAllowed("Celebration actions");
@@ -1234,13 +1249,13 @@ async function executeCommand(name: string, args: unknown, context: McpCommandCo
 /** All tool transports retain their result while surfacing pending human requests. */
 export async function executeMcpTool(name: string, args: unknown, context: McpCommandContext): Promise<OperationResult<unknown> & { notifications?: AgentInbox | { error: string } }> {
   const result = await executeCommand(name, args, context);
-  if (name === "check_inbox" || name === "acknowledge_inbox") return result;
+  if (name === "check_inbox" || name === "claim_inbox" || name === "acknowledge_inbox") return result;
   try {
     const record = asObject(args);
     const scope = isPublicDemoMode() ? publicDemoSlugs() : undefined;
     const requestedProject = typeof record?.project === "string" ? record.project : undefined;
     const inbox = readAgentInbox({ project: requestedProject && (!scope || scope.includes(requestedProject)) ? requestedProject : undefined, limit: 3 }, scope);
-    return inbox.count ? { notifications: inbox, ...result } : result;
+    return inbox.count || inbox.conflicts?.length ? { notifications: inbox, ...result } : result;
   } catch {
     return { notifications: { error: "OpenBar inbox could not be checked. Call check_inbox to retry." }, ...result };
   }

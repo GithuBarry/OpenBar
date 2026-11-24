@@ -9,6 +9,8 @@ import { sha256, withWriteLockAsync } from "./codec";
 import { syncDirectory, writePrivateFileAtomic } from "@/lib/fs/atomic-write";
 import { gitProcessEnv } from "@/lib/server/git-credential-store";
 import { overleafProjectId, redactGitRemote, redactSensitiveText } from "@/lib/server/git-url";
+import { classifyGitSyncFailure } from "@/lib/git-sync-diagnostics";
+import { clearGitConflict, recordGitConflict, type RecordGitConflictInput } from "@/lib/research/git-conflict-events";
 import { withProjectWriteLockAsync } from "@/lib/research/project-lock";
 
 export interface OverleafGitStatus {
@@ -138,6 +140,35 @@ function porcelainPaths(entries: PorcelainEntry[]): string[] {
 
 function sensitiveAmong(files: string[]): string[] {
   return files.filter(isSensitivePath);
+}
+
+const UNMERGED_PORCELAIN = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
+
+function safeConflictFiles(files: readonly string[] | undefined): string[] | undefined {
+  if (!files?.length) return undefined;
+  const cleaned = [...new Set(files.filter(file => Boolean(file) && !isSensitivePath(file)))].slice(0, 50);
+  return cleaned.length ? cleaned : undefined;
+}
+
+function notifyGitConflict(projectDir: string, input: Omit<RecordGitConflictInput, "kind">): void {
+  try {
+    recordGitConflict(projectDir, {
+      kind: "git",
+      ...input,
+      message: redactSensitiveText(input.message),
+      files: safeConflictFiles(input.files),
+    });
+  } catch (error) {
+    console.warn("OpenBar git conflict notification failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
+function clearGitConflictNotice(projectDir: string): void {
+  try {
+    clearGitConflict(projectDir, "git");
+  } catch (error) {
+    console.warn("OpenBar git conflict clear failed", error instanceof Error ? error.message : String(error));
+  }
 }
 
 function texGitPathspec(projectDir: string, cwd: string): string[] {
@@ -458,7 +489,9 @@ export async function getOverleafGitStatus(projectDir: string): Promise<Overleaf
     const branch = (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "main")).trim() || "main";
     const remoteUrl = await runGit(cwd, ["config", "--get", "remote.origin.url"]).then((value) => value.trim()).catch(() => undefined);
     const statusOutput = await runGit(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...gitPathspec(projectDir, cwd)]);
-    const changedFiles = porcelainPaths(parsePorcelainZ(statusOutput));
+    const statusEntries = parsePorcelainZ(statusOutput);
+    const changedFiles = porcelainPaths(statusEntries);
+    const unmergedFiles = porcelainPaths(statusEntries.filter(entry => UNMERGED_PORCELAIN.has(entry.xy)));
     const isClean = changedFiles.length === 0;
 
     let ahead: number | undefined;
@@ -486,6 +519,19 @@ export async function getOverleafGitStatus(projectDir: string): Promise<Overleaf
       if (latest) lastCommit = { hash: latest.hash, message: latest.message, author: latest.author, date: latest.date };
     } catch {
       // Empty repo
+    }
+
+    if (unmergedFiles.length > 0) {
+      const safe = safeConflictFiles(unmergedFiles);
+      notifyGitConflict(projectDir, {
+        code: "unmerged_files",
+        message: `Git repository has ${unmergedFiles.length} unmerged file${unmergedFiles.length === 1 ? "" : "s"}${safe?.length ? `: ${safe.slice(0, 5).join(", ")}${safe.length > 5 ? ` and ${safe.length - 5} more` : ""}` : ""}.`,
+        branch,
+        ahead,
+        behind,
+        localCommit: lastCommit?.hash,
+        files: safe,
+      });
     }
 
     return {
@@ -563,7 +609,35 @@ export async function refreshOverleafGitStatus(projectDir: string): Promise<Over
         const locked = await getOverleafGitStatus(projectDir);
         if (!locked.isGitRepo || !locked.remoteUrl || !locked.isOverleafRemote) return locked;
         await runGit(cwd, ["fetch", "--prune", "origin"]);
-        return getOverleafGitStatus(projectDir);
+        const refreshed = await getOverleafGitStatus(projectDir);
+        if (refreshed.isGitRepo && refreshed.isOverleafRemote && !refreshed.error) {
+          const remoteCommit = refreshed.branch
+            ? (await runGit(cwd, ["rev-parse", `refs/remotes/origin/${refreshed.branch}`]).catch(() => "")).trim() || undefined
+            : undefined;
+          if ((refreshed.behind || 0) > 0) {
+            const diverged = (refreshed.ahead || 0) > 0 || !refreshed.isClean;
+            notifyGitConflict(projectDir, {
+              code: diverged ? "remote_conflict" : "remote_ahead",
+              message: diverged
+                ? "Git and this checkout have diverged. Reconcile both histories before pushing."
+                : "Git has newer commits. Pull and reconcile before pushing.",
+              branch: refreshed.branch,
+              ahead: refreshed.ahead,
+              behind: refreshed.behind,
+              localCommit: refreshed.lastCommit?.hash,
+              remoteCommit,
+              files: refreshed.changedFiles,
+            });
+          } else {
+            const unmerged = splitNulRecords(await runGit(cwd, ["diff", "--name-only", "--diff-filter=U", "-z"]).catch(() => ""));
+            const checkpointPath = await checkpointJournalPath(cwd).catch(() => "");
+            const hasCheckpoint = Boolean(checkpointPath && fs.existsSync(checkpointPath));
+            const statusEntries = parsePorcelainZ(await runGit(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--", ...gitPathspec(projectDir, cwd)]).catch(() => ""));
+            const hasPreStaged = preStagedPaths(statusEntries).some(isSafeCommittedPath);
+            if (!unmerged.length && !hasCheckpoint && !hasPreStaged) clearGitConflictNotice(projectDir);
+          }
+        }
+        return refreshed;
       });
     } catch (error) {
       return { ...current, error: "Git status unavailable: " + gitErrorMessage(error) };
@@ -619,6 +693,7 @@ export async function reconcileDirectPull(projectDir: string, operationId: strin
       });
       if (!completed) return { state: "pending", message: "The Git pull outcome needs inspection. Keep the editor paused and check the saved project state before retrying." };
       const result = { ok: true, message: "The Git pull completed." };
+      clearGitConflictNotice(projectDir);
       saveDirectPullReceipt(file, { version: 1, projectKey, state: "resolved", result });
       return { state: "resolved", result };
     }
@@ -645,7 +720,10 @@ export async function pullOverleafGit(projectDir: string, operationId: string): 
       let mergeStarted = false;
       try {
       const pendingCheckpoint = await withProjectWriteLockAsync(projectDir, () => checkpointRecoveryMessage(cwd));
-      if (pendingCheckpoint) return { ok: false, message: pendingCheckpoint };
+      if (pendingCheckpoint) {
+        notifyGitConflict(projectDir, { code: "checkpoint_recovery_required", message: pendingCheckpoint });
+        return { ok: false, message: pendingCheckpoint };
+      }
       const remoteUrl = (await runGit(cwd, ["config", "--get", "remote.origin.url"])).trim();
       if (!isOverleafGitRemote(remoteUrl)) {
         return { ok: false, message: "Connect this project to Git before pulling updates." };
@@ -657,7 +735,11 @@ export async function pullOverleafGit(projectDir: string, operationId: string): 
       const fetchedCommit = await fetchGitBranchCommit(cwd, branch);
       return await withProjectWriteLockAsync(projectDir, async () => {
         const recovery = recoverSourceTransaction(texPaths(projectDir).manuscriptDir, true);
-        if (!recovery.ok) return { ok: false, message: recovery.message || "The manuscript transaction requires recovery before pulling Git updates." };
+        if (!recovery.ok) {
+          const message = recovery.message || "The manuscript transaction requires recovery before pulling Git updates.";
+          notifyGitConflict(projectDir, { code: "source_transaction_recovery_failed", message, branch });
+          return { ok: false, message };
+        }
         const currentBranch = (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
         if (currentBranch !== branch) return { ok: false, message: "The Git branch changed. Check updates and try again." };
         const currentHead = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
@@ -665,19 +747,33 @@ export async function pullOverleafGit(projectDir: string, operationId: string): 
           const localBehind = await runGit(cwd, ["merge-base", "--is-ancestor", currentHead, fetchedCommit]).then(() => true, () => false);
           if (!localBehind) {
             const localAhead = await runGit(cwd, ["merge-base", "--is-ancestor", fetchedCommit, currentHead]).then(() => true, () => false);
-            if (localAhead) return { ok: true, message: "Already up to date." };
-            return { ok: false, message: "Local and remote Git branches have diverged. Review and reconcile Git updates before pulling." };
+            if (localAhead) {
+              clearGitConflictNotice(projectDir);
+              return { ok: true, message: "Already up to date." };
+            }
+            const message = "Local and remote Git branches have diverged. Review and reconcile Git updates before pulling.";
+            notifyGitConflict(projectDir, { code: "pull_diverged", message, branch, localCommit: currentHead, remoteCommit: fetchedCommit });
+            return { ok: false, message };
           }
         }
         const blockers = await findGitUpdateBlockers(cwd, currentHead, fetchedCommit);
-        if (blockers.length) return { ok: false, message: formatGitUpdateBlockers(blockers) };
+        if (blockers.length) {
+          const message = formatGitUpdateBlockers(blockers);
+          notifyGitConflict(projectDir, { code: "pull_overlap", message, branch, localCommit: currentHead, remoteCommit: fetchedCommit, files: blockers });
+          return { ok: false, message };
+        }
         saveDirectPullReceipt(file, { version: 1, projectKey, state: "applying", branch, targetHead: fetchedCommit });
         mergeStarted = true;
         const output = (await runGit(cwd, ["merge", "--ff-only", "--no-overwrite-ignore", fetchedCommit])).trim();
+        clearGitConflictNotice(projectDir);
         return { ok: true, message: output || "Already up to date." };
       });
       } catch (error) {
-        return { ok: false, message: `Could not pull Git updates: ${gitErrorMessage(error)}`, ...(mergeStarted ? { uncertain: true } : {}) };
+        const message = `Could not pull Git updates: ${gitErrorMessage(error)}`;
+        if (classifyGitSyncFailure(message).kind === "conflict") {
+          notifyGitConflict(projectDir, { code: "pull_conflict", message });
+        }
+        return { ok: false, message, ...(mergeStarted ? { uncertain: true } : {}) };
       }
     })();
     if (result.uncertain) return result;
@@ -744,11 +840,18 @@ export async function commitOverleafGit(
     // keeps manuscript saves available while Git waits on the network.
     return await withGitSyncLock(cwd, () => withProjectWriteLockAsync(projectDir, async () => {
       const pendingCheckpoint = await checkpointRecoveryMessage(cwd);
-      if (pendingCheckpoint) return { ok: false, status: "blocked", code: "checkpoint_recovery_required", message: pendingCheckpoint, paths: [] };
+      if (pendingCheckpoint) {
+        notifyGitConflict(projectDir, { code: "checkpoint_recovery_required", message: pendingCheckpoint });
+        return { ok: false, status: "blocked", code: "checkpoint_recovery_required", message: pendingCheckpoint, paths: [] };
+      }
       // A Git checkpoint must contain a complete manuscript state. Resolve an
       // interrupted multi-file write while holding the same project lock.
       const recovery = recoverSourceTransaction(texPaths(projectDir).manuscriptDir, true);
-      if (!recovery.ok) return { ok: false, status: "blocked", code: "source_transaction_recovery_failed", message: recovery.message || "The manuscript transaction requires recovery before creating a Git checkpoint.", paths: [] };
+      if (!recovery.ok) {
+        const message = recovery.message || "The manuscript transaction requires recovery before creating a Git checkpoint.";
+        notifyGitConflict(projectDir, { code: "source_transaction_recovery_failed", message });
+        return { ok: false, status: "blocked", code: "source_transaction_recovery_failed", message, paths: [] };
+      }
       let temporaryIndex: { directory: string; path: string } | undefined;
       try {
         const branch = (await runGit(cwd, ["symbolic-ref", "--short", "HEAD"])).trim();
@@ -762,7 +865,12 @@ export async function commitOverleafGit(
         if (sensitive.length) return { ok: false, status: "blocked", code: "sensitive_path", message: "Sensitive paths require cleanup before a local OpenBar commit: " + sensitive.join(", ") + ".", paths: [] };
         const existingPaths = affectedPaths.filter(isSafeCommittedPath);
         const staged = preStagedPaths(existingEntries).filter(isSafeCommittedPath);
-        if (staged.length) return { ok: false, status: "blocked", code: "pre_staged_work", message: "Affected paths contain pre-staged work. Review or commit the existing index before automatic synchronization: " + [...new Set(staged)].join(", ") + ".", paths: [] };
+        if (staged.length) {
+          const uniqueStaged = [...new Set(staged)];
+          const message = "Affected paths contain pre-staged work. Review or commit the existing index before automatic synchronization: " + uniqueStaged.join(", ") + ".";
+          notifyGitConflict(projectDir, { code: "pre_staged_work", message, branch, localCommit: head || undefined, files: uniqueStaged });
+          return { ok: false, status: "blocked", code: "pre_staged_work", message, paths: [] };
+        }
         if (!existingPaths.length) return { ok: true, status: "no_changes", message: "No local changes to commit.", branch, paths: [] };
         const indexEntries = (output: string) => {
           const entries = new Map<string, string>();
@@ -883,7 +991,10 @@ export async function syncOverleafGit(projectDir: string, expectedCommitHash?: s
     return await withGitSyncLock(cwd, async () => {
       try {
         const pendingCheckpoint = await withProjectWriteLockAsync(projectDir, () => checkpointRecoveryMessage(cwd));
-        if (pendingCheckpoint) return { ok: false, status: "failed", code: "checkpoint_recovery_required", message: pendingCheckpoint, retryable: false };
+        if (pendingCheckpoint) {
+          notifyGitConflict(projectDir, { code: "checkpoint_recovery_required", message: pendingCheckpoint });
+          return { ok: false, status: "failed", code: "checkpoint_recovery_required", message: pendingCheckpoint, retryable: false };
+        }
         const branch = (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
         const head = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
         if (!branch || branch === "HEAD") return { ok: false, status: "failed", code: "detached_head", message: "Checkout a named branch before synchronizing OpenBar.", retryable: false };
@@ -907,13 +1018,25 @@ export async function syncOverleafGit(projectDir: string, expectedCommitHash?: s
         }
         if (behind > 0) {
           const diverged = ahead > 0;
-          return { ok: false, status: "pending", code: diverged ? "remote_conflict" : "remote_ahead", message: diverged ? "Git and this checkout have diverged. Reconcile both histories before pushing." : "Git has newer commits. Pull and reconcile before pushing.", commitHash: head, branch, ahead, behind, retryable: true };
+          const code = diverged ? "remote_conflict" : "remote_ahead";
+          const message = diverged ? "Git and this checkout have diverged. Reconcile both histories before pushing." : "Git has newer commits. Pull and reconcile before pushing.";
+          const remoteCommit = (await runGit(cwd, ["rev-parse", `refs/remotes/origin/${branch}`]).catch(() => "")).trim() || undefined;
+          notifyGitConflict(projectDir, { code, message, branch, ahead, behind, localCommit: head, remoteCommit });
+          return { ok: false, status: "pending", code, message, commitHash: head, branch, ahead, behind, retryable: true };
         }
-        if (ahead === 0 && remoteBranchExists) return { ok: true, status: "synchronized", message: "The intended local commit is present on the Git branch.", commitHash: head, branch, ahead, behind, retryable: false };
+        if (ahead === 0 && remoteBranchExists) {
+          clearGitConflictNotice(projectDir);
+          return { ok: true, status: "synchronized", message: "The intended local commit is present on the Git branch.", commitHash: head, branch, ahead, behind, retryable: false };
+        }
         const pushOutput = (await runGit(cwd, ["push", "origin", `HEAD:refs/heads/${branch}`])).trim();
+        clearGitConflictNotice(projectDir);
         return { ok: true, status: "synchronized", message: pushOutput || `Pushed ${head} to origin/${branch}.`, commitHash: head, branch, ahead, behind, retryable: false };
       } catch (error) {
-        return { ok: false, status: "pending", code: "push_failed", message: "Local commits remain intact. Git synchronization failed: " + gitErrorMessage(error), retryable: true };
+        const message = "Local commits remain intact. Git synchronization failed: " + gitErrorMessage(error);
+        if (classifyGitSyncFailure(message).kind === "conflict") {
+          notifyGitConflict(projectDir, { code: "push_conflict", message });
+        }
+        return { ok: false, status: "pending", code: "push_failed", message, retryable: true };
       }
     });
   } catch (error) {
@@ -1118,6 +1241,17 @@ export async function prepareOverleafPull(projectDir: string, onProgress?: (line
       const files = [...new Set((await runGit(worktree, ["diff", "--name-only", "-z", localCommit])).split("\0").filter(Boolean))];
       const session: PullSession = { worktree, localCommit, remoteCommit, branch, conflicts: [...entries.keys()] };
       await savePullSession(cwd, token, session);
+      if (conflicts.length > 0) {
+        const conflictPaths = safeConflictFiles(conflicts.map(item => item.path)) || [];
+        notifyGitConflict(projectDir, {
+          code: "merge_conflict",
+          message: `Git merge conflict in ${conflicts.length} file${conflicts.length === 1 ? "" : "s"}${conflictPaths.length ? `: ${conflictPaths.slice(0, 5).join(", ")}${conflictPaths.length > 5 ? ` and ${conflictPaths.length - 5} more` : ""}` : ""}.`,
+          branch,
+          localCommit,
+          remoteCommit,
+          files: conflictPaths,
+        });
+      }
       return { ok: true as const, review: { token, localCommit, remoteCommit, files, conflicts } };
     } catch (error) {
       if (worktree) {
@@ -1158,7 +1292,9 @@ export async function finishOverleafPull(projectDir: string, token: string, choi
       const currentHead = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
       const currentBranch = (await runGit(cwd, ["symbolic-ref", "--short", "HEAD"])).trim();
       if (currentHead !== session.localCommit || currentBranch !== session.branch) {
-        return { ok: false, message: "The local project changed during review. Close this review and pull again to include those edits." };
+        const message = "The local project changed during review. Close this review and pull again to include those edits.";
+        notifyGitConflict(projectDir, { code: "review_stale", message, branch: currentBranch, localCommit: currentHead, remoteCommit: session.remoteCommit });
+        return { ok: false, message };
       }
       const selected = new Map(choices.map((choice) => [choice.path, choice]));
       if (selected.size !== session.conflicts.length || session.conflicts.some((file) => !selected.has(file))) {
@@ -1210,10 +1346,16 @@ export async function finishOverleafPull(projectDir: string, token: string, choi
         const currentHead = (await runGit(cwd, ["rev-parse", "HEAD"])).trim();
         const currentBranch = (await runGit(cwd, ["symbolic-ref", "--short", "HEAD"])).trim();
         if (currentHead !== session.localCommit || currentBranch !== session.branch) {
-          return { ok: false as const, message: "The Git branch changed during review. Close this review and pull again to include the latest checkpoint." };
+          const message = "The Git branch changed during review. Close this review and pull again to include the latest checkpoint.";
+          notifyGitConflict(projectDir, { code: "review_stale", message, branch: currentBranch, localCommit: currentHead, remoteCommit: session.remoteCommit });
+          return { ok: false as const, message };
         }
         const blockers = await findGitUpdateBlockers(cwd, currentHead, resultHead);
-        if (blockers.length) return { ok: false as const, message: formatGitUpdateBlockers(blockers) };
+        if (blockers.length) {
+          const message = formatGitUpdateBlockers(blockers);
+          notifyGitConflict(projectDir, { code: "pull_overlap", message, branch: currentBranch, localCommit: currentHead, remoteCommit: session.remoteCommit, files: blockers });
+          return { ok: false as const, message };
+        }
         session.resultHead = resultHead;
         await savePullSession(cwd, token, session);
         await runGit(cwd, ["merge", "--ff-only", "--no-overwrite-ignore", resultHead]);
@@ -1222,6 +1364,7 @@ export async function finishOverleafPull(projectDir: string, token: string, choi
       if (!applied.ok) return applied;
       session.applied = true;
       await savePullSession(cwd, token, session).catch(() => undefined);
+      clearGitConflictNotice(projectDir);
       return appliedPullResult(cwd, session);
     } catch (error) {
       return { ok: false, message: gitErrorMessage(error) };
@@ -1290,7 +1433,10 @@ export async function finishForceSync(projectDir: string, token: string, confirm
       const session = JSON.parse(fs.readFileSync(file, "utf8")) as ForceSyncSession;
       mutationStarted = session.phase === "applying";
       const refs = [`refs/openbar/recovery/${token}/local`, `refs/openbar/recovery/${token}/overleaf`];
-      const success = () => ({ ok: true as const, applied: true, message: session.direction === "pull" ? "Local project now matches the reviewed Git commit." : "Git now matches the reviewed local commit.", recoveryRefs: refs });
+      const success = () => {
+        clearGitConflictNotice(projectDir);
+        return { ok: true as const, applied: true, message: session.direction === "pull" ? "Local project now matches the reviewed Git commit." : "Git now matches the reviewed local commit.", recoveryRefs: refs };
+      };
       const uncertain = () => ({ ok: false as const, uncertain: true, message: "The force synchronization may have completed. Keep this editor open and check the project state before continuing." });
       if (session.phase === "applied") return success();
       if (cancel && !session.phase) { fs.rmSync(file); return { ok: true, message: "Force synchronization cancelled." }; }
@@ -1377,5 +1523,35 @@ export async function getOverleafSyncDetails(projectDir: string, refresh = false
   const overlappingFiles = incomingFiles.filter(file => localFiles.has(file));
   const conflictedFiles = splitNulRecords(await runGit(cwd, ["diff", "--name-only", "--diff-filter=U", "-z"]).catch(() => ""));
   const recovery = (await runGit(cwd, ["for-each-ref", "--count=40", "--sort=-creatordate", "--format=%(refname) %(objectname)", "refs/openbar/recovery/"]).catch(() => "")).trim().split("\n").filter(Boolean);
+  if (conflictedFiles.length > 0) {
+    const safe = safeConflictFiles(conflictedFiles);
+    notifyGitConflict(projectDir, {
+      code: "unmerged_files",
+      message: `Git repository has ${conflictedFiles.length} unmerged file${conflictedFiles.length === 1 ? "" : "s"}${safe?.length ? `: ${safe.slice(0, 5).join(", ")}${safe.length > 5 ? ` and ${safe.length - 5} more` : ""}` : ""}.`,
+      branch: status.branch,
+      ahead: status.ahead,
+      behind: status.behind,
+      localCommit: status.lastCommit?.hash,
+      remoteCommit: remoteCommit || undefined,
+      files: safe,
+    });
+  } else if (status.isOverleafRemote && (status.behind || 0) > 0 && ((status.ahead || 0) > 0 || !status.isClean || overlappingFiles.length > 0)) {
+    notifyGitConflict(projectDir, {
+      code: "remote_conflict",
+      message: "Git and this checkout have diverged. Reconcile both histories before pushing.",
+      branch: status.branch,
+      ahead: status.ahead,
+      behind: status.behind,
+      localCommit: status.lastCommit?.hash,
+      remoteCommit: remoteCommit || undefined,
+      files: overlappingFiles.length ? overlappingFiles : status.changedFiles,
+    });
+  } else if (refresh && (status.behind || 0) === 0 && !status.error) {
+    const checkpointPath = await checkpointJournalPath(cwd).catch(() => "");
+    const hasCheckpoint = Boolean(checkpointPath && fs.existsSync(checkpointPath));
+    const statusEntries = parsePorcelainZ(await runGit(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--", ...gitPathspec(projectDir, cwd)]).catch(() => ""));
+    const hasPreStaged = preStagedPaths(statusEntries).some(isSafeCommittedPath);
+    if (!hasCheckpoint && !hasPreStaged) clearGitConflictNotice(projectDir);
+  }
   return { status, localCommit: status.lastCommit?.hash, remoteCommit: remoteCommit || null, baseCommit: baseCommit || null, incomingFiles, outgoingFiles, overlappingFiles, conflictedFiles, recovery, nextStep: (status.behind || 0) > 0 ? "Call sync_project with action=review_pull to obtain base/local/remote text for each conflict. Resolve every file and apply_pull with the returned token. Each choice selects an entire file. A changed local HEAD or tracked working tree requires a fresh review." : "Local and remote commit counts are in status. Use the existing project save operation to publish local commits." };
 }

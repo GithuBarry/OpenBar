@@ -12,21 +12,45 @@ export function hasNoteText(value?: string): boolean {
 
 /** Project saved fields into Notes while keeping the stored source untouched. */
 export function cardNotesText(caption?: string, caution?: MindmapCaution): string {
-  const fields = [caption, caution?.background, caution?.critical, caution?.important]
-    .filter((field): field is string => hasNoteText(field));
-  if (fields.length < 2) return fields[0] ?? "";
+  return projectCardNotes(caption, caution).text;
+}
 
+export function projectCardNotes(caption?: string, caution?: MindmapCaution, anchor?: { field: string; offset: number }) {
   // Repeated text within an authored field can be meaningful, including code fences.
-  const separator = /\r?\n(?:[\t ]*\r?\n)+/;
-  const merged = [fields[0]!];
-  const seen = new Set(fields[0]!.split(separator));
-  for (const field of fields.slice(1)) {
-    const paragraphs = field.split(separator);
-    const additional = paragraphs.filter(paragraph => hasNoteText(paragraph) && !seen.has(paragraph));
-    if (additional.length) merged.push(additional.length === paragraphs.length ? field : additional.join("\n\n"));
-    for (const paragraph of additional) seen.add(paragraph);
+  const fields = { caption, ...caution };
+  const seen = new Map<string, number>();
+  let text = "";
+  let workingMentionAt: number | undefined;
+  for (const field of CARD_NOTE_FIELDS) {
+    const source = fields[field];
+    if (!source || !hasNoteText(source)) continue;
+    const parts = source.split(/(\r?\n(?:[\t ]*\r?\n)+)/);
+    const preserveSeparators = !text || parts.every((part, i) => i % 2 || (hasNoteText(part) && !seen.has(part)));
+    const added = new Map<string, number>();
+    if (text) text += preserveSeparators ? "\n\n" : "";
+    const sourceStart = text.length;
+    if (preserveSeparators) text += source;
+    let sourceOffset = 0;
+    for (let i = 0; i < parts.length; i += 2) {
+      const paragraph = parts[i]!;
+      let outputOffset = seen.get(paragraph);
+      if (preserveSeparators) {
+        outputOffset = sourceStart + sourceOffset;
+        if (!added.has(paragraph)) added.set(paragraph, outputOffset);
+      } else if (hasNoteText(paragraph) && outputOffset === undefined) {
+        text += "\n\n";
+        outputOffset = text.length;
+        if (!added.has(paragraph)) added.set(paragraph, outputOffset);
+        text += paragraph;
+      }
+      if (anchor?.field === field && outputOffset !== undefined && anchor.offset >= sourceOffset && anchor.offset < sourceOffset + paragraph.length) {
+        workingMentionAt = outputOffset + anchor.offset - sourceOffset;
+      }
+      sourceOffset += paragraph.length + (parts[i + 1]?.length ?? 0);
+    }
+    for (const [paragraph, offset] of added) if (!seen.has(paragraph)) seen.set(paragraph, offset);
   }
-  return merged.join("\n\n");
+  return { text, workingMentionAt };
 }
 
 /** Restore the active card's note fields while retaining its other live fields. */

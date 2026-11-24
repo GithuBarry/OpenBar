@@ -1,260 +1,1000 @@
 % OpenBar mindmap record. TeX ignores this comment-only file.
 % OB-DATA-BEGIN openbar/mindmap@1 id=mindmap
 % {
-%   "createdAt": "2025-01-12T16:10:00.000Z",
+%   "createdAt": "2026-02-12T12:00:00.000Z",
 %   "id": "draft",
 %   "nodes": [
 %     {
-%       "createdAt": "2025-01-12T16:10:00.000Z",
+%       "caption": "Published at ICLR 2026 (arXiv:2506.19140). Instead of retraining or distilling every target architecture, Command-V copies an existing low-rank residual adapter (DiReFT) from a donor LLM into a recipient of a different size or family using only generic profiling prompts and closed-form linear algebra.",
+%       "color": "#785ef0",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
 %       "id": "root",
 %       "order": 0,
 %       "parentId": null,
+%       "refs": [
+%         {
+%           "id": "https://arxiv.org/abs/2506.19140",
+%           "kind": "web",
+%           "label": "arXiv:2506.19140"
+%         },
+%         {
+%           "id": "https://openreview.net/forum?id=oRYzpI3cmJ",
+%           "kind": "web",
+%           "label": "ICLR 2026"
+%         },
+%         {
+%           "id": "https://github.com/GithuBarry/Command-V",
+%           "kind": "web",
+%           "label": "GitHub repo"
+%         }
+%       ],
 %       "shape": "root",
-%       "text": "Command-V"
+%       "text": "Training-free behavior transfer: profile residual activations, fit linear converters, and paste a donor ReFT adapter onto a different LLM.",
+%       "title": "Command-V",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2025-02-18T09:00:00.000Z",
-%       "id": "branch-method",
+%       "caption": "Finetuning, LoRA, RLHF, and distillation all repeat expensive training for every model family and scale. Command-V exploits shared representation geometry across LLMs so a behavior trained once on a cheap donor can be pasted onto other models in seconds.",
+%       "color": "#785ef0",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "framing",
 %       "order": 0,
 %       "parentId": "root",
-%       "progress": 100,
+%       "refs": [
+%         {
+%           "id": "sec-introduction",
+%           "kind": "paper-section",
+%           "label": "Introduction"
+%         },
+%         {
+%           "id": "sec-related",
+%           "kind": "paper-section",
+%           "label": "Related Work"
+%         }
+%       ],
 %       "shape": "branch",
 %       "tags": [
-%         "method"
+%         "framing"
 %       ],
-%       "text": "Profiles and converters",
-%       "updatedAt": "2025-03-29T12:07:55.000Z"
+%       "text": "Reuse existing representation adapters across LLM sizes and families without recipient backpropagation or task data.",
+%       "title": "Problem & core idea",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2025-04-02T08:50:00.000Z",
-%       "id": "branch-refusal",
-%       "order": 1,
-%       "parentId": "root",
-%       "progress": 100,
-%       "shape": "branch",
-%       "tags": [
-%         "eval"
+%       "caption": "The Pareto advantage holds even after accounting for the one-time, task-agnostic activation profiling pass on an A100-40GB. See [[eval-refusal]] for full refusal / overrefusal / ARC-Challenge numbers and [[method-latency]] for TTFT overhead.",
+%       "color": "#785ef0",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "framing-headline",
+%       "order": 0,
+%       "parentId": "framing",
+%       "refs": [
+%         {
+%           "id": "sec-experiments",
+%           "kind": "paper-section",
+%           "label": "Refusal Enhancement"
+%         }
 %       ],
-%       "text": "Refusal enhancement",
-%       "updatedAt": "2025-05-06T19:22:47.000Z"
-%     },
-%     {
-%       "createdAt": "2025-05-07T09:00:00.000Z",
-%       "id": "branch-jailbreak",
-%       "order": 2,
-%       "parentId": "root",
-%       "progress": 100,
-%       "shape": "branch",
-%       "tags": [
-%         "eval"
-%       ],
-%       "text": "Jailbreak transfer",
-%       "updatedAt": "2025-05-28T02:17:09.000Z"
-%     },
-%     {
-%       "createdAt": "2025-05-12T09:50:00.000Z",
-%       "id": "branch-cot",
-%       "order": 3,
-%       "parentId": "root",
-%       "progress": 100,
-%       "shape": "branch",
-%       "tags": [
-%         "eval"
-%       ],
-%       "text": "Auto-CoT",
-%       "updatedAt": "2025-06-11T09:12:04.000Z"
-%     },
-%     {
-%       "createdAt": "2025-01-12T16:20:00.000Z",
-%       "id": "branch-writing",
-%       "order": 4,
-%       "parentId": "root",
-%       "progress": 100,
-%       "shape": "branch",
-%       "tags": [
-%         "paper"
-%       ],
-%       "text": "Paper and release",
-%       "updatedAt": "2026-02-12T11:37:08.000Z"
-%     },
-%     {
-%       "color": "#0f766e",
-%       "createdAt": "2025-04-27T15:00:00.000Z",
-%       "id": "note-pareto",
-%       "order": 5,
-%       "parentId": "root",
 %       "shape": "callout",
 %       "tags": [
 %         "finding"
 %       ],
-%       "text": "3B refusal adapter pasted onto 8B: ASR 36.85 to 20.40, beating direct 8B ReFT 28.55. Converters 6.35s on a laptop CPU.",
-%       "updatedAt": "2025-04-27T15:00:00.000Z"
+%       "text": "Pasting a **3B** refusal adapter onto **8B** cuts WildJailbreak ASR from **36.85% → 20.40%** ((2,000 adversarial harmful prompts judged by LlamaGuard3-8B)), beating direct 8B ReFT (**28.55%**) with **6.35 s** CPU converter fitting ((mean across 14–18 layer pairs on an M1 Max MacBook Pro)).",
+%       "title": "Headline Pareto result",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2025-02-18T09:10:00.000Z",
+%       "caption": "Figure 1 from the manuscript. Profiling requires only forward passes (no decoding or task-specific data), so an edge device can paste an 8B adapter onto a 3B model without ever hosting 8B weights.",
+%       "color": "#785ef0",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "framing-overview-fig",
+%       "order": 1,
+%       "parentId": "framing",
+%       "refs": [
+%         {
+%           "id": "figures/overview2.png",
+%           "imageWidth": 100,
+%           "kind": "figure",
+%           "label": "Fig. 1: Command-V transfer overview"
+%         },
+%         {
+%           "id": "sec-introduction",
+%           "kind": "paper-section",
+%           "label": "Introduction"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "Profile donor and recipient once on generic prompts, derive layer converters, and paste the donor adapter at inference.",
+%       "title": "Transfer overview",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Builds on evidence that LLMs converge to shared representation neighborhoods (Platonic Representation Hypothesis; Lee et al. 2025; Wolfram & Schein 2025). Unlike concurrent same-family steering maps, Command-V transfers trained low-rank ReFT adapters across sizes and model families.",
+%       "color": "#785ef0",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "framing-landscape",
+%       "order": 2,
+%       "parentId": "framing",
+%       "refs": [
+%         {
+%           "id": "sec-related",
+%           "kind": "paper-section",
+%           "label": "Related Work"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "| Approach | Cross-arch? | Recipient<br>backprop? | Task data<br>needed? |\n| --- | :---: | :---: | :---: |\n| Finetuning / LoRA / ReFT | No | Yes | Yes |\n| Knowledge distillation | Yes | Yes | Yes ((requires teacher generations)) |\n| Model merging / task arithmetic | No ((same family & size)) | No | No |\n| Activation steering (RepE / CAA) | No ((single model space)) | No | Few-shot |\n| **Command-V** | **Yes** | **No** | **No** ((generic LIMA prompts only)) |",
+%       "title": "Contrast with model-editing baselines",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Pipeline scripts in release repo: `step1_capture_activations.py` → `step2_derive_converters.py` → `step3_commandv_inference.py`. Default adapter setup: DiReFT rank 8 on every other donor layer, intervening at the last prompt token only (<0.04% added params).",
+%       "color": "#648fff",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "method",
+%       "order": 1,
+%       "parentId": "root",
+%       "refs": [
+%         {
+%           "id": "sec-method",
+%           "kind": "paper-section",
+%           "label": "Method"
+%         },
+%         {
+%           "id": "compute",
+%           "kind": "wiki-page",
+%           "label": "Compute notes"
+%         }
+%       ],
+%       "shape": "branch",
+%       "tags": [
+%         "method"
+%       ],
+%       "text": "Three training-free phases map recipient hidden states into donor space, apply the donor DiReFT delta, and map back.",
+%       "title": "Method: Profiles → Converters → Paste",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Equation: h^{l_R}_intervened = h^{l_R} + C_{l_D→l_R}(ΔI^{l_D}(C_{l_R→l_D}(h^{l_R}))), where ΔI(h) = W_2^T(W_1 h + b). Because interventions fire once on the final prompt token at each paired layer, autoregressive decoding adds zero per-token overhead.",
+%       "cardWidth": 420,
+%       "color": "#648fff",
+%       "contentFormat": "html",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "method-diagram",
+%       "order": 0,
+%       "parentId": "method",
+%       "refs": [
+%         {
+%           "id": "sec-method",
+%           "kind": "paper-section",
+%           "label": "Transfer Mechanism"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "<svg viewBox=\"0 0 404 116\" role=\"img\" aria-label=\"Command-V inference paste loop: map recipient h_R via C_{R to D}, apply donor DiReFT delta I, map back via C_{D to R}, and add to h_R\">\n  <g>\n    <title>Recipient residual hidden state at final prompt token of layer l_R</title>\n    <rect x=\"4\" y=\"10\" width=\"70\" height=\"44\" rx=\"8\" fill=\"#eef2ff\" stroke=\"#648fff\" stroke-width=\"1.5\"/>\n    <text x=\"39\" y=\"29\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"#1e3a8a\">h_R</text>\n    <text x=\"39\" y=\"44\" text-anchor=\"middle\" font-size=\"9.5\" fill=\"#475569\">layer l_R</text>\n  </g>\n  <path d=\"M74 32 H92\" stroke=\"#64748b\" stroke-width=\"1.5\" fill=\"none\" stroke-linecap=\"round\"/>\n  <polygon points=\"90,28 97,32 90,36\" fill=\"#64748b\"/>\n  <g>\n    <title>Moore-Penrose linear map C_{R→D} = X†Y from recipient into donor space</title>\n    <rect x=\"98\" y=\"10\" width=\"76\" height=\"44\" rx=\"8\" fill=\"#ede9fe\" stroke=\"#785ef0\" stroke-width=\"1.5\"/>\n    <text x=\"136\" y=\"29\" text-anchor=\"middle\" font-size=\"11.5\" font-weight=\"700\" fill=\"#4c1d95\">C_R→D</text>\n    <text x=\"136\" y=\"44\" text-anchor=\"middle\" font-size=\"9.5\" fill=\"#5b21b6\">X†Y</text>\n  </g>\n  <path d=\"M174 32 H192\" stroke=\"#64748b\" stroke-width=\"1.5\" fill=\"none\" stroke-linecap=\"round\"/>\n  <polygon points=\"190,28 197,32 190,36\" fill=\"#64748b\"/>\n  <g>\n    <title>Frozen donor DiReFT adapter ΔI(h) = W2ᵀ(W1 h + b), rank 8 on every other donor layer</title>\n    <rect x=\"198\" y=\"10\" width=\"96\" height=\"44\" rx=\"8\" fill=\"#fce7f3\" stroke=\"#dc267f\" stroke-width=\"1.5\"/>\n    <text x=\"246\" y=\"29\" text-anchor=\"middle\" font-size=\"11.5\" font-weight=\"700\" fill=\"#831843\">ΔI (DiReFT)</text>\n    <text x=\"246\" y=\"44\" text-anchor=\"middle\" font-size=\"9.5\" fill=\"#9d174d\">donor rank-8</text>\n  </g>\n  <path d=\"M294 32 H312\" stroke=\"#64748b\" stroke-width=\"1.5\" fill=\"none\" stroke-linecap=\"round\"/>\n  <polygon points=\"310,28 317,32 310,36\" fill=\"#64748b\"/>\n  <g>\n    <title>Inverse Moore-Penrose map C_{D→R} = Y†X returning Δh_R to recipient space</title>\n    <rect x=\"318\" y=\"10\" width=\"82\" height=\"44\" rx=\"8\" fill=\"#ede9fe\" stroke=\"#785ef0\" stroke-width=\"1.5\"/>\n    <text x=\"359\" y=\"29\" text-anchor=\"middle\" font-size=\"11.5\" font-weight=\"700\" fill=\"#4c1d95\">C_D→R</text>\n    <text x=\"359\" y=\"44\" text-anchor=\"middle\" font-size=\"9.5\" fill=\"#5b21b6\">Y†X → Δh_R</text>\n  </g>\n  <path d=\"M39 54 V92 H137\" stroke=\"#648fff\" stroke-width=\"1.5\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-dasharray=\"4 3\"/>\n  <polygon points=\"135,88 142,92 135,96\" fill=\"#648fff\"/>\n  <text x=\"86\" y=\"86\" text-anchor=\"middle\" font-size=\"9.5\" fill=\"#475569\">residual h_R</text>\n  <path d=\"M359 54 V92 H269\" stroke=\"#dc267f\" stroke-width=\"1.5\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n  <polygon points=\"271,88 264,92 271,96\" fill=\"#dc267f\"/>\n  <text x=\"314\" y=\"86\" text-anchor=\"middle\" font-size=\"9.5\" fill=\"#9d174d\">+ Δh_R</text>\n  <g>\n    <title>Intervened recipient hidden state applied once at the final prompt token (zero decoding cost)</title>\n    <rect x=\"144\" y=\"76\" width=\"118\" height=\"32\" rx=\"16\" fill=\"#648fff\"/>\n    <text x=\"203\" y=\"96\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"#ffffff\">h_R + Δh_R</text>\n  </g>\n</svg>",
+%       "title": "Inference-time paste loop",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Captured with batch size 4 in bfloat16, skipping decoding so peak GPU memory stays below standard generation. Profiles are task-agnostic and reusable across adapters—an edge device can paste an 8B adapter onto a 3B recipient from precomputed profiles without ever downloading 8B weights. See [[archive-bugs|Extraction hygiene]] for BOS and padding-mask fixes.",
+%       "color": "#648fff",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "method-profiles",
+%       "order": 1,
+%       "parentId": "method",
+%       "refs": [
+%         {
+%           "id": "sec-method",
+%           "kind": "paper-section",
+%           "label": "Activation Profiling"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "Run **1,030** generic LIMA prompts ((first-turn queries spanning open-ended, creative, and factual topics)) once per model and record the **last prompt token** residual vector at every layer.",
+%       "title": "1. Activation profiling (LIMA, N = 1,030)",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Closed-form pseudoinverse needs no backpropagation and preserves approximate cycle consistency C_{D→R}(C_{R→D}(h_R)) ≈ h_R. For 3B ↔ 8B, 14 layer pairs hold 14 × 2 × 3072 × 4096 = 352.8M converter parameters, yet run only MFLOPs once at prompt end. MSE-minimizing layer assignment failed—see [[archive-mse-match|MSE layer matching]].",
+%       "color": "#648fff",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "defaultCollapsed": true,
+%       "id": "method-converters",
+%       "order": 2,
+%       "parentId": "method",
+%       "refs": [
+%         {
+%           "id": "sec-method",
+%           "kind": "paper-section",
+%           "label": "Layer Converter"
+%         },
+%         {
+%           "id": "sec-appendix",
+%           "kind": "paper-section",
+%           "label": "Layer Matching"
+%         }
+%       ],
+%       "shape": "branch",
+%       "text": "Pair layers linearly via **l_R = ⌊(|L_R| / |L_D|) · l_D⌋** and solve closed-form bidirectional least-squares maps **C_{R→D} = X†Y**, **C_{D→R} = Y†X**.",
+%       "title": "2. Layer pairing & Moore-Penrose converters",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Representative 8B → 3B held-out test loss landscape. Matching purely by lowest reconstruction loss misaligns semantic depth and degrades downstream transfer; linear proportional depth avoids this collapse.",
+%       "color": "#648fff",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "method-layer-fig",
+%       "order": 0,
+%       "parentId": "method-converters",
+%       "refs": [
+%         {
+%           "id": "figures/llama_detailed_analysis.png",
+%           "imageWidth": 100,
+%           "kind": "figure",
+%           "label": "8B → 3B layer test MSE landscape"
+%         },
+%         {
+%           "id": "sec-appendix",
+%           "kind": "paper-section",
+%           "label": "Layer Matching Details"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "Later layers are harder to approximate linearly, so minimizing forward or cycle MSE collapses donor layers onto early recipient layers.",
+%       "title": "Why linear depth beats MSE matching",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Gains taper near N ≈ 1,000 on LIMA alone; extending to N = 2,000–4,000 mixes AlpacaEval and UltraChat prompts, coupling prompt diversity with sample count. N = 1,030 LIMA keeps profiling fast while approaching skyline correlation.",
+%       "color": "#648fff",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "method-sample-size",
+%       "order": 1,
+%       "parentId": "method-converters",
+%       "refs": [
+%         {
+%           "id": "sec-appendix",
+%           "kind": "paper-section",
+%           "label": "Converter & Sample Size"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "| Profiling N | Metric ((400 held-out prompts: 100 AdvBench, 100 WildJailbreak, 200 reasoning)) | 8B → 3B | 3B → 8B |\n| --- | --- | ---: | ---: |\n| 50 | Fwd MSE (10⁻⁵)<br>Pearson r | 2.1<br>0.9872 | 0.8<br>0.9720 |\n| 200 | Fwd MSE (10⁻⁵)<br>Pearson r | 1.6<br>0.9903 | 0.6<br>0.9783 |\n| **1,000** ((default LIMA: 1,030)) | Fwd MSE (10⁻⁵)<br>Pearson r | **1.5**<br>**0.9905** | **0.8**<br>**0.9719** |\n| 4,000 ((LIMA + AlpacaEval + UltraChat mix)) | Fwd MSE (10⁻⁵)<br>Pearson r | 0.5<br>0.9970 | 0.2<br>0.9924 |\n| Skyline ((self → self, N = 4,000)) | Fwd MSE (10⁻⁵)<br>Pearson r | 0.1<br>0.9996 | 0.0<br>0.9988 |",
+%       "title": "Profiling sample size N ablation",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Donor adapter training runs once on A100-40GB (~1 h AdvBench, ~12 h OpenMathReasoning, up to 22 h WildJailbreak). Inference latency measured on A100-40GB, batch size 4, one warm-up batch; prompt-length buckets (≤60 to >500 tokens) all stay within +5.2 to +9.1 ms.",
+%       "color": "#648fff",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "defaultCollapsed": true,
+%       "id": "method-latency",
+%       "order": 3,
+%       "parentId": "method",
+%       "refs": [
+%         {
+%           "id": "sec-appendix",
+%           "kind": "paper-section",
+%           "label": "Latency"
+%         },
+%         {
+%           "id": "sec-appendix",
+%           "kind": "paper-section",
+%           "label": "Compute Environment"
+%         },
+%         {
+%           "id": "compute",
+%           "kind": "wiki-page",
+%           "label": "Compute notes"
+%         }
+%       ],
+%       "shape": "branch",
+%       "text": "Converters derive in **6.35 s** on CPU ((mean across 14–18 layer pairs on an M1 Max)) and add **+5.5 to +7.4 ms** to TTFT with **zero** per-token decoding cost.",
+%       "title": "3. Compute, memory & latency budget",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Single-digit millisecond pre-decoding delta equals only a few generated tokens in wall time and does not grow with generation length.",
+%       "color": "#648fff",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "method-ttft-table",
+%       "order": 0,
+%       "parentId": "method-latency",
+%       "refs": [
+%         {
+%           "id": "sec-appendix",
+%           "kind": "paper-section",
+%           "label": "Latency"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "| Recipient | Intervention | AdvBench<br>TTFT (ms) ((shorter prompts, A100 40GB, bs=4)) | WildJailbreak<br>TTFT (ms) ((longer prompts, A100 40GB, bs=4)) |\n| --- | --- | ---: | ---: |\n| **Llama-3.2-3B** | Off-shelf<br>Direct ReFT<br>**Command-V (←8B)** | 92.87<br>93.70 (+0.83)<br>**99.76 (+6.89)** | 368.26<br>368.98 (+0.72)<br>**375.63 (+7.37)** |\n| **Llama-3.1-8B** | Off-shelf<br>Direct ReFT<br>**Command-V (←3B)** | 219.44<br>220.32 (+0.88)<br>**224.95 (+5.51)** | 876.54<br>877.39 (+0.85)<br>**882.20 (+5.66)** |",
+%       "title": "Time-to-first-token (TTFT) overhead",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Mean 6.35 s across all required layer pairs (14–18 pairs depending on donor depth); even faster on CUDA devices.",
+%       "color": "#648fff",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "method-cpu-fig",
+%       "order": 1,
+%       "parentId": "method-latency",
+%       "refs": [
+%         {
+%           "id": "figures/converter_time.png",
+%           "imageWidth": 100,
+%           "kind": "figure",
+%           "label": "M1 Max CPU converter derivation time"
+%         },
+%         {
+%           "id": "sec-appendix",
+%           "kind": "paper-section",
+%           "label": "Compute Environment"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "Pseudoinverse converters fit in seconds per model pair on a 32 GB M1 Max laptop without a GPU.",
+%       "title": "CPU converter derivation time",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "All donor adapters use DiReFT rank 8 on every other donor layer, last-token intervention, 6 epochs. Models: Llama-3.1-8B, Llama-3.2-3B/1B, Qwen2.5-7B/3B/1.5B, Gemma-2-2B-it, Phi-4-mini (3.8B), and OLMo-2-1124-7B.",
+%       "color": "#dc267f",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "evidence",
+%       "order": 2,
+%       "parentId": "root",
+%       "refs": [
+%         {
+%           "id": "sec-experiments",
+%           "kind": "paper-section",
+%           "label": "Command-V in Practice"
+%         },
+%         {
+%           "id": "case-studies",
+%           "kind": "wiki-page",
+%           "label": "Case study log"
+%         }
+%       ],
+%       "shape": "branch",
+%       "tags": [
+%         "eval"
+%       ],
+%       "text": "Three target behaviors evaluated across **9** instruction-tuned LLMs from **5** model families ((Llama-3, Qwen2.5, Gemma-2, plus inference-only Phi-4-mini and OLMo-2)).",
+%       "title": "Case studies & empirical results",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Donors trained on 10,000 WildJailbreak train prompts (batch size 2 on 3B, 4 on 8B); evaluated on all 2,000 adversarial harmful prompts (LlamaGuard3-8B) and 221 human-annotated adversarial benign prompts. Reverse 8B → 3B transfer cuts 3B ASR from 31.30% → 16.40%.",
+%       "color": "#dc267f",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "eval-refusal",
+%       "order": 0,
+%       "parentId": "evidence",
+%       "refs": [
+%         {
+%           "id": "sec-experiments",
+%           "kind": "paper-section",
+%           "label": "Refusal Enhancement"
+%         }
+%       ],
+%       "shape": "branch",
+%       "text": "**3B → 8B** transfer cuts harmful ASR from **36.85% → 20.40%**, beating direct 8B ReFT (**28.55%**) while preserving ARC-Challenge accuracy (**86.43%**).",
+%       "title": "Refusal enhancement (WildJailbreak)",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Harmful refusal transfers strongly in both directions with negligible ARC-Challenge drop; the main side effect is elevated overrefusal on jailbreak-like benign prompts, especially when transferring 8B → 3B.",
+%       "color": "#dc267f",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "eval-refusal-table",
+%       "order": 0,
+%       "parentId": "eval-refusal",
+%       "refs": [
+%         {
+%           "id": "sec-experiments",
+%           "kind": "paper-section",
+%           "label": "Refusal Enhancement"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "| Recipient | Metric | Off-shelf | Direct ReFT | Command-V |\n| --- | --- | ---: | ---: | ---: |\n| **Llama-3.1-8B**<br>((donor: 3B)) | Harmful ASR ↓ ((2,000 WildJailbreak harmful prompts))<br>Overrefusal ↓ ((221 adversarial-benign, human-annotated))<br>ARC-Challenge ↑ ((general reasoning utility check)) | 36.85%<br>1.36%<br>85.75% | 28.55% ((mid-run dip: 21.05%))<br>2.26%<br>87.20% | **20.40%**<br>4.52%<br>86.43% |\n| **Llama-3.2-3B**<br>((donor: 8B)) | Harmful ASR ↓<br>Overrefusal ↓<br>ARC-Challenge ↑ | 31.30%<br>3.17%<br>80.12% | **12.20%** ((mid-run dip: 5.65%))<br>8.60%<br>77.13% | 16.40%<br>14.48% ((32/221 benign prompts vs. 7/221 off-shelf))<br>78.24% |",
+%       "title": "Harmful ASR, overrefusal & utility",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Figure 2 from the manuscript. Purple curves track intermediary ReFT checkpoints on A100-40GB; pink curves show Command-V across profiling budgets.",
+%       "color": "#dc267f",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "eval-refusal-fig",
+%       "order": 1,
+%       "parentId": "eval-refusal",
+%       "refs": [
+%         {
+%           "id": "figures/WildJailbreak.png",
+%           "imageWidth": 100,
+%           "kind": "figure",
+%           "label": "Fig. 2: WildJailbreak ASR vs. A100 wall time"
+%         },
+%         {
+%           "id": "sec-experiments",
+%           "kind": "paper-section",
+%           "label": "Refusal Enhancement"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "Command-V sits on the compute–safety Pareto frontier on both 3B and 8B, including amortized profiling time.",
+%       "title": "ASR vs. wall-time Pareto curves",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Fixed-checkpoint 3B → 8B profile sweep (step 300k): 36.45% (N=64) → 34.15% (N=256) → 20.40% (N=1,030) vs. 37.35% baseline. Conservative batch sizes (2 on 3B, 4 on 8B) beat faster batch sizes 12/16 on harm reduction.",
+%       "color": "#ffb000",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "eval-refusal-diagnostics",
+%       "order": 2,
+%       "parentId": "eval-refusal",
+%       "shape": "leaf",
+%       "tags": [
+%         "diagnostic"
+%       ],
+%       "text": "Too few profiles weaken transfer (**36.45%** ASR at N=64 vs. **20.40%** at N=1,030 on 3B→8B), and over-training harms refusal (**5.65% → 12.20%** on 3B; **21.05% → 28.55%** on 8B).",
+%       "title": "Sensitivity: profile budget, checkpoint & batch size",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Trained on AdvBench and evaluated on both AdvBench and out-of-distribution HarmBench Standard (LlamaGuard3-8B). Includes inference-only recipients Phi-4-mini and OLMo-2-7B. Generic LIMA profiles contain no harmful prompts yet still support transfer.",
+%       "color": "#dc267f",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "defaultCollapsed": true,
+%       "id": "eval-jailbreak",
+%       "order": 1,
+%       "parentId": "evidence",
+%       "refs": [
+%         {
+%           "id": "sec-experiments",
+%           "kind": "paper-section",
+%           "label": "Refusal Suppression"
+%         },
+%         {
+%           "id": "sec-discussion",
+%           "kind": "paper-section",
+%           "label": "Ethics Statement"
+%         }
+%       ],
+%       "shape": "branch",
+%       "text": "Jailbreak adapters lift single-digit baselines to **20–80% ASR** across recipients—strongest within families—while **Gemma-2-2B-it** resists transfer. See [[limit-ethics|Dual-use impact]].",
+%       "title": "Refusal suppression (AdvBench & HarmBench)",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Reported strictly as a capability analysis and dual-use safety finding rather than a usage recommendation.",
+%       "color": "#dc267f",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "eval-jailbreak-summary",
+%       "order": 0,
+%       "parentId": "eval-jailbreak",
+%       "shape": "leaf",
+%       "text": "| Role & model | AdvBench<br>ASR ↑ | HarmBench<br>ASR ↑ | Transfer pattern |\n| --- | ---: | ---: | --- |\n| **Top donor**<br>Qwen2.5-7B | 41.2% ((mean across recipients)) | 46.9% ((mean across recipients)) | Peaks at **80.7% / 81.5%** on Qwen2.5-1.5B |\n| **Most susceptible**<br>Llama-3.2-1B | 61.7% ((mean across donors)) | 54.9% ((mean across donors)) | High vulnerability within & across families |\n| **Most resistant**<br>Gemma-2-2B-it | Low | Low | Resists jailbreak pasting from all tested donors |",
+%       "title": "Strongest donors, susceptible & resistant recipients",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Figure 3 from the manuscript. White dashed boxes highlight same-family transfers, which are consistently stronger than cross-family pairs.",
+%       "color": "#dc267f",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "eval-jailbreak-fig",
+%       "order": 1,
+%       "parentId": "eval-jailbreak",
+%       "refs": [
+%         {
+%           "id": "figures/grid.png",
+%           "imageWidth": 100,
+%           "kind": "figure",
+%           "label": "Fig. 3: AdvBench & HarmBench ASR heatmaps"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "Off-diagonal entries show Command-V transfer across Llama3, Qwen2.5, Gemma2, Phi-4-mini, and OLMo-2; diagonal cells mark direct ReFT upper bounds.",
+%       "title": "Cross-model jailbreak transfer matrix",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Trained on 2,000 OpenMathReasoning examples with `<thinking>` tokens replaced by natural words to avoid tokenizer-mismatch garbling. Evaluated on 250 questions each of BBH Multistep Arithmetic and Tracking Shuffled Objects under strict JSON output extraction. See [[limit-collapse|Format collapse]].",
+%       "color": "#dc267f",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "defaultCollapsed": true,
+%       "id": "eval-cot",
+%       "order": 2,
+%       "parentId": "evidence",
+%       "refs": [
+%         {
+%           "id": "sec-experiments",
+%           "kind": "paper-section",
+%           "label": "CoT Reasoning"
+%         },
+%         {
+%           "id": "sec-appendix",
+%           "kind": "paper-section",
+%           "label": "Qualitative Examples"
+%         }
+%       ],
+%       "shape": "branch",
+%       "text": "Porting reasoning adapters boosts BBH Multistep Arithmetic across all tested sizes (up to **+50%** on **Qwen2.5-3B**) without CoT prompting, with up to **28.8%** JSON format drops.",
+%       "title": "Auto-CoT reasoning (OpenMathReasoning → BBH)",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Figure 4 from the manuscript. Multistep Arithmetic shows large consistent gains; Tracking Shuffled Objects shows more modest gains on larger recipients.",
+%       "color": "#dc267f",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "eval-cot-fig",
+%       "order": 0,
+%       "parentId": "eval-cot",
+%       "refs": [
+%         {
+%           "id": "figures/reasoning2.png",
+%           "imageWidth": 100,
+%           "kind": "figure",
+%           "label": "Fig. 4: BBH CoT transfer results"
+%         },
+%         {
+%           "id": "sec-experiments",
+%           "kind": "paper-section",
+%           "label": "CoT Reasoning"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "Transferred adapters increase step-by-step output length and task accuracy comparably to direct ReFT, even though malformed JSON counts as wrong.",
+%       "title": "BBH accuracy, output length & JSON compliance",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Appendix examples on Llama-3.1-8B (← 3B): clean PEMDAS derivation recovering 76, minor typo (`\"oganizming\"`) still computing -20 correctly, and rare collapsed generations (`\"oganisms can't be computed\"`). Individual regressions (e.g., 54 → 468 on Llama, -20 → -25 on Qwen) also occur.",
+%       "color": "#dc267f",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "eval-cot-qualitative",
+%       "order": 1,
+%       "parentId": "eval-cot",
+%       "refs": [
+%         {
+%           "id": "sec-appendix",
+%           "kind": "paper-section",
+%           "label": "Qualitative Examples"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "Transferred CoT fixes direct-JSON arithmetic errors (e.g., `45 → 76`), but can also introduce mild lexical typos, wrong-language drift, or occasional collapsed outputs.",
+%       "title": "Qualitative recovery vs. degradation",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Captures negative transfers and failure modes explicitly documented in Discussion and Ethics so claims stay tightly aligned with evidence.",
+%       "color": "#fe6100",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "limits",
+%       "order": 3,
+%       "parentId": "root",
+%       "refs": [
+%         {
+%           "id": "sec-discussion",
+%           "kind": "paper-section",
+%           "label": "Discussion"
+%         },
+%         {
+%           "id": "sec-discussion",
+%           "kind": "paper-section",
+%           "label": "Ethics Statement"
+%         }
+%       ],
+%       "shape": "branch",
+%       "tags": [
+%         "limits"
+%       ],
+%       "text": "Honest boundaries where transfer fails or degrades, dual-use considerations, and open directions beyond the paper.",
+%       "title": "Limits, negative results & next questions",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Important scope boundary from Discussion: do not claim Command-V works when the donor adapter itself barely moves the donor model.",
+%       "color": "#fe6100",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "limit-weak-donors",
+%       "order": 0,
+%       "parentId": "limits",
+%       "progress": "ditched",
+%       "refs": [
+%         {
+%           "id": "sec-discussion",
+%           "kind": "paper-section",
+%           "label": "Discussion"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "tags": [
+%         "negative-result"
+%       ],
+%       "text": "**Commonsense ReFT** and **TOFU** fictional knowledge produce only modest donor gains and **negligible** recipient transfer—Command-V needs a strong donor behavioral shift.",
+%       "title": "Weak-donor negative transfers (Commonsense & TOFU)",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Mirrors activation oversteering. Replacing delimiter tokens with natural words reduced garbling in CoT transfer; lightweight damping such as classifier-free guidance (CFG) is a promising open fix.",
+%       "color": "#fe6100",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "limit-collapse",
+%       "order": 1,
+%       "parentId": "limits",
+%       "refs": [
+%         {
+%           "id": "sec-discussion",
+%           "kind": "paper-section",
+%           "label": "Discussion"
+%         },
+%         {
+%           "id": "sec-appendix",
+%           "kind": "paper-section",
+%           "label": "Qualitative Examples"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "Transfer can degrade strict formats (**up to 28.8%** JSON drops in [[eval-cot|Auto-CoT]]), garble exact special tokens like `<thinking>`, or collapse smaller recipients.",
+%       "title": "Oversteering, token mismatch & format collapse",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Llama-3.2-3B ↔ Llama-3.1-8B consistently transfer cleanly. Whether cheap proxy signals like converter held-out test loss predict downstream transfer quality is an open question.",
+%       "color": "#fe6100",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "limit-pairs",
+%       "order": 2,
+%       "parentId": "limits",
+%       "refs": [
+%         {
+%           "id": "sec-discussion",
+%           "kind": "paper-section",
+%           "label": "Discussion"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "Jailbreaking transfers across families, whereas refusal and reasoning weaken across dissimilar architectures; predicting strong model pairs cheaply remains open.",
+%       "title": "Cross-family decay & pair predictability",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Reported transparently as a capability and risk item in the Ethics Statement, not a product recommendation. Released adapter weights may be gated under responsible-use terms.",
+%       "color": "#fe6100",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "limit-ethics",
+%       "order": 3,
+%       "parentId": "limits",
+%       "refs": [
+%         {
+%           "id": "sec-discussion",
+%           "kind": "paper-section",
+%           "label": "Ethics Statement"
+%         },
+%         {
+%           "id": "release",
+%           "kind": "wiki-page",
+%           "label": "Release notes"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "Efficient [[eval-jailbreak|jailbreak transfer]] lowers compute barriers on open-weight models, though it does not exceed vulnerabilities already accessible via public jailbreak prompts.",
+%       "title": "Dual-use & broader impact",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Also includes pretraining-time alignment hooks for native adapter portability and CFG-style steering control to prevent utility collapse.",
+%       "color": "#fe6100",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "limit-future",
+%       "order": 4,
+%       "parentId": "limits",
+%       "refs": [
+%         {
+%           "id": "sec-discussion",
+%           "kind": "paper-section",
+%           "label": "Discussion"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "**Cross-lingual pasting** ((e.g., English instruction adapter → Swahili LLM)), **multi-adapter task composition**, **nonlinear converters**, and **non-ReFT adapters** ((e.g., MLP-input JoLA)).",
+%       "title": "Open research directions",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Preserves why Command-V converged on last-token LIMA profiles, linear depth matching, and Moore-Penrose converters rather than neuron matching or MSE-optimal layer assignment.",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "defaultCollapsed": true,
+%       "id": "archive",
+%       "order": 4,
+%       "parentId": "root",
+%       "shape": "archive",
+%       "tags": [
+%         "archive"
+%       ],
+%       "text": "Earlier dead ends and implementation bugs retained as methodological memory while keeping the main tree focused.",
+%       "title": "Archive: superseded & ditched approaches",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Tested threshold/top-N sweeps (0.7 / top-1 produced 32,699 adapters and repeated full-width commas; 0.99 / top-100 produced 869 adapters and repeated `\"appré type\"`). Explicitly deprecated in favor of whole-layer pseudoinverse converters ([[method-converters]]).",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "archive-neuron-match",
+%       "order": 0,
+%       "parentId": "archive",
+%       "progress": "ditched",
+%       "shape": "leaf",
+%       "text": "Matching individual neurons by cosine/Pearson similarity and pasting raw base→instruct deltas collapsed Qwen2.5-7B into repetition and dropped AlpacaEval (**15.29% → 9.09%**).",
+%       "title": "Neuron matching & base→instruct activation deltas",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Early transformer layers have smaller residual variance and lower reconstruction error, biasing minimum-MSE matching away from late semantic layers.",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "archive-mse-match",
+%       "order": 1,
+%       "parentId": "archive",
+%       "progress": "ditched",
+%       "refs": [
+%         {
+%           "id": "sec-appendix",
+%           "kind": "paper-section",
+%           "label": "Layer Matching Details"
+%         }
+%       ],
+%       "shape": "leaf",
+%       "text": "Pairing layers by minimum forward or cycle MSE collapses donor layers onto early recipient layers and hurts transfer; replaced by linear depth matching ([[method-converters]]).",
+%       "title": "MSE-optimal layer assignment",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Bidirectional closed-form X†Y / Y†X won on simplicity, CPU speed (6.35 s), and cycle consistency without gradient training.",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "archive-alt-converters",
+%       "order": 2,
+%       "parentId": "archive",
+%       "progress": "ditched",
+%       "shape": "leaf",
+%       "text": "Explored residual-bias skylines, orthogonal Procrustes alignment, and DirectFit / SingleMatrix / DualMatrix classes before standardizing on closed-form Moore-Penrose pseudoinverse.",
+%       "title": "Residual-bias probes & alternative converters",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "caption": "Methodological checklist preserved from debugging: disable `add_special_tokens` on already chat-templated prompts, index true per-sequence last tokens rather than `tensor[:, -1]`, and always refit `converter.fit(res1, res2)` after slicing N in profile-budget sweeps.",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "archive-bugs",
+%       "order": 3,
+%       "parentId": "archive",
+%       "shape": "leaf",
+%       "text": "Caught and fixed duplicate `<bos>` tokenization, unmasked padding in last-token extraction, converter refitting after profile truncation, and BBH object-tracking prompt bugs.",
+%       "title": "Extraction & ablation hygiene fixes",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "color": "#785ef0",
+%       "contentFormat": "markdown",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "defaultCollapsed": true,
+%       "id": "paper-release",
+%       "order": 3,
+%       "parentId": "framing",
+%       "refs": [
+%         {
+%           "id": "release",
+%           "kind": "wiki-page",
+%           "label": "Release notes"
+%         }
+%       ],
+%       "shape": "branch",
+%       "tags": [
+%         "paper"
+%       ],
+%       "text": "Completed manuscript sections, public release, and camera-ready checklist items.",
+%       "title": "Manuscript & release checklist",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "createdAt": "2026-02-12T12:00:00.000Z",
 %       "id": "card-cv-lima-profiles",
 %       "order": 0,
-%       "parentId": "branch-method",
+%       "parentId": "method-profiles",
 %       "shape": "leaf",
 %       "text": "",
 %       "todoId": "cv-lima-profiles",
-%       "updatedAt": "2025-03-04T21:16:08.000Z"
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2025-03-05T11:00:00.000Z",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
 %       "id": "card-cv-layer-match",
-%       "order": 1,
-%       "parentId": "branch-method",
+%       "order": 2,
+%       "parentId": "method-converters",
 %       "shape": "leaf",
 %       "text": "",
 %       "todoId": "cv-layer-match",
-%       "updatedAt": "2025-03-28T16:44:19.000Z"
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2025-03-06T08:40:00.000Z",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
 %       "id": "card-cv-converters",
-%       "order": 2,
-%       "parentId": "branch-method",
+%       "order": 3,
+%       "parentId": "method-converters",
 %       "shape": "leaf",
 %       "text": "",
 %       "todoId": "cv-converters",
-%       "updatedAt": "2025-03-29T12:07:55.000Z"
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2025-04-02T09:00:00.000Z",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
 %       "id": "card-cv-refusal-train",
-%       "order": 0,
-%       "parentId": "branch-refusal",
+%       "order": 3,
+%       "parentId": "eval-refusal",
 %       "shape": "leaf",
 %       "text": "",
 %       "todoId": "cv-refusal-train",
-%       "updatedAt": "2025-04-18T23:41:10.000Z"
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2025-04-19T10:15:00.000Z",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
 %       "id": "card-cv-refusal-eval",
-%       "order": 1,
-%       "parentId": "branch-refusal",
+%       "order": 4,
+%       "parentId": "eval-refusal",
 %       "shape": "leaf",
 %       "text": "",
 %       "todoId": "cv-refusal-eval",
-%       "updatedAt": "2025-04-27T14:08:33.000Z"
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2025-04-28T13:00:00.000Z",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
 %       "id": "card-cv-overrefusal",
-%       "order": 2,
-%       "parentId": "branch-refusal",
+%       "order": 5,
+%       "parentId": "eval-refusal",
 %       "shape": "leaf",
 %       "text": "",
 %       "todoId": "cv-overrefusal",
-%       "updatedAt": "2025-05-06T19:22:47.000Z"
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2025-05-07T09:30:00.000Z",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
 %       "id": "card-cv-jailbreak-matrix",
-%       "order": 0,
-%       "parentId": "branch-jailbreak",
+%       "order": 2,
+%       "parentId": "eval-jailbreak",
 %       "shape": "leaf",
 %       "text": "",
 %       "todoId": "cv-jailbreak-matrix",
-%       "updatedAt": "2025-05-28T02:17:09.000Z"
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2025-05-12T10:00:00.000Z",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
 %       "id": "card-cv-cot-openmath",
-%       "order": 0,
-%       "parentId": "branch-cot",
+%       "order": 2,
+%       "parentId": "eval-cot",
 %       "shape": "leaf",
 %       "text": "",
 %       "todoId": "cv-cot-openmath",
-%       "updatedAt": "2025-06-09T18:51:26.000Z"
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2025-05-20T11:40:00.000Z",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
 %       "id": "card-cv-failed-tasks",
-%       "order": 1,
-%       "parentId": "branch-cot",
+%       "order": 0,
+%       "parentId": "limit-weak-donors",
 %       "shape": "leaf",
 %       "text": "",
 %       "todoId": "cv-failed-tasks",
-%       "updatedAt": "2025-06-11T09:12:04.000Z"
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2025-01-12T16:20:00.000Z",
-%       "id": "card-cv-opening",
-%       "order": 0,
-%       "parentId": "branch-writing",
-%       "shape": "leaf",
-%       "text": "",
-%       "todoId": "cv-opening",
-%       "updatedAt": "2025-06-08T11:14:22.000Z"
-%     },
-%     {
-%       "createdAt": "2025-02-03T10:00:00.000Z",
-%       "id": "card-cv-related",
-%       "order": 1,
-%       "parentId": "branch-writing",
-%       "shape": "leaf",
-%       "text": "",
-%       "todoId": "cv-related",
-%       "updatedAt": "2025-06-02T09:33:41.000Z"
-%     },
-%     {
-%       "createdAt": "2025-06-10T14:00:00.000Z",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
 %       "id": "card-cv-discussion",
-%       "order": 2,
-%       "parentId": "branch-writing",
+%       "order": 5,
+%       "parentId": "limits",
 %       "shape": "leaf",
 %       "text": "",
 %       "todoId": "cv-discussion",
-%       "updatedAt": "2025-06-16T10:28:51.000Z"
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2025-06-20T09:00:00.000Z",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "card-cv-opening",
+%       "order": 0,
+%       "parentId": "paper-release",
+%       "shape": "leaf",
+%       "text": "",
+%       "todoId": "cv-opening",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "createdAt": "2026-02-12T12:00:00.000Z",
+%       "id": "card-cv-related",
+%       "order": 1,
+%       "parentId": "paper-release",
+%       "shape": "leaf",
+%       "text": "",
+%       "todoId": "cv-related",
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
+%     },
+%     {
+%       "createdAt": "2026-02-12T12:00:00.000Z",
 %       "id": "card-cv-arxiv",
-%       "order": 3,
-%       "parentId": "branch-writing",
+%       "order": 2,
+%       "parentId": "paper-release",
 %       "shape": "leaf",
 %       "text": "",
 %       "todoId": "cv-arxiv",
-%       "updatedAt": "2025-06-23T18:04:00.000Z"
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2025-06-15T16:00:00.000Z",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
 %       "id": "card-cv-code-release",
-%       "order": 4,
-%       "parentId": "branch-writing",
+%       "order": 3,
+%       "parentId": "paper-release",
 %       "shape": "leaf",
 %       "text": "",
 %       "todoId": "cv-code-release",
-%       "updatedAt": "2025-06-23T18:10:00.000Z"
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2025-09-18T12:00:00.000Z",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
 %       "id": "card-cv-iclr",
-%       "order": 5,
-%       "parentId": "branch-writing",
+%       "order": 4,
+%       "parentId": "paper-release",
 %       "shape": "leaf",
 %       "text": "",
 %       "todoId": "cv-iclr",
-%       "updatedAt": "2025-09-24T21:16:44.000Z"
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     },
 %     {
-%       "createdAt": "2026-01-28T15:00:00.000Z",
+%       "createdAt": "2026-02-12T12:00:00.000Z",
 %       "id": "card-cv-camera",
-%       "order": 6,
-%       "parentId": "branch-writing",
+%       "order": 5,
+%       "parentId": "paper-release",
 %       "shape": "leaf",
 %       "text": "",
 %       "todoId": "cv-camera",
-%       "updatedAt": "2026-02-12T11:37:08.000Z"
+%       "updatedAt": "2026-02-12T12:00:00.000Z"
 %     }
 %   ],
 %   "projectId": "command-v",
 %   "role": "draft",
 %   "rootId": "root",
 %   "title": "Command-V",
-%   "updatedAt": "2026-02-12T11:37:08.000Z"
+%   "updatedAt": "2026-02-12T12:00:00.000Z"
 % }
 % OB-DATA-END id=mindmap

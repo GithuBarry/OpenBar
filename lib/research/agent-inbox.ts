@@ -3,7 +3,8 @@ import { sha256, withWriteLock, withWriteLockAsync } from '@/lib/tex-project/cod
 import { withProjectWriteLock, withProjectWriteLockAsync } from './project-lock'
 import { agentReplyCardKey, agentReplyRequestId, agentReplyRevision } from './agent-reply-state'
 import { agentInboxReceiptFile, getAgentInboxRevision, pruneAgentInboxReceipts, readAgentInboxReceipts, readAgentReplySnapshot, rememberAgentRequests, writeAgentInboxReceipts } from './agent-reply-receipts'
-import type { AgentInbox, AgentReply, InboxAcknowledgement, InboxNotification } from './agent-inbox-contract'
+import { INBOX_CLAIM_TTL_MS, type AgentInbox, type AgentReply, type ConflictNotification, type InboxAcknowledgement, type InboxClaimResult, type InboxNotification } from './agent-inbox-contract'
+import { readActiveConflicts } from './git-conflict-events'
 
 export { getAgentInboxRevision } from './agent-reply-receipts'
 type InboxQuery = { project?: string, limit?: number, includeAcknowledged?: boolean }
@@ -16,9 +17,10 @@ function projects(project?: string, scope?: readonly string[]): string[] {
 
 export function readAgentInbox(query: InboxQuery = {}, scope?: readonly string[]): AgentInbox {
   const limit = Math.max(1, Math.min(50, query.limit ?? 8))
-  const all: InboxNotification[] = [], replies: AgentReply[] = [], history: NonNullable<AgentInbox['history']> = [], revisions: Array<[string, string]> = []
+  const all: InboxNotification[] = [], replies: AgentReply[] = [], conflicts: ConflictNotification[] = [], history: NonNullable<AgentInbox['history']> = [], revisions: Array<[string, string]> = []
   for (const project of projects(query.project, scope)) {
     const dir = projectContentDir(project)
+    conflicts.push(...readActiveConflicts(dir, project))
     let state = readAgentInboxReceipts(dir), snapshot = readAgentReplySnapshot(dir, project, state)
     const delivered = snapshot.notes.filter(note => query.includeAcknowledged || !state.acknowledged.includes(agentReplyRequestId(state, note))).slice(0, limit)
     if (delivered.some(note => !state.history?.some(item => item.id === agentReplyRequestId(state, note)))) {
@@ -38,9 +40,14 @@ export function readAgentInbox(query: InboxQuery = {}, scope?: readonly string[]
       }
     }
     const handled = new Set(state.acknowledged)
-    for (const note of snapshot.notes) {
+    const now = Date.now()
+    const claims = state.claims || {}
+    for (const { mentionLocation, ...note } of snapshot.notes) {
       const id = agentReplyRequestId(state, note)
-      all.push({ ...note, id, project, acknowledged: handled.has(id) })
+      const isHandled = handled.has(id)
+      const claim = !isHandled ? claims[id] : undefined
+      const workingUntil = claim && Date.parse(claim.expiresAt) > now ? claim.expiresAt : undefined
+      all.push({ ...note, id, project, acknowledged: isHandled, ...(workingUntil ? { workingUntil, workingMention: mentionLocation } : {}) })
     }
     const currentRequests = new Map(snapshot.notes.map(note => [agentReplyCardKey(note.mapId, note.nodeId), note]))
     for (const [key, receipt] of Object.entries(state.receipts)) if (receipt.published && snapshot.cards[key]) {
@@ -58,8 +65,10 @@ export function readAgentInbox(query: InboxQuery = {}, scope?: readonly string[]
   all.sort((a, b) => Number(b.priority === 'fast-tracked') - Number(a.priority === 'fast-tracked'))
   const pending = all.filter(note => !note.acknowledged)
   const visible = query.includeAcknowledged ? [...pending, ...all.filter(note => note.acknowledged)] : pending
+  conflicts.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || a.project.localeCompare(b.project))
   return { count: pending.length, notifications: visible.slice(0, limit), hasMore: visible.length > limit,
     revision: revisions.length === 1 ? revisions[0][1] : sha256(JSON.stringify(revisions)), replies,
+    ...(conflicts.length ? { conflicts: conflicts.slice(0, 20) } : {}),
     ...(query.includeAcknowledged ? { history: history.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 200) } : {}) }
 }
 
@@ -110,6 +119,7 @@ export async function acknowledgeAgentInbox(input: { project?: string, ids: stri
             for (const receipt of pending) receipt.published = { responseRevision: receipt.responseRevision, contentHash: receipt.contentHash, repliedAt }
           }
           handled.add(requestId)
+          if (state.claims) delete state.claims[requestId]
           acknowledged.add(requestId)
         }
         if (result.disposition === 'already_resolved') acknowledged.add(requestId)
@@ -124,4 +134,80 @@ export async function acknowledgeAgentInbox(input: { project?: string, ids: stri
   }
   return { acknowledged: [...acknowledged], rejected: [...rejected],
     dispositions: input.ids.map(id => results.get(id) || { id, disposition: 'missing' as const }), inbox: readAgentInbox({ project: input.project }, scope) }
+}
+
+export async function claimAgentInbox(
+  input: { project?: string, ids?: string[], all?: boolean, working?: boolean },
+  scope?: readonly string[],
+) {
+  const hasIds = Array.isArray(input.ids) && input.ids.length > 0
+  if (Boolean(input.all) === hasIds) {
+    throw new Error('Provide either ids or all: true (not both).')
+  }
+  if (input.all && !input.project) {
+    throw new Error('Specify project when claiming all pending mentions in a project.')
+  }
+  const working = input.working !== false
+  const claimed = new Set<string>(), released = new Set<string>(), rejected = new Set<string>()
+  const results = new Map<string, InboxClaimResult>()
+  const orderedIds: string[] = []
+  const now = Date.now()
+  const claimedAt = new Date(now).toISOString()
+  const expiresAt = new Date(now + INBOX_CLAIM_TTL_MS).toISOString()
+
+  for (const project of projects(input.project, scope)) {
+    const dir = projectContentDir(project)
+    await withProjectWriteLockAsync(dir, () => withWriteLockAsync(agentInboxReceiptFile(dir), () => {
+      const state = readAgentInboxReceipts(dir), snapshot = readAgentReplySnapshot(dir, project, state), original = JSON.stringify(state)
+      const handled = new Set(state.acknowledged)
+      const targetIds = input.all
+        ? snapshot.notes.map(note => agentReplyRequestId(state, note)).filter(id => !handled.has(id))
+        : [...new Set(input.ids || [])]
+
+      for (const id of targetIds) {
+        if (results.has(id)) continue
+        const note = snapshot.notes.find(item => item.id === id || agentReplyRequestId(state, item) === id)
+        const matching = Object.values(state.receipts).filter(item => item.requestId === id || item.currentNotificationId === id)
+        const history = state.history?.find(item => item.id === id)
+        if (!note && !matching.length && !history) continue
+        const requestId = matching[0]?.requestId || (note ? agentReplyRequestId(state, note) : history!.id)
+        if (!orderedIds.includes(id)) orderedIds.push(id)
+
+        if (!working) {
+          if (state.claims?.[requestId]) delete state.claims[requestId]
+          released.add(requestId)
+          results.set(id, { id, project, requestId, disposition: 'released' })
+          continue
+        }
+
+        if (handled.has(requestId)) {
+          if (state.claims?.[requestId]) delete state.claims[requestId]
+          results.set(id, { id, project, requestId, disposition: 'already_resolved' })
+          continue
+        }
+        if (!note) {
+          rejected.add(id)
+          results.set(id, { id, project, requestId, disposition: 'stale' })
+          continue
+        }
+        state.claims ||= {}
+        state.claims[requestId] = { claimedAt, expiresAt }
+        claimed.add(requestId)
+        results.set(id, { id, project, requestId, disposition: 'claimed', workingUntil: expiresAt })
+      }
+
+      pruneAgentInboxReceipts(state, snapshot, project)
+      if (JSON.stringify(state) !== original) writeAgentInboxReceipts(dir, state)
+    }))
+  }
+
+  const requestedOrder = input.all ? orderedIds : (input.ids || [])
+  return {
+    claimed: [...claimed],
+    released: [...released],
+    rejected: [...rejected],
+    ...(claimed.size ? { workingUntil: expiresAt } : {}),
+    dispositions: requestedOrder.map(id => results.get(id) || { id, disposition: 'missing' as const }),
+    inbox: readAgentInbox({ project: input.project }, scope),
+  }
 }

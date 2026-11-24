@@ -32,7 +32,13 @@ export function createOpenbarMcpServer(actor: string, options: { events?: boolea
     const prefix = notification ? "error" in notification ? notification.error : formatInboxPrefix(notification) : ""
     const { notifications: _notifications, ...operation } = result
     const compactStructuredNotifications = notification && !("error" in notification)
-      ? { count: notification.count, hasMore: notification.hasMore, revision: notification.revision, notifications: notification.notifications }
+      ? {
+        count: notification.count,
+        hasMore: notification.hasMore,
+        revision: notification.revision,
+        notifications: notification.notifications,
+        ...(notification.conflicts?.length ? { conflicts: notification.conflicts } : {}),
+      }
       : notification
     return {
       content: [...(prefix ? [{ type: "text" as const, text: prefix }] : []), { type: "text", text: JSON.stringify(operation) }],

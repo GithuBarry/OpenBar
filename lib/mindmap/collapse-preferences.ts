@@ -3,14 +3,18 @@ import type { MindmapNode } from "@/lib/types";
 /**
  * Collapse state belongs to the mounted browser view. Keep the key scoped to
  * both identities so two maps, or two projects, never share a view preference.
+ * Cards with durable `defaultCollapsed: true` collapse automatically unless
+ * the viewer explicitly expanded them (`expandedIds`) in this browser.
  */
 export const MINDMAP_COLLAPSE_STORAGE_PREFIX = "openbar:mindmap-collapse:v1";
 export const MINDMAP_COLLAPSE_STORAGE_VERSION = 1 as const;
 
-export type CollapsePreferenceNode = Pick<MindmapNode, "id" | "parentId">;
+export type CollapsePreferenceNode = Pick<MindmapNode, "id" | "parentId" | "defaultCollapsed">;
 export type MindmapCollapsePreference = {
   version: typeof MINDMAP_COLLAPSE_STORAGE_VERSION;
   collapsedIds: string[];
+  /** Default-collapsed branch IDs explicitly expanded by this viewer. */
+  expandedIds?: string[];
 };
 
 export function mindmapCollapseStorageKey(project: string, mapId: string): string {
@@ -43,6 +47,21 @@ export function normalizeMindmapCollapsedIds(
   )))].sort();
 }
 
+export function normalizeMindmapExpandedDefaultIds(
+  value: unknown,
+  nodes: readonly CollapsePreferenceNode[],
+): string[] {
+  const defaultIds = new Set(nodes.filter((node) => node.defaultCollapsed).map((node) => node.id));
+  const parentIds = new Set(nodes.flatMap((node) => node.parentId ? [node.parentId] : []));
+  const ids = Array.isArray(value)
+    ? value
+    : record(value)?.expandedIds;
+  if (!Array.isArray(ids)) return [];
+  return [...new Set(ids.filter((id): id is string => (
+    typeof id === "string" && defaultIds.has(id) && parentIds.has(id)
+  )))].sort();
+}
+
 /**
  * Parse the current browser format and the pre-versioned array/object forms.
  * `undefined` version is accepted for one-way migration to the canonical
@@ -60,22 +79,58 @@ export function parseMindmapCollapsePreference(
       const version = parsedRecord.version;
       if (version !== undefined && version !== MINDMAP_COLLAPSE_STORAGE_VERSION) return null;
       if (!Array.isArray(parsedRecord.collapsedIds)) return null;
+      if (parsedRecord.expandedIds !== undefined && !Array.isArray(parsedRecord.expandedIds)) return null;
     } else if (!Array.isArray(parsed)) {
       return null;
     }
+    const expandedIds = normalizeMindmapExpandedDefaultIds(parsed, nodes);
     return {
       version: MINDMAP_COLLAPSE_STORAGE_VERSION,
       collapsedIds: normalizeMindmapCollapsedIds(parsed, nodes),
+      ...(expandedIds.length ? { expandedIds } : {}),
     };
   } catch {
     return null;
   }
 }
 
-export function serializeMindmapCollapsePreference(ids: Iterable<string>): string {
+/** Combine local collapse overrides with durable `defaultCollapsed` branches. */
+export function resolveEffectiveCollapsedIds(
+  preference: MindmapCollapsePreference | null | undefined,
+  nodes: readonly CollapsePreferenceNode[],
+): Set<string> {
+  const parentIds = new Set(nodes.flatMap((node) => node.parentId ? [node.parentId] : []));
+  const expanded = new Set(preference?.expandedIds || []);
+  const effective = new Set(preference ? normalizeMindmapCollapsedIds(preference.collapsedIds, nodes) : []);
+  for (const node of nodes) {
+    if (node.defaultCollapsed && parentIds.has(node.id) && !expanded.has(node.id)) {
+      effective.add(node.id);
+    }
+  }
+  return effective;
+}
+
+/** Derive the browser-local `expandedIds` needed to persist `effective` against durable defaults. */
+export function expandedDefaultIdsForView(
+  effectiveCollapsed: ReadonlySet<string>,
+  nodes: readonly CollapsePreferenceNode[],
+): string[] {
+  const parentIds = new Set(nodes.flatMap((node) => node.parentId ? [node.parentId] : []));
+  return nodes
+    .filter((node) => node.defaultCollapsed && parentIds.has(node.id) && !effectiveCollapsed.has(node.id))
+    .map((node) => node.id)
+    .sort();
+}
+
+export function serializeMindmapCollapsePreference(
+  ids: Iterable<string>,
+  expandedIds?: Iterable<string>,
+): string {
+  const expanded = expandedIds ? [...new Set(expandedIds)].sort() : [];
   return JSON.stringify({
     version: MINDMAP_COLLAPSE_STORAGE_VERSION,
     collapsedIds: [...new Set(ids)].sort(),
+    ...(expanded.length ? { expandedIds: expanded } : {}),
   } satisfies MindmapCollapsePreference);
 }
 
@@ -104,6 +159,61 @@ export function expandMindmapImmediateChildren(
     }
   }
   return next;
+}
+
+/**
+ * Determine whether a card is currently visible under `collapsedIds` and, if
+ * hidden, how many collapsed ancestor branches and hidden cards would expand
+ * when jumping directly to it.
+ */
+export function cardJumpExpansionStats(
+  nodes: readonly CollapsePreferenceNode[],
+  collapsedIds: ReadonlySet<string>,
+  targetId: string,
+): { visible: boolean; expandCardCount: number; expandBranchCount: number } {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  if (!byId.has(targetId)) return { visible: false, expandCardCount: 0, expandBranchCount: 0 };
+
+  const collapsedAncestors: string[] = [];
+  const seen = new Set<string>();
+  let parent = byId.get(targetId)?.parentId ?? null;
+  while (parent && !seen.has(parent)) {
+    seen.add(parent);
+    if (collapsedIds.has(parent)) collapsedAncestors.push(parent);
+    parent = byId.get(parent)?.parentId ?? null;
+  }
+  if (!collapsedAncestors.length) {
+    return { visible: true, expandCardCount: 0, expandBranchCount: 0 };
+  }
+
+  const childrenByParent = new Map<string, string[]>();
+  for (const node of nodes) {
+    if (!node.parentId || !byId.has(node.parentId)) continue;
+    const siblings = childrenByParent.get(node.parentId);
+    if (siblings) siblings.push(node.id);
+    else childrenByParent.set(node.parentId, [node.id]);
+  }
+
+  // Only count cards revealed when opening the exact collapsed ancestors on the target's path;
+  // other collapsed sub-branches inside those ancestors remain collapsed.
+  const openedSet = new Set(collapsedAncestors);
+  const highestCollapsed = collapsedAncestors[collapsedAncestors.length - 1]!;
+  const revealed = new Set<string>();
+  const walk = (id: string) => {
+    for (const childId of childrenByParent.get(id) || []) {
+      if (revealed.has(childId)) continue;
+      revealed.add(childId);
+      if (!collapsedIds.has(childId) || openedSet.has(childId)) {
+        walk(childId);
+      }
+    }
+  };
+  walk(highestCollapsed);
+  return {
+    visible: false,
+    expandCardCount: revealed.size,
+    expandBranchCount: collapsedAncestors.length,
+  };
 }
 
 /**

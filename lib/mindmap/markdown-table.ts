@@ -2,6 +2,8 @@ import type { Nodes, Table } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { gfm } from "micromark-extension-gfm";
+import { stripInlineInfoNotes } from "./inline-info-notes";
+import { INLINE_MARKDOWN_BR_RE } from "./markdown-breaks";
 
 type TableMetadata = { columns: number; startsWithTable: boolean; verboseHeaders: boolean };
 const recentTables = new Map<string, TableMetadata>();
@@ -12,15 +14,24 @@ let cachedCharacters = 0;
 
 function cellText(node: Nodes): string {
   if ("children" in node) return node.children.map(cellText).join("");
-  return "value" in node ? String(node.value).replace(/<[^>]*>/g, " ") : "";
+  if (node.type === "break") return "\n";
+  if ("value" in node) {
+    return String(node.value).replace(INLINE_MARKDOWN_BR_RE, "\n").replace(/<[^>]*>/g, " ");
+  }
+  return "";
+}
+
+function cellMaxLineLength(node: Nodes): number {
+  const visible = stripInlineInfoNotes(cellText(node), " ⓘ");
+  return visible.split("\n").reduce((max, line) => Math.max(max, line.trim().length), 0);
 }
 
 function hasVerboseHeaders(table: Table): boolean {
   const [header, ...rows] = table.children;
   return Boolean(header && rows.length && header.children.some((cell, column) => {
-    const headerLength = cellText(cell).trim().length;
+    const headerLength = cellMaxLineLength(cell);
     if (headerLength < 18) return false;
-    const lengths = rows.map(row => row.children[column] ? cellText(row.children[column]).trim().length : 0).filter(Boolean);
+    const lengths = rows.map(row => row.children[column] ? cellMaxLineLength(row.children[column]) : 0).filter(Boolean);
     if (!lengths.length) return false;
     const mean = lengths.reduce((sum, length) => sum + length, 0) / lengths.length;
     return mean <= 12 && headerLength >= mean * 2.5;

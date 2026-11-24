@@ -18,6 +18,7 @@ const MINDMAP_NODE_FIELDS: ReadonlyArray<keyof MindmapNode> = [
   "priority",
   "tableLayout",
   "cardWidth",
+  "defaultCollapsed",
   "refs",
   "order",
   "createdAt",
@@ -111,6 +112,39 @@ export function mergeSavedMindmap(base: Mindmap, saved: Mindmap, latest: Mindmap
   merged.revision = saved.revision;
   merged.diskHash = saved.diskHash;
   return merged;
+}
+
+/** Return card IDs that changed incompatibly between the saved map and local edits. */
+export function findMindmapConflictNodeIds(base: Mindmap, saved: Mindmap, latest: Mindmap): string[] {
+  if (base.projectId !== saved.projectId || base.projectId !== latest.projectId
+    || (base.id || "draft") !== (saved.id || "draft") || (base.id || "draft") !== (latest.id || "draft")) return [];
+  const nodeFields = MINDMAP_NODE_FIELDS.filter(field => field !== "createdAt" && field !== "updatedAt" && field !== "order");
+  const conflicts = <T,>(original: T, remote: T, local: T, fields: ReadonlyArray<keyof T>) => fields.some(field =>
+    !valuesEqual(local[field], original[field]) && !valuesEqual(remote[field], original[field])
+    && !valuesEqual(local[field], remote[field]));
+  const same = <T,>(left: T, right: T, fields: ReadonlyArray<keyof T>) => fields.every(field => valuesEqual(left[field], right[field]));
+  const baseNodes = new Map(base.nodes.map(node => [node.id, node]));
+  const savedNodes = new Map(saved.nodes.map(node => [node.id, node]));
+  const latestNodes = new Map(latest.nodes.map(node => [node.id, node]));
+  const ids: string[] = [];
+  for (const id of new Set([...baseNodes.keys(), ...savedNodes.keys(), ...latestNodes.keys()])) {
+    const original = baseNodes.get(id), remote = savedNodes.get(id), local = latestNodes.get(id);
+    if (!original) {
+      if (remote && local && !same(remote, local, nodeFields)) ids.push(id);
+    } else if (!remote) {
+      if (local && !same(original, local, nodeFields)) ids.push(id);
+    } else if (!local) {
+      if (!same(original, remote, nodeFields)) ids.push(id);
+    } else if (
+      conflicts(original, remote, local, nodeFields)
+      || (remote.todoId !== original.todoId && remote.todoId && (!valuesEqual(local.title, original.title) || !valuesEqual(local.text, original.text)))
+      || (local.todoId !== original.todoId && local.todoId && (!valuesEqual(remote.title, original.title) || !valuesEqual(remote.text, original.text)))
+    ) {
+      ids.push(id);
+    }
+    if (ids.length >= 50) break;
+  }
+  return ids;
 }
 
 /** Rebase independent edits onto a newer saved map, preserving real conflicts. */

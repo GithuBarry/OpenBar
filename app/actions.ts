@@ -89,6 +89,7 @@ import { assertUniqueMindmapTodoIds } from "@/lib/mindmap-index";
 import { normalizeMindmapLabels } from "@/lib/mindmap/node-metadata";
 import { normalizeMindmapProgress } from "@/lib/mindmap/progress";
 import { appendActivity, type ActivityChange } from "@/lib/research/activity-log";
+import { clearGitConflict } from "@/lib/research/git-conflict-events";
 import {
   saveWorkspaceSettings,
   getWorkspaceLayout,
@@ -446,6 +447,7 @@ export async function saveMindmapAction(
       changes: mindmapActivityChanges(current, next),
     }, actor);
     if (actor === "human") {
+      try { clearGitConflict(projectContentDir(slug), "mindmap", mapId); } catch { /* best-effort */ }
       const removed = [...beforeNodes.values()].filter((node) => !afterNodes.has(node.id));
       for (let offset = 0; offset < removed.length; offset += 48) {
         const batch = removed.slice(offset, offset + 48);
@@ -667,6 +669,9 @@ export async function persistSourceBundleAction(
       includeBundle: true,
     });
     if (result.ok && !dryRun) {
+      if (actor === "human") {
+        try { clearGitConflict(projectContentDir(slug), "paper"); } catch { /* best-effort */ }
+      }
       recordActivity(slug, {
         operation: "save_paper_source",
         resources: [{ kind: "paper", id: "source" }],

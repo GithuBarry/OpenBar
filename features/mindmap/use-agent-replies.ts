@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { agentInboxKey, useAgentInbox } from "@/features/use-agent-inbox"
-import type { AgentInbox } from "@/lib/research/agent-inbox-contract"
+import type { AgentInbox, AgentMentionLocation } from "@/lib/research/agent-inbox-contract"
 import { answeredAgentRequests } from "@/lib/research/agent-reply-state"
 
 type Reply = AgentInbox["replies"][number]
 type ReplyState = { scope: string, replies: Reply[], seen: Record<string, string> }
+type WorkingNodeClaim = { mention: AgentMentionLocation, expiresAt: string }
 
 function seenPrefix(project: string, mapId: string) {
   return `openbar:agent-reply-seen:v1:${encodeURIComponent(project)}:${encodeURIComponent(mapId)}:`
@@ -33,11 +34,17 @@ export function useAgentReplies(project: string, mapId: string, inboxRevision?: 
   const inbox = useAgentInbox(project)
   const client = useQueryClient()
   const [state, setState] = useState<ReplyState>({ scope: prefix, replies: [], seen: {} })
+  const [now, setNow] = useState(() => Date.now())
   const stateRef = useRef(state)
   stateRef.current = state
   useEffect(() => {
     void client.invalidateQueries({ queryKey: agentInboxKey(project) })
   }, [client, project, inboxRevision, diskHash])
+  useEffect(() => {
+    const refresh = () => { void client.invalidateQueries({ queryKey: agentInboxKey(project) }) }
+    window.addEventListener("openbar-inbox-updated", refresh)
+    return () => window.removeEventListener("openbar-inbox-updated", refresh)
+  }, [client, project])
   useEffect(() => {
     const publish = (next: ReplyState) => { stateRef.current = next; setState(next) }
     if (Array.isArray(inbox.data?.replies)) {
@@ -55,6 +62,22 @@ export function useAgentReplies(project: string, mapId: string, inboxRevision?: 
       window.removeEventListener("storage", storage)
     }
   }, [project, mapId, prefix, inbox.data])
+
+  // Auto-expire spinning working indicators on the exact 30-minute boundary without requiring reload.
+  useEffect(() => {
+    const notifications = inbox.data?.notifications
+    if (!notifications?.length) return
+    const currentNow = Date.now()
+    let earliest = Number.POSITIVE_INFINITY
+    for (const note of notifications) {
+      if (note.mapId !== mapId || note.acknowledged || !note.workingUntil || !note.workingMention) continue
+      const expiry = Date.parse(note.workingUntil)
+      if (Number.isFinite(expiry) && expiry > currentNow && expiry < earliest) earliest = expiry
+    }
+    if (!Number.isFinite(earliest)) return
+    const timer = window.setTimeout(() => setNow(Date.now()), Math.min(2_147_483_647, Math.max(50, earliest - currentNow + 50)))
+    return () => window.clearTimeout(timer)
+  }, [inbox.data, mapId, now])
 
   const markRead = useCallback((nodeId: string, contentHash: string) => {
     const current = stateRef.current
@@ -74,5 +97,16 @@ export function useAgentReplies(project: string, mapId: string, inboxRevision?: 
     const pending = new Set(inbox.data?.notifications.filter(note => note.mapId === mapId && !note.acknowledged).map(note => note.nodeId))
     return answeredAgentRequests(replies, pending)
   }, [replies, inbox.data, mapId])
-  return { replies, unreadNodeIds, answeredRequests, markRead }
+  const workingByNode = useMemo(() => {
+    const active = new Map<string, WorkingNodeClaim>()
+    for (const note of inbox.data?.notifications || []) {
+      if (note.mapId !== mapId || note.acknowledged || !note.workingUntil || !note.workingMention) continue
+      const expiry = Date.parse(note.workingUntil)
+      if (!Number.isFinite(expiry) || expiry <= now) continue
+      active.set(note.nodeId, { mention: note.workingMention, expiresAt: note.workingUntil })
+    }
+    return active
+  }, [inbox.data, mapId, now])
+
+  return { replies, unreadNodeIds, answeredRequests, workingByNode, markRead }
 }

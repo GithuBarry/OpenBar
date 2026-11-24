@@ -14,6 +14,16 @@ function createQueryClient() {
 
 let browserQueryClient: QueryClient | undefined;
 
+function isTextEditingElement(target: EventTarget | null): boolean {
+  const el = target instanceof Element ? target : document.activeElement;
+  if (!(el instanceof Element)) return false;
+  if (el.closest("textarea, [contenteditable='true'], .cm-editor, .mindmap-node-editing")) return true;
+  if (el instanceof HTMLInputElement) {
+    return !["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"].includes(el.type);
+  }
+  return false;
+}
+
 /** Client-side providers mounted once under the server root layout. */
 export function Providers({ children }: { children: React.ReactNode }) {
   const client = typeof window === "undefined" ? createQueryClient() : (browserQueryClient ??= createQueryClient());
@@ -28,16 +38,24 @@ export function Providers({ children }: { children: React.ReactNode }) {
       if (alt) root.dataset.altKey = "true"; else delete root.dataset.altKey;
       if (shift) root.dataset.shiftKey = "true"; else delete root.dataset.shiftKey;
     };
-    const onKey = (event: KeyboardEvent) => sync(event.altKey, event.shiftKey);
     const clear = () => sync(false, false);
+    const onKey = (event: KeyboardEvent) => {
+      if (isTextEditingElement(event.target)) { clear(); return; }
+      sync(event.altKey, event.shiftKey);
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      if (isTextEditingElement(event.target)) clear();
+    };
     const onVis = () => { if (document.visibilityState !== "visible") clear(); };
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("keyup", onKey, true);
+    document.addEventListener("focusin", onFocusIn, true);
     window.addEventListener("blur", clear);
     document.addEventListener("visibilitychange", onVis);
     return () => {
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("keyup", onKey, true);
+      document.removeEventListener("focusin", onFocusIn, true);
       window.removeEventListener("blur", clear);
       document.removeEventListener("visibilitychange", onVis);
       clear();

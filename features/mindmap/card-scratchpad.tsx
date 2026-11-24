@@ -3,9 +3,12 @@
 import styles from "./card-scratchpad.module.css";
 import { ChevronDown, ChevronRight, Eye, Pencil, SquareArrowOutUpRight, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { cardNotesText, hasNoteText, type MindmapCaution } from "@/lib/mindmap/caution";
+import { CARD_NOTE_FIELDS, hasNoteText, projectCardNotes, type MindmapCaution } from "@/lib/mindmap/caution";
+import { sha256Hex } from "@/lib/mindmap/sha256";
+import type { AgentMentionLocation } from "@/lib/research/agent-inbox-contract";
 import { looksLikeMarkdown } from "@/lib/mindmap/markdown-detect";
 import { RichText } from "@/components/rich-text";
+import richStyles from "@/components/rich-text.module.css";
 import { FastTooltip } from "@/components/fast-tooltip";
 import { NotesTextarea } from "./notes-textarea";
 import { NotesContentIndicator, notesContentDescription } from "./notes-content-indicator";
@@ -17,7 +20,7 @@ function fitEditor(editor: HTMLTextAreaElement | null) {
   editor.style.height = `${editor.scrollHeight}px`;
 }
 
-export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, editing = false, readOnly = false, onChange, onCommit, onCancel, onBlockedEdit, footer }: {
+export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, editing = false, readOnly = false, workingMention, onChange, onCommit, onCancel, onBlockedEdit, footer }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   text?: string;
@@ -25,13 +28,18 @@ export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, e
   cardTitle?: string;
   editing?: boolean;
   readOnly?: boolean;
+  workingMention?: AgentMentionLocation;
   onChange?: (value: string) => void;
   onCommit?: () => void;
   onCancel?: () => void;
   onBlockedEdit?: () => void;
   footer?: ReactNode;
 }) {
-  const notes = useMemo(() => cardNotesText(text, caution), [text, caution]);
+  const { text: notes, workingMentionAt } = useMemo(() => {
+    const field = CARD_NOTE_FIELDS.find(field => field === workingMention?.field);
+    const source = field === "caption" ? text : field ? caution?.[field] : undefined;
+    return projectCardNotes(text, caution, source && workingMention?.sourceHash === sha256Hex(source) ? workingMention : undefined);
+  }, [text, caution, workingMention]);
   const hasNotes = useMemo(() => hasNoteText(notes), [notes]);
   const isMarkdown = useMemo(() => looksLikeMarkdown(notes), [notes]);
   const showNotes = hasNotes || editing || open;
@@ -52,10 +60,11 @@ export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, e
     }
   }, [open, editingInline]);
 
-  const showRendered = hasNotes && !editing && !editingInline && (isMarkdown || !editable);
+  const previewNotes = isMarkdown || workingMentionAt !== undefined;
+  const showRendered = hasNotes && !editing && !editingInline && (previewNotes || !editable);
 
   if (!showNotes && !footer && !viewerOpen) return null;
-  return <div className={`${styles.scratchpads} ${showNotes ? styles.withNotes : ""} nodrag nopan nowheel`}
+  return <div className={`${styles.scratchpads} ${showNotes ? styles.withNotes : ""} nodrag nopan`}
     onPointerDown={event => event.stopPropagation()}
     onClick={event => event.stopPropagation()}
     onDoubleClick={event => event.stopPropagation()}
@@ -69,8 +78,7 @@ export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, e
         event.preventDefault();
         setEditingInline(false);
       }
-    }}
-    onWheel={event => event.stopPropagation()}>
+    }}>
     {showNotes && <details className={styles.scratchpad} open={open}
       onToggle={event => { onOpenChange(event.currentTarget.open); if (event.currentTarget.open) fitEditor(event.currentTarget.querySelector("textarea")); }}>
       <summary
@@ -90,19 +98,20 @@ export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, e
             <span className="ob-mod-shift"><SquareArrowOutUpRight size={11} /></span>
             <span className="ob-mod-alt"><SquareArrowOutUpRight size={11} /></span>
           </span>Notes
+          {!open && workingMentionAt !== undefined && <span className={richStyles.agentSpinner} style={{ color: "rgb(var(--accent-text))" }} title="Agent is working on a request in Notes" aria-label="Agent working" />}
           <NotesContentIndicator text={notes} className={styles.amount} />
         </span>
       </summary>
-      {open && <div className={styles.body}>
+      {open && <div className={`${styles.body} nowheel`} onWheel={event => { if (!event.ctrlKey) event.stopPropagation(); }}>
         <div className={styles.bodyHeader}>
           <button type="button" className={styles.heading} aria-label="Hide notes" onClick={() => onOpenChange(false)}><ChevronDown className={styles.headingChevron} size={12} aria-hidden="true" />Notes</button>
           <div className={styles.bodyActions}>
-            {editable && !editing && isMarkdown && (
-              <FastTooltip label={editingInline ? "Preview formatted notes" : "Edit notes"}>
+            {editable && !editing && previewNotes && (
+              <FastTooltip label={editingInline ? "Preview notes" : "Edit notes"}>
                 <button
                   type="button"
                   className={styles.bodyAction}
-                  aria-label={editingInline ? "Preview formatted notes" : "Edit notes"}
+                  aria-label={editingInline ? "Preview notes" : "Edit notes"}
                   onPointerDown={event => event.preventDefault()}
                   onClick={() => setEditingInline(current => !current)}
                 >
@@ -137,7 +146,7 @@ export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, e
             className={isMarkdown ? styles.renderedMarkdown : styles.renderedPlain}
             onDoubleClick={editable ? () => setEditingInline(true) : readOnly ? () => onBlockedEdit?.() : undefined}
           >
-            <RichText text={notes} format={isMarkdown ? "markdown" : "plain"} tableLayout="scroll" />
+            <RichText text={notes} format={isMarkdown ? "markdown" : "plain"} tableLayout="scroll" workingMentionAt={workingMentionAt} />
           </div>
         ) : (
           <NotesTextarea
@@ -149,7 +158,7 @@ export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, e
             readOnly={!editable}
             rows={2}
             onFocus={() => { if (editable && !editing) setEditingInline(true); }}
-            onBlur={() => { if (editingInline && isMarkdown) setEditingInline(false); }}
+            onBlur={() => { if (editingInline && previewNotes) setEditingInline(false); }}
             onInput={event => fitEditor(event.currentTarget)}
             onChange={value => onChange?.(value)}
           />
@@ -162,6 +171,7 @@ export function CardScratchpad({ open, onOpenChange, text, caution, cardTitle, e
         open={viewerOpen}
         onClose={() => setViewerOpen(false)}
         notes={notes}
+        workingMentionAt={workingMentionAt}
         cardTitle={cardTitle}
         readOnly={readOnly}
         onChange={onChange}

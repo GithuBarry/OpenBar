@@ -6,6 +6,8 @@
 import { markdownTableColumns } from "./markdown-table";
 import { MIN_CARD_WIDTH, normalizeCardWidth } from "./card-width";
 import { MAX_HTML_CARD_LENGTH } from "./html-card";
+import { stripInlineInfoNotes } from "./inline-info-notes";
+import { INLINE_MARKDOWN_BR_RE } from "./markdown-breaks";
 import { flextree } from "d3-flextree";
 
 import { indexMindmap } from "@/lib/mindmap-index";
@@ -68,6 +70,29 @@ export function fitProseToSiblingWidth(node: MindmapNode, text: string | undefin
   return preferred.height - expanded.height >= 2 * DETAIL_LH ? width : preferred.width;
 }
 
+function markdownLayoutSource(text: string, hasTable: boolean): string {
+  const stripped = stripInlineInfoNotes(text, " ⓘ");
+  if (!/<br\s*\/?>/i.test(stripped)) return stripped;
+  return stripped
+    .split("\n")
+    .flatMap((line) => {
+      if (hasTable && line.includes("|")) {
+        let maxLines = 1;
+        const compact = line
+          .split("|")
+          .map((cell) => {
+            const parts = cell.split(INLINE_MARKDOWN_BR_RE);
+            if (parts.length > maxLines) maxLines = parts.length;
+            return parts.reduce((longest, part) => (part.trim().length > longest.trim().length ? part : longest), "");
+          })
+          .join("|");
+        return [compact, ...Array.from({ length: maxLines - 1 }, () => "")];
+      }
+      return line.split(INLINE_MARKDOWN_BR_RE);
+    })
+    .join("\n");
+}
+
 export function nodeDimensions(node: MindmapNode, displayText?: string): Dimensions {
   const isRoot = node.parentId === null;
   if (node.contentFormat === "html" && !node.todoId) {
@@ -77,7 +102,16 @@ export function nodeDimensions(node: MindmapNode, displayText?: string): Dimensi
     const visible = source.replace(/<!--[\s\S]*?-->|<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "")
       .replace(/<[^>]*>/g, " ").replace(/&(?:#\d+|#x[\da-f]+|\w+);/gi, "x").replace(/\s+/g, " ").trim();
     const title = node.title?.trim() ? wrappedSize(node.title, inner, isRoot ? ROOT_TITLE_PX : TITLE_PX, isRoot ? ROOT_TITLE_LH : TITLE_LH).height : 0;
-    const body = source.trim() ? /<svg\b/i.test(source) ? 240 : Math.min(240, wrappedSize(visible || " ", inner, DETAIL_PX, DETAIL_LH).height) : 0;
+    const textHeight = visible ? wrappedSize(visible, inner, DETAIL_PX, DETAIL_LH).height : 0;
+    const svgMatch = source.match(/<svg\b[^>]*\bviewBox\s*=\s*["']\s*[\d.+-]+[\s,]+[\d.+-]+[\s,]+([\d.+-]+)[\s,]+([\d.+-]+)\s*["']/i);
+    const svgWidth = svgMatch ? Number(svgMatch[1]) : 0;
+    const svgHeight = svgMatch ? Number(svgMatch[2]) : 0;
+    const estimatedSvg = svgWidth > 0 && svgHeight > 0 ? Math.ceil(inner * (svgHeight / svgWidth)) : 240;
+    const body = source.trim()
+      ? /<svg\b/i.test(source)
+        ? Math.max(estimatedSvg, textHeight)
+        : Math.max(DETAIL_LH, textHeight)
+      : 0;
     const meta = node.tags?.length || node.progress !== undefined || node.priority ? META_H : 0;
     return { width, height: Math.max(isRoot ? ROOT_HEIGHT : NODE_HEIGHT, PAD_Y + title + (title && body ? 4 : 0) + body + meta) };
   }
@@ -100,10 +134,13 @@ export function nodeDimensions(node: MindmapNode, displayText?: string): Dimensi
   const ordinarySource = node.title !== undefined
     ? `${node.title}\n${node.text}`
     : node.text;
-  const source = (displayText ?? ordinarySource).trim()
+  const rawSource = (displayText ?? ordinarySource).trim()
     || (node.todoId
       ? "Paper TODO placeholder that wraps onto several compact card lines at max width."
       : "Untitled topic");
+  const source = node.contentFormat === "markdown" && !node.todoId
+    ? markdownLayoutSource(rawSource, tableColumns > 0)
+    : rawSource;
   const [titleLine, ...detailLines] = source.split("\n");
   const title = wrappedSize(titleLine || "Untitled topic", maxInner, titlePx, titleLh);
   const detailText = detailLines.join("\n").trim();

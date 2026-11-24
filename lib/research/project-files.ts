@@ -9,6 +9,7 @@ import { bibliographyInputWrites, bibliographySourceFiles, bibliographyWrites, r
 import { traverseInputGraph } from "@/lib/tex-project/source-graph";
 import { withProjectWriteLock } from "./project-lock";
 import { failResult, okResult, type OperationResult } from "./operation-result";
+import { paperProseDiagnostics } from "./paper-prose-lint";
 import { beginAgentReplyCapture, completeAgentReplyCapture } from "./agent-reply-receipts";
 import { APPLY_PROJECT_EDITS_INPUT, READ_PROJECT_FILES_INPUT, isProtectedProjectPath, type ProjectFileEntry, type ProjectFilesEditInput, type ProjectFilesEditReceipt, type ProjectFilesRead, type ProjectFilesReadInput } from "./project-files-contract";
 
@@ -151,7 +152,8 @@ export function applyProjectEdits(projectDir: string, input: ProjectFilesEditInp
         try { bibliographyInputWrites(root, readBibliographyRaw(root)); }
         catch (error) { throw new ProjectFileError(error instanceof Error ? error.message : "Prepare the generated bibliography before editing.", "conflict"); }
       }
-      if (parsed.data.dryRun) return okResult({ files, dryRun: true });
+      const proseDiagnostics = actor === "webmcp" || parsed.data.dryRun ? paperProseDiagnostics(writes) : [];
+      if (parsed.data.dryRun) return okResult({ files, dryRun: true }, proseDiagnostics.length ? { diagnostics: proseDiagnostics } : {});
       const replyCapture = beginAgentReplyCapture(projectDir, projectId, actor);
       const requestId = randomUUID();
       writeSourceTransactionJournal(root, { requestId, writes, scope: "project" });
@@ -195,7 +197,13 @@ export function applyProjectEdits(projectDir: string, input: ProjectFilesEditInp
       }
       clearSourceTransactionJournal(root, true);
       const warnings = completeAgentReplyCapture(projectDir, projectId, replyCapture);
-      return okResult({ files, dryRun: false, ...(derivedFiles.length ? { derivedFiles } : {}) }, warnings.length ? { warnings } : {});
+      return okResult(
+        { files, dryRun: false, ...(derivedFiles.length ? { derivedFiles } : {}) },
+        {
+          ...(warnings.length ? { warnings } : {}),
+          ...(proseDiagnostics.length ? { diagnostics: proseDiagnostics } : {}),
+        },
+      );
     } catch (error) { return failure(error); }
   });
 }

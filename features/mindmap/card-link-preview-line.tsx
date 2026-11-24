@@ -4,14 +4,23 @@ import { useContext } from "react";
 import { getBezierPath, Position, useStore, ViewportPortal, type ReactFlowState } from "@xyflow/react";
 import { LinkPreviewContext } from "./linked-card";
 
-function previewPath(state: ReactFlowState, sourceId: string, targetId: string) {
+type PreviewCurve = {
+  path: string;
+  sourceX: number;
+  sourceY: number;
+  targetX: number;
+  targetY: number;
+  targetRect: { x: number; y: number; width: number; height: number };
+};
+
+function previewCurve(state: ReactFlowState, sourceId: string, targetId: string): PreviewCurve | undefined {
   const rect = (id: string) => {
     const node = state.nodeLookup.get(id);
     if (!node || node.hidden) return;
     const { width, height } = node.measured;
     if (!width || !height) return;
     const { x, y } = node.internals.positionAbsolute;
-    return { x: x + width / 2, y: y + height / 2, width, height };
+    return { left: x, top: y, x: x + width / 2, y: y + height / 2, width, height };
   };
   const source = rect(sourceId), target = rect(targetId);
   if (!source || !target) return;
@@ -22,23 +31,43 @@ function previewPath(state: ReactFlowState, sourceId: string, targetId: string) 
   const targetX = target.x - (horizontal ? sign * target.width / 2 : 0);
   const sourceY = source.y + (horizontal ? 0 : sign * source.height / 2);
   const targetY = target.y - (horizontal ? 0 : sign * target.height / 2);
-  const [panX, panY, zoom] = state.transform;
-  const onScreen = (x: number, y: number) =>
-    x * zoom + panX >= 0 && x * zoom + panX <= state.width && y * zoom + panY >= 0 && y * zoom + panY <= state.height;
-  if (!onScreen(sourceX, sourceY) || !onScreen(targetX, targetY)) return;
   const forward = horizontal ? Position.Right : Position.Bottom;
   const backward = horizontal ? Position.Left : Position.Top;
-  return getBezierPath({ sourceX, sourceY, targetX, targetY,
-    sourcePosition: sign > 0 ? forward : backward, targetPosition: sign > 0 ? backward : forward })[0];
+  const [path] = getBezierPath({
+    sourceX, sourceY, targetX, targetY,
+    sourcePosition: sign > 0 ? forward : backward,
+    targetPosition: sign > 0 ? backward : forward,
+  });
+  return {
+    path,
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    targetRect: { x: target.left, y: target.top, width: target.width, height: target.height },
+  };
 }
 
 function VisibleReferenceLine({ sourceId, targetId }: { sourceId: string; targetId: string }) {
-  const path = useStore(state => previewPath(state, sourceId, targetId));
-  if (!path) return null;
+  const curve = useStore(state => previewCurve(state, sourceId, targetId));
+  if (!curve) return null;
   return <ViewportPortal><svg width="1" height="1" aria-hidden="true"
-    style={{ position: "absolute", top: 0, left: 0, overflow: "visible", pointerEvents: "none" }}>
-    <path data-card-reference-line="" d={path} fill="none" stroke="rgb(var(--accent))" strokeWidth={1.5}
-      strokeDasharray="4 4" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+    style={{ position: "absolute", top: 0, left: 0, overflow: "visible", pointerEvents: "none", zIndex: 20 }}>
+    <rect
+      x={curve.targetRect.x - 3}
+      y={curve.targetRect.y - 3}
+      width={curve.targetRect.width + 6}
+      height={curve.targetRect.height + 6}
+      rx={12}
+      fill="none"
+      stroke="rgb(var(--accent) / 0.55)"
+      strokeWidth={2}
+      vectorEffect="non-scaling-stroke"
+    />
+    <path data-card-reference-line="" d={curve.path} fill="none" stroke="rgb(var(--accent))" strokeWidth={1.75}
+      strokeDasharray="5 4" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+    <circle cx={curve.sourceX} cy={curve.sourceY} r={3.5} fill="rgb(var(--surface))" stroke="rgb(var(--accent))" strokeWidth={1.75} />
+    <circle cx={curve.targetX} cy={curve.targetY} r={4.2} fill="rgb(var(--accent))" />
   </svg></ViewportPortal>;
 }
 

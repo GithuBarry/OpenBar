@@ -44,6 +44,7 @@ export function persistableMindmapNode(node: MindmapNode): MindmapNode {
   if (node.tableLayout) next.tableLayout = node.tableLayout;
   const cardWidth = normalizeCardWidth(node.cardWidth);
   if (cardWidth !== undefined) next.cardWidth = cardWidth;
+  if (node.defaultCollapsed) next.defaultCollapsed = true;
   if (node.color) next.color = node.color;
   if (node.tags?.length) next.tags = node.tags;
   if (node.progress !== undefined) next.progress = node.progress;

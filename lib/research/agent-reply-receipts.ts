@@ -67,6 +67,14 @@ export function readAgentInboxReceipts(projectDir: string): AgentInboxReceipts {
     || journal.entries.some((entry: NonNullable<AgentInboxReceipts['mentionJournal']>['entries'][number]) =>
       !entry || !HASH.test(entry.id) || typeof entry.mapId !== 'string' || typeof entry.nodeId !== 'string'
       || !Number.isFinite(Date.parse(entry.createdAt)) || (entry.priority !== undefined && entry.priority !== 'fast-tracked')))) throw new Error('OpenBar mention events need recovery.')
+  if (raw.claims !== undefined) {
+    if (!raw.claims || typeof raw.claims !== 'object' || Array.isArray(raw.claims)) throw new Error('OpenBar inbox claims need recovery.')
+    for (const [id, claim] of Object.entries(raw.claims)) {
+      const item = claim as { claimedAt?: unknown, expiresAt?: unknown }
+      if (!HASH.test(id) || !item || typeof item.claimedAt !== 'string' || typeof item.expiresAt !== 'string'
+        || !Number.isFinite(Date.parse(item.claimedAt)) || !Number.isFinite(Date.parse(item.expiresAt))) throw new Error('OpenBar inbox claims need recovery.')
+    }
+  }
   return raw as AgentInboxReceipts
 }
 
@@ -145,10 +153,28 @@ export function pruneAgentInboxReceipts(state: AgentInboxReceipts, snapshot: Age
   for (const key of Object.keys(state.agentFieldHashes || {})) if ((!snapshot.scope || snapshot.scope.includes(JSON.parse(key)[0])) && !snapshot.cards[key]) delete state.agentFieldHashes![key]
   const keep = new Set([...snapshot.notes.map(note => agentReplyRequestId(state, note)), ...Object.values(state.receipts).map(item => item.requestId), ...(state.history || []).map(item => item.id)])
   state.acknowledged = [...new Set(state.acknowledged)].filter(id => Boolean(snapshot.scope) || keep.has(id)).sort()
+  if (state.claims) {
+    const now = Date.now()
+    const handled = new Set(state.acknowledged)
+    const activeNoteIds = new Set(snapshot.notes.map(note => agentReplyRequestId(state, note)))
+    const nextClaims: NonNullable<AgentInboxReceipts['claims']> = {}
+    for (const [id, claim] of Object.entries(state.claims)) {
+      if (handled.has(id) || Date.parse(claim.expiresAt) <= now) continue
+      if (!snapshot.scope && !activeNoteIds.has(id)) continue
+      nextClaims[id] = claim
+    }
+    if (Object.keys(nextClaims).length) state.claims = nextClaims
+    else delete state.claims
+  }
 }
 
 export function writeAgentInboxReceipts(projectDir: string, state: AgentInboxReceipts): void {
   state.receipts = Object.fromEntries(Object.keys(state.receipts).sort().map(key => [key, state.receipts[key]]))
+  if (state.claims) {
+    const keys = Object.keys(state.claims).sort()
+    if (keys.length) state.claims = Object.fromEntries(keys.map(key => [key, state.claims![key]]))
+    else delete state.claims
+  }
   writeTextAtomic(agentInboxReceiptFile(projectDir), `${JSON.stringify(state)}\n`)
 }
 

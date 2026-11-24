@@ -193,7 +193,7 @@ export async function registerWebMcpToolsIndependent(
           execute: async (args, options) => {
             if (!owner.active || signal.aborted) return unavailableToolResult(tool.name);
             const result = await tool.execute(args, options);
-            return tool.name === "check_inbox" || tool.name === "acknowledge_inbox" ? result : prefixBrowserInbox(result, options?.signal);
+            return tool.name === "check_inbox" || tool.name === "claim_inbox" || tool.name === "acknowledge_inbox" ? result : prefixBrowserInbox(result, options?.signal);
           },
         };
         pageTools.set(tool.name, { tool: registeredTool, owner: owner.id });

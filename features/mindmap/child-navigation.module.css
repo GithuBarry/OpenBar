@@ -8,7 +8,9 @@
 .previewWrap { z-index: 95; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; pointer-events: none; font-family: var(--font-sans); }
 .preview { width: min(280px, calc(100vw - 24px)); padding: 12px 14px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-card); background: var(--surface-overlay); color: rgb(var(--ink)); box-shadow: var(--shadow-pop); }
 .preview > strong { display: block; font-size: 13px; line-height: 1.4; }
+.archiveBadge { display: inline-block; margin-bottom: 4px; padding: 1px 6px; border: 1px dashed rgb(var(--muted) / .45); border-radius: 999px; background: rgb(var(--surface-2)); color: rgb(var(--muted)); font-size: 10px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
 .body { display: -webkit-box; margin-top: 6px; overflow: hidden; -webkit-line-clamp: 6; -webkit-box-orient: vertical; color: rgb(var(--muted)); font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
-.hint { display: inline-block; padding: 2px 8px; border-radius: 999px; background: rgb(var(--surface) / .72); backdrop-filter: blur(8px); color: rgb(var(--faint)); font-size: 11px; line-height: 1.35; }
+.hint { display: inline-block; padding: 2px 8px; border-radius: 999px; background: rgb(var(--surface) / .88); border: 1px solid rgb(var(--line) / .7); backdrop-filter: blur(8px); color: rgb(var(--muted)); font-size: 11px; line-height: 1.35; }
+.hint[data-card-preview-hint="hidden"] { color: rgb(var(--accent-text)); border-color: rgb(var(--accent) / .3); }
 @media (pointer: coarse) { .tick { width: 28px; } }
 @media (prefers-reduced-motion: reduce) { .rail, .tick::before { transition: none; } }

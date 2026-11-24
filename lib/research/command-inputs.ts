@@ -29,6 +29,11 @@ export const WORKSPACE_INPUTS = {
 
 export const INBOX_INPUTS = {
   check_inbox: z.strictObject({ limit: z.number().int().min(1).max(50).optional(), includeAcknowledged: z.boolean().optional() }),
+  claim_inbox: z.strictObject({
+    ids: z.array(diskHash).min(1).max(50).describe("Exact pending notification IDs from check_inbox that you are immediately starting to work on.").optional(),
+    all: z.boolean().describe("Set true (with project) to claim all pending @agent and @stat mentions in that project. Use only when immediately working on all of them.").optional(),
+    working: z.boolean().describe("Set false to release an active working indicator early. Defaults to true.").optional(),
+  }),
   acknowledge_inbox: z.strictObject({ ids: z.array(diskHash).min(1).max(50), acknowledged: z.boolean().optional() }),
 };
 
@@ -82,7 +87,9 @@ const MINDMAP_PRESENTATION_INPUT = z.strictObject({
   contentFormat: z.enum(["plain", "markdown", "tex", "html"]).optional(),
   tableLayout: z.enum(["wide", "scroll"]).optional(),
   cardWidth: z.number().int().min(MIN_CARD_WIDTH).max(MAX_CARD_WIDTH).nullable().describe("Preferred card width in canvas CSS pixels. Automatic sizing fits content. Sibling or depth alignment uses the widest card in the group. Set null to restore automatic sizing.").optional(),
-  shape: z.enum(["branch", "leaf", "callout"]).optional(),
+  defaultCollapsed: z.boolean().describe("When true, viewers open this branch collapsed by default (e.g. Archive or deep evidence subtrees).").optional(),
+  collapsed: z.boolean().describe("Alias for defaultCollapsed.").optional(),
+  shape: z.enum(["branch", "leaf", "callout", "archive"]).optional(),
   color: z.string().optional(),
   progress: z.union([z.number().int().min(0).max(6), z.literal("ditched")]).nullable().describe("Map-local progress from 0 to 6, ditched for the yellow circle-slash status, or null to hide.").optional(),
 });
@@ -176,6 +183,7 @@ export const MCP_INPUTS = {
   get_project_state: SHARED_INPUTS.get_project_state.extend({ project: projectId }),
   update_workspace_instructions: SHARED_INPUTS.update_workspace_instructions,
   check_inbox: INBOX_INPUTS.check_inbox.extend({ project: projectId.optional() }),
+  claim_inbox: INBOX_INPUTS.claim_inbox.extend({ project: projectId.optional() }),
   acknowledge_inbox: INBOX_INPUTS.acknowledge_inbox.extend({ project: projectId.optional() }),
   read_project_skill: SHARED_INPUTS.read_project_skill.extend({ project: projectId }),
   get_mindmap: MINDMAP_INPUTS.get_mindmap.extend({

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { MessageSquare, Sparkles } from "lucide-react";
 import { FastTooltip } from "@/components/fast-tooltip";
@@ -15,22 +15,62 @@ export function RequestRevision({ nodeId, disabled = false, mode = "draft", onRe
 }) {
   const [open, setOpen] = useState(false);
   const [fastTrack, setFastTrack] = useState(false);
+  const [altHeld, setAltHeld] = useState(false);
+  const [isMac, setIsMac] = useState(true);
   const [comment, setComment] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const pending = useRef(false);
-  const text = comment.trim().replace(/^@(?:agent|stat)\b\s*/i, "").trim();
-  const handle = fastTrack ? "@stat" : "@agent";
+  const altSubmitRef = useRef(false);
 
-  async function addMention() {
+  useEffect(() => {
+    setIsMac(/mac|iphone|ipad|ipod/i.test(navigator.platform || navigator.userAgent));
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      setAltHeld(false);
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey || event.key === "Alt") setAltHeld(true);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (!event.altKey || event.key === "Alt") setAltHeld(false);
+    };
+    const onBlur = () => setAltHeld(false);
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [open]);
+
+  const text = comment.trim().replace(/^@(?:agent|stat)\b\s*/i, "").trim();
+  const effectiveFastTrack = fastTrack || altHeld;
+  const handle = effectiveFastTrack ? "@stat" : "@agent";
+  const sendShortcut = isMac
+    ? (altHeld ? "⌘⌥↵" : "⌘↵")
+    : (altHeld ? "Ctrl+Alt↵" : "Ctrl↵");
+  const sendHint = isMac
+    ? "Send (⌘↵ for @agent, ⌘⌥↵ for @stat)"
+    : "Send (Ctrl+Enter for @agent, Ctrl+Alt+Enter for @stat)";
+
+  async function addMention(forceFastTrack = false) {
     if (!text || pending.current) return;
+    const useStat = fastTrack || altHeld || forceFastTrack || altSubmitRef.current;
+    altSubmitRef.current = false;
     pending.current = true;
     setSaving(true);
     setError("");
     try {
-      await onRequest(`${handle} ${text}`);
+      await onRequest(`${useStat ? "@stat" : "@agent"} ${text}`);
       setComment("");
       setFastTrack(false);
+      setAltHeld(false);
       setOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save the mention on this card.");
@@ -63,7 +103,7 @@ export function RequestRevision({ nodeId, disabled = false, mode = "draft", onRe
       </button>
     </Popover.Trigger></FastTooltip>
     <PopoverSurface side="bottom" align="end" aria-label="Request a draft revision" data-mind-editor={nodeId}
-      className="w-72 max-w-[calc(100vw-24px)] p-3 nodrag nopan nowheel"
+      className="w-80 max-w-[calc(100vw-24px)] p-3 nodrag nopan nowheel"
       onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
       <form className="grid gap-2" onSubmit={event => { event.preventDefault(); void addMention(); }}
         onKeyDown={event => {
@@ -71,7 +111,7 @@ export function RequestRevision({ nodeId, disabled = false, mode = "draft", onRe
           event.stopPropagation();
           if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !event.nativeEvent.isComposing) {
             event.preventDefault();
-            void addMention();
+            void addMention(event.altKey);
           }
         }}>
         <label className="grid gap-2 text-sm font-semibold">Add {handle} revision note
@@ -81,13 +121,29 @@ export function RequestRevision({ nodeId, disabled = false, mode = "draft", onRe
         </label>
         {error && <p role="alert" className="text-xs text-danger">{error}</p>}
         <div className="flex items-center justify-between gap-2">
-          <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-muted">
-            <input type="checkbox" checked={fastTrack} disabled={saving} onChange={event => setFastTrack(event.target.checked)} />
+          <label className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-xs text-muted">
+            <input type="checkbox" checked={effectiveFastTrack} disabled={saving} onChange={event => setFastTrack(event.target.checked)} />
             <span>Fast-track (@stat)</span>
           </label>
-          <div className="flex gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5">
             <Popover.Close asChild><button type="button" className="p-button p-button-borderless btn-ghost" disabled={saving}>Cancel</button></Popover.Close>
-            <button type="submit" className="p-button p-button-primary btn-primary" disabled={saving || !text}>{saving ? "Saving…" : "Send"}</button>
+            <button
+              type="submit"
+              className="p-button p-button-primary btn-primary inline-flex items-center gap-1.5 whitespace-nowrap"
+              title={sendHint}
+              disabled={saving || !text}
+              onClick={event => { altSubmitRef.current = event.altKey; }}
+            >
+              <span>{saving ? "Saving…" : "Send"}</span>
+              {!saving && (
+                <kbd
+                  aria-hidden="true"
+                  className="rounded bg-white/20 px-1 py-0.5 font-sans text-[10px] font-medium leading-none tracking-tight text-white/95"
+                >
+                  {sendShortcut}
+                </kbd>
+              )}
+            </button>
           </div>
         </div>
       </form>

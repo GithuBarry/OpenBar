@@ -24,7 +24,7 @@ export default function AgentAccessPage() {
           <li>Call <code>get_project_state</code> with <code>{'{"project":"<slug>"}'}</code> for project context and available instruction and skill metadata. The slug is the segment after <code>/p/</code> in a project URL.</li>
           <li>Use the returned map IDs, revisions, and file hashes in subsequent operations. Inspect local-save and remote-sync results separately.</li>
         </ol>
-        <p>For Git conflicts, inspect the <code>sync</code> field in project state. Use <code>sync_project</code> with <code>review_pull</code> to receive the base, local, and Git contents for each conflicting file. Resolve whole files and call <code>apply_pull</code> with the returned token. Changes arriving during review require a fresh review.</p>
+        <p>For Git conflicts, inspect the <code>sync</code> field in project state (or watch <code>openbar.git.conflict</code> over MCP Events). Use <code>sync_project</code> with <code>review_pull</code> to receive the base, local, and Git contents for each conflicting file. Resolve whole files and call <code>apply_pull</code> with the returned token if confident nothing will be lost; otherwise summarize what conflicted and wait for the human to tell you what to do. Changes arriving during review require a fresh review.</p>
         <p>For mutation tools that accept <code>requestId</code>, supply a unique stable ID and reuse it for retries. HTTP MCP operates saved repository state without interrupting active browser editing.</p>
         <p>REST clients can read <code>/api/tools</code> and send JSON arguments to <code>/api/tools/&lt;name&gt;</code> with the same bearer token. <Link href="/openapi.json" className="text-accent underline">OpenAPI discovery</Link> describes every endpoint. MCP and REST results use <code>{'{"ok":true,"value":...}'}</code> with revision and save details.</p>
         <p>Stdio clients can launch <code>node scripts/mcp-stdio.mjs</code> with <code>OPENBAR_URL</code> and <code>OPENBAR_ACCESS_TOKEN</code> in their environment. Tailscale addresses require access to your private network. External browser origins require configuration in <code>OPENBAR_AGENT_ORIGINS</code>.</p>
@@ -32,9 +32,24 @@ export default function AgentAccessPage() {
       </section>
       <section className="space-y-3" aria-labelledby="inbox-help">
         <h2 id="inbox-help" className="text-xl font-semibold">Talk to your agent from a mindmap</h2>
-        <p>Write <code>@agent</code> on a mindmap card. Use <code>@stat</code> for a fast tracked request displayed as <strong>agent STAT</strong>. Fast tracked requests appear first and use the same reply and acknowledgement flow. Then tell your connected agent <strong>tick</strong>, <strong>check updates</strong>, <strong>check inbox</strong>, or <strong>sync</strong>. It calls <code>check_inbox</code>, reads the card, replies there, and marks the exact notification handled with <code>acknowledge_inbox</code>.</p>
-        <p><strong>Wake an OpenCode chat.</strong> Connect OpenCode 2.3 or later to the HTTP MCP address above. Enable <code>experimental.mcp_events</code> in OpenCode’s configuration and restart OpenCode. In the chat you want to wake, ask it to watch this project’s inbox continuously. For example:</p>
-        <blockquote className="border-l-2 pl-4">Watch OpenBar for new @agent and @stat mentions in project &lt;slug&gt;. Use watch_mcp_event with once set to false. When a mention arrives, check the project inbox.</blockquote>
+        <p>Write <code>@agent</code> on a mindmap card. Use <code>@stat</code> for a fast tracked request displayed as <strong>agent STAT</strong>. Fast tracked requests appear first and use the same reply and acknowledgement flow. Then tell your connected agent <strong>tick</strong>, <strong>check updates</strong>, <strong>check inbox</strong>, or <strong>sync</strong>. It calls <code>check_inbox</code>, calls <code>claim_inbox</code> for the request(s) it is immediately working on (turning <code>@</code> into a spinning indicator for 30 minutes before reverting automatically; <code>{'{"project":"<slug>","all":true}'}</code> claims all pending mentions in a project), reads the card, replies there, and marks the exact notification handled with <code>acknowledge_inbox</code>.</p>
+        <p><strong>Wake an OpenCode chat.</strong> Connect OpenCode 2.3 or later to the HTTP MCP address above with <code>&quot;protocol&quot;: &quot;auto&quot;</code> (OpenCode defaults to <code>&quot;legacy&quot;</code>, which does not negotiate MCP Events), <code>&quot;oauth&quot;: false</code>, and <code>&quot;experimental&quot;: {'{"mcp_events": true}'}</code> in OpenCode’s configuration, then reload or restart OpenCode. In the chat you want to wake, ask it to watch one project (<code>{'{"project": "<slug>"}'}</code>), specific projects (<code>{'{"projects": ["<slug-a>", "<slug-b>"]}'}</code>), or all accessible projects (<code>{'{}'}</code>) continuously. For example:</p>
+        <pre className="overflow-x-auto rounded border border-line bg-surface-2 p-3 text-xs">{`{
+  "experimental": { "mcp_events": true },
+  "mcp": {
+    "servers": {
+      "openbar": {
+        "type": "remote",
+        "url": "<OpenBar URL>/api/mcp",
+        "oauth": false,
+        "protocol": "auto",
+        "pool": true,
+        "headers": { "Authorization": "Bearer {env:OPENBAR_ACCESS_TOKEN}" }
+      }
+    }
+  }
+}`}</pre>
+        <blockquote className="border-l-2 pl-4">Watch OpenBar for new @agent/@stat mentions (openbar.inbox.mention) and Git or saved-file conflicts (openbar.git.conflict) in project &lt;slug&gt; (or across all projects). Use watch_mcp_event with once set to false. When a mention arrives, check the inbox; when a conflict arrives, inspect it and resolve it if confident nothing will be lost, otherwise summarize it and wait for me to tell you what to do.</blockquote>
         <p>Fresh agents also check the inbox after <code>get_project_state</code> at the start of each session, including when earlier chat context is unavailable. A request to sync Git or Overleaf checks the inbox first, then performs the requested synchronization.</p>
         <p>OpenBar also prefixes pending requests to tool results. Repeated IDs identify the same request. Editing the request creates a fresh notification. The Tools panel shows pending and handled requests and lets you reopen them. Your original request and paper TODO completion stay available.</p>
       </section>

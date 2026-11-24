@@ -1360,13 +1360,17 @@ select.input { appearance: auto; cursor: pointer; }
 .mindmap-node-complete { opacity: 1; }
 .mindmap-node-missing { border-color: rgb(var(--warn) / 0.85); }
 .mindmap-node-root {
-  border: 1.5px solid rgb(var(--accent) / 0.42);
+  border: 1.5px solid color-mix(in srgb, var(--mind-node-accent) 42%, transparent);
   border-left-width: 2px;
   background: var(--mind-card-surface);
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.06);
 }
 .mindmap-node-orphan { border-style: dashed; border-color: rgb(var(--warn) / 0.65); }
 .mindmap-node-callout { --mind-card-surface: color-mix(in srgb, var(--mind-node-accent) 9%, rgb(var(--surface))); border-color: var(--mind-node-accent); background: var(--mind-card-surface); }
+.mindmap-node-archive { --mind-card-surface: rgb(var(--surface-2)); border-style: dashed; border-color: rgb(var(--line)); border-left: 2px solid rgb(var(--muted) / 0.55); background: var(--mind-card-surface); opacity: 0.78; }
+.mindmap-node-archive[data-custom-color="true"] { border-color: var(--mind-node-accent); border-left-color: var(--mind-node-accent); }
+.mindmap-node-archive:hover,
+.mindmap-node-archive.mindmap-node-selected { opacity: 0.98; }
 .mindmap-node-editing { cursor: text; user-select: text; }
 .mindmap-node-drop-target {
   border-color: var(--mind-node-accent);
@@ -1587,7 +1591,18 @@ select.input { appearance: auto; cursor: pointer; }
   font-size: 0.74rem;
   line-height: 1.4;
 }
-.mindmap-node-meta { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.2rem; padding-top: 0.15rem; color: rgb(var(--faint)); font-family: var(--font-mono); font-size: 0.56rem; }
+.mindmap-node-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.4rem; margin-top: 0.3rem; padding-top: 0.15rem; color: rgb(var(--faint)); font-family: var(--font-mono); font-size: 0.56rem; }
+.mindmap-node-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.08rem 0.38rem;
+  border: 1px solid rgb(var(--ink) / 0.11);
+  border-radius: 999px;
+  background: rgb(var(--ink) / 0.045);
+  color: rgb(var(--muted));
+  line-height: 1.3;
+  white-space: nowrap;
+}
 .mindmap-node-priority {
   display: inline-flex;
   min-width: 1.45rem;

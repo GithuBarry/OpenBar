@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AArrowDown, AArrowUp, RotateCcw, SlidersHorizontal } from "lucide-react";
 
 import { ChoiceButtons } from "@/components/choice-buttons";
@@ -32,6 +32,7 @@ type SizeControlProps = {
   disabled?: boolean;
   onChange: (value: number) => void;
   onPreview?: (value: number | null) => void;
+  children?: ReactNode;
 };
 const clampSize = (value: number) => Math.max(MIN_SIZE, Math.min(MAX_SIZE, Math.round(value)));
 
@@ -51,7 +52,7 @@ export function MindmapFontSize(props: SizeControlProps) {
   </div>;
 }
 
-export function MindmapFontSizeSlider({ value, disabled = false, onChange, onPreview, widthMode, onWidthModeChange }: SizeControlProps) {
+export function MindmapFontSizeSlider({ value, disabled = false, onChange, onPreview, widthMode, onWidthModeChange, children }: SizeControlProps) {
   const [draft, setDraft] = useState(String(value));
   const currentValue = useRef(value);
   useEffect(() => {
@@ -122,5 +123,6 @@ export function MindmapFontSizeSlider({ value, disabled = false, onChange, onPre
     <ChoiceButtons label="Card text size presets" value={size} options={PRESETS} onChange={update} disabled={disabled} />
     <div className={styles.heading}><h3>Card width</h3></div>
     <ChoiceButtons label="Card width" value={widthMode} options={WIDTH_OPTIONS} onChange={onWidthModeChange} disabled={disabled} />
+    {children && <div className={styles.extras}>{children}</div>}
   </section>;
 }

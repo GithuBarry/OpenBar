@@ -46,12 +46,18 @@ export function collectAgentMention(project: string, mapId: string, nodeId: stri
   const tagged = sources.flatMap(({ field, source }) => {
     const fastTrackedIndex = agentMentionIndex(source, FAST_TRACKED_AGENT_MENTION_PATTERN)
     const index = fastTrackedIndex ?? agentMentionIndex(source)
-    return index === undefined ? [] : [{ field, source, fastTracked: fastTrackedIndex !== undefined, text: source.slice(Math.max(0, index - 100), index + 500).trim() }]
+    if (index === undefined) return []
+    const start = Math.max(0, index - 100)
+    const excerpt = source.slice(start, index + 500)
+    return [{ field, source, index, fastTracked: fastTrackedIndex !== undefined, text: excerpt.trim(),
+      previewOffset: index - start - (excerpt.length - excerpt.trimStart().length) }]
   })
   if (!tagged.length) return undefined
   tagged.sort((a, b) => Number(b.fastTracked) - Number(a.fastTracked))
+  const primary = tagged[0]!
   const id = sha256Hex(JSON.stringify([project, mapId, nodeId, sources.map(item => [item.field, item.source])]))
   return { id, mapId, nodeId, ...(tagged.some(item => item.fastTracked) ? { priority: 'fast-tracked' as const } : {}), text: tagged.map(item => item.text).join('\n').slice(0, 900), fields: tagged.map(item => item.field),
+    mentionLocation: { field: primary.field, offset: primary.index, sourceHash: sha256Hex(primary.source), previewOffset: primary.previewOffset },
     href: `/p/${encodeURIComponent(project)}/mindmap/${encodeURIComponent(mapId)}#${encodeURIComponent(nodeId)}` }
 }
 

@@ -37,7 +37,7 @@ function changedFields(draftNode?: MindmapNode, savedNode?: MindmapNode, activeT
   if (draftNode.progress !== savedNode.progress) fields.push("progress")
   if (draftNode.color !== savedNode.color) fields.push("accent")
   if (draftNode.cardWidth !== savedNode.cardWidth) fields.push("width")
-  if (draftNode.shape !== savedNode.shape || draftNode.contentFormat !== savedNode.contentFormat || draftNode.tableLayout !== savedNode.tableLayout) fields.push("format")
+  if (draftNode.shape !== savedNode.shape || draftNode.contentFormat !== savedNode.contentFormat || draftNode.tableLayout !== savedNode.tableLayout || Boolean(draftNode.defaultCollapsed) !== Boolean(savedNode.defaultCollapsed)) fields.push("format")
   if (Boolean(draftNode.agentDraft) !== Boolean(savedNode.agentDraft)) fields.push("draft state")
   if (JSON.stringify(draftNode.refs || []) !== JSON.stringify(savedNode.refs || [])) fields.push("links/images")
   if (JSON.stringify(draftNode.metadata || null) !== JSON.stringify(savedNode.metadata || null)) fields.push("properties")

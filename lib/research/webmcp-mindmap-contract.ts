@@ -20,16 +20,16 @@ import type { CurrentLocation,SharedWebMcpActions } from "./webmcp-shared-contra
 
 export { isPrimaryMindmapRole as isPrimaryMindmap };
 
-const PRESENTATION_SHAPES = ["branch", "leaf", "callout"] as const;
+const PRESENTATION_SHAPES = ["branch", "leaf", "callout", "archive"] as const;
 
 export { MAX_MINDMAP_LABEL_CHARS, MAX_MINDMAP_LABELS, normalizeMindmapLabels as clampMindmapLabels } from "@/lib/mindmap/node-metadata";
 
 export type LiveMindmapNode = Pick<
   MindmapNode,
-  "agentDraft" | "id" | "parentId" | "title" | "text" | "caption" | "caution" | "todoId" | "contentFormat" | "tableLayout" | "cardWidth" | "shape" | "color" | "tags" | "progress" | "priority" | "refs" | "metadata" | "createdAt" | "updatedAt"
+  "agentDraft" | "id" | "parentId" | "title" | "text" | "caption" | "caution" | "todoId" | "contentFormat" | "tableLayout" | "cardWidth" | "defaultCollapsed" | "shape" | "color" | "tags" | "progress" | "priority" | "refs" | "metadata" | "createdAt" | "updatedAt"
 > & { completed?: boolean; /** Browser view preference, excluded from durable map state. */ collapsed?: boolean };
 
-export type MindmapPresentationPatch = Pick<MindmapNode, "contentFormat" | "tableLayout" | "shape" | "color"> & {
+export type MindmapPresentationPatch = Pick<MindmapNode, "contentFormat" | "tableLayout" | "defaultCollapsed" | "shape" | "color"> & {
   progress?: MindmapNode["progress"] | null;
   cardWidth?: number | null;
 };
@@ -272,7 +272,7 @@ export function parsePresentationArg(
 ): OperationResult<MindmapNodeContentPatch["presentation"]> {
   if (!value || typeof value !== "object") return failResult("invalid_arguments", "presentation must be an object.", false);
   const rec = value as Record<string, unknown>;
-  const extra = Object.keys(rec).find((key) => !["contentFormat", "tableLayout", "cardWidth", "shape", "color", "progress"].includes(key));
+  const extra = Object.keys(rec).find((key) => !["contentFormat", "tableLayout", "cardWidth", "defaultCollapsed", "collapsed", "shape", "color", "progress"].includes(key));
   if (extra) return failResult("invalid_arguments", `Unknown presentation property "${extra}".`, false);
   const patch: NonNullable<MindmapNodeContentPatch["presentation"]> = {};
   if (rec.contentFormat !== undefined) {
@@ -292,6 +292,19 @@ export function parsePresentationArg(
       return failResult("invalid_arguments", `cardWidth must be an integer from ${MIN_CARD_WIDTH} to ${MAX_CARD_WIDTH}, or null for automatic width.`, false);
     }
     patch.cardWidth = rec.cardWidth as number | null;
+  }
+  if (rec.defaultCollapsed !== undefined || rec.collapsed !== undefined) {
+    if (rec.defaultCollapsed !== undefined && rec.collapsed !== undefined && rec.defaultCollapsed !== rec.collapsed) {
+      return failResult("invalid_arguments", "defaultCollapsed and collapsed must match when both are provided.", false);
+    }
+    const raw = rec.defaultCollapsed !== undefined ? rec.defaultCollapsed : rec.collapsed;
+    if (typeof raw !== "boolean") {
+      return failResult("invalid_arguments", "defaultCollapsed must be true or false.", false);
+    }
+    if (nodeId === rootId && raw) {
+      return failResult("invalid_arguments", "The root topic cannot be collapsed by default.", false);
+    }
+    patch.defaultCollapsed = raw;
   }
   if (rec.shape !== undefined) {
     if (nodeId === rootId) return failResult("invalid_arguments", "The root topic keeps the root style.", false);

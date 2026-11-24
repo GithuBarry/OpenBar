@@ -32,17 +32,48 @@ Ordinary tool results prefix a bounded list of pending requests. MCP uses a lead
 text content block and a `notifications` field. REST and WebMCP preserve the normal
 operation result and place `notifications` first.
 
-Read the linked context and reply on the card within the current user instructions,
-then call `acknowledge_inbox` with the exact IDs. Repeated IDs identify the same
+Read the linked context, call `claim_inbox` only for the exact notification ID(s)
+you are immediately starting to work on (or `{ project, all: true }` when
+immediately working on every pending request in that project — this replaces `@`
+on that request's active marker with a spinning indicator for 30 minutes before
+automatically reverting, leaves quoted history alone, and can
+be released early with `working: false`), reply on the card within the current
+user instructions, then call `acknowledge_inbox` with the exact IDs. Repeated IDs identify the same
 request. Editing mention-bearing text produces a new ID. Receipts store delivery
 IDs in machine runtime storage, while the paper and map own the request text.
 Acknowledgement preserves paper TODO completion. `includeAcknowledged` shows handled
 items and `acknowledged=false` reopens them. Humans can do both in the Tools panel.
 Clients receive pending notifications on their next OpenBar call. An MCP Events
-client can also watch for newly saved mentions in one project over authenticated
-HTTP. In OpenCode 2.3 or later, enable `experimental.mcp_events`, restart
-OpenCode, and ask the chat to watch continuously. With an MCP connection named
-`openbar`, the arguments to OpenCode’s `watch_mcp_event` are:
+client can also watch for newly saved mentions in one project, a selected list of
+projects, or all accessible projects over authenticated HTTP (`2026-07-28` MCP).
+In OpenCode 2.3 or later, enable `experimental.mcp_events` and set
+`"protocol": "auto"` on the `openbar` MCP server entry (OpenCode defaults to
+`"legacy"`, which does not negotiate MCP Events):
+
+```json
+{
+  "experimental": { "mcp_events": true },
+  "mcp": {
+    "servers": {
+      "openbar": {
+        "type": "remote",
+        "url": "<OpenBar URL>/api/mcp",
+        "oauth": false,
+        "protocol": "auto",
+        "pool": true,
+        "headers": { "Authorization": "Bearer {env:OPENBAR_ACCESS_TOKEN}" }
+      }
+    }
+  }
+}
+```
+
+Then reload or restart OpenCode and ask the chat to watch continuously. With an
+MCP connection named `openbar`, pass `{ "project": "<slug>" }` for one project,
+`{ "projects": ["<slug-a>", "<slug-b>"] }` for specific projects, or `{}` (or
+omit `arguments`) for all accessible projects. Subscribe to `openbar.inbox.mention`
+for `@agent`/`@stat` mentions and `openbar.git.conflict` for Git synchronization
+and saved-file (mindmap/paper) conflicts:
 
 ```json
 {
@@ -53,12 +84,25 @@ OpenCode, and ask the chat to watch continuously. With an MCP connection named
 }
 ```
 
-The project slug comes from the project URL. Register the watch, then call
-`check_inbox` for outstanding requests. On each wake, use the same inbox and
-acknowledgement flow. OpenCode’s default watch ends after the first event.
-The stream reports new and edited human mentions saved through OpenBar. Use
-`check_inbox` to reconcile outstanding requests after an external file edit
-or a gap in replay history.
+```json
+{
+  "server": "openbar",
+  "event": "openbar.git.conflict",
+  "arguments": { "project": "<slug>" },
+  "once": false
+}
+```
+
+Project slugs come from the project URLs. Register the watch, then call
+`check_inbox` for outstanding requests and active conflict alerts. On each mention
+wake, use the same inbox and acknowledgement flow. On each `openbar.git.conflict`
+wake (or conflict prefix on a tool call), inspect the conflict with `sync_project`
+or `get_project_state` / `get_mindmap` and resolve it if confident nothing
+(including unsaved human edits) will be lost; otherwise summarize what conflicted
+and wait for the human to tell you what to do. OpenCode’s default watch ends after
+the first event. The mention stream reports new and edited human mentions saved
+through OpenBar. Use `check_inbox` to reconcile outstanding requests after an
+external file edit or a gap in replay history.
 
 A memoryless agent follows this path:
 
@@ -84,7 +128,10 @@ The steps have distinct roles:
 4. Read the relevant files with `read_project_files`. Use `navigate_project`
    with a project-state id or href to open the corresponding UI.
 5. Call the tools owned by the active paper, mindmap, wiki, or instructions
-   page. Agent Ready shows the catalog available for the current page.
+   page. The robot indicator turns green when browser tools are registered or an
+   MCP notification listener is active for the current project (any project on
+   the workspace page). Its details show both statuses and browser registration
+   issues separately.
 
 ## Workspace tools on `/`
 
@@ -208,7 +255,7 @@ Deliver useful structure early and refine it as work progresses. Choose the pres
 
 Mindmap structure: Use meaningful branching relationships in the project's own terms. Write concise prose cards, use child cards for distinct topics, and put supporting detail in collapsed Notes. Definitions, explanations, and conclusions belong in prose cards or Notes. For example, an Evaluation branch can have Dataset coverage, Method/model results, and Failure analysis children, with scoring details in Notes on the relevant card.
 
-State the takeaway in one sentence a new reader can understand. Quantify changes against a named baseline on a stated sample. Use prose for a simple fact, a table for exact comparisons, or a labeled chart for a pattern. Keep headings short. Give shared units or denominators once per column, and split long labels across lines when the format supports it. Show uncertainty and evidence gaps beside the values. Keep essential color keys with the graphic and navigation hints beside their controls. For a comparison matrix, choose meaningful rows and columns, such as methods and models, and put measured results at their intersections.
+State the takeaway in one sentence a new reader can understand. Quantify changes against a named baseline on a stated sample. Use prose for a simple fact, a table for exact comparisons, or a labeled chart for a pattern. Keep headings short. Give shared units or denominators once per column, and split long labels across lines with `<br>` in Markdown tables. When stacking multiple metrics in a Markdown table row, use explicit `<br>` breaks in both the label cell and every value cell so numbers stay line-aligned across columns (avoid `/` lists that wrap unpredictably into 2 vs. 3 lines), or split metrics into separate rows/columns. Wrap optional Markdown hover details in `((detail))` to render an `(i)` mouseover tooltip. Show uncertainty and evidence gaps beside the values. Keep essential color keys with the graphic and navigation hints beside their controls. For a comparison matrix, choose meaningful rows and columns, such as methods and models, and put measured results at their intersections.
 
 Visible incompleteness: Both the mindmap and manuscript should visibly reflect unfinished work. Preserve intended branches, sections, comparisons, table rows and columns, and figures while evidence arrives. Keep empty or explicitly pending result cells, unresolved questions, TODOs, and sentence placeholders beside the relevant argument. Fill entries as evidence becomes available. Preserve verified results and stable TODO identities during reorganization, and expose gaps reopened by scope changes.
 
@@ -225,7 +272,13 @@ An empty cell keeps an evidence gap open. [PENDING] identifies planned work awai
 Sentence placeholder example: "On [DATASET], [METHOD] achieves [RESULT PENDING], measured by [METRIC]."
 
 Preserve tables, row and column axes, captions, labels, TODOs, comments,
-markers, and intentionally incomplete cells. `\obmarker` is a local paper
+markers, and intentionally incomplete cells. Write manuscript `.tex` prose for
+an external peer reviewer—never leak internal method/experiment version labels
+(`v1`, `v2`, `v3`, `repaired`, `wave`, `smoke`, `confirmatory`), local harness
+scripts/JSON filenames, or run-log bookkeeping (`0 technical failures`, `cells`)
+into `.tex` text, headings, captions, or tables; present one coherent final
+design and frame comparisons as named component ablations (keep provenance in
+collapsed mindmap Notes or wiki). `\obmarker` is a local paper
 hole. `\obtodo` is operational work that appears on Primary, initially in
 Primary Unplaced. `compile_paper` saves live edits and starts the paper build.
 
@@ -340,7 +393,7 @@ the complete unsaved source while a draft is shortened to fit this limit.
 
 Use compact static semantic HTML and self-contained inline SVG geometry, with a
 `viewBox`, accessible labels, and fill/stroke colors. OpenBar sanitizes the source
-and fits visuals within 440 × 240 CSS pixels. Paper TODO cards keep TeX formatting.
+and sizes the body to the card width and content height. Paper TODO cards keep TeX formatting.
 Draw the visual directly in the card body. Fit the SVG viewBox to the plot, use
 short labels, and put the takeaway beside the graphic in card text. Put methods
 and longer explanations in collapsed Notes. A nested SVG `<title>` can expose a

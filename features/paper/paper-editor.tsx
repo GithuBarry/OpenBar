@@ -76,6 +76,7 @@ import type { BibEntry, BibliographyImportResult } from "@/lib/bibtex";
 import type { PaperCompileStatus } from "@/lib/tex-project/compile";
 import { getBrowserPaperCompileStatus, requestBrowserPaperCompile } from "./browser-compile";
 import { getBrowserEditablePaper, saveBrowserPaperSource } from "./browser-source";
+import { clearBrowserConflict, reportBrowserConflict } from "@/lib/research/browser-conflict";
 import { parseTexFileLines } from "@/lib/tex-project/tex-diagnostics";
 
 import { headingKeyForElement } from "./heading-keys";
@@ -1158,17 +1159,22 @@ export function PaperEditor({
     if (signal?.aborted) throw Object.assign(new Error("Operation cancelled."), { code: "cancelled" });
     let saveText = text;
     let rebasedFromDisk: { hash: string; source: string } | null = null;
+    let rebaseConflictFiles: string[] | undefined;
+    let diskPaperHash: string | undefined;
     let result = await saveBrowserPaperSource(project, saveText, bundleHashRef.current, { signal, actor });
     if (!result.ok && result.code === "stale_disk_state") {
       // Attempt conservative line-level 3-way rebase against the latest disk bundle.
       // Do not mutate bundleHashRef/savedSourceRef until the retry save actually succeeds.
       const diskPaper = await getBrowserEditablePaper(project).catch(() => null);
+      diskPaperHash = diskPaper?.bundle.bundleHash;
       if (diskPaper?.bundle.bundleHash && diskPaper.bundle.bundleHash !== bundleHashRef.current) {
         const merged = rebaseBundleSource(baseline, saveText, diskPaper.bundle.source);
         if (merged.ok) {
           rebasedFromDisk = { hash: diskPaper.bundle.bundleHash, source: diskPaper.bundle.source };
           saveText = merged.source;
           result = await saveBrowserPaperSource(project, saveText, diskPaper.bundle.bundleHash, { signal, actor });
+        } else if (merged.files.length) {
+          rebaseConflictFiles = merged.files;
         }
       }
     }
@@ -1179,6 +1185,16 @@ export function PaperEditor({
         ...(result.currentHash ? { currentHash: result.currentHash } : {}),
       };
       setSaveConflict(result.code === "stale_disk_state");
+      if (result.code === "stale_disk_state" && actor === "human") {
+        reportBrowserConflict(project, {
+          kind: "paper",
+          code: "paper_conflict",
+          message: result.message,
+          expectedHash: bundleHashRef.current,
+          currentHash: result.currentHash || diskPaperHash,
+          ...(rebaseConflictFiles?.length ? { files: rebaseConflictFiles } : {}),
+        });
+      }
       throw new Error(result.message);
     }
     void rebasedFromDisk;
@@ -1210,12 +1226,21 @@ export function PaperEditor({
     const rebased = rebaseBundleSource(text, live, canonical);
     const pending = pendingSaveRef.current;
     const rebasedPending = pending ? rebaseBundleSource(text, pending.text, canonical) : undefined;
-    const preserveConflict = (message: string): never => {
+    const preserveConflict = (message: string, files?: string[]): never => {
       pendingSaveRef.current = null;
       saveConflictRef.current = true;
       setSaveConflict(true);
       setLocalDirty(true);
       saveFailureRef.current = { code: "stale_disk_state", message };
+      if (actor === "human") {
+        reportBrowserConflict(project, {
+          kind: "paper",
+          code: "paper_conflict",
+          message,
+          currentHash: bundleHashRef.current,
+          ...(files?.length ? { files } : {}),
+        });
+      }
       if (pending && pending.text !== live) {
         // Keep both versions available when a queued snapshot differs from
         // the editor. Each can contain work the other does not have.
@@ -1232,7 +1257,7 @@ export function PaperEditor({
     if (!rebased.ok || (rebasedPending && !rebasedPending.ok)) {
       const files = [...new Set([...(rebased.ok ? [] : rebased.files), ...(rebasedPending && !rebasedPending.ok ? rebasedPending.files : [])])];
       const detail = files.length ? ` Changed files: ${files.join(", ")}.` : "";
-      return preserveConflict(`The saved include graph changed while newer edits were made. Your newer edits remain in this editor and recovery draft.${detail} Copy those edits before reloading the saved paper.`);
+      return preserveConflict(`The saved include graph changed while newer edits were made. Your newer edits remain in this editor and recovery draft.${detail} Copy those edits before reloading the saved paper.`, files);
     }
     if (pending && rebasedPending?.ok) pendingSaveRef.current = { ...pending, text: rebasedPending.source };
     if (rebased.source !== live) {
@@ -1328,6 +1353,7 @@ export function PaperEditor({
       return;
     }
     applyHydrated(paper);
+    clearBrowserConflict(project, "paper");
   }, [applyHydrated, project]);
 
   const liveSource = useCallback(() => editorRef.current?.getLiveSource() ?? sourceRef.current, []);

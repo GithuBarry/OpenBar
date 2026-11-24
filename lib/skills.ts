@@ -1,4 +1,4 @@
-import { EXPERIMENT_WRITING_GUIDANCE, MINDMAP_CARD_GUIDANCE, MINDMAP_WRITING_REFERENCE, MINDMAP_WRITING_SKILL_ID } from "./research/agent-guidance";
+import { EXPERIMENT_WRITING_GUIDANCE, MINDMAP_CARD_GUIDANCE, MINDMAP_WRITING_REFERENCE, MINDMAP_WRITING_SKILL_ID, PAPER_PROSE_GUIDANCE } from "./research/agent-guidance";
 
 /**
  * OpenBar — bundled research skills.
@@ -62,45 +62,71 @@ Inverse guard: don't manufacture disagreement or uncertainty to look rigorous. A
   },
   {
     id: "lean-research-coder",
-    title: "Lean research coder (ponytail)",
-    when: "Implementing or refactoring research code with a minimal, auditable design.",
-    source: "Lean engineering practice",
-    body: `Write the laziest solution that actually works — minimal, shortest, but never careless. Walk this ladder and STOP at the first rung that holds:
+    title: "Lean research coder",
+    when: "Implementing, reviewing, or refactoring ML/CS research code with faithful protocols, lean implementations, explicit experimental choices, and auditable outputs.",
+    source: "OpenBar research coding practice",
+    body: `Apply scientific judgment to implementation. Pairs with \`rigorous-researcher\` during research coding and remains self-contained for executable behavior.
 
-1. Does this need to exist at all?
-2. Already in this codebase? (reuse it)
-3. Does the stdlib do it?
-4. Native platform feature covers it?
-5. An already-installed dependency solves it?
-6. Can it be one line?
-7. Only then: the minimum code that works.
+## Preserve the scientific object
+- Identify the protocol and behavior affected by the change. Preserve task semantics, information access, dataset membership, training/evaluation boundaries, and measurement definitions.
+- Use the original benchmark harness or reference implementation when available and appropriate. Make scientifically meaningful deviations explicit.
+- Never silently override decoding or harness defaults—such as forcing \`temperature=0\`, setting an arbitrary \`max_tokens\`/\`max_len\` cap, altering \`top_p\`, or capping tool rounds/turns—without the researcher's explicit knowledge and approval. Follow official model/benchmark defaults and surface any cap or deviation before running.
+- Keep comparisons fair across data access, prompts, budgets, settings, retries, and stopping rules. Inspect relevant prior code and papers when their details determine implementation correctness.
 
-Rules: No unrequested abstractions, interfaces, factories, or config for hypothetical futures. No boilerplate or scaffolding "for later". Deletion over addition. Smallest working diff. Bug fix = root cause, not symptom. Mark deliberate shortcuts with a "ponytail:" comment naming the tradeoff.
+## Keep implementation lean
+- Prefer maintained libraries, official APIs, and native harnesses. Keep custom logic small, explicit, and close to the method's concepts.
+- Scope cleanup to the requested work and its dependencies. Every abstraction must earn its place through reproducibility, auditability, or clarity; avoid speculative scaffolding.
+- Expose evidence-affecting choices through the project's existing configuration or experiment specification. Record effective defaults, randomness, sampling rules, budgets, and model/data revisions, reusing existing conventions.
 
-Never simplify away: input validation, error handling at trust boundaries, security, or accessibility. Leave one small runnable check (assert/tiny test) for non-trivial logic.
+## Preserve failure meaning
+- Surface missing artifacts, malformed examples, invalid configuration, evaluator mismatches, and unexpected truncation. Fail the affected operation when its scientific assumptions break, or retain an explicit failure record when the protocol calls for continuing.
+- Any recovery path must preserve scientific meaning and remain visible in the evidence. Keep failed and excluded cases with their reasons and denominators.
+- Use assertions for concrete scientific invariants. Never simplify away input validation, auditability, or security.
 
-For research code specifically: correctness and auditability of scientific claims come first. A result you can't reproduce or point to evidence for is not a result.`,
+## Verify the affected evidence
+- Run checks proportional to the change within the authorized budget. Inspect raw examples and outputs when transformations, parsing, or evaluation change.
+- Trace reported measurements to code state, commands, configuration, data, seeds or sampling rules, and raw artifacts.
+- Keep disposable checks in temporary locations or the project's established development area. Preserve evidence-producing workflows and outputs according to project conventions. Scale experiments along axes needed to assess the requested claim.
+
+## Complete the requested work
+- Continue through implementation, relevant execution, inspection, and repairs within scope. Report implemented behavior, executed checks, produced evidence, and material remaining limitations.
+- Distinguish implementation readiness, diagnostic results, and completed experiments in status reports.
+- Use a design interview (\`grill-me\`) when requested for consequential unresolved choices; otherwise ask focused questions only where missing information materially blocks progress.`,
   },
   {
     id: "rigorous-researcher",
-    title: "Rigorous researcher",
-    when: "Planning experiments, making empirical claims, or writing up results.",
-    source: "Evidence-grounded research practice",
-    body: `Hold the line on scientific claims.
+    title: "Rigorous research agent",
+    when: "Applying rigorous scientific judgment during ML/LLM research planning, coding, experiments, analysis, and writing, aligning claims with informative evidence.",
+    source: "OpenBar research practice",
+    body: `Make the research truer, sharper, and easier to audit across planning, coding, experiments, analysis, and writing. Pairs with \`lean-research-coder\` during implementation.
 
 ${EXPERIMENT_WRITING_GUIDANCE}
 
-- Pre-register: write the hypothesis and the concrete expected outcome BEFORE running the experiment. Compare results to the frozen prediction; don't rewrite the prediction after seeing results (no HARKing).
-- Name the question, not just the method. Don't get stuck optimizing a method and lose the goal. Prefer research questions that stay interesting whichever way the result comes out.
-- Every empirical claim needs pointable evidence (a run id, a figure, a metric, a source span). No evidence → say so; do not invent a result.
-- Inspect the thing before the metric. Inspect raw inputs, intermediate states, raw outputs, evaluator traces, dropped cases, and table source files before trusting aggregate numbers.
-- Track denominators, filters, prompts, costs, retries, seeds, failures, exclusions, and hidden defaults. Fuzzy accounting turns results into decoration.
-- Preserve single source of truth. Leave experiment dashboards, compute logs, manuscript claims, shared notes, and repository artifacts in their source systems. Add lightweight anchors, manifests, hashes, and small excerpts so OpenBar can link and challenge the work.
-- Keep researcher input minimal. If a source lacks an anchor, add the smallest useful anchor or manifest next to the source, then teach OpenBar to read it.
-- Required fields should be the smallest source-near note that makes evidence findable. Agents can fill optional detail from logs, tables, commits, and paper context.
-- Distinguish "written but not verified" from "tested and passing". A disconfirmed prediction is a real, valuable result — report it, don't bury it.
-- Prefer fewer verified facts to many unsupported ones. Don't add decorative specificity (invented numbers, synthetic quotes) to look complete.
-- Complete a full end-to-end unit of any method quickly before scaling it up.`,
+## Choose informative work
+- Identify the scientific uncertainty and choose the action most likely to change the decision. Give every experiment a clear role: main comparison, baseline, ablation, stress test, or sensitivity check.
+- Respect the requested scope, available budget, and stopping condition. Complete a full end-to-end unit quickly before scaling up.
+- State claims through their conditions, comparisons, measurements, and implications. Give baselines serious consideration and keep comparisons fair.
+- Pre-register the hypothesis and concrete expected outcome before running; compare results to the frozen prediction (no HARKing). Separate exploratory observations from results produced under a fixed evaluation protocol.
+
+## Ground claims in evidence
+- Match the strength of a claim to the evidence actually produced. Every empirical claim needs pointable evidence (run id, figure, metric, source span); no evidence → say so and never invent decorative specificity.
+- Inspect the thing before the metric: check raw inputs, transformations, outputs, evaluator traces, failures, exclusions, and table sources where they could change the conclusion. Trace consequential numbers through measurement to the underlying cases.
+- Account for denominators, filters, prompts, sampling/length settings, costs, retries, seeds, and missing cases when they affect interpretation. Never silently force \`temperature=0\`, set arbitrary \`max_tokens\`/\`max_len\` or turn caps, or trim inputs/outputs without the researcher's explicit knowledge—disclose effective defaults and truncation rates alongside results. Investigate leakage, drift, truncation, parser shortcuts, and alternative explanations.
+- Preserve executed evidence and single source of truth in source systems, adding lightweight source-near anchors, manifests, hashes, and small excerpts so OpenBar can link and challenge the work.
+
+## Keep uncertainty visible
+- Call out compromised comparisons and unsupported conclusions, explain their consequence, and identify the evidence needed to resolve them. Label missing evidence and incomplete work explicitly (empty cells, [PENDING], [UNKNOWN], measured 0).
+- Choose failure handling that preserves scientific meaning. Keep invalid, failed, and disconfirmed cases visible instead of burying them.
+- Clearly label planning artifacts, development diagnostics, and completed experiments, and distinguish "written but not verified" from "tested and passing".
+
+## Write and finish with precision
+- Connect motivation, claim, evidence, and implication. Keep operational details in the audit trail (collapsed mindmap Notes or wiki, never manuscript .tex prose) and limitations near the claims they qualify. State what the reader should believe and how far the evidence reaches.
+- Continue requested work through authorized analysis, verification, and repairs until the deliverable is supported by inspected evidence with explicit limitations. Report exact dependency or budget blockers when stopped, and treat further ideas as follow-up work unless required for the requested claim.
+
+## Optional references
+- Paper argument and structure: https://www.alignmentforum.org/posts/eJGptPbbFPZGLpjsp/highly-opinionated-advice-on-how-to-write-ml-papers (Neel Nanda)
+- Training and debugging neural networks: https://karpathy.github.io/2019/04/25/recipe/ (Andrej Karpathy)
+- Research code release: https://github.com/paperswithcode/releasing-research-code (Papers with Code)`,
   },
   {
     id: "paper-writing",
@@ -108,6 +134,8 @@ ${EXPERIMENT_WRITING_GUIDANCE}
     when: "Editing a research draft, paper section, abstract, or related work.",
     source: "OpenBar writing practice",
     body: `Write the paper. Unfinished actions are \\obtodo anchors in that paper.
+
+${PAPER_PROSE_GUIDANCE}
 
 Before a long run, mark the sentence, figure or cell it could change. Return to that spot when evidence arrives. Keep planned sections and comparison axes visible as the paper grows.
 
@@ -117,10 +145,11 @@ ${MINDMAP_WRITING_REFERENCE}
 - Put remaining work in \\obtodo[id=…]{…}. Completing a TODO can be a decision with no new prose.
 - Do not invent a parallel task tracker in the wiki or mindmap.
 - Keep unmeasured results visibly marked with sentence placeholders or pending cells beside the relevant argument. Fill values from verified evidence, retaining measured zero and unresolved outcomes as distinct states.
-- Edit in place so the document reads as a coherent artifact. Process narration belongs in the wiki if it is useful later.
+- Edit in place so the document reads as a coherent artifact. Process narration, version history, and harness paths belong in collapsed mindmap Notes or the wiki if useful later.
 - Match the project's existing voice and notation.
 
-Prose quality: prefer concrete specificity over polished generality, plain words over synonym-chasing, and don't perform (no keynote cadence, no ceremonial wrap-ups).`,
+Prose quality: prefer concrete specificity over polished generality, plain words over synonym-chasing, and don't perform (no keynote cadence, no ceremonial wrap-ups).
+Optional reference on ML paper argument and structure: https://www.alignmentforum.org/posts/eJGptPbbFPZGLpjsp/highly-opinionated-advice-on-how-to-write-ml-papers (Neel Nanda).`,
   },
   {
     id: "status-report",
@@ -163,6 +192,12 @@ Per persona report: comprehension %, friction points (with location + a gut-reac
   },
 ];
 
+const SKILL_ALIASES: Record<string, string> = {
+  "research-mindset": "rigorous-researcher",
+  "rigorous-research-agent": "rigorous-researcher",
+};
+
 export function getSkill(id: string): Skill | undefined {
-  return SKILLS.find((s) => s.id === id);
+  const canonical = SKILL_ALIASES[id] || id;
+  return SKILLS.find((s) => s.id === canonical);
 }

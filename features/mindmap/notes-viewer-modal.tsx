@@ -10,10 +10,11 @@ import { hasNoteText } from "@/lib/mindmap/caution";
 import { NotesTextarea } from "./notes-textarea";
 import styles from "./notes-viewer-modal.module.css";
 
-export function NotesViewerModal({ open, onClose, notes, cardTitle, readOnly = false, onChange }: {
+export function NotesViewerModal({ open, onClose, notes, workingMentionAt, cardTitle, readOnly = false, onChange }: {
   open: boolean;
   onClose: () => void;
   notes: string;
+  workingMentionAt?: number;
   cardTitle?: string;
   readOnly?: boolean;
   onChange?: (value: string) => void;
@@ -54,7 +55,7 @@ export function NotesViewerModal({ open, onClose, notes, cardTitle, readOnly = f
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={cardTitle ? `Notes for ${cardTitle}` : "Notes"} className={styles.viewer}>
+    <Modal open={open} onClose={onClose} closeOnBackdropClick title={cardTitle ? `Notes for ${cardTitle}` : "Notes"} className={styles.viewer}>
       <div
         className={styles.shell}
         onPointerDown={event => event.stopPropagation()}
@@ -121,7 +122,7 @@ export function NotesViewerModal({ open, onClose, notes, cardTitle, readOnly = f
               className={isMarkdown ? styles.markdownBody : styles.plainBody}
               onDoubleClick={editable ? () => setEditing(true) : undefined}
             >
-              <RichText text={notes} format={isMarkdown ? "markdown" : "plain"} tableLayout="scroll" />
+              <RichText text={notes} format={isMarkdown ? "markdown" : "plain"} tableLayout="scroll" workingMentionAt={workingMentionAt} />
             </div>
           ) : (
             <p className={styles.empty}>No notes yet.</p>

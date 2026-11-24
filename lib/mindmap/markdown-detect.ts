@@ -1,9 +1,12 @@
 import { markdownTableColumns } from "./markdown-table";
+import { hasInlineInfoNotes } from "./inline-info-notes";
 
-/** Lightly detect Markdown syntax (tables, headings, lists, links, emphasis, code, blockquotes). */
+/** Lightly detect Markdown syntax (tables, headings, lists, links, emphasis, code, blockquotes, hover notes, line breaks). */
 export function looksLikeMarkdown(text: string): boolean {
   if (!text) return false;
   if (markdownTableColumns(text) > 0) return true;
+  if (hasInlineInfoNotes(text)) return true;
+  if (/<br\s*\/?>/i.test(text)) return true;
   if (/\[[^\]\n]+\]\((?:https?:\/\/|\/|#)[^)\s]+\)/.test(text)) return true;
   if (/\*\*[^*\s][^*\n]*\*\*/.test(text)) return true;
   if (/`[^`\n]+`/.test(text) || /^```/m.test(text)) return true;

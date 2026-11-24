@@ -1,5 +1,6 @@
 import type { MindmapNode } from "@/lib/types";
 import { markdownTableColumns, markdownTableHasVerboseHeaders } from "@/lib/mindmap/markdown-table";
+import { stripInlineInfoNotes } from "@/lib/mindmap/inline-info-notes";
 import type { OperationDiagnostic } from "./operation-result";
 
 type VisibleCard = Pick<MindmapNode, "id" | "title" | "text" | "todoId" | "contentFormat">;
@@ -10,7 +11,8 @@ function densityIssue(node: VisibleCard): DensityIssue | undefined {
   if (markdownTableHasVerboseHeaders(node.text)) return "table_headers";
   if (markdownTableColumns(node.text)) return;
   let words = 0;
-  for (const text of [node.title || "", node.text]) {
+  for (const raw of [node.title || "", node.text]) {
+    const text = node.contentFormat === "markdown" ? stripInlineInfoNotes(raw) : raw;
     const token = /\S+/g;
     while (token.exec(text)) if (++words > 160) return "long_prose";
   }
@@ -32,7 +34,7 @@ export function mindmapDensityHint(
       severity: "info",
       code: "mindmap_density_hint",
       message: issue === "table_headers"
-        ? `${card}: Long headings over short values. Consider compact "Metric /N" headers and define N once.`
+        ? `${card}: Long headings over short values. Consider compact "Metric /N" headers, <br> line breaks, or ((detail)) hover notes, and define N once.`
         : `${card}: Over 160 visible words. Consider aiming near 80 and moving supporting detail into collapsed Notes or distinct child cards.`,
     }];
   }

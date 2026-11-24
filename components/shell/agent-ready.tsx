@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import * as Popover from "@radix-ui/react-popover";
 import { PopoverSurface } from "@/components/pop";
@@ -36,6 +36,18 @@ const SURFACE_ORDER: WebMcpSurface[] = ["workspace", "shared", "paper", "mindmap
 
 export function AgentReadyIndicator() {
   const project = useInboxProject();
+  const mcpStatus = useQuery({
+    queryKey: ["openbar", "agent-status", project],
+    queryFn: async ({ signal }) => {
+      const query = project ? `?${new URLSearchParams({ project })}` : "";
+      const response = await fetch(`/api/agent-status${query}`, { cache: "no-store", signal });
+      if (!response.ok) throw new Error("MCP listener status is unavailable.");
+      const { listeners } = await response.json() as { listeners: number };
+      return listeners;
+    },
+    refetchInterval: 5000,
+    retry: false,
+  });
   const [catalog, setCatalog] = useState<WebMcpCatalogEntry[]>([]);
   const [diagnostics, setDiagnostics] = useState<WebMcpDiagnostic[]>([]);
   const [open, setOpen] = useState(false);
@@ -91,10 +103,16 @@ export function AgentReadyIndicator() {
     }));
   }, [catalog]);
 
-  const ready = catalog.length > 0;
+  const listenerCount = mcpStatus.isError ? 0 : mcpStatus.data ?? 0;
+  const browserReady = catalog.length > 0;
+  const ready = browserReady || listenerCount > 0;
   const issueCount = diagnostics.length;
+  const readyDetails = [
+    browserReady ? `${catalog.length} browser tools` : "",
+    listenerCount ? `${listenerCount} MCP ${listenerCount === 1 ? "listener" : "listeners"}` : "",
+  ].filter(Boolean).join(", ");
   const statusText = ready
-    ? `Agent ready: ${catalog.length} tools${issueCount ? `, ${issueCount} issues` : ""}`
+    ? `Agent ready: ${readyDetails}`
     : issueCount
       ? `Agent issues: ${issueCount}`
       : "Agent waiting";
@@ -105,7 +123,7 @@ export function AgentReadyIndicator() {
       <FastTooltip label={`${statusText}. Connection details`}>
         <Popover.Trigger
           type="button"
-          className={cn("ob-agent-ready", ready && "ob-agent-ready-on", issueCount > 0 && "ob-agent-ready-issue")}
+          className={cn("ob-agent-ready", ready && "ob-agent-ready-on", !ready && issueCount > 0 && "ob-agent-ready-issue")}
           aria-label={`${statusText}. Agent connection details`}
         >
           <span className="ob-agent-ready-dot" aria-hidden="true" />
@@ -119,7 +137,13 @@ export function AgentReadyIndicator() {
           <Link href="/agents" className="text-xs text-accent underline">How to connect a browser or headless agent</Link>
           <AgentInboxPanel project={project} />
           <p className="ob-agent-ready-heading mt-3">{statusText}</p>
-          {ready ? (
+          <p className="ob-agent-ready-empty">
+            {mcpStatus.isError ? "MCP listener status unavailable."
+              : mcpStatus.isPending ? "Checking MCP listeners…"
+              : listenerCount ? `MCP notifications: ${listenerCount} active ${listenerCount === 1 ? "listener" : "listeners"}.`
+              : project ? "No active MCP notification listeners for this project." : "No active MCP notification listeners."}
+          </p>
+          {browserReady ? (
             grouped.map(({ surface, tools }) => (
               <div key={surface} className="ob-agent-ready-group">
                 <p>{SURFACE_LABEL[surface] || surface}</p>
@@ -133,12 +157,12 @@ export function AgentReadyIndicator() {
           ) : issueCount === 0 ? (
             <p className="ob-agent-ready-empty">{hostStatus}</p>
           ) : null}
-          {ready && (
-            <p className="ob-agent-ready-empty">Tools are registered in this page. Agent discovery must be provided by your browser integration; registration does not confirm that an agent is attached.</p>
+          {browserReady && (
+            <p className="ob-agent-ready-empty">Browser tools are registered on this page. This does not confirm a browser agent is attached.</p>
           )}
           {issueCount > 0 && (
             <div className="ob-agent-ready-group">
-              <p>Registration issues</p>
+              <p>Browser registration issues</p>
               <ul>
                 {diagnostics.map((item) => (
                   <li key={`${item.surface}:${item.name}`} title={item.error}>
@@ -193,16 +217,19 @@ function AgentInboxPanel({ project }: { project?: string }) {
     {inbox && <>
       {inbox.notifications.length === 0 && <p className="ob-agent-ready-empty">Your inbox is clear.</p>}
       <ul className="max-h-60 space-y-2 overflow-y-auto" aria-label="Mindmap messages">
-        {inbox.notifications.map((notification) => <li key={notification.id} className="rounded-md border border-line p-2" data-inbox-notification={notification.id} data-acknowledged={notification.acknowledged} data-agent-priority={notification.priority}>
+        {inbox.notifications.map((notification) => {
+          const working = Boolean(!notification.acknowledged && notification.workingUntil && Date.parse(notification.workingUntil) > Date.now());
+          return <li key={notification.id} className="rounded-md border border-line p-2" data-inbox-notification={notification.id} data-acknowledged={notification.acknowledged} data-agent-priority={notification.priority} data-agent-working={working || undefined}>
           <div className="mb-1 flex items-center justify-between gap-2 text-xs text-muted">
-            <span>{notification.project}</span>{notification.priority === "fast-tracked" && <span className="font-medium text-accent">Fast tracked</span>}<span>{notification.acknowledged ? "Handled" : "Pending"}</span>
+            <span>{notification.project}</span>{notification.priority === "fast-tracked" && <span className="font-medium text-accent">Fast tracked</span>}<span>{notification.acknowledged ? "Handled" : working ? "Working…" : "Pending"}</span>
           </div>
-          <p className="whitespace-pre-wrap break-words text-xs leading-snug"><RichText text={notification.text} /></p>
+          <p className="whitespace-pre-wrap break-words text-xs leading-snug"><RichText text={notification.text} workingMentionAt={working ? notification.workingMention?.previewOffset : undefined} /></p>
           <div className="mt-2 flex items-center justify-between gap-2 text-xs">
             <Link href={notification.href} className="text-accent underline">Open card</Link>
             <button type="button" className="btn-ghost px-2 py-1" disabled={busy} onClick={() => acknowledgement.mutate(notification)}>{notification.acknowledged ? "Reopen" : "Mark handled"}</button>
           </div>
-        </li>)}
+        </li>;
+        })}
       </ul>
       {inbox.hasMore && <p className="ob-agent-ready-empty mt-2">More messages are available. Handle the pending messages and refresh.</p>}
       {includeAcknowledged && Boolean(inbox.history?.length) && <details className="mt-2 text-xs">

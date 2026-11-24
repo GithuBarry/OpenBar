@@ -26,7 +26,7 @@ export type MindmapSession = {
 /** Semantic node fields that the inspector and agent tools may edit. */
 export type MindmapNodePatch = Pick<
   MindmapNode,
-  "agentDraft" | "title" | "caption" | "caution" | "shape" | "metadata" | "contentFormat" | "tableLayout" | "cardWidth" | "color" | "refs" | "tags" | "progress"
+  "agentDraft" | "title" | "caption" | "caution" | "shape" | "metadata" | "contentFormat" | "tableLayout" | "cardWidth" | "defaultCollapsed" | "color" | "refs" | "tags" | "progress"
 > & { text?: string; priority?: MindmapNode["priority"] };
 
 function semanticPatch(patch: MindmapNodePatch, node?: MindmapNode): MindmapNodePatch {
@@ -41,6 +41,7 @@ function semanticPatch(patch: MindmapNodePatch, node?: MindmapNode): MindmapNode
   if (Object.prototype.hasOwnProperty.call(patch, "contentFormat")) next.contentFormat = patch.contentFormat;
   if (Object.prototype.hasOwnProperty.call(patch, "tableLayout")) next.tableLayout = patch.tableLayout;
   if (Object.prototype.hasOwnProperty.call(patch, "cardWidth")) next.cardWidth = normalizeCardWidth(patch.cardWidth);
+  if (Object.prototype.hasOwnProperty.call(patch, "defaultCollapsed")) next.defaultCollapsed = patch.defaultCollapsed ? true : undefined;
   if (Object.prototype.hasOwnProperty.call(patch, "color")) next.color = patch.color;
   if (Object.prototype.hasOwnProperty.call(patch, "refs")) next.refs = patch.refs;
   if (Object.prototype.hasOwnProperty.call(patch, "tags")) next.tags = patch.tags;

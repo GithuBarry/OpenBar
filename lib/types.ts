@@ -40,7 +40,7 @@ export interface Project {
   diskHash?: string;
 }
 
-export type MindmapNodeShape = "root" | "branch" | "leaf" | "note" | "callout";
+export type MindmapNodeShape = "root" | "branch" | "leaf" | "note" | "callout" | "archive";
 
 import type { MindmapProgress } from "@/lib/mindmap/progress";
 import type { MindmapCaution } from "@/lib/mindmap/caution";
@@ -74,6 +74,8 @@ export interface MindmapNode {
   tableLayout?: "wide" | "scroll";
   /** Optional map-owned card width in canvas CSS pixels. Height follows content. */
   cardWidth?: number;
+  /** When true, viewers open this branch collapsed by default until they expand it locally. */
+  defaultCollapsed?: boolean;
   color?: string;
   tags?: string[];
   /** Optional map-local 0–6 progress or ditched status. Absent is hidden. */

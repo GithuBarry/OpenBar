@@ -10,10 +10,10 @@ import { failResult, isOperationResult, type OperationResult } from "@/lib/resea
 import { registerWebMcpToolsIndependent, waitForModelContext, type WebMcpTool } from "@/lib/research/webmcp-register";
 
 const SCHEMAS = commandJsonSchemas(INBOX_INPUTS);
-const NAMES = ["check_inbox", "acknowledge_inbox"] as const;
+const NAMES = ["check_inbox", "claim_inbox", "acknowledge_inbox"] as const;
 
 export async function requestInbox<T>(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PATCH",
   project: string | undefined,
   input: Record<string, unknown> = {},
   signal?: AbortSignal,
@@ -29,7 +29,7 @@ export async function requestInbox<T>(
       credentials: "same-origin",
       cache: "no-store",
       signal,
-      ...(method === "POST" ? {
+      ...(method === "POST" || method === "PATCH" ? {
         headers: { "Content-Type": "application/json", [AGENT_INBOX_ACTOR_HEADER]: actor },
         body: JSON.stringify({ ...input, ...(project ? { project } : {}) }),
       } : {}),
@@ -61,7 +61,7 @@ export function useInboxWebMcp(project?: string): void {
       if (controller.signal.aborted || !modelContext) return;
       const tools: WebMcpTool[] = NAMES.map((name) => ({
         name,
-        title: name === "check_inbox" ? "Check OpenBar updates" : "Mark inbox messages handled or reopen them",
+        title: name === "check_inbox" ? "Check OpenBar updates" : name === "claim_inbox" ? "Mark inbox mentions as actively in progress" : "Mark inbox messages handled or reopen them",
         description: INBOX_TOOL_DESCRIPTIONS[name],
         inputSchema: SCHEMAS[name],
         annotations: { readOnlyHint: name === "check_inbox", untrustedContentHint: true },
@@ -70,8 +70,9 @@ export function useInboxWebMcp(project?: string): void {
           if (!parsed.ok) return parsed;
           const signal = options?.signal
             ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
-          const result = await requestInbox(name === "check_inbox" ? "GET" : "POST", project, parsed.value, signal, "webmcp");
-          if (result.ok && name === "acknowledge_inbox") window.dispatchEvent(new Event("openbar-inbox-updated"));
+          const method = name === "check_inbox" ? "GET" : name === "claim_inbox" ? "PATCH" : "POST";
+          const result = await requestInbox(method, project, parsed.value, signal, "webmcp");
+          if (result.ok && name !== "check_inbox") window.dispatchEvent(new Event("openbar-inbox-updated"));
           return result;
         },
       }));

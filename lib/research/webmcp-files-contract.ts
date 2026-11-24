@@ -9,7 +9,7 @@ export function buildProjectFilesWebMcpTools(host: {
 }): PaperWebMcpTool[] {
   return [
     { name: "read_project_files", title: "Read project files", description: "List project directories or read file bytes and SHA256 hashes. Paths stay inside the project. OpenBar state and Git metadata are protected. Reading may save the open editor's existing draft first.", schema: READ_PROJECT_FILES_INPUT, readOnly: false, run: host.read },
-    { name: "apply_project_edits", title: "Edit project files", description: "Create, replace, or delete project files in a hash-checked batch. Arbitrary file types are supported. OpenBar state and Git metadata are protected. The open editor saves first and reconciles the result.", schema: APPLY_PROJECT_EDITS_INPUT, readOnly: false, run: host.edit },
+    { name: "apply_project_edits", title: "Edit project files", description: "Create, replace, or delete project files in a hash-checked batch. Arbitrary file types are supported. OpenBar state and Git metadata are protected. The open editor saves first and reconciles the result. For manuscript .tex prose, write for an external peer reviewer: never leak internal method/experiment version labels (v1, v2, repaired, wave, smoke, confirmatory), harness scripts/JSON filenames, or run-log bookkeeping; frame design comparisons as named component ablations (see paper-writing skill).", schema: APPLY_PROJECT_EDITS_INPUT, readOnly: false, run: host.edit },
   ].map(tool => ({
     name: tool.name,
     title: tool.title,

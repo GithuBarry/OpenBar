@@ -1,5 +1,5 @@
 import { MCP_INPUTS } from '@/lib/research/command-inputs'
-import { acknowledgeAgentInbox, readAgentInbox } from '@/lib/research/agent-inbox'
+import { acknowledgeAgentInbox, claimAgentInbox, readAgentInbox } from '@/lib/research/agent-inbox'
 import { AGENT_INBOX_ACTOR_HEADER } from '@/lib/research/agent-inbox-contract'
 import { failResult, okResult } from '@/lib/research/operation-result'
 import { readAgentRequestBody } from '@/lib/server/agent-request-body'
@@ -50,5 +50,21 @@ export async function POST(request: Request) {
     const scope = await authorize(parsed.data.project)
     const actor = request.headers.get(AGENT_INBOX_ACTOR_HEADER) === 'webmcp' ? 'webmcp' : 'human'
     return json(okResult(await acknowledgeAgentInbox(parsed.data, scope, actor)))
+  } catch (error) { return failure(error) }
+}
+
+export async function PATCH(request: Request) {
+  if (!requestIsSameOrigin(request)) return json(failResult('permission_denied', 'Open OpenBar to update its notifications.', false), 403)
+  try {
+    const parsed = MCP_INPUTS.claim_inbox.safeParse(JSON.parse(await readAgentRequestBody(request, 16_384)))
+    if (!parsed.success) return json(failResult('invalid_arguments', 'Provide exact notification ids or { project, all: true }.', false), 400)
+    if (Boolean(parsed.data.all) === Boolean(parsed.data.ids?.length)) {
+      return json(failResult('invalid_arguments', 'Provide either ids or all: true (not both).', false), 400)
+    }
+    if (parsed.data.all && !parsed.data.project) {
+      return json(failResult('invalid_arguments', 'Specify project when claiming all pending mentions in a project.', false), 400)
+    }
+    const scope = await authorize(parsed.data.project)
+    return json(okResult(await claimAgentInbox(parsed.data, scope)))
   } catch (error) { return failure(error) }
 }

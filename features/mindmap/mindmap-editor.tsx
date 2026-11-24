@@ -17,7 +17,7 @@ import { HtmlCardTools } from "./html-card-tools";
 import { cardFormatPatch } from "./html-card-editing";
 import { htmlCardValidationError } from "@/lib/mindmap/html-card";
 import { RichText as NodeRichText } from "@/components/rich-text";
-import { CardLinkNavigation } from "./linked-card";
+import { CardLinkNavigation, type LinkedCardPreviewItem } from "./linked-card";
 import { connectCardLinkHistory, sameMapCardId } from "./card-link-history";
 import { ChildNavigation, type CardNavigationItem } from "./child-navigation";
 import { ParentNavigation } from "./parent-navigation";
@@ -28,6 +28,8 @@ import { PaperTodoPicker } from "./paper-todo-picker";
 import { CardLinkButton } from "./card-link-button";
 import { useAgentReplies } from "./use-agent-replies";
 import { agentReplyContentHash, visibleAgentAnswer, visibleAgentTitle } from "@/lib/research/agent-reply-state";
+import type { AgentMentionLocation } from "@/lib/research/agent-inbox-contract";
+import { sha256Hex } from "@/lib/mindmap/sha256";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useTransition, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
@@ -111,14 +113,18 @@ import {
 import { indentMindmapNode, outdentMindmapNode, type MindmapDrop } from "@/lib/mindmap/drop-targets";
 import { DEFAULT_MINDMAP_FONT_SIZE, mindmapDiskHash } from "@/lib/mindmap/mindmap";
 import { createMindmapSaveQueue } from "@/lib/mindmap/save-queue";
-import { mergeSavedMindmap, rebaseSavedMindmap } from "@/lib/mindmap/merge-saved";
+import { findMindmapConflictNodeIds, mergeSavedMindmap, rebaseSavedMindmap } from "@/lib/mindmap/merge-saved";
 import { captureDeletedMindmapBranch, restoreDeletedMindmapBranch, type DeletedMindmapBranch } from "@/lib/mindmap/deleted-branch";
 import { isOutdatedMindmapPage, loadBrowserMindmap, saveBrowserMindmap } from "@/lib/mindmap/browser-save";
+import { clearBrowserConflict, reportBrowserConflict } from "@/lib/research/browser-conflict";
 import { editedCardBaselines, hasMindmapCardRecoveryChanges, mindmapRecoveryKey, readMindmapRecovery, recoverableMindmapDraft, recoveryBaseContentHash, writeMindmapRecovery, type MindmapCardRecoveryDraft, type MindmapRecoveryDraft } from "@/lib/mindmap/browser-recovery";
 import {
+  cardJumpExpansionStats,
+  expandedDefaultIdsForView,
   expandMindmapImmediateChildren,
   mindmapCollapseStorageKey,
   parseMindmapCollapsePreference,
+  resolveEffectiveCollapsedIds,
   serializeMindmapCollapsePreference,
 } from "@/lib/mindmap/collapse-preferences";
 import { cn } from "@/lib/utils";
@@ -316,7 +322,7 @@ export function MindmapEditor({
   const [activitySince, setActivitySince] = useState<string | null>(null);
   const [customActivityDate, setCustomActivityDate] = useState(() => daysAgoDate(LAST_WEEK_DAYS));
   const collapseMapId = mindmap.id || initialMindmap.id || "draft";
-  const { replies: agentReplies, unreadNodeIds, answeredRequests, markRead: markReplyRead } = useAgentReplies(project, collapseMapId, inboxRevision, persistedDiskHashRef.current);
+  const { replies: agentReplies, unreadNodeIds, answeredRequests, workingByNode, markRead: markReplyRead } = useAgentReplies(project, collapseMapId, inboxRevision, persistedDiskHashRef.current);
   const [replyReadRequest, setReplyReadRequest] = useState(0);
   const readAgentReply = useCallback((id: string, visibleNode?: MindmapNode) => {
     if (inlineEditorSessionRef.current?.nodeId === id || editingId === id) return;
@@ -342,7 +348,7 @@ export function MindmapEditor({
     setCenterOnEdit(enabled);
   }, [centerOnEditStorageKey]);
   const collapseNodeSignature = useMemo(
-    () => mindmap.nodes.map((node) => `${node.id}:${node.parentId || ""}`).sort().join("|"),
+    () => mindmap.nodes.map((node) => `${node.id}:${node.parentId || ""}:${node.defaultCollapsed ? 1 : 0}`).sort().join("|"),
     [mindmap.nodes],
   );
   const hierarchyDepths = useMemo(() => {
@@ -362,8 +368,8 @@ export function MindmapEditor({
   const maxCollapseDepth = Math.max(2, ...hierarchyDepths.values());
   const [chosenCollapseDepth, setCollapseDepth] = useState(2);
   const collapseDepth = Math.min(chosenCollapseDepth, maxCollapseDepth);
-  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
-  const collapsedIdsRef = useRef<Set<string>>(new Set());
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => resolveEffectiveCollapsedIds(null, mindmap.nodes));
+  const collapsedIdsRef = useRef<Set<string>>(collapsedIds);
   collapsedIdsRef.current = collapsedIds;
   const [shiftExpandHeld, setShiftExpandHeld] = useState(false);
   useEffect(() => {
@@ -373,7 +379,14 @@ export function MindmapEditor({
       held = next;
       setShiftExpandHeld(next);
     };
-    const key = (event: globalThis.KeyboardEvent) => update(event.shiftKey || event.altKey);
+    const key = (event: globalThis.KeyboardEvent) => {
+      const target = event.target instanceof Element ? event.target : document.activeElement;
+      if (target instanceof Element && target.closest("input, textarea, [contenteditable='true'], .cm-editor, .mindmap-node-editing")) {
+        update(false);
+        return;
+      }
+      update(event.shiftKey || event.altKey);
+    };
     const blur = () => update(false);
     window.addEventListener("keydown", key, true);
     window.addEventListener("keyup", key, true);
@@ -389,9 +402,10 @@ export function MindmapEditor({
     collapsedIdsRef.current = next;
     setCollapsedIds(next);
     try {
+      const nodes = sessionRef.current.mindmap.nodes;
       window.localStorage.setItem(
         collapseStorageKey,
-        serializeMindmapCollapsePreference(next),
+        serializeMindmapCollapsePreference(next, expandedDefaultIdsForView(next, nodes)),
       );
     } catch {
       // Browser storage can be unavailable in private or restricted sessions.
@@ -406,22 +420,23 @@ export function MindmapEditor({
   }, [setLocalCollapsedIds]);
 
   useEffect(() => {
-    let next = new Set<string>();
+    let next = resolveEffectiveCollapsedIds(null, mindmap.nodes);
     try {
       const raw = window.localStorage.getItem(collapseStorageKey);
       const preference = parseMindmapCollapsePreference(raw, mindmap.nodes);
       if (preference) {
-        next = new Set(preference.collapsedIds);
+        next = resolveEffectiveCollapsedIds(preference, mindmap.nodes);
+        const serialized = serializeMindmapCollapsePreference(preference.collapsedIds, preference.expandedIds);
         // Rewrite legacy or stale entries into the canonical, node-filtered
         // browser format while retaining the preference in this map's store.
-        if (raw !== null && raw !== serializeMindmapCollapsePreference(next)) {
-          window.localStorage.setItem(collapseStorageKey, serializeMindmapCollapsePreference(next));
+        if (raw !== null && raw !== serialized) {
+          window.localStorage.setItem(collapseStorageKey, serialized);
         }
       } else if (raw !== null) {
         window.localStorage.removeItem(collapseStorageKey);
       }
     } catch {
-      next = new Set();
+      next = resolveEffectiveCollapsedIds(null, mindmap.nodes);
     }
     collapsedIdsRef.current = next;
     setCollapsedIds(next);
@@ -713,7 +728,19 @@ export function MindmapEditor({
       savedSignatureRef.current = savedMapSignature;
       setSavedSignature(savedMapSignature);
       if (!rebaseSavedMindmap(snapshot, saved, sessionRef.current.mindmap)) {
-        throw new Error("conflict: This card changed while saving. Your edits are preserved. Load the saved map to review both versions.");
+        const message = "conflict: This card changed while saving. Your edits are preserved. Load the saved map to review both versions.";
+        if (actor === "human") {
+          const nodeIds = findMindmapConflictNodeIds(snapshot, saved, sessionRef.current.mindmap);
+          reportBrowserConflict(project, {
+            kind: "mindmap",
+            code: "mindmap_conflict",
+            mapId: saved.id || snapshot.id || "draft",
+            message,
+            currentHash: saved.diskHash ?? mindmapDiskHash(saved),
+            ...(nodeIds.length ? { nodeIds } : {}),
+          });
+        }
+        throw new Error(message);
       }
       const latest = sessionRef.current;
       const acknowledgement = { type: "ack-save" as const, base: snapshot, saved };
@@ -837,6 +864,7 @@ export function MindmapEditor({
             caution: node.caution,
             tableLayout: node.tableLayout,
             cardWidth: node.cardWidth,
+            defaultCollapsed: node.defaultCollapsed,
             createdAt: node.createdAt,
             updatedAt: node.updatedAt,
             completed: Boolean(node.todoId && paperTodoFor(node, paperState)?.completed),
@@ -907,6 +935,7 @@ export function MindmapEditor({
       if (patch.presentation) {
         if (patch.presentation.contentFormat !== undefined) nodePatch.contentFormat = patch.presentation.contentFormat;
         if (patch.presentation.shape !== undefined) nodePatch.shape = patch.presentation.shape;
+        if (patch.presentation.defaultCollapsed !== undefined) nodePatch.defaultCollapsed = patch.presentation.defaultCollapsed;
         if (Object.prototype.hasOwnProperty.call(patch.presentation, "color")) nodePatch.color = patch.presentation.color;
         if (patch.presentation.progress === null) nodePatch.progress = undefined;
         else if (patch.presentation.progress !== undefined) nodePatch.progress = patch.presentation.progress;
@@ -1022,18 +1051,22 @@ export function MindmapEditor({
   });
   const [cardMenuOpen, setCardMenuOpen] = useState(true);
   const [unplacedOpen, setUnplacedOpen] = useState(true);
+  const [compactAppearance, setCompactAppearance] = useState(false);
   const controlDockRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const dock = controlDockRef.current;
     const editor = dock?.closest<HTMLElement>("[data-mindmap-editor]");
     if (!dock || !editor) return;
     const measure = () => {
+      const compact = editor.clientWidth > 0 && editor.clientWidth <= 560;
+      setCompactAppearance(current => current === compact ? current : compact);
       if (getComputedStyle(dock).display === "contents") editor.style.removeProperty("--mindmap-control-clearance");
       else editor.style.setProperty("--mindmap-control-clearance", `${editor.getBoundingClientRect().bottom - dock.getBoundingClientRect().top + 8}px`);
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(dock);
+    observer.observe(editor);
     return () => { observer.disconnect(); editor.style.removeProperty("--mindmap-control-clearance"); };
   }, []);
   const [selectMultiple, setSelectMultiple] = useState(false);
@@ -1287,6 +1320,12 @@ export function MindmapEditor({
     const node = layout.nodeById.get(id);
     return node ? [node] : [];
   });
+  const labeledCardIds = selectedCards.filter((card) => card.tags?.length).map((card) => card.id);
+  function clearSelectedLabels() {
+    if (readOnly || !labeledCardIds.length) return;
+    setSaveError(null);
+    dispatch({ type: "patch-nodes", ids: labeledCardIds, patch: { tags: [] } });
+  }
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const currentSignature = useMemo(() => mapSignature(mindmap), [mindmap]);
   const dirty = currentSignature !== savedSignature;
@@ -1699,20 +1738,33 @@ export function MindmapEditor({
     if (!layout.nodeById.has(id)) return;
     let parent = layout.nodeById.get(id)?.parentId;
     const visited = new Set<string>();
+    const nextCollapsed = new Set(collapsedIdsRef.current);
+    let expandedAny = false;
     while (parent && !visited.has(parent)) {
       visited.add(parent);
-      setLocalCollapsed(parent, false);
+      if (nextCollapsed.delete(parent)) expandedAny = true;
       parent = layout.nodeById.get(parent)?.parentId;
     }
+    if (expandedAny) setLocalCollapsedIds(nextCollapsed);
     selectCard(id);
     setViewMode("map");
     setFocusRequest(current => ({ id, initial, sequence: (current?.sequence || 0) + 1 }));
-  }, [layout.nodeById, selectCard, setLocalCollapsed]);
+  }, [layout.nodeById, selectCard, setLocalCollapsedIds]);
   focusCardRef.current = focusCard;
-  const linkedCardPreview = useCallback((id: string): CardNavigationItem | undefined => {
+  const linkedCardPreview = useCallback((id: string): LinkedCardPreviewItem | undefined => {
     const node = layout.nodeById.get(id);
-    return node && { id, ...cardContentForNodeWithPaperState(node, paperState), format: node.todoId ? "tex" : node.contentFormat };
-  }, [layout.nodeById, paperState]);
+    if (!node) return undefined;
+    const jump = cardJumpExpansionStats(mindmap.nodes, collapsedIds, id);
+    return {
+      id,
+      ...cardContentForNodeWithPaperState(node, paperState),
+      format: node.todoId ? "tex" : node.contentFormat,
+      visible: jump.visible,
+      expandCardCount: jump.expandCardCount,
+      expandBranchCount: jump.expandBranchCount,
+      archived: node.shape === "archive",
+    };
+  }, [collapsedIds, layout.nodeById, mindmap.nodes, paperState]);
 
   function indentSelected() {
     const id = sessionRef.current.selectedId;
@@ -2301,6 +2353,7 @@ export function MindmapEditor({
         setRestoredCardDraft(null);
         setEditingId(null);
         hydrateSavedMap(saved);
+        clearBrowserConflict(project, "mindmap", mapId);
       } catch (error) {
         setSaveError(error instanceof Error ? error.message : "Could not reload the saved mindmap.");
       }
@@ -2380,9 +2433,25 @@ export function MindmapEditor({
   // Global key navigation and canvas shortcuts
   useEffect(() => {
     const onGlobalKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || isEditableTarget(event.target)) return;
+      if (event.defaultPrevented || event.isComposing || isEditableTarget(event.target)) return;
       if (document.querySelector("[data-ob-modal]")) return;
 
+      const mod = event.metaKey || event.ctrlKey;
+      const key = event.key.toLowerCase();
+      if (key === "e" && !mod && !event.altKey) {
+        const target = event.target;
+        const onMap = target === document.body || (target instanceof Element
+          && target.closest(".mindmap-viewport, #mindmap-card-menu")
+          && !target.closest("[role=dialog], [data-radix-popper-content-wrapper]"));
+        const { selectedId, selectedIds } = sessionRef.current;
+        if (viewMode !== "map" || searchOpen || mapSettingsOpen || editingId || !onMap || !selectedIds.length) return;
+        event.preventDefault();
+        if (!event.repeat) {
+          if (readOnly) notifyBlockedEdit();
+          else void startEditing(selectedId);
+        }
+        return;
+      }
       if (event.key === "/") {
         event.preventDefault();
         setMoveQuery("");
@@ -2390,8 +2459,6 @@ export function MindmapEditor({
         setSearchOpen(true);
         return;
       }
-      const mod = event.metaKey || event.ctrlKey;
-      const key = event.key.toLowerCase();
       if (readOnly) {
         const targetEl = event.target instanceof Element ? event.target : null;
         const onInteractive = Boolean(targetEl?.closest("button, a, input, textarea, select, summary, nav"));
@@ -2401,7 +2468,7 @@ export function MindmapEditor({
           return;
         }
         if (!mod && !onInteractive && (
-          ["backspace", "delete", "e", "tab", "enter"].includes(key)
+          ["backspace", "delete", "tab", "enter"].includes(key)
           || (event.altKey && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key))
         )) {
           if (recoveryDraftRef.current && event.key === "Tab") return;
@@ -2429,25 +2496,38 @@ export function MindmapEditor({
     return () => {
       window.removeEventListener("keydown", onGlobalKeyDown);
     };
-  }, [dirty, isPending, notifyBlockedEdit, readOnly, redo, save, undo]);
+  }, [dirty, editingId, isPending, mapSettingsOpen, notifyBlockedEdit, readOnly, redo, save, searchOpen, startEditing, undo, viewMode]);
 
-  function selectDirection(direction: "parent" | "child" | "previous" | "next") {
-    const node = layout.nodeById.get(selected?.id || "");
-    if (!node) return;
-    if (direction === "parent" && node.parentId) {
-      dispatch({ type: "select", id: node.parentId });
-      return;
+  function navigateCard(event: KeyboardEvent<HTMLDivElement>) {
+    if (!selected || editingId || viewMode !== "map" || event.defaultPrevented || event.nativeEvent.isComposing
+      || event.altKey || event.shiftKey || event.metaKey || event.ctrlKey) return;
+    const target = event.target;
+    if (!(target instanceof Element) || !event.currentTarget.contains(target)
+      || (target !== event.currentTarget && !target.closest(".mindmap-rf"))
+      || isEditableTarget(target) || target.closest("button, a, summary, [data-mind-editor], .mindmap-copy-card")) return;
+
+    let id: string | null | undefined;
+    switch (event.key) {
+      case "ArrowLeft": id = selected.parentId; break;
+      case "ArrowRight": id = layout.children.get(selected.id)?.[0]?.id; break;
+      case "ArrowUp":
+      case "ArrowDown": {
+        const siblings = selected.parentId ? layout.children.get(selected.parentId) : undefined;
+        const index = siblings?.findIndex(node => node.id === selected.id) ?? -1;
+        if (index >= 0) id = siblings?.[index + (event.key === "ArrowUp" ? -1 : 1)]?.id;
+        break;
+      }
+      default: return;
     }
-    if (direction === "child") {
-      const child = (layout.children.get(node.id) || [])[0];
-      if (child) dispatch({ type: "select", id: child.id });
-      return;
-    }
-    if (!node.parentId) return;
-    const siblings = layout.children.get(node.parentId) || [];
-    const index = siblings.findIndex((item) => item.id === node.id);
-    const peer = siblings[index + (direction === "previous" ? -1 : 1)];
-    if (peer) dispatch({ type: "select", id: peer.id });
+    // Consume even boundary arrows before React Flow can nudge a selected node.
+    event.preventDefault();
+    event.stopPropagation();
+    if (!id) return;
+    if (event.key === "ArrowRight" && collapsedIds.has(selected.id)) setLocalCollapsed(selected.id, false);
+    dispatch({ type: "select", id });
+    readAgentReply(id);
+    event.currentTarget.focus({ preventScroll: true });
+    setFocusRequest(current => ({ id, sequence: (current?.sequence || 0) + 1 }));
   }
 
   function onNodeDoubleClick(id: string) {
@@ -2472,7 +2552,7 @@ export function MindmapEditor({
       dispatch({ type: "select-many", ids: flowNodes.map(node => node.id) });
       return;
     }
-    if (readOnly && (event.key === "Tab" || event.key === "Enter" || event.key === "Backspace" || event.key === "Delete" || key === "e" || event.altKey)) return;
+    if (readOnly && (event.key === "Tab" || event.key === "Enter" || event.key === "Backspace" || event.key === "Delete" || event.altKey)) return;
 
     if (event.key === "Tab") {
       event.preventDefault();
@@ -2485,23 +2565,18 @@ export function MindmapEditor({
       event.preventDefault();
       event.stopPropagation();
       if (!event.repeat) deleteSelected();
-    } else if (key === "e") {
+    } else if (event.altKey && event.key === "ArrowLeft") {
       event.preventDefault();
-      if (selected) startEditing(selected.id);
-    } else if (event.key === "ArrowLeft") {
+      outdentSelected();
+    } else if (event.altKey && event.key === "ArrowRight") {
       event.preventDefault();
-      if (event.altKey) outdentSelected(); else selectDirection("parent");
-    } else if (event.key === "ArrowRight") {
+      indentSelected();
+    } else if (event.altKey && event.key === "ArrowDown") {
       event.preventDefault();
-      if (event.altKey) indentSelected(); else selectDirection("child");
-    } else if (event.key === "ArrowDown") {
+      moveSibling(1);
+    } else if (event.altKey && event.key === "ArrowUp") {
       event.preventDefault();
-      if (event.altKey) moveSibling(1);
-      else selectDirection("next");
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      if (event.altKey) moveSibling(-1);
-      else selectDirection("previous");
+      moveSibling(-1);
     }
   }
 
@@ -2584,10 +2659,10 @@ export function MindmapEditor({
         width: dimensions.width,
         height: dimensions.height,
         selected: selectedIdSet.has(node.id),
-        renderVersion: `${editingId || ""}:${effectiveFontSize}:${shiftExpandHeld}`,
+        renderVersion: `${editingId || ""}:${effectiveFontSize}:${shiftExpandHeld}:${JSON.stringify(workingByNode.get(node.id) ?? null)}`,
       }];
     })
-  ), [editingId, layout, selectedIdSet, effectiveFontSize, shiftExpandHeld]);
+  ), [editingId, layout, selectedIdSet, effectiveFontSize, shiftExpandHeld, workingByNode]);
 
   const layoutMeasured = useMemo(() => flowNodes.every(node => measuredCards.has(node.id)), [flowNodes, measuredCards]);
 
@@ -2629,6 +2704,8 @@ export function MindmapEditor({
         activityLabel={activityNodeIds.has(node.id) ? Date.parse(activityAt) >= Date.parse(activitySince || "") ? relativeActivityLabel(activityAt) : "recent activity in this branch" : null}
         unreadReply={unreadNodeIds.has(node.id)}
         answeredRequest={answeredRequests.get(node.id)}
+        workingMention={workingByNode.get(node.id)?.mention}
+        workingTodo={workingByNode.has(node.id) ? paperTodoFor(node, paperState) : undefined}
         draftChanges={node.agentDraft ? draftChangesMap.get(node.id) : undefined}
         onRead={() => readAgentReply(node.id, node)}
         dimensions={dimensions}
@@ -2708,6 +2785,7 @@ export function MindmapEditor({
     activitySince,
     unreadNodeIds,
     answeredRequests,
+    workingByNode,
     draftChangesMap,
     readAgentReply,
     imageUploads,
@@ -2837,6 +2915,27 @@ export function MindmapEditor({
     return true;
   }
 
+  const appearanceExtras = <>
+    <button type="button" className={styles.optionRow} aria-pressed={centerOnEdit} onClick={() => setCenterOnEditPreference(!centerOnEdit)}><Crosshair size={15} />Center card while editing{centerOnEdit && <Check size={14} />}</button>
+    <div className={styles.activityFilter}>
+      <label className="mindmap-field">
+        <span>Highlight changes</span>
+        <Select label="Highlight changes" value={activityMode} onValueChange={(value) => {
+          const mode = value as "off" | "week" | "custom";
+          setActivityMode(mode);
+          setActivitySince(mode === "week" ? daysAgoDate(LAST_WEEK_DAYS) : mode === "custom" ? customActivityDate || null : null);
+        }} options={[{ value: "off", label: "Off" }, { value: "week", label: "Last 7 days" }, { value: "custom", label: "From a date" }]} />
+      </label>
+      {activityMode === "custom" && <label className="mindmap-field">
+        <span>From date</span>
+        <input type="date" aria-label="Highlight changes from date" value={customActivityDate} max={calendarDate(new Date())} onChange={(event) => {
+          setCustomActivityDate(event.target.value);
+          setActivitySince(event.target.value || null);
+        }} />
+      </label>}
+    </div>
+  </>;
+
   return (
     <CardLinkNavigation mapPath={artifactHref(project, { kind: "mindmap-node", mapId: mindmap.id, id: mindmap.rootId })} lookup={linkedCardPreview}>
     <section
@@ -2870,10 +2969,14 @@ export function MindmapEditor({
       <div className={styles.toolbar} role="group" aria-label="Mindmap controls">
         <div className={cn("p-glass-sm", paperStyles.toolbar, styles.projectBar)} role="group" aria-label="Map settings">
           {header}
-          <div className={styles.fontTools}><MindmapFontSize value={effectiveFontSize} disabled={readOnly}
-            widthMode={mindmap.cardWidthMode ?? "individual"} onWidthModeChange={cardWidthMode => dispatch({ type: "set-card-width-mode", cardWidthMode })}
-            onPreview={setPreviewFontSize}
-            onChange={fontSize => dispatch({ type: "set-font-size", fontSize })} /></div>
+          {!compactAppearance && (
+            <div className={styles.fontTools}><MindmapFontSize value={effectiveFontSize} disabled={readOnly}
+              widthMode={mindmap.cardWidthMode ?? "individual"} onWidthModeChange={cardWidthMode => dispatch({ type: "set-card-width-mode", cardWidthMode })}
+              onPreview={setPreviewFontSize}
+              onChange={fontSize => dispatch({ type: "set-font-size", fontSize })}>
+              {appearanceExtras}
+            </MindmapFontSize></div>
+          )}
           <div className={styles.toolbarActions}>
           {selectMultiple && <button type="button" className={cn("p-button p-button-glass ob-glass-button", styles.iconButton)} aria-label="Finish selecting cards" aria-pressed="true" onClick={() => { setSelectMultiple(false); setCardMenuOpen(true); }}><CheckSquare size={18} /></button>}
           <Popover.Root open={mapSettingsOpen} onOpenChange={setMapSettingsOpen}>
@@ -2906,35 +3009,23 @@ export function MindmapEditor({
                       aria-label="Mindmap title"
                     />
                   </label>
-              <MindmapFontSizeSlider value={effectiveFontSize} disabled={readOnly}
-                widthMode={mindmap.cardWidthMode ?? "individual"} onWidthModeChange={cardWidthMode => dispatch({ type: "set-card-width-mode", cardWidthMode })}
-                onPreview={setPreviewFontSize}
-                onChange={fontSize => dispatch({ type: "set-font-size", fontSize })} />
+              {compactAppearance && (
+                <MindmapFontSizeSlider value={effectiveFontSize} disabled={readOnly}
+                  widthMode={mindmap.cardWidthMode ?? "individual"} onWidthModeChange={cardWidthMode => dispatch({ type: "set-card-width-mode", cardWidthMode })}
+                  onPreview={setPreviewFontSize}
+                  onChange={fontSize => dispatch({ type: "set-font-size", fontSize })}>
+                  {appearanceExtras}
+                </MindmapFontSizeSlider>
+              )}
               <button type="button" className={styles.optionRow} aria-pressed={selectMultiple} onClick={() => { setSelectMultiple((value) => !value); setMapSettingsOpen(false); setCardMenuOpen(false); }}><CheckSquare size={15} />Select multiple{selectMultiple && <Check size={14} />}</button>
               <button type="button" className={styles.optionRow} onClick={() => { setViewMode("changes"); setMapSettingsOpen(false); }}><GitBranch size={15} />Change history</button>
               <button type="button" className={styles.optionRow} aria-pressed={manualReadOnly}
                 disabled={!manualReadOnly && (!sessionWritable || remoteOutOfSync || applyingRemote || saveConflict || Boolean(recoveryDraft))}
                 onClick={toggleReadOnly}><LockKeyhole size={15} />Read-only mode{manualReadOnly && <Check size={14} />}</button>
-              <button type="button" className={styles.optionRow} aria-pressed={centerOnEdit} onClick={() => setCenterOnEditPreference(!centerOnEdit)}><Crosshair size={15} />Center card while editing{centerOnEdit && <Check size={14} />}</button>
-              <div className={styles.activityFilter}>
-                <label className="mindmap-field">
-                  <span>Highlight changes</span>
-                  <Select label="Highlight changes" value={activityMode} onValueChange={(value) => {
-                    const mode = value as "off" | "week" | "custom";
-                    setActivityMode(mode);
-                    setActivitySince(mode === "week" ? daysAgoDate(LAST_WEEK_DAYS) : mode === "custom" ? customActivityDate || null : null);
-                  }} options={[{ value: "off", label: "Off" }, { value: "week", label: "Last 7 days" }, { value: "custom", label: "From a date" }]} />
-                </label>
-                {activityMode === "custom" && <label className="mindmap-field">
-                  <span>From date</span>
-                  <input type="date" aria-label="Highlight changes from date" value={customActivityDate} max={calendarDate(new Date())} onChange={(event) => {
-                    setCustomActivityDate(event.target.value);
-                    setActivitySince(event.target.value || null);
-                  }} />
-                </label>}
-              </div>
               <button type="button" className={styles.optionRow} aria-expanded={showShortcuts} onClick={() => setShowShortcuts((open) => !open)}><Keyboard size={15} />Keyboard shortcuts</button>
-              {showShortcuts && <dl className={styles.shortcutList}>
+               {showShortcuts && <dl className={styles.shortcutList}>
+                <div><dt>Previous / next sibling</dt><dd>↑ / ↓</dd></div>
+                <div><dt>Parent / first child</dt><dd>← / →</dd></div>
                 <div><dt>Pan canvas</dt><dd>Drag background</dd></div><div><dt>Nest card</dt><dd>Drop on card</dd></div><div><dt>Reorder card</dt><dd>Drop on edge</dd></div><div><dt>Add child</dt><dd>Tab</dd></div><div><dt>Add sibling</dt><dd>Enter</dd></div><div><dt>Edit card</dt><dd>E / double-click</dd></div><div><dt>Reorder</dt><dd>Alt + ↑ / ↓</dd></div><div><dt>Indent / outdent</dt><dd>Alt + → / ←</dd></div><div><dt>Find card</dt><dd>/</dd></div><div><dt>Undo</dt><dd>⌘ / Ctrl + Z</dd></div>
               </dl>}
             </Popover.Content></Popover.Portal>
@@ -3079,7 +3170,8 @@ export function MindmapEditor({
           className="mindmap-viewport"
           tabIndex={0}
           role="application"
-          aria-label={`Mindmap ${viewMode} view. Tab adds a child. Enter adds a sibling. E edits the selected card.`}
+          onKeyDownCapture={navigateCard}
+          aria-label={`Mindmap ${viewMode} view. Up and Down select siblings; Left selects the parent; Right selects the first child. Tab adds a child. Enter adds a sibling. E edits the selected card.`}
         >
           {viewMode === "map" ? (<div className={styles.canvasLayout}>
           {unplacedOpen && unplacedCount > 0 && <MindmapUnplacedTray project={project} paperState={paperState} nodes={mindmap.nodes} selectedParentId={selected?.id || mindmap.rootId} readOnly={readOnly} onBlockedEdit={notifyBlockedEdit} onPlaceTodo={placeUnplacedTodo} onClose={() => setUnplacedOpen(false)} />}
@@ -3200,6 +3292,7 @@ export function MindmapEditor({
           projectLabels={projectLabels}
           readOnly={readOnly}
           onClose={() => setCardMenuOpen(false)}
+          onClearLabels={clearSelectedLabels}
           onPatch={(patch) => {
             setSaveError(null);
             if (patch.contentFormat) {
@@ -3379,6 +3472,7 @@ export function MindmapEditor({
                         <X size={11} aria-hidden="true" />
                       </button></FastTooltip>
                     ))}
+                    <ClearLabelsButton onClick={clearSelectedLabels} />
                   </div>
                 )}
                 <input
@@ -3448,7 +3542,22 @@ export function MindmapEditor({
               {selected.parentId !== null && (
                 <div className="mindmap-field">
                   <span>Shape</span>
-                  <ChoiceButtons label="Card shape" value={selected.shape === "callout" ? selected.shape : "leaf"} options={[{value:"leaf",label:"Card"},{value:"callout",label:"Callout"}]} onChange={(value) => dispatch({ type: "patch-node", id: selected.id, patch: { shape: value as MindmapNode["shape"] } })} />
+                  <ChoiceButtons label="Card shape" value={selected.shape === "callout" || selected.shape === "archive" ? selected.shape : "leaf"} options={[{value:"leaf",label:"Card"},{value:"callout",label:"Callout"},{value:"archive",label:"Archive"}]} onChange={(value) => dispatch({ type: "patch-node", id: selected.id, patch: { shape: value as MindmapNode["shape"] } })} />
+                </div>
+              )}
+              {selected.parentId !== null && ((descendantCounts.get(selected.id) || 0) > 0 || selected.defaultCollapsed) && (
+                <div className="mindmap-field">
+                  <span>Branch</span>
+                  <ChoiceButtons
+                    label="Default branch state"
+                    value={selected.defaultCollapsed ? "collapsed" : "open"}
+                    options={[{ value: "open", label: "Open" }, { value: "collapsed", label: "Start collapsed" }]}
+                    onChange={(value) => {
+                      const nextCollapsed = value === "collapsed";
+                      dispatch({ type: "patch-node", id: selected.id, patch: { defaultCollapsed: nextCollapsed } });
+                      if ((descendantCounts.get(selected.id) || 0) > 0) setLocalCollapsed(selected.id, nextCollapsed);
+                    }}
+                  />
                 </div>
               )}
               <div className="mindmap-field">
@@ -3570,13 +3679,18 @@ function commonCardValue<T>(cards: MindmapNode[], read: (card: MindmapNode) => T
   return cards.every((card) => Object.is(read(card), first)) ? first : null;
 }
 
-function MultiCardInspector({ open, cards, rootId, projectLabels, readOnly, onClose, onPatch, onUpdateTag }: {
+function ClearLabelsButton({ onClick }: { onClick: () => void }) {
+  return <button type="button" className={styles.clearLabels} onClick={onClick}>Clear all labels</button>;
+}
+
+function MultiCardInspector({ open, cards, rootId, projectLabels, readOnly, onClose, onClearLabels, onPatch, onUpdateTag }: {
   open: boolean;
   cards: MindmapNode[];
   rootId: string;
   projectLabels: string[];
   readOnly: boolean;
   onClose: () => void;
+  onClearLabels: () => void;
   onPatch: (patch: MindmapNodePatch) => void;
   onUpdateTag: (tag: string, operation: "add" | "remove") => void;
 }) {
@@ -3585,7 +3699,7 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, readOnly, onCl
   const progress = commonCardValue(cards, (card) => card.progress);
   const contentFormat = commonCardValue(cards, (card) => card.contentFormat || "plain");
   const tableLayout = commonCardValue(cards, (card) => card.tableLayout || "wide");
-  const shape = commonCardValue(cards, (card) => card.shape === "callout" ? card.shape : "leaf");
+  const shape = commonCardValue(cards, (card) => card.shape === "callout" || card.shape === "archive" ? card.shape : "leaf");
   const color = commonCardValue(cards, (card) => card.color || "");
   const allOrdinary = cards.every((card) => !card.todoId);
   const allTables = allOrdinary && cards.every((card) => (card.contentFormat || "plain") === "markdown" && markdownTableColumns(card.text) > 0);
@@ -3612,7 +3726,12 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, readOnly, onCl
           <div className="mindmap-card-menu-section"><div className="mindmap-card-menu-section-body">
             <div className="mindmap-field">
               <span>Common labels</span>
-              {commonTags.length > 0 && <div className="mindmap-chip-list">{commonTags.map((tag) => <FastTooltip key={tag} label={`Remove ${tag} from selected cards`}><button type="button" className="mindmap-chip" onClick={() => onUpdateTag(tag, "remove")}>{tag}<X size={11} aria-hidden="true" /></button></FastTooltip>)}</div>}
+              {cards.some((card) => card.tags?.length) && (
+                <div className="mindmap-chip-list">
+                  {commonTags.map((tag) => <FastTooltip key={tag} label={`Remove ${tag} from selected cards`}><button type="button" className="mindmap-chip" onClick={() => onUpdateTag(tag, "remove")}>{tag}<X size={11} aria-hidden="true" /></button></FastTooltip>)}
+                  <ClearLabelsButton onClick={onClearLabels} />
+                </div>
+              )}
               <input
                 value={labelDraft}
                 list="mindmap-label-suggestions"
@@ -3687,7 +3806,7 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, readOnly, onCl
                 <ChoiceButtons<string>
                   label="Selected cards shape"
                   value={shape ?? "__mixed__"}
-                  options={[{ value: "leaf", label: "Card" }, { value: "callout", label: "Callout" }]}
+                  options={[{ value: "leaf", label: "Card" }, { value: "callout", label: "Callout" }, { value: "archive", label: "Archive" }]}
                   onChange={(value) => onPatch({ shape: value as MindmapNode["shape"] })}
                 />
               </div>
@@ -3833,6 +3952,8 @@ function CanvasNode({
   activityLabel,
   unreadReply,
   answeredRequest,
+  workingMention,
+  workingTodo,
   draftChanges,
   onRead,
   dimensions,
@@ -3884,6 +4005,8 @@ function CanvasNode({
   activityLabel?: string | null;
   unreadReply: boolean;
   answeredRequest?: string;
+  workingMention?: AgentMentionLocation;
+  workingTodo?: { title?: string; text: string };
   draftChanges?: DraftChangeInfo;
   onRead: () => void;
   dimensions: Dimensions;
@@ -3956,6 +4079,10 @@ function CanvasNode({
   const { title, body } = cardContent;
   const displayTitle = visibleAgentTitle(title, answeredRequest);
   const displayBody = visibleAgentAnswer(body, answeredRequest);
+  const { titleAt, bodyAt } = cardWorkingMention(
+    workingTodo?.title ?? node.title, workingTodo?.text ?? node.text,
+    displayTitle, displayBody, workingMention,
+  );
   const tags = node.tags || [];
   const initial = node.todoId ? `${title}${body ? `\n${body}` : ""}`.trim() : editableCardText(node);
   const [draft, setDraft] = useState(initial);
@@ -4085,17 +4212,6 @@ function CanvasNode({
       setCommitError(null);
     }
   }, [editing, htmlCard, node.id, title, body, restoredDraft]);
-  useEffect(() => {
-    if (!editing || htmlCard) return;
-    const frame = requestAnimationFrame(() => {
-      editorRef.current?.focus();
-      requestAnimationFrame(() => {
-        if (restoredDraft?.selection) editorRef.current?.setSelection(restoredDraft.selection.from, restoredDraft.selection.to);
-        else editorRef.current?.focus();
-      });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [editing, htmlCard, restoredDraft]);
   const showDraftDiff = Boolean(node.agentDraft && draftDiffHover && draftChanges && !editing);
   const plainCard = !node.todoId && !htmlCard && (!node.contentFormat || node.contentFormat === "plain");
   const titleWordDiff = useMemo(
@@ -4152,6 +4268,7 @@ function CanvasNode({
       data-draft-underline-notes={underlineNotes || undefined}
       data-child-navigation={childNavigation.length > 0 || undefined}
       data-mind-editor={editing ? node.id : undefined}
+      data-custom-color={node.color ? "true" : undefined}
       role="treeitem"
       aria-selected={selected}
       aria-label={displayTitle || mindmapNodeLabel(node)}
@@ -4163,6 +4280,7 @@ function CanvasNode({
         node.parentId === null && "mindmap-node-root",
         node.agentDraft && styles.agentDraft,
         node.shape === "callout" && "mindmap-node-callout",
+        node.shape === "archive" && "mindmap-node-archive",
         orphan && "mindmap-node-orphan",
         selected && "mindmap-node-selected",
         imageDropActive && "mindmap-image-drop-active",
@@ -4256,6 +4374,7 @@ function CanvasNode({
             : <ProgressCircles value={node.progress === "ditched" ? "ditched" : completed ? 6 : node.progress ?? 0} compact label="TODO status" />}
         </div>
       )}
+      {!node.todoId && node.shape === "archive" && <div className={styles.archiveKicker}>Archive</div>}
       {!node.todoId && node.progress !== undefined && <div className={styles.cardProgress}><ProgressCircles value={node.progress} compact label="Topic progress" /></div>}
       {editing && !htmlCard ? (
         <div className="nodrag nopan mindmap-inline-editor" onPointerDown={(event) => event.stopPropagation()} onKeyDownCapture={(event) => {
@@ -4281,6 +4400,10 @@ function CanvasNode({
               if (commitError) setCommitError(null);
             }}
             onFocus={onTextFocus}
+            onReady={() => {
+              if (restoredDraft?.selection) editorRef.current?.setSelection(restoredDraft.selection.from, restoredDraft.selection.to);
+              else editorRef.current?.focus();
+            }}
             onCommit={() => void commit()}
             onCancel={cancel}
             placeholder="Card text"
@@ -4292,18 +4415,18 @@ function CanvasNode({
         <>
           {node.todoId ? (
             <div className="mindmap-node-todo-text">
-              {displayTitle.trim() && <div className="mindmap-node-todo-title"><NodeRichText text={displayTitle} format="tex" /></div>}
-              {displayBody.trim() && <div className="mindmap-node-detail"><NodeRichText text={displayBody} format="tex" /></div>}
+              {displayTitle.trim() && <div className="mindmap-node-todo-title"><NodeRichText text={displayTitle} format="tex" workingMentionAt={titleAt} /></div>}
+              {displayBody.trim() && <div className="mindmap-node-detail"><NodeRichText text={displayBody} format="tex" workingMentionAt={bodyAt} /></div>}
             </div>
           ) : (
             <>
               {!displayTitle.trim() && !displayBody.trim() && <div className={styles.cardPlaceholder}>New card</div>}
               {displayTitle.trim() && <div className={cn("mindmap-node-title", node.parentId === null && styles.rootTitle)}>
                 {node.parentId === null ? (
-                  <><span className={styles.rootAccent} aria-hidden="true" /><div className={styles.rootSubject}>{titleWordDiff ? titleWordDiff.map((seg, i) => seg.changed ? <span key={i} className={styles.draftChanged}>{seg.text}</span> : seg.text) : <NodeRichText text={displayTitle} format={htmlCard ? "plain" : node.contentFormat} tableLayout={node.tableLayout} />}</div></>
-                ) : titleWordDiff ? titleWordDiff.map((seg, i) => seg.changed ? <span key={i} className={styles.draftChanged}>{seg.text}</span> : seg.text) : <NodeRichText text={displayTitle} format={htmlCard ? "plain" : node.contentFormat} tableLayout={node.tableLayout} />}
+                  <><span className={styles.rootAccent} aria-hidden="true" /><div className={styles.rootSubject}>{titleWordDiff && titleAt === undefined ? titleWordDiff.map((seg, i) => seg.changed ? <span key={i} className={styles.draftChanged}>{seg.text}</span> : seg.text) : <NodeRichText text={displayTitle} format={htmlCard ? "plain" : node.contentFormat} tableLayout={node.tableLayout} workingMentionAt={titleAt} />}</div></>
+                ) : titleWordDiff && titleAt === undefined ? titleWordDiff.map((seg, i) => seg.changed ? <span key={i} className={styles.draftChanged}>{seg.text}</span> : seg.text) : <NodeRichText text={displayTitle} format={htmlCard ? "plain" : node.contentFormat} tableLayout={node.tableLayout} workingMentionAt={titleAt} />}
               </div>}
-              {displayBody.trim() && <div className="mindmap-node-detail">{bodyWordDiff ? bodyWordDiff.map((seg, i) => seg.changed ? <span key={i} className={styles.draftChanged}>{seg.text}</span> : seg.text) : <NodeRichText text={displayBody} format={htmlCard ? "html" : node.contentFormat} tableLayout={node.tableLayout} />}</div>}
+              {displayBody.trim() && <div className="mindmap-node-detail">{bodyWordDiff && bodyAt === undefined ? bodyWordDiff.map((seg, i) => seg.changed ? <span key={i} className={styles.draftChanged}>{seg.text}</span> : seg.text) : <NodeRichText text={displayBody} format={htmlCard ? "html" : node.contentFormat} tableLayout={node.tableLayout} workingMentionAt={bodyAt} />}</div>}
             </>
           )}
         </>
@@ -4327,6 +4450,7 @@ function CanvasNode({
             <CardMetadataPills metadata={node.metadata} />
           </div>
           <CardScratchpad open={notesOpen} onOpenChange={setNotesOpen} text={node.caption} caution={node.caution} cardTitle={title || undefined} editing={editing} readOnly={readOnly}
+            workingMention={workingMention}
             onChange={onNoteChange} onCommit={() => void commit()} onCancel={cancel} onBlockedEdit={onBlockedEdit}
             footer={hasCardLinks(node.refs) ? <CardLinkIndicator sourceId={node.id} project={project} refs={node.refs || []} /> : undefined} />
       {!editing && <ParentNavigation cardTitle={title || "Untitled card"} item={parentNavigation} onJump={onJumpToCard} />}
@@ -4595,6 +4719,28 @@ function splitCardText(text: string): { title: string; body: string } {
   const nl = text.indexOf("\n");
   if (nl < 0) return { title: text, body: "" };
   return { title: text.slice(0, nl), body: text.slice(nl + 1) };
+}
+
+/** Preserve the occurrence when display formatting trims or splits an untitled card. */
+function cardWorkingMention(rawTitle: string | undefined, rawText: string, title: string, body: string, mention?: AgentMentionLocation): { titleAt?: number; bodyAt?: number } {
+  if (mention?.field !== "title" && mention?.field !== "text") return {};
+  const source = mention.field === "title" ? rawTitle : rawText;
+  if (!source || sha256Hex(source) !== mention.sourceHash) return {};
+  const translate = (part: string, rendered: string, base = 0) => {
+    const trim = part.length - part.trimStart().length;
+    const offset = mention.offset - base - trim;
+    return rendered === part.trim() && offset >= 0 && offset < rendered.length ? offset : undefined;
+  };
+  const combined = rawTitle === undefined ? rawText : `${rawTitle}\n${rawText}`;
+  if (!title && body === combined.trimStart()) {
+    return { bodyAt: mention.offset + (mention.field === "text" && rawTitle !== undefined ? rawTitle.length + 1 : 0) - (combined.length - body.length) };
+  }
+  if (mention.field === "title") return { titleAt: translate(source, title) };
+  if (body === source) return { bodyAt: mention.offset };
+  const newline = source.indexOf("\n");
+  if (newline < 0) return { titleAt: translate(source, title) };
+  if (mention.offset <= newline) return { titleAt: translate(source.slice(0, newline), title) };
+  return body === source.slice(newline + 1) ? { bodyAt: mention.offset - newline - 1 } : {};
 }
 
 function editableCardContent(node: MindmapNode): { title: string; body: string } {

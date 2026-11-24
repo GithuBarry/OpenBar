@@ -18,10 +18,12 @@ export type AgentReplyReceipt = {
   updatedAt?: string
   published?: ReplyPublication
 }
+export type AgentInboxClaim = { claimedAt: string, expiresAt: string }
 export type AgentInboxReceipts = {
   version: 1
   acknowledged: string[]
   receipts: Record<string, AgentReplyReceipt>
+  claims?: Record<string, AgentInboxClaim>
   agentFieldHashes?: AgentFieldHashes
   history?: AgentRequestHistory[]
   mentionJournal?: { previous?: string, entries: Array<Pick<InboxNotification, 'id' | 'mapId' | 'nodeId' | 'priority'> & { createdAt: string }> }
