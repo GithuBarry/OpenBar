@@ -680,7 +680,7 @@ async function executeUpdateProject(args: unknown, context: McpCommandContext): 
     const current = getProject(projectSlug);
     if (!current) throw new McpCommandError("invalid_path", `Unknown project "${projectSlug}".`, false);
     const next = { ...current } as Project;
-    const fields = ["title", "venue", "tagline", "overview", "researchKind", "color", "icon", "label", "mainFile", "texliveVersion"] as const;
+    const fields = ["title", "venue", "tagline", "overview", "researchKind", "color", "icon", "label", "mainFile", "markdownFile", "texliveVersion"] as const;
     for (const field of fields) if (record[field] !== undefined) {
       if (typeof record[field] !== "string") throw new McpCommandError("invalid_arguments", `${field} must be a string.`, false);
       (next as unknown as Record<string, unknown>)[field] = record[field];

@@ -43,6 +43,7 @@ export type ProjectMetadataPatch = {
   label?: string;
   engine?: "pdflatex" | "xelatex" | "lualatex";
   mainFile?: string;
+  markdownFile?: string;
   texliveVersion?: string;
   links?: ProjectLink[];
   collaborators?: string[];
@@ -211,7 +212,7 @@ async function executeSharedWebMcpTool(
           patch.engine = args.engine;
           hasMetadataPatch = true;
         }
-        for (const key of ["mainFile", "texliveVersion"] as const) {
+        for (const key of ["mainFile", "markdownFile", "texliveVersion"] as const) {
           if (args[key] === undefined) continue;
           if (typeof args[key] !== "string") return failResult("invalid_arguments", `${key} must be a string.`, { retryable: false });
           patch[key] = args[key];

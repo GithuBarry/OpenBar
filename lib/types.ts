@@ -35,6 +35,7 @@ export interface Project {
   /** TeX compiler settings persisted with the project metadata. */
   engine?: "pdflatex" | "xelatex" | "lualatex";
   mainFile?: string;
+  markdownFile?: string;
   texliveVersion?: string;
   /** SHA-256 of the project TeX envelope. Runtime-only CAS metadata. */
   diskHash?: string;

@@ -18,7 +18,7 @@ import { cardFormatPatch } from "./html-card-editing";
 import { htmlCardValidationError } from "@/lib/mindmap/html-card";
 import { RichText as NodeRichText } from "@/components/rich-text";
 import { CardLinkNavigation, type LinkedCardPreviewItem } from "./linked-card";
-import { connectCardLinkHistory, sameMapCardId } from "./card-link-history";
+import { cardSearchFragment, connectCardLinkHistory, sameMapCardId } from "./card-link-history";
 import { ChildNavigation, type CardNavigationItem } from "./child-navigation";
 import { ParentNavigation } from "./parent-navigation";
 import { MapNavigationDock } from "./map-navigation-dock";
@@ -728,7 +728,7 @@ export function MindmapEditor({
       savedSignatureRef.current = savedMapSignature;
       setSavedSignature(savedMapSignature);
       if (!rebaseSavedMindmap(snapshot, saved, sessionRef.current.mindmap)) {
-        const message = "conflict: This card changed while saving. Your edits are preserved. Load the saved map to review both versions.";
+        const message = "Save conflict: This card changed while you were editing it.";
         if (actor === "human") {
           const nodeIds = findMindmapConflictNodeIds(snapshot, saved, sessionRef.current.mindmap);
           reportBrowserConflict(project, {
@@ -1871,11 +1871,7 @@ export function MindmapEditor({
       await persistWebMcpMutation(current => {
         const saved = indexMindmap(current.mindmap).nodeById.get(id);
         if (!saved) return null;
-        const rendered = withAgentTableFormat(saved);
-        return { type: "patch-node", id, patch: {
-          agentDraft: undefined,
-          ...(rendered !== saved ? { contentFormat: rendered.contentFormat, title: rendered.title, text: rendered.text } : {}),
-        } };
+        return { type: "patch-node", id, patch: { agentDraft: undefined } };
       }, undefined, "human");
     } catch (error) {
       const restore: MindmapTreeAction = { type: "patch-node", id, patch: { agentDraft: true } };
@@ -2327,38 +2323,37 @@ export function MindmapEditor({
     onError: (message) => { if (isBackendUnavailable()) return; setRemoteSaveState("failed"); setRemoteSaveError(withPullStorageWarning(hydrationPendingRef.current ? `Reload the editor to confirm the saved project state. ${message}` : message)); },
   });
 
-  const reloadSavedMap = useCallback(() => {
+  const reloadSavedMap = useCallback((choice: "use-saved" | "review-draft") => {
     if (isPending) return;
-    if (!preserveBrowserDraft()) return;
-    const draft = captureRecoveryDraft();
+    if (choice === "review-draft" && !preserveBrowserDraft()) return;
+    const draft = recoveryDraftRef.current || captureRecoveryDraft();
     startTransition(async () => {
       try {
-        const mapId = sessionRef.current.mindmap.id || initialMindmap.id || "draft";
-        const reviewPaper = Boolean(draft.activeCard?.baseNode.todoId);
-        const [saved, paper] = await Promise.all([
-          loadBrowserMindmap(project, mapId),
-          reviewPaper ? getBrowserEditablePaper(project) : null,
-        ]);
+        const [saved, paper] = await loadSavedProjectView();
         if (!saved) throw new Error("The saved mindmap is unavailable.");
-        if (reviewPaper && paperSourceHashRef.current !== paper?.bundle.bundleHash) {
+        if (!paper && draft.activeCard?.baseNode.todoId) throw new Error("The saved paper TODO could not be loaded.");
+        if (paper && paperSourceHashRef.current !== paper.bundle.bundleHash) {
           paperMutationGenerationRef.current += 1;
-          paperSourceHashRef.current = paper?.bundle.bundleHash;
+          recordPaperSourceHash(paper.bundle.bundleHash);
           router.refresh();
         }
-        recoveryDraftRef.current = draft;
-        setRecoveryDraft(draft);
         editBaselineRef.current = null;
         activeCardDraftRef.current = null;
         inlineEditorSessionRef.current = null;
         setRestoredCardDraft(null);
         setEditingId(null);
         hydrateSavedMap(saved);
-        clearBrowserConflict(project, "mindmap", mapId);
+        const draftToReview = choice === "review-draft" ? draft : null;
+        recoveryDraftRef.current = draftToReview;
+        setRecoveryDraft(draftToReview);
+        setRecoveryReviewOpen(Boolean(draftToReview));
+        if (!draftToReview) clearBrowserDraft();
+        clearBrowserConflict(project, "mindmap", draft.mapId);
       } catch (error) {
-        setSaveError(error instanceof Error ? error.message : "Could not reload the saved mindmap.");
+        setSaveError(`Save conflict: Could not load the latest saved map. ${error instanceof Error ? error.message : "Try again."}`);
       }
     });
-  }, [captureRecoveryDraft, initialMindmap.id, isPending, project, hydrateSavedMap, preserveBrowserDraft, router]);
+  }, [captureRecoveryDraft, clearBrowserDraft, hydrateSavedMap, isPending, loadSavedProjectView, preserveBrowserDraft, project, recordPaperSourceHash, router]);
 
   const recoverySavedMap = lastAcknowledgedMapRef.current;
   const recoverySavedHash = persistedDiskHashRef.current;
@@ -2400,18 +2395,6 @@ export function MindmapEditor({
     setSaveError(null);
     setLocalSaveState("dirty");
   }, [dispatch, recoveryDraft, recoveryPaperHash, restorableDraft, setLocalCollapsed]);
-
-  const keepSavedMap = useCallback(() => {
-    recoveryDraftRef.current = null;
-    editBaselineRef.current = null;
-    activeCardDraftRef.current = null;
-    inlineEditorSessionRef.current = null;
-    setRestoredCardDraft(null);
-    setEditingId(null);
-    setRecoveryReviewOpen(false);
-    setRecoveryDraft(null);
-    clearBrowserDraft();
-  }, [clearBrowserDraft]);
 
   const downloadBrowserDraft = useCallback(() => {
     const draft = recoveryDraftRef.current || captureRecoveryDraft();
@@ -2823,26 +2806,27 @@ export function MindmapEditor({
   const searchResults = useMemo(() => {
     if (!searchOpen) return [];
     const needle = moveQuery.trim().toLocaleLowerCase();
-    const base = mindmap.nodes
-      .filter((node) => {
-        if (!needle) return true;
-        const content = cardContentForNodeWithPaperState(node, paperState);
-        const cautionText = node.caution ? [node.caution.critical, node.caution.important, node.caution.background].filter(Boolean).join(" ") : "";
-        const metadataText = node.metadata ? Object.entries(node.metadata).map(([k, v]) => `${k} ${typeof v === "string" ? v : JSON.stringify(v)}`).join(" ") : "";
-        return `${content.title} ${content.body} ${node.caption || ""} ${cautionText} ${(node.tags || []).join(" ")} ${metadataText}`.toLocaleLowerCase().includes(needle);
-      })
-      .map((node) => ({ id: node.id, label: cardContentForNodeWithPaperState(node, paperState).title || (node.contentFormat === "html" ? "HTML card" : "Untitled card") }));
-    return base.map((result) => {
-      const node = layout.nodeById.get(result.id);
-      const parent = node?.parentId ? layout.nodeById.get(node.parentId) : undefined;
-      const depth = hierarchyDepths.get(result.id);
-      const below = descendantCounts.get(result.id) || 0;
+    const idQuery = needle.replace(/^#/, "");
+    const matches = mindmap.nodes.filter((node) => {
+      if (!needle || (idQuery && node.id.toLocaleLowerCase().startsWith(idQuery))) return true;
+      const content = cardContentForNodeWithPaperState(node, paperState);
+      const cautionText = node.caution ? [node.caution.critical, node.caution.important, node.caution.background].filter(Boolean).join(" ") : "";
+      const metadataText = node.metadata ? Object.entries(node.metadata).map(([k, v]) => `${k} ${typeof v === "string" ? v : JSON.stringify(v)}`).join(" ") : "";
+      return `${content.title} ${content.body} ${node.caption || ""} ${cautionText} ${(node.tags || []).join(" ")} ${metadataText}`.toLocaleLowerCase().includes(needle);
+    });
+    const exactIndex = idQuery ? matches.findIndex(node => node.id.toLocaleLowerCase() === idQuery) : -1;
+    if (exactIndex > 0) matches.unshift(...matches.splice(exactIndex, 1));
+    return matches.map((node) => {
+      const parent = node.parentId ? layout.nodeById.get(node.parentId) : undefined;
+      const depth = hierarchyDepths.get(node.id);
+      const below = descendantCounts.get(node.id) || 0;
       const context = [
         depth === 0 ? "Root" : depth === undefined ? "Outside root" : `Depth ${depth}`,
-        below ? `${below} ${below === 1 ? "card" : "cards"} below` : layout.children.get(result.id)?.length ? "Branch" : "Leaf",
+        below ? `${below} ${below === 1 ? "card" : "cards"} below` : layout.children.get(node.id)?.length ? "Branch" : "Leaf",
         parent ? `under ${cardContentForNodeWithPaperState(parent, paperState).title || (parent.contentFormat === "html" ? "HTML card" : "Untitled card")}` : undefined,
       ].filter(Boolean).join(", ");
-      return { ...result, context };
+      const label = cardContentForNodeWithPaperState(node, paperState).title || (node.contentFormat === "html" ? "HTML card" : "Untitled card");
+      return { id: node.id, label, context };
     });
   }, [searchOpen, mindmap.nodes, moveQuery, paperState, layout, hierarchyDepths, descendantCounts]);
   const visibleSearchResults = searchResults.slice(0, 60);
@@ -3094,8 +3078,15 @@ export function MindmapEditor({
                 onCloseAutoFocus={(event) => { if (searchDismissedOutsideRef.current) event.preventDefault(); }}>
                 <div className={styles.searchField}>
                   <Search size={17} />
-                  <input autoFocus value={moveQuery} placeholder="Search titles, text, and labels…" aria-label="Search cards" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="mindmap-search-results" aria-activedescendant={visibleSearchResults[searchIndex] ? `mindmap-search-result-${searchIndex}` : undefined}
-                    onChange={(event) => { setMoveQuery(event.target.value); setSearchIndex(0); }}
+                  <input autoFocus value={moveQuery} placeholder="Search titles, text, labels, or #card-id…" aria-label="Search cards" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="mindmap-search-results" aria-activedescendant={visibleSearchResults[searchIndex] ? `mindmap-search-result-${searchIndex}` : undefined}
+                     onChange={(event) => { setMoveQuery(event.target.value); setSearchIndex(0); }}
+                     onPaste={(event) => {
+                       const fragment = cardSearchFragment(event.clipboardData.getData("text/plain"));
+                       if (!fragment) return;
+                       event.preventDefault();
+                       setMoveQuery(fragment);
+                       setSearchIndex(0);
+                     }}
                     onKeyDown={(event) => {
                       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                         event.preventDefault();
@@ -3232,15 +3223,16 @@ export function MindmapEditor({
           <Popover.Arrow className={styles.recoveryArrow} width={14} height={7} />
           <div className={styles.recoveryBody}>
           <header><strong>Review browser draft</strong><Popover.Close aria-label="Close browser draft review"><X size={15} /></Popover.Close></header>
-          <p>This tab has a draft from {new Date(recoveryDraft.savedAt).toLocaleString()}.</p>
+          <p>This tab has unsaved edits from {new Date(recoveryDraft.savedAt).toLocaleString()}. Use the latest map saved in OpenBar to discard those edits and continue.</p>
+          {saveError && <p role="alert">{saveError}</p>}
           {restorableDraft ? recoveryDraft.baseHash !== recoverySavedHash && <p>Your edits can be restored onto the latest saved map.</p> : (
             <p>This draft needs manual review. Compare the differences or download a copy before discarding it.</p>
           )}
           <RecoveryCardReview draft={recoveryDraft} saved={recoverySavedMap} todos={paperState?.paper?.todos} defaultOpen={!restorableDraft} />
           <div className={styles.recoveryActions}>
-            {restorableDraft && <button type="button" className="p-button p-button-primary btn-primary" onClick={restoreBrowserDraft}>Restore draft</button>}
+            <button type="button" className="p-button p-button-primary btn-primary" disabled={isPending} onClick={() => reloadSavedMap("use-saved")}>Use latest saved map</button>
+            {restorableDraft && <button type="button" className="p-button p-button-default btn-outline" disabled={isPending} onClick={restoreBrowserDraft}>Restore browser draft</button>}
             <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download draft</button>
-            <button type="button" className="p-button p-button-borderless btn-ghost" onClick={keepSavedMap}>Keep saved map</button>
           </div>
           </div>
         </PopoverSurface>
@@ -3252,10 +3244,14 @@ export function MindmapEditor({
         message={outdatedSave
           ? recoveryStored ? "OpenBar was updated while this page was open. Your draft is preserved in this tab. Refresh, then restore the draft to finish saving."
             : "OpenBar was updated while this page was open. Keep this tab open or download your draft. Browser recovery storage is currently unavailable."
+          : saveConflict ? `${saveError} Use the latest map saved in OpenBar to discard this tab’s unsaved edits and continue. To keep your edits, review or download the browser draft.`
           : recoveryStored === false ? `${saveError} Keep this tab open or download the draft before refreshing.` : saveError}
         report={outdatedSave ? saveError : undefined} diagnosticContext={getMindmapDiagnostics} paused={saveConflict} attentionRequest={saveConflictAttention}>
-        <button type="button" className="p-button p-button-default btn-outline" onClick={outdatedSave ? () => void refreshWithDraft() : saveConflict ? reloadSavedMap : retrySave}>{outdatedSave ? "Refresh and retry" : saveConflict ? "Load saved map" : "Retry save"}</button>
-        {saveConflict && !outdatedSave && <button type="button" className="p-button p-button-default btn-outline" onClick={retrySave}>Retry merge and save</button>}
+        {saveConflict && !outdatedSave ? <>
+          <button type="button" className="p-button p-button-primary btn-primary" disabled={isPending} onClick={() => reloadSavedMap("use-saved")}>Use latest saved map</button>
+          <button type="button" className="p-button p-button-default btn-outline" disabled={isPending} onClick={() => reloadSavedMap("review-draft")}>Review browser draft</button>
+          <button type="button" className="p-button p-button-default btn-outline" disabled={isPending} onClick={retrySave}>Retry merge and save</button>
+        </> : <button type="button" className="p-button p-button-default btn-outline" onClick={outdatedSave ? () => void refreshWithDraft() : retrySave}>{outdatedSave ? "Refresh and retry" : "Retry save"}</button>}
         <button type="button" className="p-button p-button-default btn-outline" onClick={downloadBrowserDraft}>Download draft</button>
       </EditorNotice>}
       {(hydrationPending || remoteSaveError || remoteOutOfSync || reviewingRemote) && <OverleafSyncNotice suppressed={primaryIssue?.id !== "git"} relatedIssues={relatedIssues} floating
@@ -3542,7 +3538,7 @@ export function MindmapEditor({
               {selected.parentId !== null && (
                 <div className="mindmap-field">
                   <span>Shape</span>
-                  <ChoiceButtons label="Card shape" value={selected.shape === "callout" || selected.shape === "archive" ? selected.shape : "leaf"} options={[{value:"leaf",label:"Card"},{value:"callout",label:"Callout"},{value:"archive",label:"Archive"}]} onChange={(value) => dispatch({ type: "patch-node", id: selected.id, patch: { shape: value as MindmapNode["shape"] } })} />
+                  <ChoiceButtons label="Card shape" value={selected.shape === "callout" || selected.shape === "archive" ? selected.shape : "leaf"} options={[{value:"leaf",label:"Card"},{value:"callout",label:"Callout"},{value:"archive",label:"Archive"}]} onChange={(value) => dispatch({ type: "patch-node", id: selected.id, patch: inspectorShapePatch(value) })} />
                 </div>
               )}
               {selected.parentId !== null && ((descendantCounts.get(selected.id) || 0) > 0 || selected.defaultCollapsed) && (
@@ -3672,6 +3668,10 @@ export function MindmapEditor({
     </section>
     </CardLinkNavigation>
   );
+}
+
+function inspectorShapePatch(shape: MindmapNode["shape"]): MindmapNodePatch {
+  return shape === "archive" ? { shape, agentDraft: undefined } : { shape };
 }
 
 function commonCardValue<T>(cards: MindmapNode[], read: (card: MindmapNode) => T): T | null {
@@ -3804,10 +3804,10 @@ function MultiCardInspector({ open, cards, rootId, projectLabels, readOnly, onCl
                 <span>Shape</span>
                 {shape === null && mixed}
                 <ChoiceButtons<string>
-                  label="Selected cards shape"
+                    label="Selected cards shape"
                   value={shape ?? "__mixed__"}
                   options={[{ value: "leaf", label: "Card" }, { value: "callout", label: "Callout" }, { value: "archive", label: "Archive" }]}
-                  onChange={(value) => onPatch({ shape: value as MindmapNode["shape"] })}
+                  onChange={(value) => onPatch(inspectorShapePatch(value as MindmapNode["shape"]))}
                 />
               </div>
             )}

@@ -259,6 +259,7 @@ function persistableProject(project: Project): Project {
   if (project.label?.trim()) next.label = project.label.trim();
   if (project.engine) next.engine = project.engine;
   if (project.mainFile?.trim()) next.mainFile = project.mainFile.trim();
+  if (project.markdownFile?.trim()) next.markdownFile = project.markdownFile.trim();
   if (project.texliveVersion?.trim()) next.texliveVersion = project.texliveVersion.trim();
   return next;
 }

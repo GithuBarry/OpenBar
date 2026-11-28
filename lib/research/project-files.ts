@@ -91,7 +91,7 @@ export function readProjectFiles(projectDir: string, input: ProjectFilesReadInpu
           const bytes = fs.readFileSync(file.absolute), offset = Math.min(parsed.data.offset ?? 0, bytes.length);
           const selected = bytes.subarray(offset, offset + remaining);
           let content: string, encoding: "utf8" | "base64";
-          try { content = new TextDecoder("utf-8", { fatal: true }).decode(selected); encoding = selected.includes(0) ? "base64" : "utf8"; }
+          try { content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(selected); encoding = selected.includes(0) ? "base64" : "utf8"; }
           catch { content = ""; encoding = "base64"; }
           if (encoding === "base64") content = selected.toString("base64");
           remaining -= selected.length;

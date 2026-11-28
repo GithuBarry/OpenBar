@@ -15,6 +15,18 @@ export function sameMapCardId(href: string, current: URL): string | undefined {
   } catch { /* A malformed fragment has no map destination. */ }
 }
 
+/** Extract the search term from a copied card link, including links from another host. */
+export function cardSearchFragment(text: string): string | undefined {
+  const href = text.trim();
+  if (!/^(?:https?:\/\/|\/p\/)/i.test(href) || /\s/.test(href)) return;
+  try {
+    const url = new URL(href, window.location.href);
+    if (/^\/p\/[^/]+\/mindmap(?:\/[^/]+)?\/?$/.test(url.pathname) && url.hash.length > 1) {
+      return `#${decodeURIComponent(url.hash.slice(1))}`;
+    }
+  } catch { /* Leave malformed links as ordinary search text. */ }
+}
+
 /** Keep the unfragmented map entry reachable when the first jump starts on the canvas. */
 export function connectCardLinkHistory(focus: (id: string, initial?: boolean) => boolean, selectedId: () => string | undefined) {
   function followLocation() {

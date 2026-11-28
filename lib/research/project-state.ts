@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { markdownIndex } from "@/lib/markdown-manuscript";
+import { readManuscriptFile } from "./markdown-workspace";
 
 import { analyzePaper, paperTodoIsOpen, type PaperAnalysis, type PaperHeading, type PaperMarker, type PaperNote, type PaperTodo } from "@/lib/research/paper-analysis";
 import {
@@ -138,6 +140,7 @@ export type ProjectState = {
     label?: string;
     engine?: Project["engine"];
     mainFile?: string;
+    markdownFile?: string;
     texliveVersion?: string;
   };
   current?: CurrentLocation;
@@ -162,6 +165,8 @@ export type ProjectState = {
     }>;
     diagnostics: SourceDiagnostic[];
   } | null;
+  /** Reader-facing prose locations. Map mutations use the private TeX bundle. */
+  markdownManuscript?: NonNullable<ProjectState["paper"]>;
   mindmaps: Array<{ id: string; title: string; primary: boolean; href: string; nodeCount: number }>;
   wiki: Array<{ slug: string; title: string; href: string; updatedAt: string }>;
   recent: RecentActivityItem[];
@@ -625,6 +630,7 @@ export function buildProjectState(input: {
       ...(input.project.label ? { label: input.project.label } : {}),
       ...(input.project.engine ? { engine: input.project.engine } : {}),
       ...(input.project.mainFile ? { mainFile: input.project.mainFile } : {}),
+      ...(input.project.markdownFile ? { markdownFile: input.project.markdownFile } : {}),
       ...(input.project.texliveVersion ? { texliveVersion: input.project.texliveVersion } : {}),
     },
     ...(input.current ? { current: input.current } : {}),
@@ -694,7 +700,7 @@ export function getProjectState(slug: string, current?: CurrentLocation): Projec
   const context = bundle ? buildSourceContextIndex(paths.manuscriptDir, bundle.rootFile, bundle) : undefined;
   const analysis = paper ? analyzePaper(paper.source) : undefined;
   const skills = mergeSkills(discoverSkillsInDir(dir), discoverWorkspaceSkills(), bundledSkills());
-  return buildProjectState({
+  const state = buildProjectState({
     project,
     paper,
     analysis,
@@ -710,6 +716,38 @@ export function getProjectState(slug: string, current?: CurrentLocation): Projec
     activity: readActivity(dir, 2_000),
     current,
   });
+  if (project.markdownFile && state.paper) {
+    const paper = { ...state.paper, todos: state.paper.todos.map(t => ({ ...t })), comments: state.paper.comments.map(c => ({ ...c })) };
+    try {
+      const post = readManuscriptFile(dir, project.markdownFile);
+      const { headings, anchors } = markdownIndex(post.source);
+      const sectionAt = (at: number) => headings.filter(h => h.from <= at).at(-1);
+      // The Markdown file owns prose/ranges. Editing a TODO record still uses
+      // its own TeX file and hash, never the prose hash or a Markdown offset.
+      paper.rootFile = post.path;
+      paper.sourceHash = post.hash!;
+      paper.title = headings.find(h => h.level === 1)?.title ?? project.title;
+      paper.outline = headings.map((h, i) => {
+        const to = headings[i + 1]?.from ?? post.source.length;
+        return { id: `md-section-${h.from}`, title: h.title, level: h.level, file: post.path, sourceHash: post.hash!,
+          sourceRange: { from: h.from, to }, openTodos: anchors.filter(a => a.kind === "todo" && a.from >= h.from && a.from < to
+            && paper.todos.some(t => t.id === a.id && !t.completed)).length };
+      });
+      for (const note of [...paper.todos, ...paper.comments]) {
+        const a = anchors.find(a => a.id === note.id);
+        const h = a && sectionAt(a.from);
+        if (a) {
+          note.sectionId = h ? `md-section-${h.from}` : undefined;
+          note.sectionTitle = h?.title;
+          note.href = paperHref(slug, a.id);
+        } else note.href = `/p/${encodeURIComponent(slug)}/paper?source=tex#${encodeURIComponent(note.id || "")}`;
+      }
+      state.markdownManuscript = paper;
+    } catch (e) {
+      paper.diagnostics.push({ severity: "error", code: "markdown_read_failed", message: e instanceof Error ? e.message : "Could not open Markdown manuscript.", filePath: project.markdownFile });
+    }
+  }
+  return state;
 }
 
 /** Project reads stay available while optional inbox metadata is being recovered. */
@@ -727,7 +765,7 @@ export function getProjectAgentMentions(slug: string, limit = 50) {
 export function projectStateForAgent(state: ProjectState, query: ProjectStateQuery = {}): unknown {
   const detail = query.detail === "full" ? "full" : "summary";
   const todoLimit = query.todoLimit ?? (detail === "full" ? Infinity : 8);
-  const paper = state.paper;
+  const paper = state.markdownManuscript ?? state.paper;
   const workspaceAgentsMd = workspaceInstructionsAvailable() ? state.workspaceAgentsMd : undefined;
   const agentMentions = state.agentMentions;
   const primaryUnplaced = (todo: ProjectStateTodo) => todo.primaryUnplaced ?? todo.unplaced;

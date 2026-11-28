@@ -100,6 +100,7 @@ labels, and presentation. Browser preferences stay on the current device.
 
 ## Documentation
 
+- [Markdown manuscripts and ICLR blog posts](docs/markdown-manuscripts.md)
 - [Architecture and product model](docs/architecture.md)
 - [MCP and WebMCP operations](docs/webmcp.md)
 - [Hosting and deployment](deploy/README.md)

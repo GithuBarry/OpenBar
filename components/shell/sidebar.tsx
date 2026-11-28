@@ -135,6 +135,7 @@ export function Sidebar({
     ? [
         { href: `${base}/paper`, label: "Paper", icon: "drafts" as const },
         { href: `${base}/mindmap`, label: "Mindmap", icon: "mindmap" as const },
+        ...(!publicDemo && !viewOnly ? [{ href: `${base}/markdown`, label: "Markdown", icon: "notes" as const, group: "more" as const }] : []),
         { href: `${base}/wiki`, label: "Wiki", icon: "notes" as const },
         ...(!publicDemo && !viewOnly ? [{ href: `${base}/instructions`, label: "Instructions", icon: "instructions" as const, group: "more" as const }] : []),
       ]

@@ -6,6 +6,7 @@ import { normalizeMindmapCaution, restoreCardNotes, type CardNoteField, type Min
 import type { Mindmap, MindmapCardWidthMode, MindmapNode } from "@/lib/types";
 import { mergeSavedMindmap } from "@/lib/mindmap/merge-saved";
 import { linkedTodoCaption } from "@/lib/mindmap/link-existing-todo";
+import { withAgentTableFormat } from "@/lib/mindmap/agent-draft";
 import { cardFormatPatch } from "./html-card-editing";
 
 export { byOrder, indexMindmap };
@@ -31,7 +32,13 @@ export type MindmapNodePatch = Pick<
 
 function semanticPatch(patch: MindmapNodePatch, node?: MindmapNode): MindmapNodePatch {
   const next: MindmapNodePatch = {};
-  if (Object.prototype.hasOwnProperty.call(patch, "agentDraft")) next.agentDraft = patch.agentDraft;
+  if (Object.prototype.hasOwnProperty.call(patch, "agentDraft")) {
+    next.agentDraft = patch.agentDraft;
+    if (node?.agentDraft && !patch.agentDraft) {
+      const rendered = withAgentTableFormat(node);
+      if (rendered !== node) Object.assign(next, { contentFormat: rendered.contentFormat, title: rendered.title, text: rendered.text });
+    }
+  }
   if (Object.prototype.hasOwnProperty.call(patch, "title")) next.title = patch.title;
   if (Object.prototype.hasOwnProperty.call(patch, "text")) next.text = patch.text;
   if (Object.prototype.hasOwnProperty.call(patch, "caption")) next.caption = patch.caption;

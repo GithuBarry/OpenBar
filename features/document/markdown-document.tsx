@@ -1,4 +1,4 @@
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { InlineInfoNote } from "@/components/inline-info-note";
 import { remarkInlineInfoNotes } from "@/lib/mindmap/inline-info-notes";
@@ -14,10 +14,10 @@ const COMPONENTS: Components = {
   },
 };
 
-export function MarkdownDocument({ source }: { source: string }) {
+export function MarkdownDocument({ source, components, remarkPlugins = [], rehypePlugins }: { source: string } & Pick<Options, "components" | "remarkPlugins" | "rehypePlugins">) {
   return (
     <article className={`prose-ob max-w-3xl ${styles.document}`}>
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS}>{source}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[...REMARK_PLUGINS, ...(remarkPlugins ?? [])]} rehypePlugins={rehypePlugins} components={{ ...COMPONENTS, ...components }}>{source}</ReactMarkdown>
     </article>
   );
 }

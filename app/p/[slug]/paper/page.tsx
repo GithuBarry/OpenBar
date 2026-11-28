@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 import { PaperEditor } from "@/features/paper/paper-editor";
 import { DRAFT_MINDMAP_ID, getBibliographyData, getMindmap, getPaperEditorState, getProjectMetadata } from "@/lib/store";
 import { requireProjectPage } from "@/lib/server/project-access";
+import { MarkdownWorkbench } from "@/features/document/markdown-workbench";
+import { openMarkdownAction } from "@/app/markdown-actions";
 
 /**
  * The Draft is the live TeX manuscript. TODOs and comments live inline as
@@ -10,14 +12,20 @@ import { requireProjectPage } from "@/lib/server/project-access";
  */
 export default async function PaperPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ source?: string }>;
 }) {
   const { slug } = await params;
   await requireProjectPage(slug);
   const project = getProjectMetadata(slug);
   if (!project) notFound();
 
+  if (project.markdownFile && (await searchParams).source !== "tex") {
+    const initial = await openMarkdownAction(slug, project.markdownFile);
+    return <MarkdownWorkbench key={`${slug}:${project.markdownFile}`} project={slug} initial={initial} primary rootId={getMindmap(slug)?.rootId} />;
+  }
   const paper = getPaperEditorState(slug);
   const map = getMindmap(slug, DRAFT_MINDMAP_ID);
   const placementTargets = (map?.nodes || []).map((node) => ({

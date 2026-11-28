@@ -495,6 +495,9 @@ function buildReplacements(
       attributes: { className: "ob-tex-parbox" },
       content: lastArg(node),
     }),
+    // PDF dimensions don't apply to the HTML preview. Keep the converted
+    // content as nodes so a nested table stays a table instead of raw markup.
+    resizebox: (node: Macro) => ({ type: "group", content: lastArg(node) }),
     documentclass: () => silent(),
     usepackage: () => silent(),
     maketitle: () => silent(),
@@ -517,6 +520,11 @@ function buildReplacements(
     textsc: (node: Macro) => htmlLike({
       tag: "span",
       attributes: { className: "ob-tex-small-caps" },
+      content: lastArg(node),
+    }),
+    textnormal: (node: Macro) => htmlLike({
+      tag: "span",
+      attributes: { style: "font-family:inherit;font-style:normal;font-weight:normal" },
       content: lastArg(node),
     }),
   };

@@ -899,6 +899,7 @@ export async function updateProjectAction(
       ...(patch.label !== undefined ? { label: patch.label } : {}),
       ...(patch.engine !== undefined ? { engine: patch.engine } : {}),
       ...(patch.mainFile !== undefined ? { mainFile: patch.mainFile } : {}),
+      ...(patch.markdownFile !== undefined ? { markdownFile: patch.markdownFile } : {}),
       ...(patch.texliveVersion !== undefined ? { texliveVersion: patch.texliveVersion } : {}),
       ...(patch.links !== undefined ? { links: patch.links } : {}),
       ...(patch.collaborators !== undefined ? { collaborators: patch.collaborators } : {}),

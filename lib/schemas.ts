@@ -80,6 +80,7 @@ export const projectSchema = z
     label: z.string().optional(),
     engine: z.enum(["pdflatex", "xelatex", "lualatex"]).optional(),
     mainFile: z.string().regex(/^[A-Za-z0-9._/-]+$/).optional(),
+    markdownFile: z.string().regex(/^(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.md$/).optional(),
     texliveVersion: z.string().max(120).optional(),
   })
   .strip();
